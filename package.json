@@ -1,10 +1,10 @@
 {
   "name": "resultproxy",
-  "version": "1.5.0",
-  "main": "electron-main.cjs",
+  "version": "1.6.0",
+  "main": "backend/electron-main.cjs",
   "scripts": {
     "dev:react": "vite",
-    "dev:electron": "cross-env NODE_ENV=development electron electron-main.cjs",
+    "dev:electron": "cross-env NODE_ENV=development electron backend/electron-main.cjs",
     "dev": "concurrently -k \"npm run dev:react\" \"wait-on http://localhost:5173 && npm run dev:electron\"",
     "build": "vite build",
     "package": "npm run build && electron-builder --win"
@@ -19,15 +19,19 @@
       "target": "nsis",
       "icon": "public/logo.png"
     },
+    "linux": {
+      "target": "tar.gz",
+      "icon": "public/logo.png"
+    },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     },
     "files": [
-      "dist/**/*",
-      "electron-main.cjs",
-      "package.json"
-    ]
+  "dist/**/*",
+  "backend/**/*",
+  "package.json"
+]
   },
   "dependencies": {
     "cors": "^2.8.6",

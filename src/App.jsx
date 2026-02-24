@@ -1,11 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 
-// ⚠️ ВАЖНО ДЛЯ ВАШЕГО ПК: Раскомментируйте эту строку, чтобы работало ваше лого:
-// import logo from "./assets/logo.png";
-
-// ⚠️ И удалите вот эту строку-заглушку (она нужна только чтобы песочница не выдавала ошибку):
-const logo =
-  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+import logo from "./assets/logo.png";
 
 import {
   Globe,
@@ -625,7 +620,7 @@ export default function App() {
         </nav>
 
         <div className="p-4 border-t border-zinc-800 text-xs text-zinc-500 text-center">
-          Версия 1.5.0 (stable)
+          Версия 1.6.0 (newest)
         </div>
       </div>
 
