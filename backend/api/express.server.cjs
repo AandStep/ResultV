@@ -243,6 +243,27 @@ class ApiServer {
       const os = require("os");
       res.json({ platform: os.platform() });
     });
+
+    this.app.get("/api/version", (req, res) => {
+      let version = app.getVersion();
+      // В режиме разработки app.getVersion() может возвращать версию самого Electron (например 40.6.0),
+      // так как точка входа находится в папке backend.
+      // Поэтому для гарантии отдаём версию из package.json в dev режиме:
+      if (!app.isPackaged) {
+        try {
+          const path = require("path");
+          const fs = require("fs");
+          const packageJsonPath = path.join(__dirname, "../../package.json");
+          const packageJson = JSON.parse(
+            fs.readFileSync(packageJsonPath, "utf-8"),
+          );
+          version = packageJson.version;
+        } catch (e) {
+          console.error("Не удалось прочитать package.json:", e);
+        }
+      }
+      res.json({ version });
+    });
   }
 }
 

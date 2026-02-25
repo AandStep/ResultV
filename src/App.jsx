@@ -12,10 +12,23 @@ import { formatBytes, formatSpeed } from "./utils/formatters";
 import { useConfigContext } from "./context/ConfigContext";
 import logo from "./assets/logo.png";
 import { useTranslation } from "react-i18next";
+import { useCheckUpdate } from "./hooks/useCheckUpdate";
+import UpdateNotificationModal from "./components/ui/UpdateNotificationModal";
 
 const AppContent = () => {
   const { t } = useTranslation();
   const { isConfigLoaded, activeTab } = useConfigContext();
+  const { updateAvailable, latestVersionData, currentVersion } =
+    useCheckUpdate();
+
+  const [isUpdateDismissed, setIsUpdateDismissed] = React.useState(
+    () => window.sessionStorage.getItem("updateDismissed") === "true",
+  );
+
+  const handleDismissUpdate = () => {
+    window.sessionStorage.setItem("updateDismissed", "true");
+    setIsUpdateDismissed(true);
+  };
 
   if (!isConfigLoaded) {
     return (
@@ -44,6 +57,15 @@ const AppContent = () => {
       {activeTab === "buy" && <BuyProxyView />}
       {activeTab === "logs" && <LogsView />}
       {activeTab === "settings" && <SettingsView />}
+
+      {updateAvailable && !isUpdateDismissed && (
+        <UpdateNotificationModal
+          currentVersion={currentVersion}
+          latestVersion={latestVersionData?.version}
+          downloadUrl={latestVersionData?.downloadUrl}
+          onClose={handleDismissUpdate}
+        />
+      )}
     </MainLayout>
   );
 };
