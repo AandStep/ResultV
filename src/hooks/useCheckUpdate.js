@@ -4,7 +4,7 @@ import { DAEMON_URL } from "./useLogs";
 
 // Замените на реальный URL вашего JSON-файла с информацией о версии
 const UPDATE_URL =
-  "https://raw.githubusercontent.com/username/repo/main/update.json";
+  "https://raw.githubusercontent.com/AandStep/ResultProxy/dev/update.json";
 
 export const useCheckUpdate = () => {
   const [updateAvailable, setUpdateAvailable] = useState(false);
@@ -22,17 +22,8 @@ export const useCheckUpdate = () => {
         const localVersion = localData.version;
         setCurrentVersion(localVersion);
 
-        // 2. Получаем последнюю версию с внешнего сервера
-        // В реальном приложении раскомментируйте это:
-        // const remoteResponse = await fetch(UPDATE_URL);
-        // const remoteData = await remoteResponse.json();
-
-        // Мок для тестирования (замените на реальный fetch выше):
-        const remoteData = {
-          version: "2.1.0",
-          releaseNotes: "Улучшена стабильность и добавлены новые функции.",
-          downloadUrl: "https://example.com/download",
-        };
+        const remoteResponse = await fetch(UPDATE_URL);
+        const remoteData = await remoteResponse.json();
 
         setLatestVersionData(remoteData);
 
