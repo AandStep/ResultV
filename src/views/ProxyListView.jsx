@@ -1,5 +1,5 @@
-import React from "react";
-import { Server, Activity, Pencil, Trash2 } from "lucide-react";
+import React, { useState, useMemo } from "react";
+import { Server, Activity, Pencil, Trash2, Search } from "lucide-react";
 import { FlagIcon } from "../components/ui/FlagIcon";
 import { useConfigContext } from "../context/ConfigContext";
 import { useConnectionContext } from "../context/ConnectionContext";
@@ -7,6 +7,8 @@ import { useTranslation } from "react-i18next";
 
 export const ProxyListView = () => {
   const { t } = useTranslation();
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortBy, setSortBy] = useState("default");
   const { proxies, setProxies, setEditingProxy, setActiveTab } =
     useConfigContext();
   const {
@@ -16,6 +18,23 @@ export const ProxyListView = () => {
     isConnected,
     pings,
   } = useConnectionContext();
+
+  const filteredAndSortedProxies = useMemo(() => {
+    let result = [...proxies];
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(
+        (p) =>
+          p.name.toLowerCase().includes(q) || p.ip.toLowerCase().includes(q),
+      );
+    }
+    if (sortBy === "country") {
+      result.sort((a, b) => (a.country || "").localeCompare(b.country || ""));
+    } else if (sortBy === "type") {
+      result.sort((a, b) => (a.type || "").localeCompare(b.type || ""));
+    }
+    return result;
+  }, [proxies, searchQuery, sortBy]);
 
   const editProxy = (proxy) => {
     setEditingProxy(proxy);
@@ -33,14 +52,48 @@ export const ProxyListView = () => {
         <p className="text-zinc-400 mt-2">{t("proxyList.desc")}</p>
       </div>
 
+      {proxies.length > 0 && (
+        <div className="flex flex-col sm:flex-row gap-4 bg-zinc-900/50 p-4 rounded-2xl border border-zinc-800">
+          <div className="relative flex-1 text-white">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
+            <input
+              type="text"
+              placeholder={t("proxyList.searchPlaceholder")}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-zinc-800 border-none text-white rounded-xl py-3 pl-12 pr-4 outline-none focus:ring-2 focus:ring-[#00A819]/50 transition-all placeholder:text-zinc-500"
+            />
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            <span className="text-zinc-400 text-sm font-medium whitespace-nowrap">
+              {t("proxyList.sortBy")}:
+            </span>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              className="bg-zinc-800 border-none text-white rounded-xl py-3 px-4 outline-none focus:ring-2 focus:ring-[#00A819]/50 transition-all cursor-pointer appearance-none min-w-[140px]"
+            >
+              <option value="default">{t("proxyList.sort.default")}</option>
+              <option value="country">{t("proxyList.sort.country")}</option>
+              <option value="type">{t("proxyList.sort.type")}</option>
+            </select>
+          </div>
+        </div>
+      )}
+
       {proxies.length === 0 ? (
         <div className="text-center py-16 bg-zinc-900 rounded-3xl border border-zinc-800 border-dashed">
           <Server className="w-16 h-16 text-zinc-700 mx-auto mb-4" />
           <p className="text-zinc-400 text-lg">{t("proxyList.empty")}</p>
         </div>
+      ) : filteredAndSortedProxies.length === 0 ? (
+        <div className="text-center py-16 bg-zinc-900 rounded-3xl border border-zinc-800 border-dashed">
+          <Search className="w-16 h-16 text-zinc-700 mx-auto mb-4" />
+          <p className="text-zinc-400 text-lg">{t("proxyList.noResults")}</p>
+        </div>
       ) : (
         <div className="grid gap-6 grid-cols-1 sm:grid-cols-[repeat(auto-fit,minmax(320px,1fr))]">
-          {proxies.map((proxy) => {
+          {filteredAndSortedProxies.map((proxy) => {
             const isActive = isConnected && activeProxy?.id === proxy.id;
             return (
               <div

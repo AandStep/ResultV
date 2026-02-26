@@ -4,21 +4,68 @@ export const detectCountry = async (ip, name = "") => {
     if (
       cleanIp === "127.0.0.1" ||
       cleanIp === "localhost" ||
-      cleanIp.startsWith("192.168.")
+      cleanIp.startsWith("192.168.") ||
+      cleanIp.startsWith("10.") // Local network check
     ) {
       return "local";
     }
 
     const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), 3000);
-    const res = await fetch(
-      `http://ip-api.com/json/${cleanIp}?fields=countryCode`,
-      { signal: controller.signal },
-    );
+    // Increase timeout a bit to account for multiple APIs
+    const id = setTimeout(() => controller.abort(), 4000);
+
+    let countryCode = null;
+
+    // 1. Try api.iplocation.net first (Very accurate for physical location vs ASN)
+    try {
+      const res = await fetch(`https://api.iplocation.net/?ip=${cleanIp}`, {
+        signal: controller.signal,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.country_code2 && data.country_code2 !== "-") {
+          countryCode = data.country_code2;
+        }
+      }
+    } catch (e) {}
+
+    // 2. Try api.ip2location.io (Excellent fallback for physical accuracy)
+    if (!countryCode) {
+      try {
+        const res3 = await fetch(`https://api.ip2location.io/?ip=${cleanIp}`, {
+          signal: controller.signal,
+        });
+        if (res3.ok) {
+          const data3 = await res3.json();
+          if (data3 && data3.country_code && data3.country_code !== "-") {
+            countryCode = data3.country_code;
+          }
+        }
+      } catch (e) {}
+    }
+
+    // 3. Fall back to ip-api.com (handles domains well, but HTTP so might be blocked)
+    if (!countryCode) {
+      try {
+        const res2 = await fetch(
+          `http://ip-api.com/json/${cleanIp}?fields=countryCode`,
+          { signal: controller.signal },
+        );
+        if (res2.ok) {
+          const data2 = await res2.json();
+          if (data2 && data2.countryCode) {
+            countryCode = data2.countryCode;
+          }
+        }
+      } catch (e) {
+        // Ignore error
+      }
+    }
+
     clearTimeout(id);
-    const data = await res.json();
-    if (data.countryCode) {
-      return data.countryCode.toLowerCase();
+
+    if (countryCode) {
+      return countryCode.toLowerCase();
     }
   } catch (error) {}
 

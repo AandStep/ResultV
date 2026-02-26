@@ -120,6 +120,14 @@
     "desc": "Manage your servers",
     "empty": "The proxy list is empty.",
     "pinging": "Pinging...",
+    "searchPlaceholder": "Search by name or IP...",
+    "sortBy": "Sort by",
+    "sort": {
+      "default": "Default",
+      "country": "Country",
+      "type": "Type"
+    },
+    "noResults": "No proxies found matching your criteria.",
     "status": {
       "connected": "Connected",
       "connect": "Connect"
