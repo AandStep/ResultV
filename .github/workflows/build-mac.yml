@@ -1,0 +1,44 @@
+name: Build macOS
+
+on:
+  push:
+    branches: ["dev"]
+  pull_request:
+    branches: ["dev"]
+  # Позволяет запускать сборку вручную из интерфейса GitHub
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install dependencies
+        # Используем npm ci для чистой установки, если есть package-lock.json, иначе npm install
+        run: npm ci || npm install
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Build macOS apps (Intel & Apple Silicon)
+        # Флаги --arm64 и --x64 создадут два отдельных .dmg файла для старых и новых маков
+        run: npx electron-builder --mac --arm64 --x64
+        env:
+          # Требуется electron-builder в некоторых случаях, и полезно для публикации релизов
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ResultProxy-macOS-Builds
+          path: release/*.dmg
+          retention-days: 7

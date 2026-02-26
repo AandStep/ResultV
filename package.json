@@ -24,6 +24,10 @@
       "target": "tar.gz",
       "icon": "public/logo.png"
     },
+    "mac": {
+      "target": "dmg",
+      "icon": "public/logo.png"
+    },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
