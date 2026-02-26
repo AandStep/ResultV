@@ -24,7 +24,7 @@ jobs:
 
       - name: Install dependencies
         # Используем npm ci для чистой установки, если есть package-lock.json, иначе npm install
-        run: npm ci || npm install
+        run: npm ci --legacy-peer-deps || npm install --legacy-peer-deps
 
       - name: Build frontend
         run: npm run build
