@@ -1,4 +1,4 @@
-const { app } = require("electron");
+const { app, ipcMain } = require("electron");
 const path = require("path");
 
 // Устанавливаем принудительно директорию с данными
@@ -16,6 +16,7 @@ if (!gotTheLock) {
 // 1. Dependency Injection - Импорт всех модулей
 // ---------------------------------------------------------
 const loggerService = require("./core/logger.service.cjs");
+const authManager = require("./core/auth.manager.cjs");
 const stateStore = require("./core/state.store.cjs");
 const configManager = require("./config/config.manager.cjs");
 const SystemFactory = require("./system/system.factory.cjs");
@@ -62,6 +63,10 @@ const apiServer = new ApiServer(
 // ---------------------------------------------------------
 // 3. Жизненный цикл Electron
 // ---------------------------------------------------------
+
+ipcMain.on("get-api-token", (event) => {
+  event.returnValue = authManager.getToken();
+});
 
 app.on("second-instance", () => {
   windowManager.show();

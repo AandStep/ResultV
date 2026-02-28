@@ -17,7 +17,11 @@ class WindowManager {
       height: 780,
       icon: nativeImage.createFromPath(iconPath),
       autoHideMenuBar: true,
-      webPreferences: { nodeIntegration: true, contextIsolation: false },
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        preload: path.join(__dirname, "preload.cjs"),
+      },
     });
 
     this.mainWindow.loadURL(

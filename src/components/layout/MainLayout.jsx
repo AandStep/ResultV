@@ -43,7 +43,7 @@ export const MainLayout = ({ children }) => {
       <div className="flex-1 flex flex-col relative overflow-y-auto min-w-0">
         <MobileHeader />
 
-        <div className="p-4 md:p-10 w-full max-w-[1600px] mx-auto pb-24 md:pb-10">
+        <div className="p-4 md:px-10 md:py-6 w-full max-w-[1600px] mx-auto pb-24 md:pb-8">
           {children}
         </div>
       </div>

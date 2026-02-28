@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { DAEMON_URL } from "./useLogs";
+import { apiFetch } from "./useLogs";
 
 export const useDaemonPing = (proxies, isConfigLoaded) => {
   const [pings, setPings] = useState({});
@@ -11,7 +11,7 @@ export const useDaemonPing = (proxies, isConfigLoaded) => {
       const newPings = {};
       for (const p of proxies) {
         try {
-          const res = await fetch(`${DAEMON_URL}/api/ping`, {
+          const res = await apiFetch(`/api/ping`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ ip: p.ip, port: p.port }),

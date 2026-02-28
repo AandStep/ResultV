@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { DAEMON_URL } from "./useLogs";
+import { apiFetch } from "./useLogs";
 
 export const useDaemonStatus = (
   isConnected,
@@ -24,7 +24,7 @@ export const useDaemonStatus = (
     let interval;
     const fetchStatus = async () => {
       try {
-        const res = await fetch(`${DAEMON_URL}/api/status`);
+        const res = await apiFetch(`/api/status`);
         if (res.ok) {
           const data = await res.json();
           if (daemonStatus !== "online") setDaemonStatus("online");
@@ -56,8 +56,6 @@ export const useDaemonStatus = (
                   p.id === data.activeProxy.id || p.ip === data.activeProxy.ip,
               );
               setActiveProxy(localMatchedProxy || data.activeProxy);
-            } else {
-              if (!failedProxy) setActiveProxy(null);
             }
           }
 

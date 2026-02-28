@@ -26,8 +26,24 @@ class ApiServer {
   }
 
   start() {
-    this.app.use(cors());
+    const corsOptions = {
+      origin: ["http://localhost:5173", "file://", "electron://"],
+      optionsSuccessStatus: 200,
+    };
+    this.app.use(cors(corsOptions));
     this.app.use(express.json());
+
+    // Authorization middleware
+    const authManager = require("../core/auth.manager.cjs");
+    this.app.use((req, res, next) => {
+      // Allow preflight options
+      if (req.method === "OPTIONS") return next();
+
+      if (!authManager.verifyRequest(req)) {
+        return res.status(401).json({ error: "Unauthorized access" });
+      }
+      next();
+    });
 
     // Registering Routes
     this._registerRoutes();

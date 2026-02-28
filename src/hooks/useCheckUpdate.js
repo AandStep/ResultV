@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { compareVersions } from "../utils/versionCheck";
-import { DAEMON_URL } from "./useLogs";
+import { apiFetch } from "./useLogs";
 
 // Замените на реальный URL вашего JSON-файла с информацией о версии
 const UPDATE_URL =
@@ -17,7 +17,7 @@ export const useCheckUpdate = () => {
       try {
         setLoading(true);
         // 1. Получаем текущую версию из локального API Electron
-        const localResponse = await fetch(`${DAEMON_URL}/api/version`);
+        const localResponse = await apiFetch(`/api/version`);
         const localData = await localResponse.json();
         const localVersion = localData.version;
         setCurrentVersion(localVersion);

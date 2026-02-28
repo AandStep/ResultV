@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { DAEMON_URL } from "./useLogs";
+import { apiFetch } from "./useLogs";
 
 export const useDaemonControl = (
   isConnected,
@@ -30,14 +30,14 @@ export const useDaemonControl = (
 
       if (isConnected) {
         addLog("Отключение...", "info");
-        await fetch(`${DAEMON_URL}/api/disconnect`, { method: "POST" });
+        await apiFetch(`/api/disconnect`, { method: "POST" });
         addLog("Отключено успешно.", "success");
         setIsConnected(false);
       } else {
         addLog(`Подключение к ${targetProxy.name}...`, "info");
         setActiveProxy(targetProxy);
 
-        const res = await fetch(`${DAEMON_URL}/api/connect`, {
+        const res = await apiFetch(`/api/connect`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -90,11 +90,11 @@ export const useDaemonControl = (
         addLog(`Переключение на: ${proxy.name}...`, "info");
 
         if (isConnected) {
-          await fetch(`${DAEMON_URL}/api/disconnect`, { method: "POST" });
+          await apiFetch(`/api/disconnect`, { method: "POST" });
           setIsConnected(false);
         }
 
-        const res = await fetch(`${DAEMON_URL}/api/connect`, {
+        const res = await apiFetch(`/api/connect`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -144,7 +144,7 @@ export const useDaemonControl = (
           isSwitchingRef.current = true;
           addLog("Активный сервер удален. Разрыв соединения...", "info");
           try {
-            await fetch(`${DAEMON_URL}/api/disconnect`, { method: "POST" });
+            await apiFetch(`/api/disconnect`, { method: "POST" });
             addLog("Отключено успешно.", "success");
           } catch (e) {}
           setIsConnected(false);

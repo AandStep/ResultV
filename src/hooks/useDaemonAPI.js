@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { DAEMON_URL } from "./useLogs";
+import { apiFetch } from "./useLogs";
 
 export const useDaemonAPI = ({
   proxies,
@@ -31,7 +31,7 @@ export const useDaemonAPI = ({
       const newPings = {};
       for (const p of proxies) {
         try {
-          const res = await fetch(`${DAEMON_URL}/api/ping`, {
+          const res = await apiFetch(`/api/ping`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ ip: p.ip, port: p.port }),
@@ -58,7 +58,7 @@ export const useDaemonAPI = ({
     let interval;
     const fetchStatus = async () => {
       try {
-        const res = await fetch(`${DAEMON_URL}/api/status`);
+        const res = await apiFetch(`/api/status`);
         if (res.ok) {
           const data = await res.json();
           if (daemonStatus !== "online") setDaemonStatus("online");
@@ -125,14 +125,14 @@ export const useDaemonAPI = ({
 
       if (isConnected) {
         addLog("Отключение...", "info");
-        await fetch(`${DAEMON_URL}/api/disconnect`, { method: "POST" });
+        await apiFetch(`/api/disconnect`, { method: "POST" });
         addLog("Отключено успешно.", "success");
         setIsConnected(false);
       } else {
         addLog(`Подключение к ${targetProxy.name}...`, "info");
         setActiveProxy(targetProxy);
 
-        const res = await fetch(`${DAEMON_URL}/api/connect`, {
+        const res = await apiFetch(`/api/connect`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -181,11 +181,11 @@ export const useDaemonAPI = ({
         addLog(`Переключение на: ${proxy.name}...`, "info");
 
         if (isConnected) {
-          await fetch(`${DAEMON_URL}/api/disconnect`, { method: "POST" });
+          await apiFetch(`/api/disconnect`, { method: "POST" });
           setIsConnected(false);
         }
 
-        const res = await fetch(`${DAEMON_URL}/api/connect`, {
+        const res = await apiFetch(`/api/connect`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -225,7 +225,7 @@ export const useDaemonAPI = ({
           isSwitchingRef.current = true;
           addLog("Активный сервер удален. Разрыв соединения...", "info");
           try {
-            await fetch(`${DAEMON_URL}/api/disconnect`, { method: "POST" });
+            await apiFetch(`/api/disconnect`, { method: "POST" });
             addLog("Отключено успешно.", "success");
           } catch (e) {}
           setIsConnected(false);

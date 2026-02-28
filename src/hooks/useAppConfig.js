@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { DAEMON_URL } from "./useLogs";
-import { decryptWithPassword } from "../utils/crypto";
+import { apiFetch, DAEMON_URL } from "./useLogs";
 import { detectCountry } from "../utils/network";
 
 export const useAppConfig = (addLog) => {
@@ -18,26 +17,22 @@ export const useAppConfig = (addLog) => {
   const [platform, setPlatform] = useState("win32");
 
   useEffect(() => {
-    fetch(`${DAEMON_URL}/api/platform`)
+    apiFetch(`/api/platform`)
       .then((res) => res.json())
       .then((data) => {
         if (data.platform) setPlatform(data.platform);
       })
       .catch(() => {});
 
-    fetch(`${DAEMON_URL}/api/config`)
+    apiFetch(`/api/config`)
       .then((res) => res.json())
       .then((data) => {
-        if (data.proxies) {
-          if (typeof data.proxies === "string") {
-            const dec = decryptWithPassword(
-              data.proxies,
-              "ResPrx_S3cUr3_K3y_991",
-            );
-            if (dec) setProxies(dec);
-          } else if (Array.isArray(data.proxies) && data.proxies.length > 0) {
-            setProxies(data.proxies);
-          }
+        if (
+          data.proxies &&
+          Array.isArray(data.proxies) &&
+          data.proxies.length > 0
+        ) {
+          setProxies(data.proxies);
         }
         if (data.routingRules) setRoutingRules(data.routingRules);
         if (data.settings) setSettings(data.settings);
@@ -53,7 +48,7 @@ export const useAppConfig = (addLog) => {
 
   useEffect(() => {
     if (!isConfigLoaded) return;
-    fetch(`${DAEMON_URL}/api/config`, {
+    apiFetch(`/api/config`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ proxies, routingRules, settings }),
@@ -62,7 +57,7 @@ export const useAppConfig = (addLog) => {
 
   useEffect(() => {
     if (!isConfigLoaded) return;
-    fetch(`${DAEMON_URL}/api/update-rules`, {
+    apiFetch(`/api/update-rules`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(routingRules),
@@ -71,7 +66,7 @@ export const useAppConfig = (addLog) => {
 
   useEffect(() => {
     if (!isConfigLoaded) return;
-    fetch(`${DAEMON_URL}/api/sync-proxies`, {
+    apiFetch(`/api/sync-proxies`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(proxies),
@@ -81,7 +76,7 @@ export const useAppConfig = (addLog) => {
   const updateSetting = useCallback((key, value) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
     if (key === "autostart" || key === "killswitch") {
-      fetch(`${DAEMON_URL}/api/${key}`, {
+      apiFetch(`/api/${key}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enable: value }),
@@ -101,7 +96,7 @@ export const useAppConfig = (addLog) => {
       setActiveTab,
       setEditingProxy,
     ) => {
-      let countryCode = await detectCountry(proxyData.ip, proxyData.name || "");
+      let countryCode = await detectCountry(proxyData.ip);
 
       if (
         countryCode === "unknown" &&

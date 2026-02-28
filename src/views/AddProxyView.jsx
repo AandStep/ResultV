@@ -67,7 +67,7 @@ export const AddProxyView = () => {
   };
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6 animate-in fade-in duration-300">
+    <div className="max-w-2xl mx-auto space-y-5 animate-in fade-in duration-300">
       <div>
         <h2 className="text-3xl font-bold text-white">
           {editingProxy ? t("add.titleEdit") : t("add.titleAdd")}
@@ -78,7 +78,7 @@ export const AddProxyView = () => {
       </div>
       <form
         onSubmit={handleSubmit}
-        className="bg-zinc-900 p-8 rounded-3xl border border-zinc-800 space-y-6"
+        className="bg-zinc-900 p-6 rounded-3xl border border-zinc-800 space-y-5"
       >
         <div>
           <label className="block text-sm font-medium text-zinc-400 mb-2">
@@ -139,11 +139,11 @@ export const AddProxyView = () => {
             ))}
           </div>
         </div>
-        <div className="pt-6 border-t border-zinc-800">
-          <p className="text-sm font-medium text-zinc-400 mb-4 flex items-center">
+        <div className="pt-5 border-t border-zinc-800">
+          <p className="text-sm font-medium text-zinc-400 mb-3 flex items-center">
             <Lock className="w-4 h-4 mr-2" /> {t("add.auth")}
           </p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <input
               type="text"
               placeholder={t("add.loginPlaceholder")}
@@ -164,19 +164,19 @@ export const AddProxyView = () => {
             />
           </div>
         </div>
-        <div className="pt-6 flex space-x-4">
+        <div className="pt-5 flex space-x-4">
           {editingProxy && (
             <button
               type="button"
               onClick={onCancel}
-              className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-4 rounded-xl transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none"
+              className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-3 rounded-xl transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none"
             >
               {t("add.cancel")}
             </button>
           )}
           <button
             type="submit"
-            className="flex-[2] bg-[#007E3A] hover:bg-[#005C2A] text-white font-bold py-4 rounded-xl transition-colors shadow-lg shadow-[#007E3A]/20 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none"
+            className="flex-[2] bg-[#007E3A] hover:bg-[#005C2A] text-white font-bold py-3 rounded-xl transition-colors shadow-lg shadow-[#007E3A]/20 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none"
           >
             {editingProxy ? t("add.saveChanges") : t("add.saveProxy")}
           </button>

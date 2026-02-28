@@ -1,4 +1,4 @@
-export const detectCountry = async (ip, name = "") => {
+export const detectCountry = async (ip) => {
   try {
     let cleanIp = ip.split(":")[0];
     if (
@@ -10,107 +10,85 @@ export const detectCountry = async (ip, name = "") => {
       return "local";
     }
 
-    const controller = new AbortController();
-    // Increase timeout a bit to account for multiple APIs
-    const id = setTimeout(() => controller.abort(), 4000);
-
     let countryCode = null;
 
-    // 1. Try api.iplocation.net first (Very accurate for physical location vs ASN)
+    // Функция для fetch с таймаутом в 2 сек (чтобы не тормозить UI)
+    const fetchWithTimeout = async (url, ms = 2000) => {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), ms);
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(id);
+      return res;
+    };
+
+    // 1. iplocation.net (Определяет физическое местоположение, очень точно для прокси)
     try {
-      const res = await fetch(`https://api.iplocation.net/?ip=${cleanIp}`, {
-        signal: controller.signal,
-      });
+      const res = await fetchWithTimeout(
+        `https://api.iplocation.net/?ip=${cleanIp}`,
+      );
       if (res.ok) {
         const data = await res.json();
-        if (data && data.country_code2 && data.country_code2 !== "-") {
+        if (
+          data &&
+          data.country_code2 &&
+          data.country_code2 !== "-" &&
+          data.country_code2.length === 2
+        ) {
           countryCode = data.country_code2;
         }
       }
     } catch (e) {}
 
-    // 2. Try api.ip2location.io (Excellent fallback for physical accuracy)
+    // 2. ip-api.com (Широко разрешен, хороший резерв)
     if (!countryCode) {
       try {
-        const res3 = await fetch(`https://api.ip2location.io/?ip=${cleanIp}`, {
-          signal: controller.signal,
-        });
+        const res2 = await fetchWithTimeout(
+          `http://ip-api.com/json/${cleanIp}?fields=countryCode`,
+        );
+        if (res2.ok) {
+          const data2 = await res2.json();
+          if (data2 && data2.countryCode && data2.countryCode.length === 2) {
+            countryCode = data2.countryCode;
+          }
+        }
+      } catch (e) {}
+    }
+
+    // 3. GeoJS (Работает почти всегда, быстрый HTTPS, берем правильное поле)
+    if (!countryCode) {
+      try {
+        const res3 = await fetchWithTimeout(
+          `https://get.geojs.io/v1/ip/country/${cleanIp}.json`,
+        );
         if (res3.ok) {
           const data3 = await res3.json();
-          if (data3 && data3.country_code && data3.country_code !== "-") {
+          // Важно: берем country_code, а НЕ country (так как нужен формат "US", а не "United States")
+          if (data3 && data3.country_code && data3.country_code.length === 2) {
             countryCode = data3.country_code;
           }
         }
       } catch (e) {}
     }
 
-    // 3. Fall back to ip-api.com (handles domains well, but HTTP so might be blocked)
+    // 4. Country.is (Надежная защита от падения предыдущих)
     if (!countryCode) {
       try {
-        const res2 = await fetch(
-          `http://ip-api.com/json/${cleanIp}?fields=countryCode`,
-          { signal: controller.signal },
+        const res4 = await fetchWithTimeout(
+          `https://api.country.is/${cleanIp}`,
         );
-        if (res2.ok) {
-          const data2 = await res2.json();
-          if (data2 && data2.countryCode) {
-            countryCode = data2.countryCode;
+        if (res4.ok) {
+          const data4 = await res4.json();
+          if (data4 && data4.country && data4.country.length === 2) {
+            countryCode = data4.country;
           }
         }
-      } catch (e) {
-        // Ignore error
-      }
+      } catch (e) {}
     }
-
-    clearTimeout(id);
 
     if (countryCode) {
       return countryCode.toLowerCase();
     }
   } catch (error) {}
-
-  const s = name.toLowerCase();
-  if (
-    s.includes("ru") ||
-    s.includes("rus") ||
-    s.includes("ру") ||
-    s.includes("россия")
-  )
-    return "ru";
-  if (
-    s.includes("us") ||
-    s.includes("usa") ||
-    s.includes("сша") ||
-    s.includes("america")
-  )
-    return "us";
-  if (s.includes("de") || s.includes("germany") || s.includes("герм"))
-    return "de";
-  if (
-    s.includes("uk") ||
-    s.includes("gb") ||
-    s.includes("london") ||
-    s.includes("англия") ||
-    s.includes("британ")
-  )
-    return "gb";
-  if (
-    s.includes("nl") ||
-    s.includes("neth") ||
-    s.includes("нидерланд") ||
-    s.includes("голландия")
-  )
-    return "nl";
-  if (s.includes("fr") || s.includes("france") || s.includes("франц"))
-    return "fr";
-  if (s.includes("kz") || s.includes("kazakhstan") || s.includes("казах"))
-    return "kz";
-  if (s.includes("ua") || s.includes("ukraine") || s.includes("украин"))
-    return "ua";
-  if (s.includes("tr") || s.includes("turkey") || s.includes("турц"))
-    return "tr";
-  if (s.includes("fi") || s.includes("finland") || s.includes("финлянд"))
-    return "fi";
 
   return "unknown";
 };

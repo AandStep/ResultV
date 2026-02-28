@@ -2,6 +2,15 @@ import { useState, useEffect, useCallback } from "react";
 
 export const DAEMON_URL = "http://127.0.0.1:14080";
 
+export const apiFetch = async (endpoint, options = {}) => {
+  const token = window.electronAPI ? window.electronAPI.getApiToken() : "";
+  const headers = {
+    ...options.headers,
+    Authorization: `Bearer ${token}`,
+  };
+  return fetch(`${DAEMON_URL}${endpoint}`, { ...options, headers });
+};
+
 export const useLogs = () => {
   const [logs, setLogs] = useState([
     {
@@ -31,7 +40,7 @@ export const useLogs = () => {
     let interval;
     const fetchLogs = async () => {
       try {
-        const res = await fetch(`${DAEMON_URL}/api/logs`);
+        const res = await apiFetch(`/api/logs`);
         if (res.ok) {
           const data = await res.json();
           setBackendLogs(data);

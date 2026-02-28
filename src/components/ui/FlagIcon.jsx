@@ -31,10 +31,10 @@ export const FlagIcon = ({ code, className = "" }) => {
   if (isoCode && !imgError) {
     return (
       <img
-        src={`https://flagcdn.com/w40/${isoCode}.png`}
-        srcSet={`https://flagcdn.com/w80/${isoCode}.png 2x`}
+        src={`https://cdnjs.cloudflare.com/ajax/libs/flag-icons/7.2.3/flags/4x3/${isoCode}.svg`}
         alt={isoCode.toUpperCase()}
         className={`block shrink-0 object-contain ${className}`}
+        style={{ width: "24px", height: "18px", borderRadius: "2px" }}
         onError={() => setImgError(true)}
       />
     );

@@ -1,5 +1,13 @@
-import React, { useState, useMemo } from "react";
-import { Server, Activity, Pencil, Trash2, Search } from "lucide-react";
+import React, { useState, useMemo, useRef, useEffect } from "react";
+import {
+  Server,
+  Activity,
+  Pencil,
+  Trash2,
+  Search,
+  Plus,
+  ChevronDown,
+} from "lucide-react";
 import { FlagIcon } from "../components/ui/FlagIcon";
 import { useConfigContext } from "../context/ConfigContext";
 import { useConnectionContext } from "../context/ConnectionContext";
@@ -9,6 +17,9 @@ export const ProxyListView = () => {
   const { t } = useTranslation();
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState("default");
+  const [isSortOpen, setIsSortOpen] = useState(false);
+  const sortRef = useRef(null);
+
   const { proxies, setProxies, setEditingProxy, setActiveTab } =
     useConfigContext();
   const {
@@ -18,6 +29,16 @@ export const ProxyListView = () => {
     isConnected,
     pings,
   } = useConnectionContext();
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (sortRef.current && !sortRef.current.contains(event.target)) {
+        setIsSortOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const filteredAndSortedProxies = useMemo(() => {
     let result = [...proxies];
@@ -32,6 +53,11 @@ export const ProxyListView = () => {
       result.sort((a, b) => (a.country || "").localeCompare(b.country || ""));
     } else if (sortBy === "type") {
       result.sort((a, b) => (a.type || "").localeCompare(b.type || ""));
+    } else if (sortBy === "newest") {
+      // Assuming array order is from oldest to newest by default
+      result.reverse();
+    } else if (sortBy === "oldest") {
+      // Do nothing, list is already oldest by default
     }
     return result;
   }, [proxies, searchQuery, sortBy]);
@@ -64,19 +90,40 @@ export const ProxyListView = () => {
               className="w-full bg-zinc-800 border-none text-white rounded-xl py-3 pl-12 pr-4 outline-none focus:ring-2 focus:ring-[#00A819]/50 transition-all placeholder:text-zinc-500"
             />
           </div>
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-3 shrink-0" ref={sortRef}>
             <span className="text-zinc-400 text-sm font-medium whitespace-nowrap">
               {t("proxyList.sortBy")}:
             </span>
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              className="bg-zinc-800 border-none text-white rounded-xl py-3 px-4 outline-none focus:ring-2 focus:ring-[#00A819]/50 transition-all cursor-pointer appearance-none min-w-[140px]"
-            >
-              <option value="default">{t("proxyList.sort.default")}</option>
-              <option value="country">{t("proxyList.sort.country")}</option>
-              <option value="type">{t("proxyList.sort.type")}</option>
-            </select>
+            <div className="relative">
+              <button
+                onClick={() => setIsSortOpen(!isSortOpen)}
+                className="flex items-center justify-between bg-zinc-800 border-none text-white rounded-xl py-3 px-4 outline-none focus:ring-2 focus:ring-[#00A819]/50 transition-all cursor-pointer min-w-[160px]"
+              >
+                <span>{t(`proxyList.sort.${sortBy}`)}</span>
+                <ChevronDown
+                  className={`w-4 h-4 text-zinc-400 transition-transform ${isSortOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+
+              {isSortOpen && (
+                <div className="absolute top-full left-0 right-0 mt-2 bg-zinc-900 border border-zinc-700/50 rounded-xl shadow-xl overflow-hidden z-10 animate-in slide-in-from-top-2 duration-200">
+                  {["default", "newest", "oldest", "country", "type"].map(
+                    (option) => (
+                      <button
+                        key={option}
+                        onClick={() => {
+                          setSortBy(option);
+                          setIsSortOpen(false);
+                        }}
+                        className={`w-full text-left px-4 py-3 text-sm transition-colors ${sortBy === option ? "bg-[#00A819]/10 text-[#00A819]" : "text-zinc-300 hover:bg-zinc-800 hover:text-white"}`}
+                      >
+                        {t(`proxyList.sort.${option}`)}
+                      </button>
+                    ),
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -93,6 +140,19 @@ export const ProxyListView = () => {
         </div>
       ) : (
         <div className="grid gap-6 grid-cols-1 sm:grid-cols-[repeat(auto-fit,minmax(320px,1fr))]">
+          {/* Add Proxy Card */}
+          <div
+            onClick={() => setActiveTab("add")}
+            className="bg-zinc-900/50 p-6 rounded-3xl border border-zinc-800 hover:border-[#00A819] hover:bg-zinc-800/30 border-dashed transition-all flex flex-col items-center justify-center cursor-pointer group/card outline-none focus:outline-none focus:ring-0 focus-visible:outline-none min-h-[160px]"
+          >
+            <div className="w-12 h-12 rounded-xl bg-zinc-800/50 border border-zinc-700/50 flex items-center justify-center mb-4 group-hover/card:bg-[#00A819]/10 group-hover/card:border-[#00A819]/30 transition-colors">
+              <Plus className="w-6 h-6 text-zinc-400 group-hover/card:text-[#00A819] transition-colors" />
+            </div>
+            <h3 className="text-lg font-bold text-zinc-400 group-hover/card:text-white transition-colors">
+              {t("add.newServer")}
+            </h3>
+          </div>
+
           {filteredAndSortedProxies.map((proxy) => {
             const isActive = isConnected && activeProxy?.id === proxy.id;
             return (
