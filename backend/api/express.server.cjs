@@ -1,8 +1,113 @@
 const express = require("express");
 const cors = require("cors");
-const http = require("http");
+const https = require("https");
 const { app } = require("electron");
+const {
+  validateIp,
+  validatePort,
+  sanitizeProxy,
+  validateRules,
+} = require("./validators.cjs");
 
+// ═══════════════════════════════════════════════════════════
+// Rate Limiting (in-memory, без внешних зависимостей)
+// ═══════════════════════════════════════════════════════════
+const AUTH_FAIL_LIMIT = 10; // Макс. неудачных попыток
+const AUTH_FAIL_WINDOW_MS = 60000; // Окно в 60 секунд
+const AUTH_BLOCK_DURATION_MS = 300000; // Блокировка на 5 минут
+
+const authFailures = new Map(); // ip -> { count, firstFailAt }
+const blockedIps = new Map(); // ip -> unblockAt
+
+function isRateLimited(ip) {
+  const blockedUntil = blockedIps.get(ip);
+  if (blockedUntil) {
+    if (Date.now() < blockedUntil) return true;
+    blockedIps.delete(ip);
+  }
+  return false;
+}
+
+function recordAuthFailure(ip) {
+  const now = Date.now();
+  let record = authFailures.get(ip);
+
+  if (!record || now - record.firstFailAt > AUTH_FAIL_WINDOW_MS) {
+    record = { count: 1, firstFailAt: now };
+  } else {
+    record.count++;
+  }
+
+  authFailures.set(ip, record);
+
+  if (record.count >= AUTH_FAIL_LIMIT) {
+    blockedIps.set(ip, now + AUTH_BLOCK_DURATION_MS);
+    authFailures.delete(ip);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// GEO-API helper (HTTPS only, цепочка fallback'ов)
+// ═══════════════════════════════════════════════════════════
+function httpsGet(url, timeoutMs = 3000) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, (res) => {
+      let data = "";
+      res.on("data", (chunk) => (data += chunk));
+      res.on("end", () => {
+        try {
+          resolve(JSON.parse(data));
+        } catch (e) {
+          reject(new Error("JSON parse error"));
+        }
+      });
+    });
+    req.on("error", reject);
+    req.setTimeout(timeoutMs, () => {
+      req.destroy();
+      reject(new Error("timeout"));
+    });
+  });
+}
+
+async function detectCountryBackend(cleanIp) {
+  // 1. iplocation.net (HTTPS)
+  try {
+    const data = await httpsGet(`https://api.iplocation.net/?ip=${cleanIp}`);
+    if (
+      data &&
+      data.country_code2 &&
+      data.country_code2 !== "-" &&
+      data.country_code2.length === 2
+    ) {
+      return data.country_code2.toLowerCase();
+    }
+  } catch (e) {}
+
+  // 2. geojs.io (HTTPS)
+  try {
+    const data = await httpsGet(
+      `https://get.geojs.io/v1/ip/country/${cleanIp}.json`,
+    );
+    if (data && data.country_code && data.country_code.length === 2) {
+      return data.country_code.toLowerCase();
+    }
+  } catch (e) {}
+
+  // 3. country.is (HTTPS)
+  try {
+    const data = await httpsGet(`https://api.country.is/${cleanIp}`);
+    if (data && data.country && data.country.length === 2) {
+      return data.country.toLowerCase();
+    }
+  } catch (e) {}
+
+  return null;
+}
+
+// ═══════════════════════════════════════════════════════════
+// API Server
+// ═══════════════════════════════════════════════════════════
 class ApiServer {
   constructor(
     loggerService,
@@ -33,13 +138,23 @@ class ApiServer {
     this.app.use(cors(corsOptions));
     this.app.use(express.json());
 
-    // Authorization middleware
+    // Authorization middleware с rate limiting
     const authManager = require("../core/auth.manager.cjs");
     this.app.use((req, res, next) => {
       // Allow preflight options
       if (req.method === "OPTIONS") return next();
 
+      const clientIp = req.ip || req.connection.remoteAddress || "unknown";
+
+      // Проверка rate limit
+      if (isRateLimited(clientIp)) {
+        return res
+          .status(429)
+          .json({ error: "Too many failed requests. Try again later." });
+      }
+
       if (!authManager.verifyRequest(req)) {
+        recordAuthFailure(clientIp);
         return res.status(401).json({ error: "Unauthorized access" });
       }
       next();
@@ -61,43 +176,28 @@ class ApiServer {
       res.json(this.logger.getLogs());
     });
 
-    this.app.post("/api/detect-country", (req, res) => {
+    this.app.post("/api/detect-country", async (req, res) => {
       const { ip } = req.body;
       if (!ip) return res.json({ country: "🌐" });
 
       let cleanIp = ip.split(":")[0];
 
+      // Валидация IP
+      if (!validateIp(cleanIp)) {
+        return res.json({ country: "🌐" });
+      }
+
       if (
         cleanIp === "127.0.0.1" ||
         cleanIp === "localhost" ||
-        cleanIp.startsWith("192.168.")
+        cleanIp.startsWith("192.168.") ||
+        cleanIp.startsWith("10.")
       ) {
         return res.json({ country: "🏠" });
       }
 
-      http
-        .get(
-          `http://ip-api.com/json/${cleanIp}?fields=countryCode`,
-          (apiRes) => {
-            let data = "";
-            apiRes.on("data", (chunk) => (data += chunk));
-            apiRes.on("end", () => {
-              try {
-                const parsed = JSON.parse(data);
-                if (parsed.countryCode) {
-                  res.json({ country: parsed.countryCode.toLowerCase() });
-                } else {
-                  res.json({ country: "🌐" });
-                }
-              } catch (e) {
-                res.json({ country: "🌐" });
-              }
-            });
-          },
-        )
-        .on("error", () => {
-          res.json({ country: "🌐" });
-        });
+      const country = await detectCountryBackend(cleanIp);
+      res.json({ country: country || "🌐" });
     });
 
     this.app.get("/api/config", (req, res) => {
@@ -128,6 +228,15 @@ class ApiServer {
 
     this.app.post("/api/ping", async (req, res) => {
       const { ip, port } = req.body;
+
+      // Валидация входных данных
+      if (!validateIp(ip)) {
+        return res.status(400).json({ error: "Невалидный IP адрес" });
+      }
+      if (!validatePort(port)) {
+        return res.status(400).json({ error: "Невалидный порт" });
+      }
+
       const result = await this.trafficMonitor.pingProxy(ip, port);
       res.json(result);
     });
@@ -137,6 +246,17 @@ class ApiServer {
       this.stateStore.update({ killSwitch: enable });
 
       const state = this.stateStore.getState();
+
+      // Проверка прав администратора
+      let needsAdmin = false;
+      if (enable && process.platform === "win32") {
+        const { execSync } = require("child_process");
+        try {
+          execSync("net session", { stdio: "ignore" });
+        } catch (e) {
+          needsAdmin = true;
+        }
+      }
 
       if (state.killSwitch && state.isProxyDead && state.isConnected) {
         await this.proxyManager.applyKillSwitch();
@@ -148,7 +268,7 @@ class ApiServer {
         await this.proxyManager.setSystemProxy(true, state.activeProxy, true);
       }
 
-      res.json({ success: true });
+      res.json({ success: true, needsAdmin });
     });
 
     this.app.post("/api/sync-proxies", (req, res) => {
@@ -161,6 +281,13 @@ class ApiServer {
       this.logger.log("--- НОВЫЙ ЗАПРОС НА ПОДКЛЮЧЕНИЕ ---", "info");
       try {
         const proxy = req.body;
+
+        // Валидация прокси-объекта
+        const validation = sanitizeProxy(proxy);
+        if (!validation.valid) {
+          return res.status(400).json({ error: validation.error });
+        }
+
         this.stateStore.update({ killSwitch: !!proxy.killSwitch });
 
         const { alive } = await this.trafficMonitor.pingProxy(
@@ -205,7 +332,12 @@ class ApiServer {
           isProxyDead: false,
         });
         this.trayManager.updateMenu();
-        res.status(200).json({ success: true });
+
+        // DNS leak warning: HTTP-прокси не проксируют DNS-запросы
+        const proxyType = (proxy.type || "HTTP").toUpperCase();
+        const dnsLeakWarning = proxyType !== "SOCKS5";
+
+        res.status(200).json({ success: true, dnsLeakWarning });
       } catch (err) {
         this.logger.log(`Ошибка подключения: ${err.message}`, "error");
         res.status(500).json({ error: err.message });
@@ -214,6 +346,12 @@ class ApiServer {
 
     this.app.post("/api/update-rules", async (req, res) => {
       try {
+        // Валидация rules
+        const validation = validateRules(req.body);
+        if (!validation.valid) {
+          return res.status(400).json({ error: validation.error });
+        }
+
         const state = this.stateStore.getState();
         if (state.isConnected && state.activeProxy && !state.isProxyDead) {
           const updatedProxy = { ...state.activeProxy, rules: req.body };
@@ -262,9 +400,6 @@ class ApiServer {
 
     this.app.get("/api/version", (req, res) => {
       let version = app.getVersion();
-      // В режиме разработки app.getVersion() может возвращать версию самого Electron (например 40.6.0),
-      // так как точка входа находится в папке backend.
-      // Поэтому для гарантии отдаём версию из package.json в dev режиме:
       if (!app.isPackaged) {
         try {
           const path = require("path");
@@ -279,6 +414,21 @@ class ApiServer {
         }
       }
       res.json({ version });
+    });
+
+    this.app.get("/api/admin-status", (req, res) => {
+      const { execSync } = require("child_process");
+      let isAdmin = false;
+      if (process.platform === "win32") {
+        try {
+          execSync("net session", { stdio: "ignore" });
+          isAdmin = true;
+        } catch (e) {}
+      } else {
+        // На Linux/macOS проверяем uid === 0
+        isAdmin = process.getuid && process.getuid() === 0;
+      }
+      res.json({ isAdmin, platform: process.platform });
     });
   }
 }

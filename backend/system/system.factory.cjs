@@ -39,6 +39,7 @@ class SystemFactory {
             "Killswitch пока не поддерживается на этой ОС",
             "warning",
           ),
+        removeKillSwitchFirewall: async () => {},
         disableSystemProxy: async () => {
           loggerService.log(
             "Очистка прокси пока не реализована для этой ОС",
@@ -53,12 +54,16 @@ class SystemFactory {
           );
         },
         checkAppWhitelist: async () => false,
+        setRunAsAdminFlag: async () => {},
       };
     }
 
     const processManager = new ProcessMng();
     const proxyManager = new ProxyMng(loggerService);
     const networkManager = new NetworkMng();
+
+    // Специальные утилиты для Windows (старая архитектура)
+    const windowsUtils = platform === "win32" ? require("./windows.cjs") : null;
 
     // Возвращаем Facade, который реализует старый интерфейс для обратной совместимости
     // с остальным бекендом, пока он не переписан полностью.
@@ -72,8 +77,13 @@ class SystemFactory {
       disableSystemProxy: (logCb) => proxyManager.disableSystemProxy(),
       disableSystemProxySync: () => proxyManager.disableSystemProxySync(),
       applyKillSwitch: (logCb) => proxyManager.applyKillSwitch(),
+      removeKillSwitchFirewall: () => proxyManager.removeKillSwitchFirewall(),
       checkAppWhitelist: (port, wl, host, logCb) =>
         processManager.checkAppWhitelist(port, wl, host, logCb),
+      setRunAsAdminFlag: (enable) =>
+        windowsUtils
+          ? windowsUtils.setRunAsAdminFlag(enable)
+          : Promise.resolve(),
     };
   }
 }

@@ -146,7 +146,14 @@ export const useDaemonAPI = ({
           const errData = await res.json().catch(() => ({}));
           throw new Error(errData.error || `HTTP ${res.status}`);
         }
+        const resData = await res.json().catch(() => ({}));
         addLog("Соединение установлено.", "success");
+        if (resData.dnsLeakWarning) {
+          addLog(
+            "⚠️ DNS-утечка: HTTP-прокси не проксирует DNS-запросы. Используйте SOCKS5 для полной защиты.",
+            "warning",
+          );
+        }
         setIsConnected(true);
       }
 
@@ -200,8 +207,15 @@ export const useDaemonAPI = ({
           throw new Error(errData.error || "Ошибка смены прокси");
         }
 
+        const resData = await res.json().catch(() => ({}));
         setIsConnected(true);
         addLog(`Успешно переключено на ${proxy.name}`, "success");
+        if (resData.dnsLeakWarning) {
+          addLog(
+            "⚠️ DNS-утечка: HTTP-прокси не проксирует DNS-запросы. Используйте SOCKS5 для полной защиты.",
+            "warning",
+          );
+        }
 
         setTimeout(() => {
           isSwitchingRef.current = false;

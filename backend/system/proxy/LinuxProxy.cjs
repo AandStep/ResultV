@@ -3,6 +3,9 @@ const util = require("util");
 const { execFile, execSync } = require("child_process");
 const execFileAsync = util.promisify(execFile);
 
+// Маркер-комментарий для идентификации наших правил iptables
+const IPTABLES_COMMENT = "ResultProxy_KillSwitch";
+
 class LinuxProxy extends BaseProxyManager {
   formatBypassList(whitelist) {
     let bypassArray = ["'localhost'", "'127.0.0.0/8'", "'::1'"];
@@ -108,7 +111,6 @@ class LinuxProxy extends BaseProxyManager {
 
       this.log(`[СИСТЕМА] Прокси применен к Linux (gsettings).`, "success");
     } catch (error) {
-      // Игнорируем ошибки gsettings (может быть KDE/иная среда), но логируем на уровне инфо
       this.log(
         `[СИСТЕМА Linux] Ошибка настройки gsettings: ${error.message} (возможно не GNOME среда)`,
         "info",
@@ -118,6 +120,10 @@ class LinuxProxy extends BaseProxyManager {
 
   async disableSystemProxy() {
     this.log("[СИСТЕМА] Очистка настроек прокси Linux...", "info");
+
+    // Всегда снимаем правила iptables kill switch
+    await this.removeKillSwitchFirewall();
+
     try {
       await execFileAsync("gsettings", [
         "set",
@@ -134,6 +140,18 @@ class LinuxProxy extends BaseProxyManager {
   }
 
   disableSystemProxySync() {
+    // Снимаем правила iptables синхронно
+    try {
+      execSync(
+        `iptables -D OUTPUT -m comment --comment "${IPTABLES_COMMENT}" -j DROP`,
+        { stdio: "ignore" },
+      );
+      execSync(
+        `iptables -D INPUT -m comment --comment "${IPTABLES_COMMENT}" -j DROP`,
+        { stdio: "ignore" },
+      );
+    } catch (e) {}
+
     try {
       execSync(`gsettings set org.gnome.system.proxy mode 'none'`, {
         stdio: "ignore",
@@ -148,6 +166,70 @@ class LinuxProxy extends BaseProxyManager {
       "[KILL SWITCH] Активирована полная блокировка интернета!",
       "error",
     );
+
+    // Основной механизм: iptables (блокирует ВСЁ, не только приложения с gsettings)
+    let firewallApplied = false;
+    try {
+      // Снимаем старые правила если остались
+      await this.removeKillSwitchFirewall();
+
+      // Разрешаем loopback
+      await execFileAsync("iptables", [
+        "-I",
+        "OUTPUT",
+        "-o",
+        "lo",
+        "-j",
+        "ACCEPT",
+        "-m",
+        "comment",
+        "--comment",
+        IPTABLES_COMMENT,
+      ]);
+      await execFileAsync("iptables", [
+        "-I",
+        "INPUT",
+        "-i",
+        "lo",
+        "-j",
+        "ACCEPT",
+        "-m",
+        "comment",
+        "--comment",
+        IPTABLES_COMMENT,
+      ]);
+      // Блокируем всё остальное
+      await execFileAsync("iptables", [
+        "-A",
+        "OUTPUT",
+        "-j",
+        "DROP",
+        "-m",
+        "comment",
+        "--comment",
+        IPTABLES_COMMENT,
+      ]);
+      await execFileAsync("iptables", [
+        "-A",
+        "INPUT",
+        "-j",
+        "DROP",
+        "-m",
+        "comment",
+        "--comment",
+        IPTABLES_COMMENT,
+      ]);
+
+      firewallApplied = true;
+      this.log("[KILL SWITCH] iptables активирован.", "error");
+    } catch (error) {
+      this.log(
+        `[KILL SWITCH] Не удалось применить iptables (нет прав root?): ${error.message}. Используем fallback.`,
+        "warning",
+      );
+    }
+
+    // Fallback: мёртвый прокси через gsettings
     try {
       await execFileAsync("gsettings", [
         "set",
@@ -185,6 +267,78 @@ class LinuxProxy extends BaseProxyManager {
         "info",
       );
     }
+  }
+
+  async removeKillSwitchFirewall() {
+    // Удаляем все наши правила iptables по комментарию
+    try {
+      // Удаляем правила OUTPUT
+      while (true) {
+        try {
+          await execFileAsync("iptables", [
+            "-D",
+            "OUTPUT",
+            "-m",
+            "comment",
+            "--comment",
+            IPTABLES_COMMENT,
+            "-j",
+            "DROP",
+          ]);
+        } catch (e) {
+          break;
+        }
+      }
+      while (true) {
+        try {
+          await execFileAsync("iptables", [
+            "-D",
+            "OUTPUT",
+            "-m",
+            "comment",
+            "--comment",
+            IPTABLES_COMMENT,
+            "-j",
+            "ACCEPT",
+          ]);
+        } catch (e) {
+          break;
+        }
+      }
+      // Удаляем правила INPUT
+      while (true) {
+        try {
+          await execFileAsync("iptables", [
+            "-D",
+            "INPUT",
+            "-m",
+            "comment",
+            "--comment",
+            IPTABLES_COMMENT,
+            "-j",
+            "DROP",
+          ]);
+        } catch (e) {
+          break;
+        }
+      }
+      while (true) {
+        try {
+          await execFileAsync("iptables", [
+            "-D",
+            "INPUT",
+            "-m",
+            "comment",
+            "--comment",
+            IPTABLES_COMMENT,
+            "-j",
+            "ACCEPT",
+          ]);
+        } catch (e) {
+          break;
+        }
+      }
+    } catch (e) {} // iptables может быть недоступен
   }
 }
 

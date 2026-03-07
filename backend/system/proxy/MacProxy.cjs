@@ -2,6 +2,12 @@ const BaseProxyManager = require("./BaseProxyManager.cjs");
 const util = require("util");
 const { execFile, execSync } = require("child_process");
 const execFileAsync = util.promisify(execFile);
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+
+// Путь к конфигурации pf для kill switch
+const PF_CONF_PATH = path.join(os.tmpdir(), "resultproxy_killswitch.conf");
 
 // Вспомогательная функция для получения активных сетевых адаптеров Mac
 async function getActiveServices() {
@@ -100,6 +106,9 @@ class MacProxy extends BaseProxyManager {
     this.log("[СИСТЕМА] Очистка настроек прокси macOS...", "info");
     const services = await getActiveServices();
 
+    // Всегда снимаем правила pf kill switch
+    await this.removeKillSwitchFirewall();
+
     try {
       await this._runCommandsForServices(services, (service) => [
         ["-setwebproxystate", service, "off"],
@@ -116,6 +125,16 @@ class MacProxy extends BaseProxyManager {
   }
 
   disableSystemProxySync() {
+    // Снимаем правила pf синхронно
+    try {
+      execSync("pfctl -d", { stdio: "ignore" });
+    } catch (e) {}
+    try {
+      if (fs.existsSync(PF_CONF_PATH)) {
+        fs.unlinkSync(PF_CONF_PATH);
+      }
+    } catch (e) {}
+
     try {
       let services = ["Wi-Fi", "Ethernet"];
       try {
@@ -154,8 +173,32 @@ class MacProxy extends BaseProxyManager {
       "[KILL SWITCH] Активирована полная блокировка интернета!",
       "error",
     );
-    const services = await getActiveServices();
 
+    // Основной механизм: pf (packet filter) — блокирует ВСЁ на уровне ядра
+    let firewallApplied = false;
+    try {
+      // Создаём конфиг pf: разрешаем только loopback
+      const pfRules = [
+        "# ResultProxy Kill Switch",
+        "set skip on lo0",
+        "block all",
+      ].join("\n");
+
+      fs.writeFileSync(PF_CONF_PATH, pfRules);
+
+      await execFileAsync("pfctl", ["-e", "-f", PF_CONF_PATH]);
+
+      firewallApplied = true;
+      this.log("[KILL SWITCH] macOS pf файрвол активирован.", "error");
+    } catch (error) {
+      this.log(
+        `[KILL SWITCH] Не удалось применить pf (нет прав?): ${error.message}. Используем fallback.`,
+        "warning",
+      );
+    }
+
+    // Fallback: мёртвый прокси через networksetup
+    const services = await getActiveServices();
     try {
       await this._runCommandsForServices(services, (service) => [
         ["-setwebproxy", service, "127.0.0.1", "65535"],
@@ -171,6 +214,17 @@ class MacProxy extends BaseProxyManager {
         "error",
       );
     }
+  }
+
+  async removeKillSwitchFirewall() {
+    try {
+      await execFileAsync("pfctl", ["-d"]);
+    } catch (e) {} // pf мог быть не активен
+    try {
+      if (fs.existsSync(PF_CONF_PATH)) {
+        fs.unlinkSync(PF_CONF_PATH);
+      }
+    } catch (e) {}
   }
 }
 

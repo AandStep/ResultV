@@ -1,4 +1,4 @@
-const { BrowserWindow, nativeImage, app } = require("electron");
+const { BrowserWindow, nativeImage, app, session } = require("electron");
 const path = require("path");
 
 class WindowManager {
@@ -7,10 +7,10 @@ class WindowManager {
   }
 
   create() {
-    const iconPath =
-      process.env.NODE_ENV === "development"
-        ? path.join(__dirname, "../../public", "logo.png")
-        : path.join(__dirname, "../../dist", "logo.png");
+    const isDev = process.env.NODE_ENV === "development";
+    const iconPath = isDev
+      ? path.join(__dirname, "../../public", "logo.png")
+      : path.join(__dirname, "../../dist", "logo.png");
 
     this.mainWindow = new BrowserWindow({
       width: 1050,
@@ -20,12 +20,36 @@ class WindowManager {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
+        sandbox: true,
         preload: path.join(__dirname, "preload.cjs"),
       },
     });
 
+    // CSP-заголовки (только в production — в dev Vite требует inline-скрипты и WebSocket для HMR)
+    if (!isDev) {
+      session.defaultSession.webRequest.onHeadersReceived(
+        (details, callback) => {
+          callback({
+            responseHeaders: {
+              ...details.responseHeaders,
+              "Content-Security-Policy": [
+                [
+                  "default-src 'self'",
+                  "script-src 'self'",
+                  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+                  "font-src 'self' https://fonts.gstatic.com",
+                  "img-src 'self' data: https://flagcdn.com https://cdnjs.cloudflare.com",
+                  "connect-src 'self' http://127.0.0.1:14080",
+                ].join("; "),
+              ],
+            },
+          });
+        },
+      );
+    }
+
     this.mainWindow.loadURL(
-      process.env.NODE_ENV === "development"
+      isDev
         ? "http://localhost:5173"
         : `file://${path.join(__dirname, "../../dist/index.html")}`,
     );

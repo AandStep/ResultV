@@ -8,7 +8,8 @@
     "dev:electron": "cross-env NODE_ENV=development electron backend/electron-main.cjs",
     "dev": "concurrently -k \"npm run dev:react\" \"wait-on http://localhost:5173 && npm run dev:electron\"",
     "build": "vite build",
-    "package": "npm run build && electron-builder --win"
+    "package": "npm run build && electron-builder --win",
+    "package:linux": "npm run build && electron-builder --linux"
   },
   "build": {
     "appId": "com.resultproxy.app",
@@ -21,7 +22,7 @@
       "icon": "public/logo.png"
     },
     "linux": {
-      "target": "tar.gz",
+      "target": ["AppImage", "tar.gz"],
       "icon": "public/logo.png"
     },
     "mac": {

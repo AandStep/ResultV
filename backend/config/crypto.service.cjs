@@ -1,4 +1,6 @@
 const os = require("os");
+const fs = require("fs");
+const path = require("path");
 const crypto = require("crypto");
 const { execSync } = require("child_process");
 
@@ -11,6 +13,11 @@ class CryptoService {
       .digest();
   }
 
+  /**
+   * Returns a stable machine identifier.
+   * Falls back to a randomly generated UUID stored on disk
+   * instead of a predictable hardcoded string.
+   */
   getHardwareId() {
     try {
       let id = "";
@@ -32,9 +39,43 @@ class CryptoService {
         });
       }
       const match = id.match(/[a-fA-F0-9\-]{8,}/);
-      return match ? match[0] : "fallback-hw-id-2024";
+      if (match) return match[0];
     } catch (e) {
-      return "fallback-hw-id-2024";
+      // Hardware ID unavailable — fall through to file-based fallback
+    }
+    return this._getOrCreateFallbackId();
+  }
+
+  /**
+   * Generate a random UUID on first run and persist it to disk.
+   * On subsequent runs, read the stored UUID.
+   */
+  _getOrCreateFallbackId() {
+    try {
+      const fallbackDir =
+        process.env.APPDATA || path.join(os.homedir(), ".config");
+      const fallbackPath = path.join(
+        fallbackDir,
+        "resultProxy",
+        ".machine-fallback-id",
+      );
+
+      if (fs.existsSync(fallbackPath)) {
+        const stored = fs.readFileSync(fallbackPath, "utf8").trim();
+        if (stored.length >= 32) return stored;
+      }
+
+      const newId = crypto.randomUUID();
+      const dir = path.dirname(fallbackPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(fallbackPath, newId, "utf8");
+      return newId;
+    } catch (e) {
+      // Last resort — generate a random ID (won't persist across restarts,
+      // but this is vastly better than a predictable hardcoded string)
+      return crypto.randomUUID();
     }
   }
 

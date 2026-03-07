@@ -268,4 +268,31 @@ module.exports = {
       );
     });
   },
+
+  // 8. Установка/снятие флага "Запускать от имени администратора" в реестре Windows
+  setRunAsAdminFlag: (enable) => {
+    return new Promise((resolve) => {
+      const { app } = require("electron");
+
+      if (!app.isPackaged) {
+        return resolve();
+      }
+
+      const exePath = app.getPath("exe");
+      const regPath =
+        "HKCU\\Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers";
+      const command = enable
+        ? `reg add "${regPath}" /v "${exePath}" /t REG_SZ /d "~ RUNASADMIN" /f`
+        : `reg delete "${regPath}" /v "${exePath}" /f`;
+
+      exec(command, (err) => {
+        if (err) {
+          console.error(
+            `[СИСТЕМА] Ошибка при установке флага RUNASADMIN: ${err.message}`,
+          );
+        }
+        resolve();
+      });
+    });
+  },
 };

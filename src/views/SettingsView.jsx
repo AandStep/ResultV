@@ -34,13 +34,19 @@ export const SettingsView = () => {
     setPwdModal({ isOpen: true, mode: "export", data: null });
   };
 
-  const executeExport = () => {
+  const executeExport = async () => {
     if (!pwdInput) return;
 
     const fullConfig = { proxies, routingRules, settings };
+    const encrypted = await encryptWithPassword(fullConfig, pwdInput);
+    if (!encrypted) {
+      showNotify(t("settings.notify.read_error"), true);
+      return;
+    }
     const securePayload = {
       _isSecure: true,
-      data: encryptWithPassword(fullConfig, pwdInput),
+      _version: 2,
+      data: encrypted,
     };
 
     const dataStr =
@@ -79,14 +85,11 @@ export const SettingsView = () => {
           showNotify(t("settings.notify.import_old"));
         } else if (imported && typeof imported === "object") {
           if (imported.proxies) {
-            if (typeof imported.proxies === "string") {
-              const dec = decryptWithPassword(
-                imported.proxies,
-                "ResPrx_S3cUr3_K3y_991",
-              );
-              setProxies(dec || []);
-            } else {
+            if (Array.isArray(imported.proxies)) {
               setProxies(imported.proxies);
+            } else {
+              showNotify(t("settings.notify.invalid_format"), true);
+              return;
             }
           }
           if (imported.routingRules) setRoutingRules(imported.routingRules);
@@ -108,9 +111,9 @@ export const SettingsView = () => {
     };
   };
 
-  const executeImport = () => {
+  const executeImport = async () => {
     if (!pwdInput || !pwdModal.data) return;
-    const dec = decryptWithPassword(pwdModal.data, pwdInput);
+    const dec = await decryptWithPassword(pwdModal.data, pwdInput);
     if (dec) {
       setProxies(dec.proxies || []);
       setRoutingRules(dec.routingRules || routingRules);

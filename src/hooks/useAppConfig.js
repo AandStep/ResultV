@@ -80,7 +80,21 @@ export const useAppConfig = (addLog) => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enable: value }),
-      }).catch(() => {});
+      })
+        .then(async (res) => {
+          if (key === "killswitch" && value && res.ok) {
+            const data = await res.json().catch(() => ({}));
+            if (data.needsAdmin && window.electronAPI?.restartAsAdmin) {
+              const restart = window.confirm(
+                "Kill Switch работает эффективнее с правами администратора (полная блокировка через файрвол).\n\nПерезапустить приложение с правами администратора?",
+              );
+              if (restart) {
+                window.electronAPI.restartAsAdmin();
+              }
+            }
+          }
+        })
+        .catch(() => {});
     }
   }, []);
 

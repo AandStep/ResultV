@@ -28,6 +28,10 @@ class BaseProxyManager {
   async applyKillSwitch() {
     throw new Error("Method applyKillSwitch must be implemented");
   }
+
+  async removeKillSwitchFirewall() {
+    // По умолчанию ничего не делаем — переопределяется в наследниках
+  }
 }
 
 module.exports = BaseProxyManager;
