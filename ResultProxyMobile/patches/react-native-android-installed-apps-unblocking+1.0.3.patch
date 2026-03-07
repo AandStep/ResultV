@@ -1,0 +1,36 @@
+diff --git a/node_modules/react-native-android-installed-apps-unblocking/android/build.gradle b/node_modules/react-native-android-installed-apps-unblocking/android/build.gradle
+index da4222c..7c0fc0a 100644
+--- a/node_modules/react-native-android-installed-apps-unblocking/android/build.gradle
++++ b/node_modules/react-native-android-installed-apps-unblocking/android/build.gradle
+@@ -1,18 +1,16 @@
+ 
+ apply plugin: 'com.android.library'
+ 
++
+ android {
+-    compileSdkVersion 23
+-    buildToolsVersion "23.0.1"
++    compileSdkVersion rootProject.hasProperty('compileSdkVersion') ? rootProject.compileSdkVersion : 34
++    buildToolsVersion rootProject.hasProperty('buildToolsVersion') ? rootProject.buildToolsVersion : "34.0.0"
+ 
+     defaultConfig {
+-        minSdkVersion 16
+-        targetSdkVersion 22
++        minSdkVersion rootProject.hasProperty('minSdkVersion') ? rootProject.minSdkVersion : 21
++        targetSdkVersion rootProject.hasProperty('targetSdkVersion') ? rootProject.targetSdkVersion : 34
+         versionCode 1
+         versionName "1.0"
+-        ndk {
+-            abiFilters "armeabi-v7a", "x86"
+-        }
+     }
+     lintOptions {
+        warning 'InvalidPackage'
+@@ -20,5 +18,5 @@ android {
+ }
+ 
+ dependencies {
+-    compile 'com.facebook.react:react-native:0.6+'
++    implementation 'com.facebook.react:react-native:+'
+ }
+\ No newline at end of file
