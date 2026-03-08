@@ -1,0 +1,22 @@
+🤖 Запускаем Electron через Playwright...
+❌ Произошла ошибка при создании скриншотов: electron.launch: Process failed to launch!
+Call log:
+[2m  - <launching> "C:\ResultProxy\node_modules\electron\dist\electron.exe" "-r" "C:\ResultProxy\node_modules\playwright-core\lib\server\electron\loader.js" "--inspect=0" "--remote-debugging-port=0" "backend/electron-main.cjs"[22m
+[2m  - <launched> pid=20744[22m
+[2m  - [pid=20744][out][22m
+[2m  - [pid=20744][err] Debugger listening on ws://127.0.0.1:59223/51a3063b-7489-4d30-bf93-0dbbc5cdb6ec[22m
+[2m  - [pid=20744][err] For help, see: https://nodejs.org/en/docs/inspector[22m
+[2m  - <ws connecting> ws://127.0.0.1:59223/51a3063b-7489-4d30-bf93-0dbbc5cdb6ec[22m
+[2m  - <ws connected> ws://127.0.0.1:59223/51a3063b-7489-4d30-bf93-0dbbc5cdb6ec[22m
+[2m  - [pid=20744][err] Debugger attached.[22m
+[2m  - <ws disconnected> ws://127.0.0.1:59223/51a3063b-7489-4d30-bf93-0dbbc5cdb6ec code=1006 reason=[22m
+[2m  - [pid=20744] <kill>[22m
+[2m  - [pid=20744] <will force kill>[22m
+[2m  - [pid=20744] taskkill stderr: �訡��: �� 㤠���� ���� ����� "20744".[22m
+[2m  - [pid=20744] <process did exit: exitCode=0, signal=null>[22m
+[2m  - [pid=20744] starting temporary directories cleanup[22m
+[2m  - [pid=20744] finished temporary directories cleanup[22m
+
+    at async run (C:\ResultProxy\scripts\take-screenshots.js:19:23) {
+  name: 'Error'
+}
