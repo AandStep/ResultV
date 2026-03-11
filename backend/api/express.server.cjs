@@ -271,6 +271,16 @@ class ApiServer {
       res.json({ success: true, needsAdmin });
     });
 
+    this.app.post("/api/adblock", (req, res) => {
+      const enable = !!req.body.enable;
+      this.stateStore.update({ adblock: enable });
+      this.logger.log(
+        `[ADBLOCK] ${enable ? "Включён" : "Выключен"}`,
+        enable ? "success" : "info",
+      );
+      res.json({ success: true });
+    });
+
     this.app.post("/api/sync-proxies", (req, res) => {
       this.stateStore.update({ uiProxies: req.body || [] });
       this.trayManager.updateMenu();

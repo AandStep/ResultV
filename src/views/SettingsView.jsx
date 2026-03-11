@@ -158,6 +158,12 @@ export const SettingsView = () => {
           isOn={settings.killswitch}
           onToggle={() => updateSetting("killswitch", !settings.killswitch)}
         />
+        <SettingToggle
+          title={t("settings.adblock.title")}
+          description={t("settings.adblock.desc")}
+          isOn={settings.adblock}
+          onToggle={() => updateSetting("adblock", !settings.adblock)}
+        />
       </div>
 
       <div className="p-8 bg-zinc-900 rounded-3xl border border-zinc-800 mt-10">

@@ -79,6 +79,10 @@
       "title": "Enable Kill Switch",
       "desc": "Instantly cut internet connection if proxy goes down."
     },
+    "adblock": {
+      "title": "Ad Blocker",
+      "desc": "Automatically block ads and trackers when connected through proxy."
+    },
     "export_import": {
       "title": "Export / Import Configurations",
       "desc": "Save config to a secure file. It will be encrypted with your personal password.",

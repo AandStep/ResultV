@@ -1,6 +1,6 @@
 {
   "name": "resultproxy",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "type": "module",
   "main": "backend/electron-main.cjs",
   "scripts": {
@@ -22,7 +22,10 @@
       "icon": "public/logo.png"
     },
     "linux": {
-      "target": ["AppImage", "tar.gz"],
+      "target": [
+        "AppImage",
+        "tar.gz"
+      ],
       "icon": "public/logo.png"
     },
     "mac": {
@@ -40,7 +43,9 @@
     ]
   },
   "dependencies": {
+    "@ghostery/adblocker": "^2.14.1",
     "cors": "^2.8.6",
+    "cross-fetch": "^4.1.0",
     "express": "^5.2.1",
     "i18next": "^25.8.13",
     "i18next-browser-languagedetector": "^8.2.1",

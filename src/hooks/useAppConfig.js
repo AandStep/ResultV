@@ -13,6 +13,7 @@ export const useAppConfig = (addLog) => {
   const [settings, setSettings] = useState({
     autostart: false,
     killswitch: false,
+    adblock: false,
   });
   const [showProtocolModal, setShowProtocolModal] = useState(false);
   const [platform, setPlatform] = useState("win32");
@@ -76,7 +77,7 @@ export const useAppConfig = (addLog) => {
 
   const updateSetting = useCallback((key, value) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
-    if (key === "autostart" || key === "killswitch") {
+    if (key === "autostart" || key === "killswitch" || key === "adblock") {
       apiFetch(`/api/${key}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

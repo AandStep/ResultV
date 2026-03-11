@@ -12,6 +12,7 @@ class StateStore extends EventEmitter {
       speedSent: 0,
       isProxyDead: false,
       killSwitch: false,
+      adblock: false,
       uiProxies: [], // proxies cached from UI
       lastTickStats: { received: 0, sent: 0, time: Date.now() },
       sessionStartStats: { received: 0, sent: 0 },

@@ -39,6 +39,7 @@ const TrafficMonitor = require("./core/traffic.monitor.cjs");
 const ApiServer = require("./api/express.server.cjs");
 const WindowManager = require("./electron/window.manager.cjs");
 const TrayManager = require("./electron/tray.manager.cjs");
+const adblock = require("./utils/adblock.cjs");
 
 // ---------------------------------------------------------
 // 2. Инициализация (Сборка приложения)
@@ -224,6 +225,11 @@ app.whenReady().then(async () => {
     } else {
       stateStore.update({ killSwitch: true });
     }
+
+    // Восстанавливаем настройку adblock из конфига
+    if (config?.settings?.adblock) {
+      stateStore.update({ adblock: true });
+    }
   } else {
     loggerService.log(
       "Конфиг не найден, используются настройки по умолчанию.",
@@ -266,6 +272,11 @@ app.whenReady().then(async () => {
   trayManager.init();
   apiServer.start();
   trafficMonitor.start();
+
+  // Инициализация блокировщика рекламы (Ghostery)
+  adblock.initEngine(app.getPath("userData")).catch(err => {
+    loggerService.log(`[ADBLOCK] Ошибка инициализации: ${err.message}`, 'error');
+  });
 });
 
 // ---------------------------------------------------------

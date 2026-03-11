@@ -1,16 +1,8 @@
 const net = require("net");
 const { SocksClient } = require("socks");
 const { isWhitelisted } = require("../utils/domain.cjs");
-
-const BLOCKED_RESOURCES = [
-  "instagram.com",
-  "facebook.com",
-  "twitter.com",
-  "x.com",
-  "t.me",
-  "discord.com",
-  "netflix.com",
-];
+const { isAdDomain } = require("../utils/adblock.cjs");
+const { isBlockedDomain } = require("../utils/blocked.cjs");
 
 class SocksServer {
   constructor(loggerService, systemAdapter, stateStore) {
@@ -186,6 +178,19 @@ class SocksServer {
               client.removeListener("data", onData);
               const remainingData = buffer.slice(offset);
 
+              // Ad Blocker: блокировка рекламных доменов (Ghostery)
+              const adblockEnabled = this.stateStore.getState().adblock;
+              if (adblockEnabled && isAdDomain(dstHost)) {
+                this.logger.log(
+                  `[ADBLOCK] Заблокировано: ${dstHost}`,
+                  "warning",
+                );
+                client.write(successResponse);
+                client.end();
+                client.resume();
+                return;
+              }
+
               const activeProxy = this.stateStore.getState().activeProxy;
               const currentRules = activeProxy?.rules || {
                 mode: "global",
@@ -217,9 +222,7 @@ class SocksServer {
                 dstHost,
                 currentRules.whitelist,
               );
-              const isBlocked = BLOCKED_RESOURCES.some((d) =>
-                dstHost.includes(d),
-              );
+              const isBlocked = isBlockedDomain(dstHost);
 
               let useProxy = false;
               let reason = "";

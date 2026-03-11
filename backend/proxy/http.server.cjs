@@ -1,15 +1,27 @@
 const ProxyChain = require("proxy-chain");
 const { isWhitelisted } = require("../utils/domain.cjs");
+const { isAdDomain } = require("../utils/adblock.cjs");
 
-const BLOCKED_RESOURCES = [
-  "instagram.com",
-  "facebook.com",
-  "twitter.com",
-  "x.com",
-  "t.me",
-  "discord.com",
-  "netflix.com",
-];
+function guessType(url) {
+  const ext = url.split("?")[0].split(".").pop().toLowerCase();
+  const types = {
+    js: "script",
+    css: "stylesheet",
+    jpg: "image",
+    jpeg: "image",
+    png: "image",
+    gif: "image",
+    svg: "image",
+    webp: "image",
+    woff: "font",
+    woff2: "font",
+    ttf: "font",
+    otf: "font",
+  };
+  return types[ext] || "xmlhttprequest";
+}
+
+const { isBlockedDomain } = require("../utils/blocked.cjs");
 
 class HttpServer {
   constructor(loggerService, systemAdapter, stateStore) {
@@ -58,11 +70,24 @@ class HttpServer {
           }
         }
 
+        // Ad Blocker: блокировка рекламных доменов (Ghostery)
+        const adblockEnabled = this.stateStore.getState().adblock;
+        const fullUrl = `http://${hostname}${request.url}`;
+        const type = guessType(fullUrl);
+
+        if (adblockEnabled && isAdDomain(hostname, fullUrl, type)) {
+          this.logger.log(
+            `[ADBLOCK] Заблокировано: ${hostname} (${type})`,
+            "warning",
+          );
+          return { requestAuthentication: false, failMsg: "Blocked by AdBlock" };
+        }
+
         const { isWhitelisted: isBypass, matchingRules } = isWhitelisted(
           hostname,
           currentRules.whitelist,
         );
-        const isBlocked = BLOCKED_RESOURCES.some((d) => hostname.includes(d));
+        const isBlocked = isBlockedDomain(hostname);
 
         let useProxy = false;
         let reason = "";
