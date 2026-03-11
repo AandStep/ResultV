@@ -1,16 +1,64 @@
-# React + Vite
+# ResultProxy
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+**ResultProxy** — это кроссплатформенное прокси-приложение, созданное с использованием Electron, React и Vite.
 
-Currently, two official plugins are available:
+🌐 **Официальный сайт проекта:** [https://result-proxy.ru/](https://result-proxy.ru/)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## ✨ Особенности
 
-## React Compiler
+- Встроенный блокировщик рекламы на базе `@ghostery/adblocker`
+- Поддержка HTTP и SOCKS прокси
+- Современный пользовательский интерфейс, созданный на React и Tailwind CSS
+- Кроссплатформенность (Windows, macOS, Linux)
+- Многоязычный интерфейс (интеграция с `i18next`)
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## 🚀 Установка и запуск (для разработчиков)
 
-## Expanding the ESLint configuration
+### Требования
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+- Node.js (рекомендуется LTS версия)
+- npm
+
+### Шаги
+
+1. Клонируйте репозиторий и перейдите в папку проекта:
+   ```bash
+   git clone <ссылка_на_ваш_репозиторий>
+   cd ResultProxy
+   ```
+
+2. Установите зависимости:
+   ```bash
+   npm install --legacy-peer-deps
+   ```
+
+3. Запустите проект в режиме разработчика:
+   ```bash
+   npm run dev
+   ```
+   *Эта команда одновременно запустит процесс Vite для React и основное окно приложения Electron.*
+
+## 📦 Сборка приложения
+
+Для того чтобы собрать установочные файлы `.exe`, `.AppImage` и другие форматы, используйте следующие команды:
+
+- **Для Windows:**
+  ```bash
+  npm run package
+  ```
+
+- **Для Linux:**
+  ```bash
+  npm run package:linux
+  ```
+
+## 🛠 Технологический стек
+
+- **Кроссплатформенная оболочка:** [Electron](https://www.electronjs.org/)
+- **Frontend:** [React](https://reactjs.org/), [Vite](https://vitejs.dev/), [Tailwind CSS](https://tailwindcss.com/)
+- **Проксирование и сеть:** `proxy-chain`, `socks`, `express`
+- **Блокировка рекламы:** [@ghostery/adblocker](https://github.com/ghostery/adblocker)
+
+---
+
+**Больше информации и загрузка приложения:** [https://result-proxy.ru/](https://result-proxy.ru/)
