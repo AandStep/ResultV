@@ -124,7 +124,7 @@ export const Sidebar = () => {
       <div className="p-4 border-t border-zinc-800 flex items-center justify-between">
         <LanguageSwitcher />
         <span className="text-xs text-zinc-500">
-          {t("sidebar.version", { version: "2.1.0" })}
+          {t("sidebar.version", { version: "2.1.1" })}
         </span>
       </div>
     </div>
