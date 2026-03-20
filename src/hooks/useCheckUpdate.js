@@ -21,7 +21,7 @@ import { apiFetch } from "./useLogs";
 
 // Замените на реальный URL вашего JSON-файла с информацией о версии
 const UPDATE_URL =
-  "https://raw.githubusercontent.com/AandStep/ResultProxy/dev/update.json";
+  "https://raw.githubusercontent.com/AandStep/ResultProxy/main/update.json";
 
 export const useCheckUpdate = () => {
   const [updateAvailable, setUpdateAvailable] = useState(false);
