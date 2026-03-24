@@ -33,7 +33,7 @@ import { useTranslation } from "react-i18next";
 
 export const HomeView = () => {
   const { t } = useTranslation();
-  const { proxies, setEditingProxy, setActiveTab } = useConfigContext();
+  const { proxies, setEditingProxy, setActiveTab, settings } = useConfigContext();
   const {
     isConnected,
     isProxyDead,
@@ -50,7 +50,7 @@ export const HomeView = () => {
   const isError = !!failedProxy;
   const [isProxyListOpen, setIsProxyListOpen] = useState(false);
   const hasProxies = proxies.length > 0;
-  const displayProxy = failedProxy || activeProxy || proxies[0];
+  const displayProxy = failedProxy || activeProxy || proxies.find(p => p.id === settings?.lastSelectedProxyId) || proxies[0];
 
   const goToBuy = () => setActiveTab("buy");
   const goToAdd = () => {
@@ -77,7 +77,7 @@ export const HomeView = () => {
               ? t("home.status.error")
               : t("home.status.unprotected")}
         </h2>
-        <p className="text-zinc-500 text-md">
+        <p className="text-zinc-400">
           {isConnected
             ? isProxyDead
               ? t("home.desc.lost")
@@ -121,7 +121,7 @@ export const HomeView = () => {
       </div>
 
       {!hasProxies ? (
-        <div className="w-full max-w-2xl flex flex-col items-center animate-in fade-in duration-300">
+        <div className="w-full flex flex-col items-center animate-in fade-in duration-300">
           <p className="text-zinc-400 mb-4 text-center">
             {t("home.noProxies")}
             <span
@@ -146,7 +146,7 @@ export const HomeView = () => {
         </div>
       ) : (
         <div
-          className={`w-full max-w-2xl bg-zinc-900 rounded-3xl border flex flex-col overflow-hidden transition-all outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${(isProxyDead && isConnected) || isError ? "border-rose-500/30" : isProxyListOpen ? "border-zinc-700" : "border-zinc-800 hover:border-[#007E3A] hover:bg-zinc-800/50"}`}
+          className={`w-full bg-zinc-900 rounded-3xl border flex flex-col overflow-hidden transition-all outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${(isProxyDead && isConnected) || isError ? "border-rose-500/30" : isProxyListOpen ? "border-zinc-700" : "border-zinc-800 hover:border-[#007E3A] hover:bg-zinc-800/50"}`}
         >
           <div
             onClick={() => setIsProxyListOpen(!isProxyListOpen)}
@@ -287,7 +287,7 @@ export const HomeView = () => {
       )}
 
       {isError ? (
-        <div className="flex space-x-4 w-full max-w-2xl animate-in slide-in-from-bottom-4 fade-in duration-300">
+        <div className="flex space-x-4 w-full animate-in slide-in-from-bottom-4 fade-in duration-300">
           <button
             onClick={() => onEditProxy(displayProxy)}
             className="flex-1 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-white py-4 rounded-3xl font-bold transition-colors"
@@ -306,7 +306,7 @@ export const HomeView = () => {
         </div>
       ) : (
         <div
-          className={`w-full max-w-2xl grid grid-cols-2 gap-6 transition-all duration-500 ${isConnected ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none"}`}
+          className={`w-full grid grid-cols-2 gap-6 transition-all duration-500 ${isConnected ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none"}`}
         >
           <div className="bg-zinc-900 rounded-3xl p-6 border border-zinc-800 flex flex-col min-w-0 relative">
             <div className="flex justify-between items-start w-full">

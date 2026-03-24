@@ -15,10 +15,10 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+const { app } = require("electron");
 const express = require("express");
 const cors = require("cors");
 const https = require("https");
-const { app } = require("electron");
 const {
   validateIp,
   validatePort,
@@ -64,7 +64,7 @@ function recordAuthFailure(ip) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// GEO-API helper (HTTPS only, цепочка fallback'ов)
+// GEO-API (Опрос собственного сервера)
 // ═══════════════════════════════════════════════════════════
 function httpsGet(url, timeoutMs = 3000) {
   return new Promise((resolve, reject) => {
@@ -87,57 +87,16 @@ function httpsGet(url, timeoutMs = 3000) {
   });
 }
 
-async function detectCountryBackend(cleanIp) {
-  const promises = [
-    (async () => {
-      try {
-        const data = await httpsGet(`https://api.country.is/${cleanIp}`);
-        if (data && data.country && data.country.length === 2) {
-          return data.country.toLowerCase();
-        }
-      } catch (e) {}
-      return null;
-    })(),
-    (async () => {
-      try {
-        const data = await httpsGet(`https://get.geojs.io/v1/ip/country/${cleanIp}.json`);
-        if (data && data.country && data.country.length === 2) {
-          return data.country.toLowerCase();
-        }
-      } catch (e) {}
-      return null;
-    })(),
-    (async () => {
-      try {
-        const data = await httpsGet(`https://api.iplocation.net/?ip=${cleanIp}`);
-        if (data && data.country_code2 && data.country_code2 !== "-" && data.country_code2.length === 2) {
-          return data.country_code2.toLowerCase();
-        }
-      } catch (e) {}
-      return null;
-    })()
-  ];
-
-  const results = await Promise.all(promises);
-  
-  const counts = {};
-  for (const code of results) {
-    if (code) {
-      counts[code] = (counts[code] || 0) + 1;
+async function detectCountryBackend(cleanIp, logger = null) {
+  try {
+    const data = await httpsGet(`https://result-proxy.ru/countryAPI/api.php?ip=${cleanIp}`);
+    if (data && data.country && data.country.length === 2) {
+      return data.country.toLowerCase();
     }
+  } catch (e) {
+    if (logger) logger.log(`[GEOIP] Ошибка получения страны: ${e.message}`, "error");
   }
-
-  let maxCount = 0;
-  let bestCode = null;
-  
-  for (const code of results) {
-    if (code && counts[code] > maxCount) {
-      maxCount = counts[code];
-      bestCode = code;
-    }
-  }
-
-  return bestCode;
+  return null;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -231,7 +190,7 @@ class ApiServer {
         return res.json({ country: "🏠" });
       }
 
-      const country = await detectCountryBackend(cleanIp);
+      const country = await detectCountryBackend(cleanIp, this.logger);
       res.json({ country: country || "🌐" });
     });
 

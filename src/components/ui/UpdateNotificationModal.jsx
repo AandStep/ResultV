@@ -47,7 +47,7 @@ const UpdateNotificationModal = ({
           </button>
         </div>
 
-        <p className="text-zinc-400 mb-6 whitespace-pre-wrap">
+        <p className="text-zinc-500 text-sm mb-6 whitespace-pre-wrap">
           {t(
             "update.message",
             "У вас установлена версия {{current}}, доступна новая версия {{latest}}.",
@@ -61,7 +61,7 @@ const UpdateNotificationModal = ({
         <div className="flex gap-3">
           <button
             onClick={onClose}
-            className="flex-1 py-3 px-4 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white hover:border-[#00A819] transition-all text-sm font-bold outline-none focus:outline-none"
+            className="flex-1 py-3 px-4 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white hover:border-[#00A819] transition-all font-bold outline-none focus:outline-none"
           >
             {t("update.later", "Позже")}
           </button>
@@ -76,7 +76,7 @@ const UpdateNotificationModal = ({
               }
               onClose();
             }}
-            className="flex-1 py-3 px-4 rounded-xl bg-[#007E3A] hover:bg-[#00A819] text-white transition-all text-sm font-bold border-transparent outline-none focus:outline-none"
+            className="flex-1 py-3 px-4 rounded-xl bg-[#007E3A] hover:bg-[#00A819] text-white transition-all font-bold border-transparent outline-none focus:outline-none"
           >
             {t("update.download", "Обновить")}
           </button>

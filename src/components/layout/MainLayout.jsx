@@ -57,7 +57,7 @@ export const MainLayout = ({ children }) => {
 
       <Sidebar />
 
-      <div className="flex-1 flex flex-col relative overflow-y-auto min-w-0">
+      <div className="flex-1 flex flex-col relative overflow-y-scroll min-w-0">
         <MobileHeader />
 
         <div className="p-4 md:px-10 md:py-6 w-full max-w-[1600px] mx-auto pb-24 md:pb-8">

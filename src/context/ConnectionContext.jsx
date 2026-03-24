@@ -25,7 +25,7 @@ import { useDaemonControl } from "../hooks/useDaemonControl";
 const ConnectionContext = createContext();
 
 export const ConnectionProvider = ({ children }) => {
-  const { proxies, routingRules, settings, isConfigLoaded } =
+  const { proxies, routingRules, settings, updateSetting, isConfigLoaded } =
     useConfigContext();
   const { addLog } = useLogContext();
 
@@ -58,6 +58,7 @@ export const ConnectionProvider = ({ children }) => {
     proxies,
     routingRules,
     settings,
+    updateSetting,
     daemonStatus,
     isSwitchingRef,
     addLog,

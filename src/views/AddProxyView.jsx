@@ -166,7 +166,7 @@ export const AddProxyView = () => {
   };
 
   return (
-    <div className="max-w-2xl mx-auto space-y-5 animate-in fade-in duration-300">
+    <div className="space-y-6 animate-in fade-in duration-300">
       <div>
         <div className="flex justify-between items-end mb-2">
           <div>

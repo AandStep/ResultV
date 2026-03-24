@@ -28,6 +28,7 @@ export const useDaemonControl = (
   proxies,
   routingRules,
   settings,
+  updateSetting,
   daemonStatus,
   isSwitchingRef,
   addLog,
@@ -38,7 +39,7 @@ export const useDaemonControl = (
       return;
     }
 
-    const targetProxy = activeProxy || proxies[0];
+    const targetProxy = activeProxy || proxies.find(p => p.id === settings?.lastSelectedProxyId) || proxies[0];
     if (proxies.length === 0 || !targetProxy) return;
 
     try {
@@ -53,6 +54,9 @@ export const useDaemonControl = (
       } else {
         addLog(`Подключение к ${targetProxy.name}...`, "info");
         setActiveProxy(targetProxy);
+        if (settings?.lastSelectedProxyId !== targetProxy.id) {
+          updateSetting("lastSelectedProxyId", targetProxy.id);
+        }
 
         const res = await apiFetch(`/api/connect`, {
           method: "POST",
@@ -111,6 +115,9 @@ export const useDaemonControl = (
         setFailedProxy(null);
         if (setActiveTab) setActiveTab("home");
         setActiveProxy(proxy);
+        if (settings?.lastSelectedProxyId !== proxy.id) {
+          updateSetting("lastSelectedProxyId", proxy.id);
+        }
         addLog(`Переключение на: ${proxy.name}...`, "info");
 
         if (isConnected) {

@@ -93,7 +93,7 @@ export const LogsView = () => {
     .slice(0, 150);
 
   return (
-    <div className="max-w-4xl mx-auto space-y-4 animate-in fade-in duration-300 h-full flex flex-col">
+    <div className="space-y-6 animate-in fade-in duration-300 h-full flex flex-col">
       <div>
         <h2 className="text-3xl font-bold text-white">{t("logs.title")}</h2>
         <p className="text-zinc-400 mt-2">{t("logs.desc")}</p>

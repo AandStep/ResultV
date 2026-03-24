@@ -21,7 +21,15 @@ import { useTranslation } from "react-i18next";
 import p6logo from "../assets/p6logo.png";
 import pmlogo from "../assets/pmlogo.png";
 
+import psellerlogo from "../assets/pseller.png";
+
 const PARTNERS = [
+  {
+    id: "proxy_seller",
+    link: "https://proxy-seller.com/?partner=4TZ2AXZ85WHSQT",
+    promoCode: "YZDPUK_1131267",
+    logo: psellerlogo,
+  },
   {
     id: "proxy6",
     link: "https://proxy6.net/?r=833290",
@@ -55,12 +63,12 @@ export const BuyProxyView = () => {
   };
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="text-left space-y-2">
-        <h2 className="text-4xl font-black text-white tracking-tight">
+        <h2 className="text-3xl font-bold text-white">
           {t("buy.title")}
         </h2>
-        <p className="text-zinc-400 text-lg max-w-xl leading-relaxed">
+        <p className="text-zinc-400 mt-2 max-w-xl leading-relaxed">
           {t("buy.desc")}
         </p>
       </div>
@@ -86,10 +94,10 @@ export const BuyProxyView = () => {
 
               {/* Content Section */}
               <div className="flex-1 min-w-0">
-                <h3 className="text-xl font-bold text-white mb-1 group-hover:text-[#00A819] transition-colors">
+                <h3 className="text-lg font-bold text-white mb-1 group-hover:text-[#00A819] transition-colors">
                   {t(`buy.${partner.id}.discount`)}
                 </h3>
-                <p className="text-zinc-400 text-sm line-clamp-2 leading-relaxed">
+                <p className="text-zinc-500 text-sm line-clamp-2 leading-relaxed">
                   {t(`buy.${partner.id}.discount_desc`)}
                 </p>
               </div>
@@ -106,7 +114,7 @@ export const BuyProxyView = () => {
                 ) : (
                   <ExternalLink className="w-4 h-4" />
                 )}
-                <span className="text-sm">
+                <span>
                   {copiedLink === partner.id ? t("buy.copied") : t("buy.go")}
                 </span>
               </button>

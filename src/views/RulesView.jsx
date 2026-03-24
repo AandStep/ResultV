@@ -93,7 +93,7 @@ export const RulesView = () => {
   const safeAppWhitelist = rules.appWhitelist || [];
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6 animate-in fade-in duration-300">
+    <div className="space-y-6 animate-in fade-in duration-300">
       <div>
         <h2 className="text-3xl font-bold text-white">{t("rules.title")}</h2>
         <p className="text-zinc-400 mt-2">{t("rules.desc")}</p>

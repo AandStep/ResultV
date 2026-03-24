@@ -190,6 +190,11 @@
   "buy": {
     "title": "Buy Proxies",
     "desc": "Reliable IPv4 and IPv6 proxies for any tasks from our partners",
+    "proxy_seller": {
+      "discount": "Discount from Proxy-Seller",
+      "discount_desc": "Register on Proxy-Seller using the link below to get a discount on proxies.",
+      "promo_title": "Promo Code"
+    },
     "proxy6": {
       "discount": "5% discount from PROXY6.net",
       "discount_desc": "Register on PROXY6.net using the link below to get a 5% discount on proxies.",

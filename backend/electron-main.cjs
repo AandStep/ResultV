@@ -19,6 +19,9 @@ const { app, ipcMain, dialog } = require("electron");
 const path = require("path");
 const { execSync } = require("child_process");
 
+// Фиксируем AppUserModelId чтобы закрепление на панели задач сохранялось при обновлениях
+app.setAppUserModelId("com.resultproxy.app");
+
 // Устанавливаем принудительно директорию с данными
 app.setPath("userData", path.join(app.getPath("appData"), "resultProxy"));
 

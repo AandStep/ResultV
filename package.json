@@ -1,6 +1,6 @@
 {
   "name": "resultproxy",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "ResultProxy Application",
   "author": "ResultProxy",
   "type": "module",
@@ -37,7 +37,10 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "guid": "resultproxy-app",
+      "shortcutName": "ResultProxy",
+      "deleteAppDataOnUninstall": false
     },
     "files": [
       "dist/**/*",

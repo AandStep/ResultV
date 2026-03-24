@@ -143,7 +143,7 @@ export const SettingsView = () => {
   };
 
   return (
-    <div className="max-w-3xl mx-auto space-y-10 animate-in fade-in duration-300 relative">
+    <div className="space-y-6 animate-in fade-in duration-300 relative">
       <div>
         <h2 className="text-3xl font-bold text-white">{t("settings.title")}</h2>
         <p className="text-zinc-400 mt-2">{t("settings.desc")}</p>
@@ -184,10 +184,10 @@ export const SettingsView = () => {
       </div>
 
       <div className="p-8 bg-zinc-900 rounded-3xl border border-zinc-800 mt-10">
-        <h3 className="text-white font-bold mb-2 text-xl">
+        <h3 className="text-white font-bold text-lg mb-2">
           {t("settings.export_import.title")}
         </h3>
-        <p className="text-zinc-400 mb-6">
+        <p className="text-zinc-500 text-sm mb-6">
           <Shield className="inline-block w-4 h-4 mr-1 text-[#00A819]" />
           {t("settings.export_import.desc")}
         </p>

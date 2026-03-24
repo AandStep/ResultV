@@ -37,7 +37,7 @@ const ProtocolSelectionModal = ({ isOpen, onClose, onConfirm, count }) => {
             <Info className="w-8 h-8 text-[#007E3A]" />
           </div>
           <div className="space-y-2">
-            <h3 className="text-2xl font-bold text-white">
+            <h3 className="text-xl font-bold text-white">
               {t("add.protocolSelectionTitle")}
             </h3>
             <p className="text-zinc-400 text-sm leading-relaxed">

@@ -25,7 +25,7 @@ export const SettingToggle = ({ title, description, isOn, onToggle }) => {
     >
       <div className="pr-6">
         <h4 className="text-white font-bold text-lg">{title}</h4>
-        <p className="text-zinc-500 mt-1">{description}</p>
+        <p className="text-zinc-500 text-sm mt-1">{description}</p>
       </div>
       <div
         className={`relative w-14 h-7 rounded-full transition-colors duration-300 ease-in-out shrink-0 ${isOn ? "bg-[#007E3A]" : "bg-zinc-700"}`}
