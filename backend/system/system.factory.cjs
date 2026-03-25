@@ -76,6 +76,10 @@ class SystemFactory {
         // Новые методы для планировщика задач
         enableTaskAutostart: async () => {},
         disableTaskAutostart: async () => {},
+
+        // GPO
+        setUserDataPath: () => {},
+        restoreGpoOnStartup: () => false,
       };
     }
 
@@ -113,6 +117,21 @@ class SystemFactory {
           : Promise.resolve(),
       disableTaskAutostart: () =>
         windowsUtils ? windowsUtils.disableTaskAutostart() : Promise.resolve(),
+
+      // GPO: передаём userDataPath в proxyManager для хранения backup
+      setUserDataPath: (userDataPath) => {
+        if (typeof proxyManager.setUserDataPath === "function") {
+          proxyManager.setUserDataPath(userDataPath);
+        }
+      },
+
+      // GPO: восстановление настроек при запуске (после аварийного завершения)
+      restoreGpoOnStartup: (userDataPath, logCallback) => {
+        if (platform === "win32") {
+          return WindowsProxy.restoreGpoOnStartup(userDataPath, logCallback);
+        }
+        return false;
+      },
     };
   }
 }

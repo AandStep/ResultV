@@ -163,8 +163,19 @@ app.whenReady().then(async () => {
     systemAdapter.disableSystemProxySync();
   }
 
+  // Передаём путь userData в proxy-менеджер для хранения GPO backup
+  const userDataPath = app.getPath("userData");
+  if (typeof systemAdapter.setUserDataPath === "function") {
+    systemAdapter.setUserDataPath(userDataPath);
+  }
+
+  // Восстановление GPO-настроек после аварийного завершения
+  if (typeof systemAdapter.restoreGpoOnStartup === "function") {
+    systemAdapter.restoreGpoOnStartup(userDataPath, loggerService.log.bind(loggerService));
+  }
+
   // 1. Инициализируем конфиг
-  configManager.init(app.getPath("userData"));
+  configManager.init(userDataPath);
   const config = configManager.getConfig();
 
   if (config && config.settings && config.settings.killswitch) {

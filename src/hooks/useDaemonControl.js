@@ -74,6 +74,12 @@ export const useDaemonControl = (
         }
         const resData = await res.json().catch(() => ({}));
         addLog("Соединение установлено.", "success");
+        if (resData.gpoConflict) {
+          addLog(
+            "⚠️ Обнаружены прокси-настройки от системного администратора (GPO). Они временно деактивированы на время работы прокси.",
+            "warning",
+          );
+        }
         if (resData.dnsLeakWarning) {
           addLog(
             "⚠️ DNS-утечка: HTTP-прокси не проксирует DNS-запросы. Используйте SOCKS5 для полной защиты.",
@@ -143,6 +149,12 @@ export const useDaemonControl = (
         const resData = await res.json().catch(() => ({}));
         setIsConnected(true);
         addLog(`Успешно переключено на ${proxy.name}`, "success");
+        if (resData.gpoConflict) {
+          addLog(
+            "⚠️ Обнаружены прокси-настройки от системного администратора (GPO). Они временно деактивированы на время работы прокси.",
+            "warning",
+          );
+        }
         if (resData.dnsLeakWarning) {
           addLog(
             "⚠️ DNS-утечка: HTTP-прокси не проксирует DNS-запросы. Используйте SOCKS5 для полной защиты.",

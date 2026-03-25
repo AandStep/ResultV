@@ -328,7 +328,7 @@ class ApiServer {
           bytesSent: 0,
         });
 
-        await this.proxyManager.setSystemProxy(true, proxy);
+        const proxySetResult = await this.proxyManager.setSystemProxy(true, proxy);
 
         this.stateStore.update({
           isConnected: true,
@@ -340,8 +340,9 @@ class ApiServer {
         // DNS leak warning: HTTP-прокси не проксируют DNS-запросы
         const proxyType = (proxy.type || "HTTP").toUpperCase();
         const dnsLeakWarning = proxyType !== "SOCKS5";
+        const gpoConflict = !!(proxySetResult && proxySetResult.gpoConflict);
 
-        res.status(200).json({ success: true, dnsLeakWarning });
+        res.status(200).json({ success: true, dnsLeakWarning, gpoConflict });
       } catch (err) {
         this.logger.log(`Ошибка подключения: ${err.message}`, "error");
         res.status(500).json({ error: err.message });

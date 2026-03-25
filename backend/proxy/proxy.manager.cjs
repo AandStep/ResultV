@@ -46,6 +46,7 @@ class ProxyManager {
       whitelist: ["localhost", "127.0.0.1"],
       appWhitelist: [],
     };
+    let gpoConflict = false;
 
     if (enable && proxy) {
       proxyIp = proxy.ip;
@@ -74,18 +75,25 @@ class ProxyManager {
         }
       }
 
-      await this.systemAdapter.setSystemProxy(
+      const proxyResult = await this.systemAdapter.setSystemProxy(
         proxyIp,
         proxyPort,
         proxyType,
         rules.whitelist,
         !updateRegistryOnly ? this.logger.log.bind(this.logger) : null,
       );
+
+      // Если системный адаптер вернул информацию о GPO-конфликте
+      if (proxyResult && proxyResult.gpoConflict) {
+        gpoConflict = true;
+      }
     } else {
       await this.systemAdapter.disableSystemProxy(
         this.logger.log.bind(this.logger),
       );
     }
+
+    return { gpoConflict };
   }
 
   async applyKillSwitch() {
