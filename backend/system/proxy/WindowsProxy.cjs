@@ -274,7 +274,24 @@ class WindowsProxy extends BaseProxyManager {
 
     const override = this.formatBypassList(whitelist);
 
+    // Подготовка URL для переменных среды
+    let envProxyStr = "";
+    if (proxyType === "SOCKS5") {
+      envProxyStr = `socks5://${proxyIp}:${proxyPort}`;
+    } else {
+      envProxyStr = `http://${proxyIp}:${proxyPort}`;
+    }
+
     try {
+      // Устанавливаем переменные среды
+      try {
+        await execFileAsync("setx", ["HTTP_PROXY", envProxyStr]);
+        await execFileAsync("setx", ["HTTPS_PROXY", envProxyStr]);
+        await execFileAsync("setx", ["NO_PROXY", "localhost,127.0.0.1,::1"]);
+      } catch (e) {
+        this.log(`[СИСТЕМА] Не удалось установить переменные среды: ${e.message}`, "warning");
+      }
+
       await execFileAsync("reg", [
         "add",
         "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
@@ -377,6 +394,24 @@ class WindowsProxy extends BaseProxyManager {
         ]);
       } catch (e) {}
       await execFileAsync("ipconfig", ["/flushdns"]);
+
+      // Удаляем переменные среды
+      try {
+        await execFileAsync("reg", ["delete", "HKCU\\Environment", "/v", "HTTP_PROXY", "/f"]);
+      } catch (e) {}
+      try {
+        await execFileAsync("reg", ["delete", "HKCU\\Environment", "/v", "HTTPS_PROXY", "/f"]);
+      } catch (e) {}
+      try {
+        await execFileAsync("reg", ["delete", "HKCU\\Environment", "/v", "NO_PROXY", "/f"]);
+      } catch (e) {}
+      
+      // Вызываем setx для фиктивной переменной, чтобы обновить кэш среды (событие WM_SETTINGCHANGE)
+      try {
+        await execFileAsync("setx", ["ResultProxyDummy", "1"]);
+        await execFileAsync("reg", ["delete", "HKCU\\Environment", "/v", "ResultProxyDummy", "/f"]);
+      } catch (e) {}
+
     } catch (error) {
       this.log(
         `[ОШИБКА СИСТЕМЫ] Ошибка очистки прокси: ${error.message}`,
@@ -409,6 +444,9 @@ class WindowsProxy extends BaseProxyManager {
         'reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyOverride /f',
         { stdio: "ignore" },
       );
+      execSync('reg delete "HKCU\\Environment" /v HTTP_PROXY /f', { stdio: "ignore" });
+      execSync('reg delete "HKCU\\Environment" /v HTTPS_PROXY /f', { stdio: "ignore" });
+      execSync('reg delete "HKCU\\Environment" /v NO_PROXY /f', { stdio: "ignore" });
     } catch (e) {
       // Игнорируем ошибки при синхронном закрытии
     }

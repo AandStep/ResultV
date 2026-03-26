@@ -1,6 +1,6 @@
 {
-  "version": "2.2.1",
-  "releaseTitle": "Result Proxy v2.2.1 - Hotfix",
-  "releaseNotes": "Исправлено, что при настройках прокси от системного администратора, приложение не могло их перезаписать.",
+  "version": "2.2.2",
+  "releaseTitle": "Result Proxy v2.2.2 - Hotfix environment variables",
+  "releaseNotes": "Добавлена возможность менять переменные сред, чтобы лучше проксировались все приложения.",
   "downloadUrl": "https://result-proxy.ru/"
 }
