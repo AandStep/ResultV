@@ -21,6 +21,11 @@ const (
 	internetSettingsKey = `Software\Microsoft\Windows\CurrentVersion\Internet Settings`
 )
 
+// newSystemProxy creates its platform-specific SystemProxy implementation.
+func newSystemProxy(router *Router) SystemProxy {
+	return NewWindowsSystemProxy(router)
+}
+
 // WindowsSystemProxy manages Windows system proxy via registry.
 // Uses native Go registry API instead of exec("reg add ...").
 type WindowsSystemProxy struct {

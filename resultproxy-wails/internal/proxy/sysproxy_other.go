@@ -11,6 +11,11 @@ package proxy
 
 import "fmt"
 
+// newSystemProxy creates its platform-specific SystemProxy implementation.
+func newSystemProxy(router *Router) SystemProxy {
+	return NewStubSystemProxy()
+}
+
 // StubSystemProxy is a no-op implementation for non-Windows platforms.
 // TODO: implement macOS (networksetup) and Linux (gsettings) variants.
 type StubSystemProxy struct{}

@@ -75,7 +75,7 @@ func (m *Manager) Init(ctx context.Context) {
 	defer m.mu.Unlock()
 
 	m.ctx = ctx
-	m.sysProxy = NewWindowsSystemProxy(m.router)
+	m.sysProxy = newSystemProxy(m.router)
 }
 
 // LoadBlockedLists loads additional blocked domain lists for smart mode.
