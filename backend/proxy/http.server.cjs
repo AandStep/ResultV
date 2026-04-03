@@ -59,9 +59,13 @@ class HttpServer {
       "[МОСТ HTTP] Настройка локального HTTP туннеля для авторизации...",
       "info",
     );
-    const encUser = encodeURIComponent(proxyConfig.username);
-    const encPass = encodeURIComponent(proxyConfig.password);
-    const upstreamUrl = `http://${encUser}:${encPass}@${proxyConfig.ip}:${proxyConfig.port}`;
+    let upstreamUrl = `http://${proxyConfig.ip}:${proxyConfig.port}`;
+    
+    if (proxyConfig.username && proxyConfig.password) {
+      const encUser = encodeURIComponent(proxyConfig.username);
+      const encPass = encodeURIComponent(proxyConfig.password);
+      upstreamUrl = `http://${encUser}:${encPass}@${proxyConfig.ip}:${proxyConfig.port}`;
+    }
 
     this.server = new ProxyChain.Server({
       port: this.port,

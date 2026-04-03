@@ -119,7 +119,7 @@ class TrafficMonitor {
     return new Promise((resolve) => {
       const start = Date.now();
       const socket = new net.Socket();
-      socket.setTimeout(2000);
+      socket.setTimeout(5000);
 
       socket.on("connect", () => {
         const ping = Date.now() - start;

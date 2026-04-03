@@ -279,16 +279,33 @@ class SocksServer {
                 );
               }
 
+              const setupPipeline = (src, dst) => {
+                src.pipe(dst);
+                dst.pipe(src);
+                
+                const cleanup = () => {
+                  if (!src.destroyed) src.destroy();
+                  if (!dst.destroyed) dst.destroy();
+                };
+                
+                src.on("error", cleanup);
+                dst.on("error", cleanup);
+                
+                src.setTimeout(300000, cleanup);
+                dst.setTimeout(300000, cleanup);
+                
+                src.setKeepAlive(true, 30000);
+                dst.setKeepAlive(true, 30000);
+              };
+
               if (!useProxy) {
                 const directSocket = net.connect(dstPort, dstHost, () => {
                   client.write(successResponse);
                   if (remainingData.length > 0)
                     directSocket.write(remainingData);
-                  directSocket.pipe(client);
-                  client.pipe(directSocket);
+                  setupPipeline(client, directSocket);
                 });
-                directSocket.on("error", () => client.end());
-                client.on("error", () => directSocket.end());
+                directSocket.on("error", () => client.destroy());
               } else {
                 SocksClient.createConnection({
                   proxy: {
@@ -305,21 +322,16 @@ class SocksServer {
                     client.write(successResponse);
                     if (remainingData.length > 0)
                       info.socket.write(remainingData);
-                    info.socket.pipe(client);
-                    client.pipe(info.socket);
-
-                    info.socket.on("error", () => client.end());
-                    client.on("error", () => info.socket.end());
+                    setupPipeline(client, info.socket);
                   })
                   .catch(() => {
-                    client.end();
+                    client.destroy();
                   });
               }
             }
           } catch (e) {
-            client.end();
+            client.destroy();
           }
-          client.resume();
         };
         client.on("data", onData);
         client.on("error", () => {});

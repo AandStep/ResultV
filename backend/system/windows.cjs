@@ -22,6 +22,58 @@ const { getSafeOSWhitelist } = require("../utils/domain.cjs");
 let processTreeCache = {};
 let isCaching = false;
 
+// Очередь для пакетного запуска netstat, предотвращающая CPU-голодание (Event Loop starvation)
+let netstatQueue = {};
+let isNetstatRunning = false;
+
+function fetchPidsForPorts() {
+  if (isNetstatRunning || Object.keys(netstatQueue).length === 0) return;
+  isNetstatRunning = true;
+  
+  const currentBatch = { ...netstatQueue };
+  netstatQueue = {};
+  
+  exec("netstat -ano -p tcp", { maxBuffer: 1024 * 1024 * 50 }, (err, stdout) => {
+    isNetstatRunning = false;
+    const lines = stdout ? stdout.trim().split(/\r?\n/) : [];
+    const pidMap = {};
+    for (const line of lines) {
+      const parts = line.trim().split(/\s+/).filter(Boolean);
+      if (parts.length >= 4) {
+        pidMap[parts[1]] = parts[parts.length - 1]; // "IP:Port" -> "PID"
+      }
+    }
+    
+    for (const port in currentBatch) {
+      let foundPid = null;
+      for (const localAddr in pidMap) {
+        if (localAddr.endsWith(`:${port}`)) {
+          foundPid = pidMap[localAddr];
+          break;
+        }
+      }
+      currentBatch[port].forEach(resolve => resolve(foundPid));
+    }
+    
+    if (Object.keys(netstatQueue).length > 0) {
+      setTimeout(fetchPidsForPorts, 50);
+    }
+  });
+}
+
+function getPidForPort(port) {
+  return new Promise(resolve => {
+    if (!netstatQueue[port]) {
+      netstatQueue[port] = [];
+    }
+    netstatQueue[port].push(resolve);
+    
+    if (!isNetstatRunning) {
+      setTimeout(fetchPidsForPorts, 20); // небольшая задержка, чтобы собрать все входящие запросы в 1 команду
+    }
+  });
+}
+
 // Умная функция получения информации о процессе с fallback'ами
 async function getProcessInfo(pid) {
   return new Promise((resolve) => {
@@ -213,33 +265,13 @@ module.exports = {
   ) => {
     if (!appWhitelist || appWhitelist.length === 0 || !remotePort) return false;
 
-    return new Promise((resolve) => {
-      exec(
-        `netstat -ano | findstr ":${remotePort}"`,
-        { maxBuffer: 1024 * 1024 * 50 },
-        async (err, stdout) => {
-          if (err || !stdout) return resolve(false);
+    const pid = await getPidForPort(remotePort);
+    if (!pid || isNaN(pid) || pid === "0") return false;
 
-          const lines = stdout.trim().split(/\r?\n/);
-          let pid = null;
-          for (let line of lines) {
-            const parts = line.trim().split(/\s+/).filter(Boolean);
-            if (parts.length >= 4) {
-              let currentPid = parts[parts.length - 1];
-              let localAddr = parts[1];
-              if (localAddr.endsWith(`:${remotePort}`)) {
-                pid = currentPid;
-                break;
-              }
-            }
-          }
-
-          if (!pid || isNaN(pid) || pid === "0") return resolve(false);
-
-          let currentPid = pid;
-          let foundAppName = false;
-          let depth = 0;
-          let chain = [];
+    let currentPid = pid;
+    let foundAppName = false;
+    let depth = 0;
+    let chain = [];
 
           while (currentPid && currentPid !== "0" && depth < 10) {
             let info = processTreeCache[currentPid];
@@ -282,10 +314,7 @@ module.exports = {
               );
           }
 
-          resolve(foundAppName);
-        },
-      );
-    });
+          return foundAppName;
   },
 
   // 8. Установка/снятие флага "Запускать от имени администратора" в реестре Windows
