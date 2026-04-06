@@ -164,33 +164,6 @@ export const SettingsView = () => {
       )}
 
       <div className="space-y-4">
-        <div className="flex items-center justify-between p-4 bg-zinc-900 rounded-2xl border border-zinc-800">
-          <div>
-            <h3 className="text-white font-medium">{t("settings.mode.title", "Режим работы")}</h3>
-            <p className="text-sm text-zinc-500 mt-1">
-              {settings.mode === "tunnel" ? "Режим Туннеля (весь трафик системы)" : "Режим Прокси (создает системный прокси)"}
-            </p>
-          </div>
-          <div className="flex bg-zinc-950 rounded-xl p-1 border border-zinc-800">
-            <button
-              onClick={() => updateSetting("mode", "proxy")}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                settings.mode !== "tunnel" ? "bg-[#007E3A] text-white" : "text-zinc-500 hover:text-white"
-              }`}
-            >
-              Proxy
-            </button>
-            <button
-              onClick={() => updateSetting("mode", "tunnel")}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                settings.mode === "tunnel" ? "bg-[#007E3A] text-white" : "text-zinc-500 hover:text-white"
-              }`}
-            >
-              Tunnel
-            </button>
-          </div>
-        </div>
-
         <SettingToggle
           title={t("settings.autostart.title")}
           description={t("settings.autostart.desc")}

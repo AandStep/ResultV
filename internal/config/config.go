@@ -33,8 +33,25 @@ type ProxyEntry struct {
 	Name     string `json:"name"`
 	Country  string `json:"country"`
 	// Extended fields for sing-box protocols.
-	URI      string `json:"uri,omitempty"`      // ss://, vmess://, etc.
-	Extra    json.RawMessage `json:"extra,omitempty"` // protocol-specific config
+	URI             string          `json:"uri,omitempty"`
+	Extra           json.RawMessage `json:"extra,omitempty"`
+	Provider        string          `json:"provider,omitempty"`
+	SubscriptionURL string          `json:"subscriptionUrl,omitempty"`
+}
+
+// Subscription represents a saved subscription source.
+type Subscription struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	URL       string `json:"url"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
+	// TrafficUpload/TrafficDownload from Subscription-Userinfo (bytes used).
+	TrafficUpload   int64 `json:"trafficUpload,omitempty"`
+	TrafficDownload int64 `json:"trafficDownload,omitempty"`
+	TrafficTotal    int64 `json:"trafficTotal,omitempty"` // 0 = unlimited
+	ExpireUnix      int64 `json:"expireUnix,omitempty"`     // 0 = unknown / none
+	// IconURL optional: from subscription response headers or derived favicon URL.
+	IconURL string `json:"iconUrl,omitempty"`
 }
 
 // AppSettings stores application-wide settings.
@@ -49,9 +66,10 @@ type AppSettings struct {
 
 // AppConfig is the root configuration structure.
 type AppConfig struct {
-	RoutingRules RoutingRules `json:"routingRules"`
-	Proxies      []ProxyEntry `json:"proxies"`
-	Settings     AppSettings  `json:"settings"`
+	RoutingRules  RoutingRules   `json:"routingRules"`
+	Proxies       []ProxyEntry   `json:"proxies"`
+	Settings      AppSettings    `json:"settings"`
+	Subscriptions []Subscription `json:"subscriptions,omitempty"`
 }
 
 // DefaultConfig returns a fresh config with sensible defaults.

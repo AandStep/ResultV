@@ -105,9 +105,12 @@ export const LogsView = () => {
             className={`flex items-start space-x-4 border-b border-zinc-800/50 py-3 last:border-0 ${log.type === "error" ? "text-rose-400" : log.type === "success" ? "text-[#007E3A]" : log.type === "warning" ? "text-[#00A819]" : "text-zinc-300"}`}
           >
             <span className="text-zinc-600 shrink-0">[{log.time}]</span>
-            <span className="break-words w-full">
-              {translateLog(log.msg, t)}
-            </span>
+            <div className="break-words w-full">
+              {log.source && (
+                <span className="text-zinc-500 text-xs mr-2 font-semibold">{log.source}</span>
+              )}
+              <span>{translateLog(log.msg, t)}</span>
+            </div>
           </div>
         ))}
       </div>

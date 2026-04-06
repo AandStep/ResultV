@@ -1,6 +1,8 @@
 # Build Directory
 
-The build directory is used to house all the build files and assets for your application. 
+The build directory is used to house all the build files and assets for your application.
+
+**Application icon:** The canonical logo is [`public/logo.png`](../public/logo.png) (tray + embed). For `wails build`, keep [`appicon.png`](appicon.png) in sync with that file (copy over it). If `windows/icon.ico` is missing, Wails generates it from `appicon.png`. 
 
 The structure is:
 

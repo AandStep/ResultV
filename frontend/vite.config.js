@@ -7,6 +7,6 @@ const packageJson = JSON.parse(fs.readFileSync("./package.json", "utf-8"));
 export default defineConfig({
   plugins: [react()],
   define: {
-    __APP_VERSION__: JSON.stringify(packageJson.version || "2.2.2"),
+    __APP_VERSION__: JSON.stringify(packageJson.version || "3.0.0"),
   }
 })

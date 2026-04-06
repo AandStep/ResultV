@@ -15,7 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   Power,
   Plus,
@@ -30,10 +30,15 @@ import { useConfigContext } from "../context/ConfigContext";
 import { useConnectionContext } from "../context/ConnectionContext";
 import { formatBytes, formatSpeed } from "../utils/formatters";
 import { useTranslation } from "react-i18next";
+import {
+  getProtocolLabel,
+  isVpnType,
+  formatProxyDisplayName,
+} from "../utils/proxyParser";
 
 export const HomeView = () => {
   const { t } = useTranslation();
-  const { proxies, setEditingProxy, setActiveTab, settings } = useConfigContext();
+  const { proxies, setEditingProxy, setActiveTab, settings, updateSetting } = useConfigContext();
   const {
     isConnected,
     isProxyDead,
@@ -62,6 +67,31 @@ export const HomeView = () => {
     setActiveTab("add");
   };
   const goToProxyList = () => setActiveTab("list");
+
+  const groupedByProvider = useMemo(() => {
+    const groups = {};
+    proxies.forEach((proxy) => {
+      const providerKey = proxy.provider || t("proxyList.myProxies") || "Мои прокси";
+      if (!groups[providerKey]) groups[providerKey] = {};
+      const countryCode = proxy.country || "Unknown";
+      if (!groups[providerKey][countryCode]) groups[providerKey][countryCode] = [];
+      groups[providerKey][countryCode].push(proxy);
+    });
+
+    const myKey = t("proxyList.myProxies") || "Мои прокси";
+    return Object.entries(groups)
+      .sort(([a], [b]) => {
+        if (a === myKey) return 1;
+        if (b === myKey) return -1;
+        return a.localeCompare(b);
+      })
+      .map(([provider, countries]) => ({
+        provider,
+        countries: Object.entries(countries).sort(([a], [b]) => a.localeCompare(b)),
+      }));
+  }, [proxies, t]);
+
+  const hasProviders = proxies.some((p) => p.provider);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[75vh] space-y-10 animate-in fade-in zoom-in-95 duration-300">
@@ -120,6 +150,30 @@ export const HomeView = () => {
         </button>
       </div>
 
+      {/* Mode toggle: Proxy / Tunnel */}
+      <div className="flex items-center bg-zinc-900 rounded-2xl p-1 border border-zinc-800">
+        <button
+          onClick={() => updateSetting("mode", "proxy")}
+          className={`px-6 py-2 rounded-xl text-sm font-bold transition-all border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${
+            settings.mode === "proxy"
+              ? "bg-[#007E3A] text-white"
+              : "text-zinc-400 hover:text-white"
+          }`}
+        >
+          {t("home.modeProxy") || "ПРОКСИ"}
+        </button>
+        <button
+          onClick={() => updateSetting("mode", "tunnel")}
+          className={`px-6 py-2 rounded-xl text-sm font-bold transition-all border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${
+            settings.mode === "tunnel"
+              ? "bg-[#007E3A] text-white"
+              : "text-zinc-400 hover:text-white"
+          }`}
+        >
+          {t("home.modeTunnel") || "ТУННЕЛЬ"}
+        </button>
+      </div>
+
       {!hasProxies ? (
         <div className="w-full flex flex-col items-center animate-in fade-in duration-300">
           <p className="text-zinc-400 mb-4 text-center">
@@ -174,7 +228,7 @@ export const HomeView = () => {
                 </p>
                 {displayProxy && (
                   <p className="text-sm text-zinc-500 font-mono mt-1 truncate">
-                    {displayProxy.ip}:{displayProxy.port} ({displayProxy.type})
+                    {displayProxy.ip}:{displayProxy.port} ({isVpnType(displayProxy.type) ? getProtocolLabel(displayProxy) : displayProxy.type})
                   </p>
                 )}
               </div>
@@ -202,76 +256,57 @@ export const HomeView = () => {
 
           {isProxyListOpen && (
             <div className="bg-zinc-950/50 border-t border-zinc-800/50 p-2 max-h-[280px] overflow-y-auto scrollbar-hide space-y-2 animate-in slide-in-from-top-2 duration-200">
-              {Object.entries(
-                proxies.reduce((acc, proxy) => {
-                  const countryCode = proxy.country || "Unknown";
-                  if (!acc[countryCode]) acc[countryCode] = [];
-                  acc[countryCode].push(proxy);
-                  return acc;
-                }, {}),
-              )
-                .sort(([countryA], [countryB]) =>
-                  countryA.localeCompare(countryB),
-                )
-                .map(([country, countryProxies]) => (
-                  <div key={country} className="space-y-1 mb-2 last:mb-0">
-                    <div className="flex items-center px-3 py-1 space-x-2">
-                      <FlagIcon
-                        code={country}
-                        className="w-5 h-auto rounded-[2px] opacity-70"
-                      />
-                      <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">
-                        {country}
+              {hasProviders ? (
+                groupedByProvider.map(({ provider, countries }) => (
+                  <div key={provider} className="space-y-1 mb-2 last:mb-0">
+                    <div className="px-3 py-1">
+                      <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">
+                        {provider}
                       </span>
                     </div>
-                    {countryProxies.map((proxy) => {
-                      const isActive = activeProxy?.id === proxy.id;
-                      return (
-                        <div
-                          key={proxy.id}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            selectAndConnect(proxy);
-                            setIsProxyListOpen(false);
-                          }}
-                          className={`flex items-center justify-between p-3 rounded-2xl cursor-pointer transition-colors outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${isActive ? "bg-[#007E3A]/10 border border-[#007E3A]/20" : "bg-zinc-900/50 border border-transparent hover:border-[#00A819]/50 hover:bg-zinc-800/80"}`}
-                        >
-                          <div className="flex items-center space-x-4 min-w-0">
-                            <div className="shrink-0 flex items-center justify-center w-10 h-10 bg-zinc-800/50 rounded-lg border border-zinc-700/50">
-                              <FlagIcon
-                                code={proxy.country}
-                                className="w-6 h-auto rounded-[2px]"
-                              />
-                            </div>
-                            <div className="min-w-0">
-                              <h4
-                                className={`text-sm font-bold truncate transition-colors ${isActive ? "text-[#00A819]" : "text-white"}`}
-                              >
-                                {proxy.name}
-                              </h4>
-                              <p className="text-xs text-zinc-500 font-mono mt-0.5 truncate">
-                                {proxy.ip}:{proxy.port}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="flex items-center space-x-3 shrink-0 ml-3">
-                            <div
-                              className={`text-xs flex items-center ${pings[proxy.id] === "Timeout" || pings[proxy.id] === "Error" ? "text-rose-500" : "text-zinc-500"}`}
-                            >
-                              <Activity className="w-3 h-3 mr-1" />{" "}
-                              {pings[proxy.id] || "..."}
-                            </div>
-                            {isActive ? (
-                              <div className="w-2 h-2 rounded-full bg-[#00A819] shadow-[0_0_8px_rgba(0,168,25,0.8)]"></div>
-                            ) : (
-                              <div className="w-2 h-2 rounded-full bg-zinc-700"></div>
-                            )}
-                          </div>
+                    {countries.map(([country, countryProxies]) => (
+                      <div key={`${provider}-${country}`} className="space-y-1">
+                        <div className="flex items-center px-3 py-0.5 space-x-2">
+                          <FlagIcon
+                            code={country}
+                            className="w-4 h-auto rounded-[2px] opacity-70"
+                          />
+                          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                            {country}
+                          </span>
                         </div>
-                      );
-                    })}
+                        {countryProxies.map((proxy) => renderDropdownItem(proxy))}
+                      </div>
+                    ))}
                   </div>
-                ))}
+                ))
+              ) : (
+                Object.entries(
+                  proxies.reduce((acc, proxy) => {
+                    const countryCode = proxy.country || "Unknown";
+                    if (!acc[countryCode]) acc[countryCode] = [];
+                    acc[countryCode].push(proxy);
+                    return acc;
+                  }, {}),
+                )
+                  .sort(([countryA], [countryB]) =>
+                    countryA.localeCompare(countryB),
+                  )
+                  .map(([country, countryProxies]) => (
+                    <div key={country} className="space-y-1 mb-2 last:mb-0">
+                      <div className="flex items-center px-3 py-1 space-x-2">
+                        <FlagIcon
+                          code={country}
+                          className="w-5 h-auto rounded-[2px] opacity-70"
+                        />
+                        <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">
+                          {country}
+                        </span>
+                      </div>
+                      {countryProxies.map((proxy) => renderDropdownItem(proxy))}
+                    </div>
+                  ))
+              )}
               <button
                 onClick={(e) => {
                   e.stopPropagation();
@@ -354,4 +389,56 @@ export const HomeView = () => {
       )}
     </div>
   );
+
+  function renderDropdownItem(proxy) {
+    const isActive = activeProxy?.id === proxy.id;
+    return (
+      <div
+        key={proxy.id}
+        onClick={(e) => {
+          e.stopPropagation();
+          selectAndConnect(proxy);
+          setIsProxyListOpen(false);
+        }}
+        className={`flex items-center justify-between p-3 rounded-2xl cursor-pointer transition-colors outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${isActive ? "bg-[#007E3A]/10 border border-[#007E3A]/20" : "bg-zinc-900/50 border border-transparent hover:border-[#00A819]/50 hover:bg-zinc-800/80"}`}
+      >
+        <div className="flex items-center space-x-4 min-w-0">
+          <div className="shrink-0 flex items-center justify-center w-10 h-10 bg-zinc-800/50 rounded-lg border border-zinc-700/50">
+            <FlagIcon
+              code={proxy.country}
+              className="w-6 h-auto rounded-[2px]"
+            />
+          </div>
+          <div className="min-w-0">
+            <h4
+              className={`text-sm font-bold truncate transition-colors ${isActive ? "text-[#00A819]" : "text-white"}`}
+            >
+              {formatProxyDisplayName(proxy.name, proxy.country)}
+            </h4>
+            <p className="text-xs text-zinc-500 font-mono mt-0.5 truncate">
+              {proxy.ip}:{proxy.port}
+              {isVpnType(proxy.type) && (
+                <span className="ml-1 text-[#007E3A]">
+                  {" "}({getProtocolLabel(proxy)})
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center space-x-3 shrink-0 ml-3">
+          <div
+            className={`text-xs flex items-center ${pings[proxy.id] === "Timeout" || pings[proxy.id] === "Error" ? "text-rose-500" : "text-zinc-500"}`}
+          >
+            <Activity className="w-3 h-3 mr-1" />{" "}
+            {pings[proxy.id] || "..."}
+          </div>
+          {isActive ? (
+            <div className="w-2 h-2 rounded-full bg-[#00A819] shadow-[0_0_8px_rgba(0,168,25,0.8)]"></div>
+          ) : (
+            <div className="w-2 h-2 rounded-full bg-zinc-700"></div>
+          )}
+        </div>
+      </div>
+    );
+  }
 };

@@ -11,7 +11,9 @@ package system
 
 import (
 	"fmt"
+	"net"
 	"os/exec"
+	"strings"
 	"sync"
 )
 
@@ -105,16 +107,7 @@ func (ks *WindowsKillSwitch) enableFirewall(proxyAddr string) error {
 	}
 
 	// Rule 2: Allow traffic to the proxy server (higher priority).
-	if proxyAddr != "" {
-		// Extract just the IP from ip:port.
-		proxyIP := proxyAddr
-		for i := len(proxyIP) - 1; i >= 0; i-- {
-			if proxyIP[i] == ':' {
-				proxyIP = proxyIP[:i]
-				break
-			}
-		}
-
+	if proxyIP := extractValidIP(proxyAddr); proxyIP != "" {
 		allowProxyCmd := exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
 			"name="+firewallRuleName+"_AllowProxy",
 			"dir=out",
@@ -159,6 +152,27 @@ func (ks *WindowsKillSwitch) enableFirewall(proxyAddr string) error {
 	}
 
 	return nil
+}
+
+// extractValidIP parses the host from "ip:port" and validates it.
+// Handles IPv4 ("1.2.3.4:443"), IPv6 brackets ("[::1]:443"), and bare IPs.
+// Returns empty string if the address is empty or the IP is invalid.
+func extractValidIP(addr string) string {
+	if addr == "" {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = strings.TrimSpace(addr)
+	}
+	host = strings.Trim(host, "[]")
+	if host == "" {
+		return ""
+	}
+	if net.ParseIP(host) == nil {
+		return ""
+	}
+	return host
 }
 
 // disableFirewall removes all ResultProxy kill switch firewall rules.

@@ -12,6 +12,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"regexp"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -84,9 +87,10 @@ type SBDNS struct {
 }
 
 type SBDNSServer struct {
-	Tag             string `json:"tag"`
-	Address         string `json:"address"`
-	AddressResolver string `json:"address_resolver,omitempty"` // Нужен для DoH (sing-box 1.12+)
+	Type       string `json:"type"`
+	Tag        string `json:"tag"`
+	Server     string `json:"server,omitempty"`
+	ServerPort int    `json:"server_port,omitempty"`
 }
 
 type SBDNSRule struct {
@@ -96,16 +100,14 @@ type SBDNSRule struct {
 }
 
 type SBInbound struct {
-	Type          string   `json:"type"`
-	Tag           string   `json:"tag"`
-	Listen        string   `json:"listen,omitempty"`
-	ListenPort    int      `json:"listen_port,omitempty"`
-	Address       []string `json:"address,omitempty"`       // TUN: CIDR addresses (1.12+)
-	Stack         string   `json:"stack,omitempty"`          // TUN: "gvisor"
-	AutoRoute     bool     `json:"auto_route,omitempty"`
-	StrictRoute   bool     `json:"strict_route,omitempty"`
-	Sniff         bool     `json:"sniff,omitempty"`          // 1.11+: in inbound
-	SniffOverride bool     `json:"sniff_override_destination,omitempty"`
+	Type       string   `json:"type"`
+	Tag        string   `json:"tag"`
+	Listen     string   `json:"listen,omitempty"`
+	ListenPort int      `json:"listen_port,omitempty"`
+	Address    []string `json:"address,omitempty"` // TUN: CIDR addresses (1.12+)
+	Stack      string   `json:"stack,omitempty"`   // TUN: "gvisor"
+	AutoRoute  bool     `json:"auto_route,omitempty"`
+	StrictRoute bool    `json:"strict_route,omitempty"`
 }
 
 type SBOutbound struct {
@@ -118,6 +120,7 @@ type SBOutbound struct {
 	Method     string `json:"method,omitempty"`   // shadowsocks
 	Version    string `json:"version,omitempty"`  // socks
 	UUID       string `json:"uuid,omitempty"`     // VMess/VLess/Trojan
+	Flow       string `json:"flow,omitempty"`     // VLESS: xtls-rprx-vision
 	// TLS + транспорт для VMess/VLess/Trojan
 	TLS       *SBOutboundTLS       `json:"tls,omitempty"`
 	Transport *SBOutboundTransport `json:"transport,omitempty"`
@@ -125,17 +128,44 @@ type SBOutbound struct {
 
 // SBOutboundTLS описывает TLS-настройки для outbound.
 type SBOutboundTLS struct {
-	Enabled    bool   `json:"enabled"`
-	ServerName string `json:"server_name,omitempty"`
-	Insecure   bool   `json:"insecure,omitempty"`
+	Enabled    bool       `json:"enabled"`
+	ServerName string     `json:"server_name,omitempty"`
+	Insecure   bool       `json:"insecure,omitempty"`
+	ALPN       []string   `json:"alpn,omitempty"`
+	UTLS       *SBUTLS    `json:"utls,omitempty"`
+	Reality    *SBReality `json:"reality,omitempty"`
 }
 
-// SBOutboundTransport описывает транспортный слой (WebSocket, gRPC, HTTP/2).
+// SBUTLS configures the uTLS client fingerprint.
+type SBUTLS struct {
+	Enabled     bool   `json:"enabled"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+}
+
+// SBReality configures VLESS Reality TLS parameters.
+type SBReality struct {
+	Enabled   bool   `json:"enabled"`
+	PublicKey string `json:"public_key"`
+	ShortID   string `json:"short_id,omitempty"`
+}
+
+// SBOutboundTransport описывает транспортный слой (WebSocket, gRPC, HTTP/2, XHTTP).
 type SBOutboundTransport struct {
-	Type        string `json:"type"`
-	Path        string `json:"path,omitempty"`         // WebSocket path
-	Host        string `json:"host,omitempty"`         // WebSocket Host header
-	ServiceName string `json:"service_name,omitempty"` // gRPC service name
+	Type        string            `json:"type"`
+	Path        string            `json:"path,omitempty"`         // WebSocket / XHTTP path
+	Host        string            `json:"host,omitempty"`         // WebSocket Host header
+	ServiceName string            `json:"service_name,omitempty"` // gRPC service name
+	Mode        string            `json:"mode,omitempty"`         // XHTTP mode (auto, packet-up, stream-up, stream-one)
+	XPaddingBytes string          `json:"x_padding_bytes,omitempty"` // XHTTP padding range string, e.g. "100-1000" (sing-box Range)
+	Headers     map[string]string `json:"headers,omitempty"`      // extra headers (not Host — sing-box forbids)
+	// XHTTP (sing-box-extended V2RayXHTTPBaseOptions JSON names; link "method" maps here)
+	UplinkHTTPMethod string          `json:"uplink_http_method,omitempty"`
+	NoGRPCHeader     *bool           `json:"no_grpc_header,omitempty"`
+	NoSSEHeader      *bool           `json:"no_sse_header,omitempty"`
+	ScMaxEachPostBytes   json.RawMessage `json:"sc_max_each_post_bytes,omitempty"`
+	ScMinPostsIntervalMs json.RawMessage `json:"sc_min_posts_interval_ms,omitempty"`
+	ScStreamUpServerSecs json.RawMessage `json:"sc_stream_up_server_secs,omitempty"`
+	Xmux             json.RawMessage `json:"xmux,omitempty"`
 }
 
 type SBRoute struct {
@@ -145,12 +175,35 @@ type SBRoute struct {
 }
 
 type SBRouteRule struct {
-	Protocol    []string `json:"protocol,omitempty"`
-	Domain      []string `json:"domain,omitempty"`
-	DomainSuffix []string `json:"domain_suffix,omitempty"`
-	ProcessName []string `json:"process_name,omitempty"`
-	Outbound    string   `json:"outbound,omitempty"`
-	Action      string   `json:"action,omitempty"` // 1.11+: "block", "hijack-dns"
+	Protocol         []string `json:"protocol,omitempty"`
+	Domain           []string `json:"domain,omitempty"`
+	DomainSuffix     []string `json:"domain_suffix,omitempty"`
+	ProcessName      []string `json:"process_name,omitempty"`
+	ProcessPathRegex []string `json:"process_path_regex,omitempty"`
+	Outbound         string   `json:"outbound,omitempty"`
+	Action           string   `json:"action,omitempty"` // 1.11+: "block", "hijack-dns"
+}
+
+// appWhitelistPathRegexes builds case-insensitive regexes that match the executable
+// basename at the end of a full process path. sing-box process_name matching is
+// case-sensitive on filepath.Base(); the UI lowercases names, which breaks on Windows.
+func appWhitelistPathRegexes(names []string) []string {
+	seen := make(map[string]struct{}, len(names))
+	var out []string
+	for _, w := range names {
+		n := strings.TrimSpace(w)
+		if n == "" {
+			continue
+		}
+		key := strings.ToLower(n)
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		esc := regexp.QuoteMeta(n)
+		out = append(out, `(?i)(^|[\\/])`+esc+`$`)
+	}
+	return out
 }
 
 // BuildProxyModeConfig creates a sing-box config for system proxy mode.
@@ -159,15 +212,13 @@ func BuildProxyModeConfig(cfg EngineConfig) SingBoxConfig {
 	host, port := splitHostPort(cfg.ListenAddr, "127.0.0.1", 14081)
 
 	config := SingBoxConfig{
-		Log: &SBLog{Level: "warn"},
+		Log: &SBLog{Level: "error", Disabled: true},
 		DNS: buildDNS(cfg),
 		Inbounds: []SBInbound{{
 			Type:       "mixed",
 			Tag:        "mixed-in",
 			Listen:     host,
 			ListenPort: port,
-			Sniff:      true,
-			SniffOverride: true,
 		}},
 		Outbounds: buildOutbounds(cfg.Proxy),
 		Route:     buildRoute(cfg),
@@ -180,17 +231,15 @@ func BuildProxyModeConfig(cfg EngineConfig) SingBoxConfig {
 // TUN interface captures all system traffic.
 func BuildTunnelModeConfig(cfg EngineConfig) SingBoxConfig {
 	config := SingBoxConfig{
-		Log: &SBLog{Level: "warn"},
+		Log: &SBLog{Level: "error", Disabled: true},
 		DNS: buildDNS(cfg),
 		Inbounds: []SBInbound{{
 			Type:        "tun",
 			Tag:         "tun-in",
-			Address:     []string{"172.19.0.1/30", "fdfe:dcba:9876::1/126"}, // 1.12+: CIDR
+			Address:     []string{"172.19.0.1/30", "fdfe:dcba:9876::1/126"},
 			Stack:       "gvisor",
 			AutoRoute:   true,
 			StrictRoute: true,
-			Sniff:       true,
-			SniffOverride: true,
 		}},
 		Outbounds: buildOutbounds(cfg.Proxy),
 		Route:     buildRoute(cfg),
@@ -212,25 +261,21 @@ func buildOutbounds(proxy ProxyConfig) []SBOutbound {
 
 func buildDNS(cfg EngineConfig) *SBDNS {
 	if cfg.Mode == ProxyModeTunnel {
-		// В режиме туннеля — шифрованный DNS через DoH.
-		// udp служит bootstrap-резолвером для DoH-серверов.
 		return &SBDNS{
 			Servers: []SBDNSServer{
-				{Tag: "udp",        Address: "8.8.8.8"},
-				{Tag: "google",     Address: "tls://8.8.8.8",     AddressResolver: "udp"},
-				{Tag: "cloudflare", Address: "tls://1.1.1.1",     AddressResolver: "udp"},
-				{Tag: "local",      Address: "local"},
+				{Type: "udp", Tag: "udp", Server: "8.8.8.8"},
+				{Type: "tls", Tag: "google", Server: "8.8.8.8"},
+				{Type: "tls", Tag: "cloudflare", Server: "1.1.1.1"},
+				{Type: "local", Tag: "local"},
 			},
 		}
 	}
 
-	// В режиме прокси — простой UDP DNS, без DoH.
-	// DoH требует https-транспорта который может отсутствовать в конкретной сборке sing-box.
 	return &SBDNS{
 		Servers: []SBDNSServer{
-			{Tag: "google",     Address: "8.8.8.8"},
-			{Tag: "cloudflare", Address: "1.1.1.1"},
-			{Tag: "local",      Address: "local"},
+			{Type: "udp", Tag: "google", Server: "8.8.8.8"},
+			{Type: "udp", Tag: "cloudflare", Server: "1.1.1.1"},
+			{Type: "local", Tag: "local"},
 		},
 	}
 }
@@ -243,36 +288,78 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 
 	var rules []SBRouteRule
 
+	// Sniff rule action replaces legacy inbound sniff/sniff_override_destination (1.11+).
+	rules = append(rules, SBRouteRule{
+		Action: "sniff",
+	})
+
 	// DNS hijacking rule (1.11+ action-based).
 	rules = append(rules, SBRouteRule{
 		Protocol: []string{"dns"},
 		Action:   "hijack-dns",
 	})
 
-	// App whitelist: bypass by process name (native sing-box support!).
-	if len(cfg.AppWhitelist) > 0 {
+	// App whitelist: bypass by process path regex (case-insensitive basename match).
+	if rx := appWhitelistPathRegexes(cfg.AppWhitelist); len(rx) > 0 {
 		rules = append(rules, SBRouteRule{
-			ProcessName: cfg.AppWhitelist,
-			Outbound:    "direct",
+			Action:           "route",
+			ProcessPathRegex: rx,
+			Outbound:         "direct",
 		})
 	}
 
-	// Domain whitelist: bypass these domains.
+	// Domain whitelist with nested exceptions support.
+	// Example: [".ru", "2ip.ru"] -> ru=direct, 2ip.ru=proxy (override).
 	if len(cfg.Whitelist) > 0 {
-		var suffixes []string
-		var exact []string
+		seen := make(map[string]struct{}, len(cfg.Whitelist))
+		var normalized []string
 		for _, w := range cfg.Whitelist {
 			n := normalizeRule(w)
-			if n != "" {
-				suffixes = append(suffixes, n)
-				exact = append(exact, n)
+			if n == "" {
+				continue
 			}
+			if _, ok := seen[n]; ok {
+				continue
+			}
+			seen[n] = struct{}{}
+			normalized = append(normalized, n)
 		}
-		if len(suffixes) > 0 {
-			rules = append(rules, SBRouteRule{
-				DomainSuffix: suffixes,
-				Outbound:     "direct",
+
+		if len(normalized) > 0 {
+			ordered := append([]string(nil), normalized...)
+			sort.SliceStable(ordered, func(i, j int) bool {
+				di := strings.Count(ordered[i], ".")
+				dj := strings.Count(ordered[j], ".")
+				if di != dj {
+					return di > dj
+				}
+				if len(ordered[i]) != len(ordered[j]) {
+					return len(ordered[i]) > len(ordered[j])
+				}
+				return ordered[i] < ordered[j]
 			})
+
+			isWhitelisted := func(host string, all []string) bool {
+				matchCount := 0
+				for _, rule := range all {
+					if host == rule || strings.HasSuffix(host, "."+rule) {
+						matchCount++
+					}
+				}
+				return matchCount > 0 && matchCount%2 == 1
+			}
+
+			for _, suffix := range ordered {
+				outbound := "proxy"
+				if isWhitelisted(suffix, normalized) {
+					outbound = "direct"
+				}
+				rules = append(rules, SBRouteRule{
+					Action:       "route",
+					DomainSuffix: []string{suffix},
+					Outbound:     outbound,
+				})
+			}
 		}
 	}
 

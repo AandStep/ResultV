@@ -9,11 +9,17 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,6 +62,11 @@ func NewApp() *App {
 // SetTrayIcon sets the icon bytes for the system tray (call before startup).
 func (a *App) SetTrayIcon(icon []byte) {
 	a.trayIcon = icon
+}
+
+// GetVersion returns the application version (wails.json info.productVersion).
+func (a *App) GetVersion() string {
+	return productVersionFromWailsJSON()
 }
 
 // startup is called when the Wails app starts.
@@ -187,6 +198,12 @@ func (a *App) SaveConfig(cfg config.AppConfig) error {
 	if a.config == nil {
 		return fmt.Errorf("config manager not initialized")
 	}
+	// Partial saves from the frontend: missing key → nil; empty [] can also arrive if React state
+	// was not hydrated yet — never replace a non-empty stored list with an empty one.
+	existing := a.config.GetConfig()
+	if cfg.Subscriptions == nil || (len(cfg.Subscriptions) == 0 && len(existing.Subscriptions) > 0) {
+		cfg.Subscriptions = existing.Subscriptions
+	}
 	if err := a.config.SaveConfig(cfg); err != nil {
 		a.log.Error(fmt.Sprintf("Ошибка сохранения конфигурации: %v", err))
 		return err
@@ -254,10 +271,73 @@ func (a *App) GetStatus() proxy.StatusDTO {
 
 // SetMode switches the proxy mode (proxy/tunnel).
 func (a *App) SetMode(mode string) error {
-	if a.proxy == nil {
-		return fmt.Errorf("proxy manager not initialized")
+	result, err := a.ApplyMode(mode)
+	if err != nil {
+		return err
 	}
-	return a.proxy.SetMode(proxy.ProxyMode(mode))
+	if !result.Success {
+		return errors.New(result.Message)
+	}
+	return nil
+}
+
+// ApplyMode saves mode and reapplies connection if needed.
+func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
+	if mode != string(proxy.ProxyModeProxy) && mode != string(proxy.ProxyModeTunnel) {
+		return proxy.ConnectResultDTO{
+			Success: false,
+			Message: fmt.Sprintf("неподдерживаемый режим: %s", mode),
+		}, nil
+	}
+	if a.config == nil {
+		return proxy.ConnectResultDTO{Success: false, Message: "config manager not initialized"}, nil
+	}
+	if a.proxy == nil {
+		return proxy.ConnectResultDTO{Success: false, Message: "proxy manager not initialized"}, nil
+	}
+
+	cfg := a.config.GetConfig()
+	previousMode := cfg.Settings.Mode
+	cfg.Settings.Mode = mode
+	if err := a.config.SaveConfig(cfg); err != nil {
+		a.log.Error(fmt.Sprintf("Ошибка сохранения режима: %v", err))
+		return proxy.ConnectResultDTO{Success: false, Message: fmt.Sprintf("Ошибка сохранения режима: %v", err)}, nil
+	}
+
+	status := a.proxy.GetStatus()
+	if status.CurrentProxy != nil {
+		result := a.proxy.Connect(
+			a.ctx,
+			*status.CurrentProxy,
+			proxy.ProxyMode(mode),
+			proxy.RoutingMode(cfg.RoutingRules.Mode),
+			cfg.RoutingRules.Whitelist,
+			cfg.RoutingRules.AppWhitelist,
+			cfg.Settings.KillSwitch,
+			cfg.Settings.AdBlock,
+		)
+		if result.Success {
+			serverName := fmt.Sprintf("%s:%d", status.CurrentProxy.IP, status.CurrentProxy.Port)
+			if a.tray != nil {
+				a.tray.SetConnected(serverName)
+			}
+			wailsRuntime.EventsEmit(a.ctx, "proxy:connected", *status.CurrentProxy)
+		} else if !result.FallbackUsed {
+			// Reconnect fully failed (no fallback) — rollback mode in config.
+			cfg.Settings.Mode = previousMode
+			_ = a.config.SaveConfig(cfg)
+			if a.tray != nil {
+				a.tray.SetDisconnected()
+			}
+			wailsRuntime.EventsEmit(a.ctx, "proxy:disconnected", nil)
+		}
+		return result, nil
+	}
+
+	if err := a.proxy.SetMode(proxy.ProxyMode(mode)); err != nil {
+		return proxy.ConnectResultDTO{Success: false, Message: fmt.Sprintf("Ошибка применения режима: %v", err)}, nil
+	}
+	return proxy.ConnectResultDTO{Success: true, Message: "Режим сохранен"}, nil
 }
 
 // GetMode returns the current proxy mode.
@@ -353,12 +433,44 @@ func (a *App) IsAutostartEnabled() bool {
 	return system.IsAutostartEnabled()
 }
 
-// UpdateRules updates routing rules.
+// UpdateRules updates routing rules and reapplies them to sing-box / system proxy if connected.
 func (a *App) UpdateRules(rules config.RoutingRules) error {
 	if a.config == nil {
 		return fmt.Errorf("config manager not initialized")
 	}
-	return a.config.UpdateRoutingRules(rules)
+	if err := a.config.UpdateRoutingRules(rules); err != nil {
+		return err
+	}
+	if a.proxy == nil {
+		return nil
+	}
+	status := a.proxy.GetStatus()
+	if !status.IsConnected || status.CurrentProxy == nil {
+		return nil
+	}
+
+	cur := *status.CurrentProxy
+	result := a.proxy.ReconnectWithRoutingRules(
+		a.ctx,
+		proxy.RoutingMode(rules.Mode),
+		rules.Whitelist,
+		rules.AppWhitelist,
+	)
+	if !result.Success {
+		a.log.Error(fmt.Sprintf("Ошибка применения правил маршрутизации: %s", result.Message))
+		if a.tray != nil {
+			a.tray.SetDisconnected()
+		}
+		wailsRuntime.EventsEmit(a.ctx, "proxy:disconnected", nil)
+		return fmt.Errorf("%s", result.Message)
+	}
+
+	a.log.Info("[PROXY] Правила маршрутизации применены")
+	if a.tray != nil {
+		a.tray.SetConnected(fmt.Sprintf("%s:%d", cur.IP, cur.Port))
+	}
+	wailsRuntime.EventsEmit(a.ctx, "proxy:connected", cur)
+	return nil
 }
 
 // ExportConfig exports the current config as a shareable string.
@@ -396,9 +508,9 @@ func (a *App) ImportConfig(data string) error {
 	return nil
 }
 
-// GetPlatform returns the current platform identifier.
+// GetPlatform returns the current platform identifier (Go GOOS: windows, darwin, linux, …).
 func (a *App) GetPlatform() string {
-	return "windows"
+	return runtime.GOOS
 }
 
 // IsAdmin checks if the app is running with admin privileges.
@@ -464,7 +576,340 @@ func (a *App) DetectCountry(ip string) (string, error) {
 	return "Unknown", nil
 }
 
+// parseSubscriptionUserInfoHeader parses the Subscription-Userinfo response header
+// (Clash-style: upload=0; download=0; total=0; expire=unix).
+func parseSubscriptionUserInfoHeader(v string) (upload, download, total, expire int64) {
+	if v == "" {
+		return 0, 0, 0, 0
+	}
+	for _, part := range strings.Split(v, ";") {
+		part = strings.TrimSpace(part)
+		kv := strings.SplitN(part, "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(strings.ToLower(kv[0]))
+		val := strings.TrimSpace(kv[1])
+		n, err := strconv.ParseInt(val, 10, 64)
+		if err != nil {
+			continue
+		}
+		switch key {
+		case "upload":
+			upload = n
+		case "download":
+			download = n
+		case "total":
+			total = n
+		case "expire":
+			expire = n
+		}
+	}
+	return upload, download, total, expire
+}
+
+// subscriptionIconCandidates returns possible icon URLs (headers first, then site favicon, DuckDuckGo).
+func subscriptionIconCandidates(subURL string, h http.Header) []string {
+	parsed, err := url.Parse(subURL)
+	if err != nil {
+		parsed = nil
+	}
+	var out []string
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return
+		}
+		for _, x := range out {
+			if x == s {
+				return
+			}
+		}
+		out = append(out, s)
+	}
+	for _, key := range []string{
+		"Profile-Icon-Url",
+		"Icon-Url",
+		"Subscription-Icon",
+		"Icon",
+		"Profile-Icon",
+	} {
+		v := strings.TrimSpace(h.Get(key))
+		if v == "" {
+			continue
+		}
+		low := strings.ToLower(v)
+		if strings.HasPrefix(low, "http://") || strings.HasPrefix(low, "https://") {
+			add(v)
+			continue
+		}
+		if strings.HasPrefix(v, "/") && parsed != nil && parsed.Scheme != "" && parsed.Host != "" {
+			add(parsed.Scheme + "://" + parsed.Host + v)
+		}
+	}
+	for key, vals := range h {
+		if len(vals) == 0 {
+			continue
+		}
+		lk := strings.ToLower(key)
+		if !strings.Contains(lk, "icon") {
+			continue
+		}
+		v := strings.TrimSpace(vals[0])
+		low := strings.ToLower(v)
+		if strings.HasPrefix(low, "http://") || strings.HasPrefix(low, "https://") {
+			add(v)
+		}
+	}
+	if parsed != nil && parsed.Hostname() != "" {
+		ho := parsed.Hostname()
+		add("https://" + ho + "/favicon.ico")
+		add("https://icons.duckduckgo.com/ip3/" + ho + ".ico")
+	}
+	return out
+}
+
+// inlineSmallImageFromURL downloads a small image and returns a data: URL (for WebView where remote images may be blocked).
+func inlineSmallImageFromURL(client *http.Client, imageURL string) string {
+	if imageURL == "" {
+		return ""
+	}
+	low := strings.ToLower(imageURL)
+	if !strings.HasPrefix(low, "http://") && !strings.HasPrefix(low, "https://") {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 ResultProxy/2.0")
+	req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+	resp, err := client.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return ""
+	}
+	defer resp.Body.Close()
+	const maxBytes = 49152
+	buf, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil || len(buf) > maxBytes {
+		return ""
+	}
+	ct := strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0])
+	ct = strings.ToLower(ct)
+	if ct == "" || ct == "application/octet-stream" || ct == "binary/octet-stream" {
+		ct = http.DetectContentType(buf)
+	}
+	if !strings.HasPrefix(ct, "image/") {
+		return ""
+	}
+	return "data:" + ct + ";base64," + base64.StdEncoding.EncodeToString(buf)
+}
+
+func resolveSubscriptionIcon(client *http.Client, subURL string, h http.Header) string {
+	cands := subscriptionIconCandidates(subURL, h)
+	for _, cand := range cands {
+		if data := inlineSmallImageFromURL(client, cand); data != "" {
+			return data
+		}
+	}
+	if len(cands) > 0 {
+		return cands[0]
+	}
+	return ""
+}
+
+func (a *App) fetchSubscriptionFromURL(subURL string) ([]config.ProxyEntry, int64, int64, int64, int64, string, error) {
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Get(subURL)
+	if err != nil {
+		return nil, 0, 0, 0, 0, "", fmt.Errorf("fetching subscription: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, 0, 0, 0, 0, "", fmt.Errorf("subscription returned HTTP %d", resp.StatusCode)
+	}
+
+	up, down, tot, exp := parseSubscriptionUserInfoHeader(resp.Header.Get("Subscription-Userinfo"))
+	iconURL := resolveSubscriptionIcon(client, subURL, resp.Header)
+
+	bodyBytes := make([]byte, 0, 1024*64)
+	buf := make([]byte, 4096)
+	for {
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			bodyBytes = append(bodyBytes, buf[:n]...)
+		}
+		if readErr != nil {
+			break
+		}
+	}
+
+	entries, err := proxy.ParseSubscriptionBody(string(bodyBytes))
+	if err != nil {
+		return nil, up, down, tot, exp, iconURL, err
+	}
+
+	providerName := extractProviderName(subURL)
+	baseID := time.Now().UnixMilli()
+	for i := range entries {
+		entries[i].SubscriptionURL = subURL
+		entries[i].Provider = providerName
+		entries[i].ID = fmt.Sprintf("%d", baseID+int64(i))
+	}
+
+	a.log.Success(fmt.Sprintf("Подписка загружена: %d серверов", len(entries)))
+	return entries, up, down, tot, exp, iconURL, nil
+}
+
+// FetchSubscription fetches and parses a subscription URL, returning proxy entries.
+func (a *App) FetchSubscription(subURL string) ([]config.ProxyEntry, error) {
+	entries, _, _, _, _, _, err := a.fetchSubscriptionFromURL(subURL)
+	return entries, err
+}
+
+// RefreshSubscription refreshes a subscription by its ID and returns updated entries.
+func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
+	if a.config == nil {
+		return nil, fmt.Errorf("config manager not initialized")
+	}
+
+	cfg := a.config.GetConfig()
+	var sub *config.Subscription
+	for i := range cfg.Subscriptions {
+		if cfg.Subscriptions[i].ID == subID {
+			sub = &cfg.Subscriptions[i]
+			break
+		}
+	}
+	if sub == nil {
+		return nil, fmt.Errorf("subscription %s not found", subID)
+	}
+
+	entries, up, down, tot, exp, iconURL, err := a.fetchSubscriptionFromURL(sub.URL)
+	if err != nil {
+		return nil, fmt.Errorf("refreshing subscription %s: %w", sub.Name, err)
+	}
+
+	for i := range entries {
+		entries[i].Provider = sub.Name
+		entries[i].SubscriptionURL = sub.URL
+	}
+
+	for i := range cfg.Subscriptions {
+		if cfg.Subscriptions[i].ID == subID {
+			cfg.Subscriptions[i].UpdatedAt = time.Now().Format(time.RFC3339)
+			cfg.Subscriptions[i].TrafficUpload = up
+			cfg.Subscriptions[i].TrafficDownload = down
+			cfg.Subscriptions[i].TrafficTotal = tot
+			cfg.Subscriptions[i].ExpireUnix = exp
+			if iconURL != "" {
+				cfg.Subscriptions[i].IconURL = iconURL
+			}
+			break
+		}
+	}
+	if err := a.config.SaveConfig(cfg); err != nil {
+		a.log.Error(fmt.Sprintf("Ошибка сохранения после обновления подписки: %v", err))
+	}
+
+	a.log.Success(fmt.Sprintf("Подписка '%s' обновлена: %d серверов", sub.Name, len(entries)))
+	return entries, nil
+}
+
+// AddSubscription saves a new subscription and fetches its servers.
+func (a *App) AddSubscription(name, subURL string) ([]config.ProxyEntry, error) {
+	if a.config == nil {
+		return nil, fmt.Errorf("config manager not initialized")
+	}
+
+	cfg := a.config.GetConfig()
+	for _, s := range cfg.Subscriptions {
+		if s.URL == subURL {
+			return nil, fmt.Errorf("подписка с этим URL уже добавлена")
+		}
+	}
+
+	entries, up, down, tot, exp, iconURL, err := a.fetchSubscriptionFromURL(subURL)
+	if err != nil {
+		return nil, err
+	}
+
+	sub := config.Subscription{
+		ID:              fmt.Sprintf("%d", time.Now().UnixMilli()),
+		Name:            name,
+		URL:             subURL,
+		UpdatedAt:       time.Now().Format(time.RFC3339),
+		TrafficUpload:   up,
+		TrafficDownload: down,
+		TrafficTotal:    tot,
+		ExpireUnix:      exp,
+		IconURL:         iconURL,
+	}
+
+	for i := range entries {
+		entries[i].Provider = name
+	}
+
+	cfg.Subscriptions = append(cfg.Subscriptions, sub)
+	if err := a.config.SaveConfig(cfg); err != nil {
+		return nil, fmt.Errorf("saving subscription: %w", err)
+	}
+
+	a.log.Success(fmt.Sprintf("Подписка '%s' добавлена: %d серверов", name, len(entries)))
+	return entries, nil
+}
+
+// DeleteSubscription removes a subscription by ID.
+func (a *App) DeleteSubscription(subID string) error {
+	if a.config == nil {
+		return fmt.Errorf("config manager not initialized")
+	}
+
+	cfg := a.config.GetConfig()
+	found := false
+	newSubs := make([]config.Subscription, 0, len(cfg.Subscriptions))
+	for _, s := range cfg.Subscriptions {
+		if s.ID == subID {
+			found = true
+			continue
+		}
+		newSubs = append(newSubs, s)
+	}
+	if !found {
+		return fmt.Errorf("subscription %s not found", subID)
+	}
+	cfg.Subscriptions = newSubs
+	return a.config.SaveConfig(cfg)
+}
+
 // --- Helpers ---
+
+// extractProviderName derives a human-readable provider name from a subscription URL.
+func extractProviderName(subURL string) string {
+	u, err := url.Parse(subURL)
+	if err != nil || u.Host == "" {
+		return "Subscription"
+	}
+	host := u.Hostname()
+	// Remove common prefixes
+	host = strings.TrimPrefix(host, "www.")
+	// Use the domain part before the first dot as provider name
+	parts := strings.Split(host, ".")
+	if len(parts) >= 2 {
+		name := parts[len(parts)-2]
+		// Capitalize first letter
+		if len(name) > 0 {
+			return strings.ToUpper(name[:1]) + name[1:]
+		}
+	}
+	return host
+}
 
 func (a *App) getUserDataPath() string {
 	appData := os.Getenv("APPDATA")

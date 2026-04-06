@@ -15,15 +15,34 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import React, { useState } from "react";
-import { Info, Check } from "lucide-react";
+import React, { useState, useMemo } from "react";
+import { Info, Check, Shield } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { VPN_TYPES } from "../../utils/proxyParser";
 
-const ProtocolSelectionModal = ({ isOpen, onClose, onConfirm, count }) => {
+const ProtocolSelectionModal = ({ isOpen, onClose, onConfirm, count, proxies = [] }) => {
   const { t } = useTranslation();
   const [selectedType, setSelectedType] = useState("HTTP");
 
+  const { plainProxies, vpnProxies, vpnSummary } = useMemo(() => {
+    const plain = proxies.filter((p) => !VPN_TYPES.includes(p.type));
+    const vpn = proxies.filter((p) => VPN_TYPES.includes(p.type));
+    const summary = {};
+    vpn.forEach((p) => {
+      summary[p.type] = (summary[p.type] || 0) + 1;
+    });
+    return { plainProxies: plain, vpnProxies: vpn, vpnSummary: summary };
+  }, [proxies]);
+
   if (!isOpen) return null;
+
+  const hasPlain = plainProxies.length > 0;
+  const hasVpn = vpnProxies.length > 0;
+  const onlyVpn = hasVpn && !hasPlain;
+
+  const handleConfirm = () => {
+    onConfirm(onlyVpn ? null : selectedType);
+  };
 
   return (
     <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 animate-in fade-in duration-300">
@@ -40,30 +59,68 @@ const ProtocolSelectionModal = ({ isOpen, onClose, onConfirm, count }) => {
             <h3 className="text-xl font-bold text-white">
               {t("add.protocolSelectionTitle")}
             </h3>
-            <p className="text-zinc-400 text-sm leading-relaxed">
-              {t("add.protocolSelectionDesc")}
-            </p>
+            {hasPlain && (
+              <p className="text-zinc-400 text-sm leading-relaxed">
+                {t("add.protocolSelectionDesc")}
+              </p>
+            )}
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-3">
-          {["HTTP", "HTTPS", "SOCKS5"].map((type) => (
-            <button
-              key={type}
-              onClick={() => setSelectedType(type)}
-              className={`flex items-center justify-between px-6 py-4 rounded-2xl border transition-all ${
-                selectedType === type
-                  ? "bg-[#007E3A]/10 border-[#007E3A] text-white shadow-lg shadow-[#007E3A]/5"
-                  : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700"
-              }`}
-            >
-              <span className="font-bold">{type}</span>
-              {selectedType === type && (
-                <Check className="w-5 h-5 text-[#007E3A]" />
-              )}
-            </button>
-          ))}
-        </div>
+        {hasVpn && (
+          <div className="bg-zinc-950 rounded-2xl p-4 border border-zinc-800 space-y-3">
+            <div className="flex items-center space-x-2 text-[#007E3A]">
+              <Shield className="w-5 h-5" />
+              <span className="text-sm font-bold">
+                {t("add.vpnDetected", { count: vpnProxies.length }) ||
+                  `Обнаружено ${vpnProxies.length} VPN-серверов`}
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(vpnSummary).map(([type, cnt]) => (
+                <span
+                  key={type}
+                  className="text-xs px-3 py-1 rounded-lg bg-[#007E3A]/10 text-[#00A819] font-bold"
+                >
+                  {type} ({cnt})
+                </span>
+              ))}
+            </div>
+            <p className="text-zinc-500 text-xs">
+              {t("add.vpnKeepTypes") ||
+                "VPN-протоколы определены автоматически из ссылок"}
+            </p>
+          </div>
+        )}
+
+        {hasPlain && (
+          <div className="space-y-3">
+            {hasVpn && (
+              <p className="text-sm text-zinc-400 font-medium">
+                {t("add.plainProxiesProtocol", { count: plainProxies.length }) ||
+                  `Выберите протокол для ${plainProxies.length} обычных прокси:`}
+              </p>
+            )}
+            <div className="grid grid-cols-1 gap-3">
+              {["HTTP", "HTTPS", "SOCKS5"].map((type) => (
+                <button
+                  key={type}
+                  onClick={() => setSelectedType(type)}
+                  className={`flex items-center justify-between px-6 py-4 rounded-2xl border transition-all ${
+                    selectedType === type
+                      ? "bg-[#007E3A]/10 border-[#007E3A] text-white shadow-lg shadow-[#007E3A]/5"
+                      : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700"
+                  }`}
+                >
+                  <span className="font-bold">{type}</span>
+                  {selectedType === type && (
+                    <Check className="w-5 h-5 text-[#007E3A]" />
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="pt-2 flex space-x-3">
           <button
@@ -73,10 +130,10 @@ const ProtocolSelectionModal = ({ isOpen, onClose, onConfirm, count }) => {
             {t("add.cancel")}
           </button>
           <button
-            onClick={() => onConfirm(selectedType)}
+            onClick={handleConfirm}
             className="flex-[2] bg-[#007E3A] hover:bg-[#005C2A] text-white font-bold py-4 rounded-2xl transition-all shadow-lg shadow-[#007E3A]/20"
           >
-            {t("add.confirmImport", { count })}
+            {t("add.confirmImport", { count: count || proxies.length })}
           </button>
         </div>
       </div>

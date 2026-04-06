@@ -58,10 +58,17 @@ export const useDaemonControl = (
                 );
 
                 if (!res.success) {
-                    throw new Error(res.message || "Unknown proxy connection error");
+                    const reason = res.reason ? ` Причина: ${res.reason}` : "";
+                    throw new Error((res.message || "Unknown proxy connection error") + reason);
                 }
 
                 addLog("Соединение установлено.", "success");
+                if (res.tunnelFailed) {
+                    addLog(`Туннелирование не запущено: ${res.reason || "неизвестная причина"}`, "warning");
+                    if (res.fallbackUsed) {
+                        addLog("Подключение работает в fallback-режиме без TUN.", "warning");
+                    }
+                }
                 
                 // Show GPO warning if the core hit a GPO block
                 // (Wails events: we actually might emit this from app.go or manager.go)
@@ -119,11 +126,18 @@ export const useDaemonControl = (
                 );
 
                 if (!res.success) {
-                    throw new Error(res.message || "Ошибка смены прокси: Узел отклонил подключение");
+                    const reason = res.reason ? ` Причина: ${res.reason}` : "";
+                    throw new Error((res.message || "Ошибка смены прокси: Узел отклонил подключение") + reason);
                 }
 
                 setIsConnected(true);
                 addLog(`Успешно переключено на ${proxy.name}`, "success");
+                if (res.tunnelFailed) {
+                    addLog(`Туннелирование не запущено: ${res.reason || "неизвестная причина"}`, "warning");
+                    if (res.fallbackUsed) {
+                        addLog("Подключение работает в fallback-режиме без TUN.", "warning");
+                    }
+                }
 
                 setTimeout(() => {
                     isSwitchingRef.current = false;

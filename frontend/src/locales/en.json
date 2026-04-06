@@ -8,7 +8,7 @@
     "rules": "Smart Rules",
     "logs": "Event Logs",
     "settings": "Settings",
-    "version": "Version {{version}} (newest)"
+    "version": "Version {{version}}"
   },
   "home": {
     "status": {
@@ -33,7 +33,9 @@
     "editData": "Edit Details",
     "chooseOther": "Select Another",
     "download": "Download",
-    "upload": "Upload"
+    "upload": "Upload",
+    "modeProxy": "PROXY",
+    "modeTunnel": "TUNNEL"
   },
   "add": {
     "titleAdd": "Add Configuration",
@@ -66,7 +68,14 @@
     "protocolSelectionTitle": "Select Protocol",
     "protocolSelectionDesc": "All imported proxies will be added with the selected protocol. If individual proxies use different protocols, you'll need to change them manually after import.",
     "confirmImport": "Add {{count}} proxies",
-    "gotIt": "Got it"
+    "gotIt": "Got it",
+    "subscriptionUrl": "Subscription URL or URI",
+    "subscriptionPlaceholder": "https://example.com/sub or vless://...",
+    "loadSubscription": "Load",
+    "subscriptionError": "Subscription fetch error",
+    "vpnDetected": "Detected {{count}} VPN servers",
+    "vpnKeepTypes": "VPN protocols are auto-detected from links",
+    "plainProxiesProtocol": "Select protocol for {{count}} plain proxies:"
   },
   "settings": {
     "title": "Application Settings",
@@ -145,9 +154,22 @@
     "sortBy": "Sort by",
     "sort": {
       "default": "Default",
+      "newest": "Newest",
+      "oldest": "Oldest",
       "country": "Country",
-      "type": "Type"
+      "type": "Type",
+      "provider": "Provider"
     },
+    "myProxies": "My Proxies",
+    "refreshSub": "Refresh",
+    "refreshSubAria": "Refresh subscription",
+    "deleteSubscriptionAria": "Delete subscription",
+    "deleteManualGroupAria": "Delete all manual servers",
+    "confirmDeleteSubscription": "Delete subscription \"{{name}}\" and all its servers from the list?",
+    "confirmDeleteMyProxies": "Delete all manually added servers ({{count}})?",
+    "subUnlimited": "∞",
+    "subActiveUntil": "Active until: {{date}}",
+    "subRefreshHint": "If the subscription does not work, use the refresh button.",
     "noResults": "No proxies found matching your criteria.",
     "status": {
       "connected": "Connected",

@@ -10,6 +10,7 @@
 import { useState, useEffect, useCallback } from "react";
 import wailsAPI from "../utils/wailsAPI";
 import { detectCountry } from "../utils/network";
+import { mergeSubscriptionRefreshCountries } from "../utils/proxyParser";
 
 export const useAppConfig = (addLog) => {
     const [isConfigLoaded, setIsConfigLoaded] = useState(false);
@@ -29,6 +30,7 @@ export const useAppConfig = (addLog) => {
     });
     const [showProtocolModal, setShowProtocolModal] = useState(false);
     const [platform, setPlatform] = useState("windows");
+    const [subscriptions, setSubscriptions] = useState([]);
 
     useEffect(() => {
         const loadInitialConfig = async () => {
@@ -46,6 +48,9 @@ export const useAppConfig = (addLog) => {
                     }
                     if (config.settings) {
                         setSettings(config.settings);
+                    }
+                    if (config.subscriptions && Array.isArray(config.subscriptions)) {
+                        setSubscriptions(config.subscriptions);
                     }
                     setIsConfigLoaded(true);
                     addLog("Конфигурация успешно загружена.", "success");
@@ -72,15 +77,41 @@ export const useAppConfig = (addLog) => {
         wailsAPI.syncProxies(sanitizedProxies).catch(err => console.error("SyncProxies err:", err));
     }, [proxies, isConfigLoaded]);
 
-    const updateSetting = useCallback((key, value) => {
+    const updateSetting = useCallback(async (key, value) => {
+        const previousValue = settings[key];
+
+        if (key === "mode") {
+            setSettings((prev) => ({ ...prev, [key]: value }));
+            try {
+                const result = await wailsAPI.applyMode(value);
+                if (!result?.success) {
+                    throw new Error(result?.message || "Не удалось применить режим");
+                }
+                if (result.tunnelFailed) {
+                    const reason = result.reason || "неизвестная причина";
+                    addLog(`Туннелирование не запущено: ${reason}`, "warning");
+                    if (result.fallbackUsed) {
+                        addLog("Применен fallback: подключение продолжено без TUN.", "warning");
+                    }
+                } else {
+                    addLog(`Режим ${value} применен`, "success");
+                }
+            } catch (err) {
+                setSettings((prev) => ({ ...prev, [key]: previousValue }));
+                addLog(`Ошибка применения режима: ${err?.message || err}`, "error");
+            }
+            return;
+        }
+
         setSettings((prev) => {
             const newSettings = { ...prev, [key]: value };
             
-            // Save the entire config object immediately
+            // Save the entire config object immediately (must include subscriptions or backend would drop them).
             wailsAPI.saveConfig({
                 proxies: proxies.map(p => ({ ...p, port: parseInt(p.port, 10) || 0, id: String(p.id) })),
                 routingRules,
-                settings: newSettings
+                settings: newSettings,
+                subscriptions,
             }).catch(console.error);
 
             return newSettings;
@@ -101,7 +132,39 @@ export const useAppConfig = (addLog) => {
         } else if (key === "adblock") {
             wailsAPI.toggleAdBlock(value).catch(err => console.error("Ad block error:", err));
         }
-    }, [proxies, routingRules]);
+    }, [proxies, routingRules, settings, subscriptions, addLog]);
+
+    // Auto-refresh subscriptions every 6 hours
+    useEffect(() => {
+        if (!isConfigLoaded || subscriptions.length === 0) return;
+
+        const refreshAll = async () => {
+            for (const sub of subscriptions) {
+                try {
+                    const updated = await wailsAPI.refreshSubscription(sub.id);
+                    if (updated?.length) {
+                        setProxies((prev) => {
+                            const filtered = prev.filter((p) => p.subscriptionUrl !== sub.url);
+                            const merged = mergeSubscriptionRefreshCountries(prev, updated, sub.url);
+                            return [...filtered, ...merged];
+                        });
+                        addLog(`Подписка "${sub.name}" обновлена: ${updated.length} серверов`, "success");
+                    }
+                } catch (err) {
+                    console.error("Subscription refresh error:", err);
+                }
+            }
+            try {
+                const cfg = await wailsAPI.getConfig();
+                if (cfg?.subscriptions) setSubscriptions(cfg.subscriptions);
+            } catch (e) {
+                console.error("getConfig after subscription refresh:", e);
+            }
+        };
+
+        const interval = setInterval(refreshAll, 6 * 60 * 60 * 1000);
+        return () => clearInterval(interval);
+    }, [isConfigLoaded, subscriptions, addLog]);
 
     const handleSaveProxy = useCallback(
         async (
@@ -161,21 +224,35 @@ export const useAppConfig = (addLog) => {
 
     const handleBulkSaveProxies = useCallback(
         async (proxiesData, setActiveTab, defaultProtocol) => {
+            const VPN_TYPES = ["SS", "VMESS", "VLESS", "TROJAN"];
             const now = Date.now();
             const finalProxies = await Promise.all(
                 proxiesData.map(async (p, index) => {
                     const countryCode = await detectCountry(p.ip);
+                    const isVpn = VPN_TYPES.includes(p.type);
                     return {
                         ...p,
-                        id: String(now + index),
-                        country: countryCode,
-                        type: defaultProtocol || p.type || "HTTP",
+                        id: String(p.id || now + index),
+                        country: p.country && p.country !== "unknown" && p.country !== "\u{1F310}" ? p.country : countryCode,
+                        type: isVpn ? p.type : (defaultProtocol || p.type || "HTTP"),
                         port: parseInt(p.port, 10) || 0,
                     };
                 })
             );
 
-            setProxies((prev) => [...prev, ...finalProxies]);
+            setProxies((prev) => {
+                const VPN_SET = new Set(["SS", "VMESS", "VLESS", "TROJAN"]);
+                const newKeys = new Set(
+                    finalProxies
+                        .filter((p) => VPN_SET.has(p.type))
+                        .map((p) => `${p.ip}:${p.port}:${p.type}`)
+                );
+                const filtered = prev.filter((p) => {
+                    if (!VPN_SET.has(p.type)) return true;
+                    return !newKeys.has(`${p.ip}:${p.port}:${p.type}`);
+                });
+                return [...filtered, ...finalProxies];
+            });
             addLog(`Добавлено ${finalProxies.length} новых прокси.`, "success");
             setActiveTab("list");
         },
@@ -196,5 +273,7 @@ export const useAppConfig = (addLog) => {
         showProtocolModal,
         setShowProtocolModal,
         platform,
+        subscriptions,
+        setSubscriptions,
     };
 };

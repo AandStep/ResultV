@@ -40,9 +40,9 @@ export const useLogs = () => {
         // Fetch initial bulk logs
         const fetchInitialLogs = async () => {
             try {
-                const recentLogs = await wailsAPI.getLogs(100, 1);
-                if (recentLogs && recentLogs.entries) {
-                    setBackendLogs(recentLogs.entries);
+                const recentLogs = await wailsAPI.getLogs(1, 100);
+                if (recentLogs && recentLogs.items) {
+                    setBackendLogs(recentLogs.items);
                 }
             } catch (err) {
                 console.error("Failed to fetch initial logs:", err);

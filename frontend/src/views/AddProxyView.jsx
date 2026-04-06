@@ -16,13 +16,22 @@
  */
 
 import React, { useState, useEffect } from "react";
-import { Lock } from "lucide-react";
+import { Lock, Link2 } from "lucide-react";
 import { useConfigContext } from "../context/ConfigContext";
 import { useConnectionContext } from "../context/ConnectionContext";
 import { useTranslation } from "react-i18next";
-import { parseProxies } from "../utils/proxyParser";
-import { FileUp, ClipboardList, Info } from "lucide-react";
+import {
+  parseProxies,
+  isSubscriptionURL,
+  isVpnType,
+  subscriptionLabelFromURL,
+} from "../utils/proxyParser";
+import { FileUp, ClipboardList } from "lucide-react";
 import ProtocolSelectionModal from "../components/ui/ProtocolSelectionModal";
+import wailsAPI from "../utils/wailsAPI";
+
+const PLAIN_TYPES = ["HTTP", "HTTPS", "SOCKS5"];
+const VPN_TYPES_LIST = ["VLESS", "VMESS", "TROJAN", "SS"];
 
 export const AddProxyView = () => {
   const { t } = useTranslation();
@@ -32,6 +41,7 @@ export const AddProxyView = () => {
     editingProxy,
     setEditingProxy,
     setActiveTab,
+    setSubscriptions,
   } = useConfigContext();
   const {
     activeProxy,
@@ -58,11 +68,13 @@ export const AddProxyView = () => {
     );
   };
 
-  const [importMode, setImportMode] = useState("single"); // "single" or "bulk"
+  const [importMode, setImportMode] = useState("single");
   const [bulkText, setBulkText] = useState("");
   const [isImporting, setIsImporting] = useState(false);
   const [pendingProxies, setPendingProxies] = useState([]);
   const [showSelectionModal, setShowSelectionModal] = useState(false);
+  const [vpnUri, setVpnUri] = useState("");
+  const [vpnLoading, setVpnLoading] = useState(false);
 
   const handleClipboardImport = async () => {
     try {
@@ -72,8 +84,6 @@ export const AddProxyView = () => {
         return;
       }
       setBulkText(text);
-      // Logic from handleBulkImport can be called here or we can just set text and let user confirm
-      // But user said "Add from clipboard", implying immediate action.
       await processImport(text);
     } catch (err) {
       console.error("Failed to read clipboard:", err);
@@ -86,6 +96,25 @@ export const AddProxyView = () => {
   };
 
   const processImport = async (text) => {
+    if (isSubscriptionURL(text)) {
+      setIsImporting(true);
+      try {
+        const entries = await wailsAPI.fetchSubscription(text.trim());
+        if (!entries || entries.length === 0) {
+          alert(t("add.noProxiesFound") || "No proxies found.");
+          return;
+        }
+        setPendingProxies(entries);
+        setShowSelectionModal(true);
+      } catch (err) {
+        console.error("Subscription fetch error:", err);
+        alert(t("add.subscriptionError") || `Error: ${err}`);
+      } finally {
+        setIsImporting(false);
+      }
+      return;
+    }
+
     const proxiesToImport = parseProxies(text);
     if (proxiesToImport.length === 0) {
       alert(t("add.noProxiesFound") || "No proxies found.");
@@ -106,7 +135,40 @@ export const AddProxyView = () => {
           p.name || `${t("add.newServer")} ${new Date().toLocaleTimeString()}`,
       }));
 
-      await handleBulkSaveProxies(namedProxies, setActiveTab, protocol);
+      const subURL = namedProxies[0]?.subscriptionUrl;
+      const allSameSubscription =
+        subURL &&
+        isSubscriptionURL(subURL) &&
+        namedProxies.every((p) => p.subscriptionUrl === subURL);
+
+      if (allSameSubscription) {
+        const label = subscriptionLabelFromURL(subURL);
+        let entries;
+        try {
+          entries = await wailsAPI.addSubscription(label, subURL);
+        } catch (err) {
+          const msg = String(err?.message || err || "");
+          if (msg.includes("уже добавлена")) {
+            const cfg = await wailsAPI.getConfig();
+            const existing = cfg.subscriptions?.find((s) => s.url === subURL);
+            if (!existing) throw err;
+            entries = await wailsAPI.refreshSubscription(existing.id);
+          } else {
+            throw err;
+          }
+        }
+        const withNames = entries.map((p, i) => ({
+          ...p,
+          name:
+            p.name ||
+            `${t("add.newServer")} ${new Date().toLocaleTimeString()}-${i}`,
+        }));
+        await handleBulkSaveProxies(withNames, setActiveTab, protocol);
+        const cfg = await wailsAPI.getConfig();
+        if (cfg.subscriptions) setSubscriptions(cfg.subscriptions);
+      } else {
+        await handleBulkSaveProxies(namedProxies, setActiveTab, protocol);
+      }
 
       setBulkText("");
       setImportMode("single");
@@ -129,7 +191,48 @@ export const AddProxyView = () => {
       await processImport(event.target.result);
     };
     reader.readAsText(file);
-    e.target.value = ""; // Reset for same file re-upload
+    e.target.value = "";
+  };
+
+  const handleVpnUriSubmit = async () => {
+    const text = vpnUri.trim();
+    if (!text) return;
+
+    if (isSubscriptionURL(text)) {
+      setVpnLoading(true);
+      try {
+        const entries = await wailsAPI.fetchSubscription(text);
+        if (!entries || entries.length === 0) {
+          alert(t("add.noProxiesFound") || "No proxies found.");
+          return;
+        }
+        setPendingProxies(entries);
+        setShowSelectionModal(true);
+      } catch (err) {
+        console.error("Subscription fetch error:", err);
+        alert(t("add.subscriptionError") || `Error: ${err}`);
+      } finally {
+        setVpnLoading(false);
+      }
+      return;
+    }
+
+    const parsed = parseProxies(text);
+    if (parsed.length === 0) {
+      alert(t("add.noProxiesFound") || "No proxies found.");
+      return;
+    }
+    if (parsed.length === 1 && isVpnType(parsed[0].type)) {
+      const p = parsed[0];
+      saveProxyWrapper({
+        ...p,
+        name: p.name || t("add.newServer"),
+      });
+    } else {
+      setPendingProxies(parsed);
+      setShowSelectionModal(true);
+    }
+    setVpnUri("");
   };
 
   const [formData, setFormData] = useState({
@@ -139,8 +242,10 @@ export const AddProxyView = () => {
     type: "HTTP",
     username: "",
     password: "",
-    country: "🌐",
+    country: "\u{1F310}",
   });
+
+  const isVpnMode = VPN_TYPES_LIST.includes(formData.type);
 
   useEffect(() => {
     if (editingProxy) setFormData(editingProxy);
@@ -152,7 +257,7 @@ export const AddProxyView = () => {
         type: "HTTP",
         username: "",
         password: "",
-        country: "🌐",
+        country: "\u{1F310}",
       });
   }, [editingProxy]);
 
@@ -207,58 +312,64 @@ export const AddProxyView = () => {
           onSubmit={handleSubmit}
           className="bg-zinc-900 p-6 rounded-3xl border border-zinc-800 space-y-5"
         >
-          <div>
-            <label className="block text-sm font-medium text-zinc-400 mb-2">
-              {t("add.profileName")}
-            </label>
-            <input
-              type="text"
-              placeholder={t("add.profilePlaceholder")}
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus:border-[#007E3A] transition-colors"
-              value={formData.name || ""}
-              onChange={(e) =>
-                setFormData({ ...formData, name: e.target.value })
-              }
-            />
-          </div>
-          <div className="grid grid-cols-3 gap-6">
-            <div className="col-span-2">
+          {!isVpnMode && (
+            <div>
               <label className="block text-sm font-medium text-zinc-400 mb-2">
-                {t("add.ip")}
+                {t("add.profileName")}
               </label>
               <input
                 type="text"
-                required
-                placeholder="192.168.1.1"
+                placeholder={t("add.profilePlaceholder")}
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus:border-[#007E3A] transition-colors"
-                value={formData.ip || ""}
+                value={formData.name || ""}
                 onChange={(e) =>
-                  setFormData({ ...formData, ip: e.target.value })
+                  setFormData({ ...formData, name: e.target.value })
                 }
               />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-zinc-400 mb-2">
-                {t("add.port")}
-              </label>
-              <input
-                type="number"
-                required
-                placeholder="8000"
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus:border-[#007E3A] transition-colors"
-                value={formData.port || ""}
-                onChange={(e) =>
-                  setFormData({ ...formData, port: e.target.value })
-                }
-              />
+          )}
+
+          {!isVpnMode && (
+            <div className="grid grid-cols-3 gap-6">
+              <div className="col-span-2">
+                <label className="block text-sm font-medium text-zinc-400 mb-2">
+                  {t("add.ip")}
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="192.168.1.1"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus:border-[#007E3A] transition-colors"
+                  value={formData.ip || ""}
+                  onChange={(e) =>
+                    setFormData({ ...formData, ip: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-zinc-400 mb-2">
+                  {t("add.port")}
+                </label>
+                <input
+                  type="number"
+                  required
+                  placeholder="8000"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus:border-[#007E3A] transition-colors"
+                  value={formData.port || ""}
+                  onChange={(e) =>
+                    setFormData({ ...formData, port: e.target.value })
+                  }
+                />
+              </div>
             </div>
-          </div>
+          )}
+
           <div>
             <label className="block text-sm font-medium text-zinc-400 mb-3">
               {t("add.protocol")}
             </label>
-            <div className="grid grid-cols-3 gap-3">
-              {["HTTP", "HTTPS", "SOCKS5"].map((type) => (
+            <div className="grid grid-cols-3 gap-3 mb-3">
+              {PLAIN_TYPES.map((type) => (
                 <button
                   type="button"
                   key={type}
@@ -269,49 +380,97 @@ export const AddProxyView = () => {
                 </button>
               ))}
             </div>
-          </div>
-          <div className="pt-5 border-t border-zinc-800">
-            <p className="text-sm font-medium text-zinc-400 mb-3 flex items-center">
-              <Lock className="w-4 h-4 mr-2" /> {t("add.auth")}
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              <input
-                type="text"
-                placeholder={t("add.loginPlaceholder")}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus:border-[#007E3A] transition-colors"
-                value={formData.username || ""}
-                onChange={(e) =>
-                  setFormData({ ...formData, username: e.target.value })
-                }
-              />
-              <input
-                type="password"
-                placeholder={t("add.passPlaceholder")}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus:border-[#007E3A] transition-colors"
-                value={formData.password || ""}
-                onChange={(e) =>
-                  setFormData({ ...formData, password: e.target.value })
-                }
-              />
+            <div className="grid grid-cols-4 gap-3">
+              {VPN_TYPES_LIST.map((type) => (
+                <button
+                  type="button"
+                  key={type}
+                  onClick={() => setFormData({ ...formData, type })}
+                  className={`py-3 rounded-xl text-xs font-bold border transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${formData.type === type ? "bg-[#007E3A] text-white border-[#007E3A]" : "bg-zinc-950 text-zinc-400 border-zinc-800 hover:border-[#00A819]"}`}
+                >
+                  {type}
+                </button>
+              ))}
             </div>
           </div>
-          <div className="pt-5 flex space-x-4">
-            {editingProxy && (
+
+          {isVpnMode ? (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-zinc-400 mb-2">
+                  {t("add.subscriptionUrl") || "Ссылка на подписку или URI"}
+                </label>
+                <textarea
+                  className="w-full h-28 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white font-mono text-sm outline-none focus:border-[#007E3A] transition-colors resize-none"
+                  placeholder={t("add.subscriptionPlaceholder") || "https://example.com/sub или vless://..."}
+                  value={vpnUri}
+                  onChange={(e) => setVpnUri(e.target.value)}
+                />
+              </div>
               <button
                 type="button"
-                onClick={onCancel}
-                className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-3 rounded-xl transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none"
+                onClick={handleVpnUriSubmit}
+                disabled={vpnLoading || !vpnUri.trim()}
+                className="w-full bg-[#007E3A] hover:bg-[#005C2A] disabled:bg-zinc-800 disabled:text-zinc-600 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-[#007E3A]/20 flex items-center justify-center space-x-2"
               >
-                {t("add.cancel")}
+                {vpnLoading ? (
+                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <Link2 className="w-5 h-5" />
+                )}
+                <span>
+                  {vpnLoading
+                    ? t("add.importing") || "Загрузка..."
+                    : t("add.loadSubscription") || "Загрузить"}
+                </span>
               </button>
-            )}
-            <button
-              type="submit"
-              className="flex-[2] bg-[#007E3A] hover:bg-[#005C2A] text-white font-bold py-3 rounded-xl transition-colors shadow-lg shadow-[#007E3A]/20 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none"
-            >
-              {editingProxy ? t("add.saveChanges") : t("add.saveProxy")}
-            </button>
-          </div>
+            </div>
+          ) : (
+            <>
+              <div className="pt-5 border-t border-zinc-800">
+                <p className="text-sm font-medium text-zinc-400 mb-3 flex items-center">
+                  <Lock className="w-4 h-4 mr-2" /> {t("add.auth")}
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <input
+                    type="text"
+                    placeholder={t("add.loginPlaceholder")}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus:border-[#007E3A] transition-colors"
+                    value={formData.username || ""}
+                    onChange={(e) =>
+                      setFormData({ ...formData, username: e.target.value })
+                    }
+                  />
+                  <input
+                    type="password"
+                    placeholder={t("add.passPlaceholder")}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus:border-[#007E3A] transition-colors"
+                    value={formData.password || ""}
+                    onChange={(e) =>
+                      setFormData({ ...formData, password: e.target.value })
+                    }
+                  />
+                </div>
+              </div>
+              <div className="pt-5 flex space-x-4">
+                {editingProxy && (
+                  <button
+                    type="button"
+                    onClick={onCancel}
+                    className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-3 rounded-xl transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none"
+                  >
+                    {t("add.cancel")}
+                  </button>
+                )}
+                <button
+                  type="submit"
+                  className="flex-[2] bg-[#007E3A] hover:bg-[#005C2A] text-white font-bold py-3 rounded-xl transition-colors shadow-lg shadow-[#007E3A]/20 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none"
+                >
+                  {editingProxy ? t("add.saveChanges") : t("add.saveProxy")}
+                </button>
+              </div>
+            </>
+          )}
         </form>
       ) : (
         <div className="bg-zinc-900 p-6 rounded-3xl border border-zinc-800 space-y-5">
@@ -367,6 +526,7 @@ export const AddProxyView = () => {
 
       <ProtocolSelectionModal
         isOpen={showSelectionModal}
+        proxies={pendingProxies}
         count={pendingProxies.length}
         onClose={() => {
           setShowSelectionModal(false);

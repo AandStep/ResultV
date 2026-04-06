@@ -45,10 +45,12 @@ export const RulesView = () => {
     }
   };
 
+  const isWin =
+    platform === "win32" || platform === "windows" || platform === "win64";
+
   const addApp = () => {
     if (newApp) {
       let appName = newApp.toLowerCase().trim();
-      const isWin = platform === "win32";
       if (isWin && !appName.endsWith(".exe")) appName += ".exe";
       if (!isWin && !appName.includes(".")) appName += ".app";
 
@@ -71,7 +73,6 @@ export const RulesView = () => {
     const file = e.target.files[0];
     if (file) {
       let appName = file.name.toLowerCase();
-      const isWin = platform === "win32";
       if (isWin && !appName.endsWith(".exe")) appName += ".exe";
       if (!isWin && !appName.includes(".")) appName += ".app";
       const currentList = rules.appWhitelist || [];
@@ -83,7 +84,6 @@ export const RulesView = () => {
   };
 
   const popularTlds = ["*.ru", "*.рф", "*.su", "*.by", "*.kz"];
-  const isWin = platform === "win32";
   const appExt = isWin ? ".exe" : ".app";
   const appPlaceholder = isWin ? "steam.exe" : "safari.app";
 

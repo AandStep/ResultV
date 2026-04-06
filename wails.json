@@ -2,9 +2,10 @@
   "$schema": "https://wails.io/schemas/config.v2.json",
   "name": "ResultProxy",
   "outputfilename": "ResultProxy",
+  "build:tags": "with_gvisor,with_utls,with_clash_api",
   "info": {
     "productString": "ResultProxy",
-    "productVersion": "2.2.2",
+    "productVersion": "3.0.0",
     "companyName": "ResultProxy",
     "productDescription": "ResultProxy Application"
   },

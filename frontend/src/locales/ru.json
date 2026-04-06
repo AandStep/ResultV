@@ -8,7 +8,7 @@
     "rules": "Умные правила",
     "logs": "Журнал логов",
     "settings": "Настройки",
-    "version": "Версия {{version}} (newest)"
+    "version": "Версия {{version}}"
   },
   "home": {
     "status": {
@@ -33,7 +33,9 @@
     "editData": "Изменить данные",
     "chooseOther": "Выбрать другой",
     "download": "Загружено",
-    "upload": "Отправлено"
+    "upload": "Отправлено",
+    "modeProxy": "ПРОКСИ",
+    "modeTunnel": "ТУННЕЛЬ"
   },
   "add": {
     "titleAdd": "Добавить конфигурацию",
@@ -66,7 +68,14 @@
     "protocolSelectionTitle": "Выберите протокол",
     "protocolSelectionDesc": "Все импортируемые прокси будут добавлены с выбранным протоколом. Если у прокси разные протоколы, их придется изменить вручную после добавления.",
     "confirmImport": "Добавить {{count}} прокси",
-    "gotIt": "Понятно"
+    "gotIt": "Понятно",
+    "subscriptionUrl": "Ссылка на подписку или URI",
+    "subscriptionPlaceholder": "https://example.com/sub или vless://...",
+    "loadSubscription": "Загрузить",
+    "subscriptionError": "Ошибка загрузки подписки",
+    "vpnDetected": "Обнаружено {{count}} VPN-серверов",
+    "vpnKeepTypes": "VPN-протоколы определены автоматически из ссылок",
+    "plainProxiesProtocol": "Выберите протокол для {{count}} обычных прокси:"
   },
   "settings": {
     "title": "Настройки приложения",
@@ -148,8 +157,19 @@
       "newest": "Новые",
       "oldest": "Старые",
       "country": "По стране",
-      "type": "По типу"
+      "type": "По типу",
+      "provider": "По провайдеру"
     },
+    "myProxies": "Мои прокси",
+    "refreshSub": "Обновить",
+    "refreshSubAria": "Обновить подписку",
+    "deleteSubscriptionAria": "Удалить подписку",
+    "deleteManualGroupAria": "Удалить все серверы вручную",
+    "confirmDeleteSubscription": "Удалить подписку «{{name}}» и все её серверы из списка?",
+    "confirmDeleteMyProxies": "Удалить все вручную добавленные серверы ({{count}})?",
+    "subUnlimited": "∞",
+    "subActiveUntil": "Активна до: {{date}}",
+    "subRefreshHint": "Если подписка не работает — нажмите кнопку обновления.",
     "noResults": "По вашему запросу прокси не найдены.",
     "status": {
       "connected": "Подключено",

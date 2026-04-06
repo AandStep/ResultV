@@ -9,24 +9,42 @@
 
 import { useState, useEffect } from "react";
 import { compareVersions } from "../utils/versionCheck";
-// In a real Wails app, we'd add GetVersion() to App
-// For now, hardcode or fetch from a config
+import { GetVersion } from "../../wailsjs/go/main/App";
 
 const UPDATE_URL =
     "https://raw.githubusercontent.com/AandStep/ResultProxy/main/update.json";
 
+/** Текущая версия: из Go (встроенный wails.json) в Wails; иначе __APP_VERSION__ из Vite. */
+async function resolveLocalVersion() {
+    try {
+        if (typeof window !== "undefined" && window.go?.main?.App?.GetVersion) {
+            const v = await GetVersion();
+            if (v && String(v).trim()) {
+                return String(v).trim();
+            }
+        }
+    } catch {
+        // npm run dev в браузере без Wails
+    }
+    if (typeof __APP_VERSION__ !== "undefined" && __APP_VERSION__) {
+        return String(__APP_VERSION__).trim();
+    }
+    return "0.0.0";
+}
+
 export const useCheckUpdate = () => {
     const [updateAvailable, setUpdateAvailable] = useState(false);
     const [latestVersionData, setLatestVersionData] = useState(null);
-    const [currentVersion, setCurrentVersion] = useState("2.2.2");
+    const [currentVersion, setCurrentVersion] = useState(() =>
+        typeof __APP_VERSION__ !== "undefined" ? String(__APP_VERSION__) : "",
+    );
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         const checkUpdate = async () => {
             try {
                 setLoading(true);
-                // Placeholder version. You'd normally call `await GetVersion()` here
-                const localVersion = "2.2.2";
+                const localVersion = await resolveLocalVersion();
                 setCurrentVersion(localVersion);
 
                 const cacheBuster = `?_t=${Date.now()}`;

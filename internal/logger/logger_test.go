@@ -102,7 +102,7 @@ func TestEventEmitter(t *testing.T) {
 	var mu sync.Mutex
 
 	l.SetEmitter(func(eventName string, data any) {
-		if eventName != "log:new" {
+		if eventName != "log" {
 			t.Errorf("unexpected event: %q", eventName)
 		}
 		mu.Lock()

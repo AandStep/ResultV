@@ -1,5 +1,33 @@
 export namespace config {
 	
+	export class Subscription {
+	    id: string;
+	    name: string;
+	    url: string;
+	    updatedAt?: string;
+	    trafficUpload?: number;
+	    trafficDownload?: number;
+	    trafficTotal?: number;
+	    expireUnix?: number;
+	    iconUrl?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Subscription(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.url = source["url"];
+	        this.updatedAt = source["updatedAt"];
+	        this.trafficUpload = source["trafficUpload"];
+	        this.trafficDownload = source["trafficDownload"];
+	        this.trafficTotal = source["trafficTotal"];
+	        this.expireUnix = source["expireUnix"];
+	        this.iconUrl = source["iconUrl"];
+	    }
+	}
 	export class AppSettings {
 	    autostart: boolean;
 	    killswitch: boolean;
@@ -33,6 +61,8 @@ export namespace config {
 	    country: string;
 	    uri?: string;
 	    extra?: number[];
+	    provider?: string;
+	    subscriptionUrl?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProxyEntry(source);
@@ -50,6 +80,8 @@ export namespace config {
 	        this.country = source["country"];
 	        this.uri = source["uri"];
 	        this.extra = source["extra"];
+	        this.provider = source["provider"];
+	        this.subscriptionUrl = source["subscriptionUrl"];
 	    }
 	}
 	export class RoutingRules {
@@ -72,6 +104,7 @@ export namespace config {
 	    routingRules: RoutingRules;
 	    proxies: ProxyEntry[];
 	    settings: AppSettings;
+	    subscriptions?: Subscription[];
 	
 	    static createFrom(source: any = {}) {
 	        return new AppConfig(source);
@@ -82,6 +115,7 @@ export namespace config {
 	        this.routingRules = this.convertValues(source["routingRules"], RoutingRules);
 	        this.proxies = this.convertValues(source["proxies"], ProxyEntry);
 	        this.settings = this.convertValues(source["settings"], AppSettings);
+	        this.subscriptions = this.convertValues(source["subscriptions"], Subscription);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -102,6 +136,7 @@ export namespace config {
 		    return a;
 		}
 	}
+	
 	
 	
 
@@ -180,6 +215,9 @@ export namespace proxy {
 	    success: boolean;
 	    message: string;
 	    gpoConflict: boolean;
+	    tunnelFailed: boolean;
+	    reason: string;
+	    fallbackUsed: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new ConnectResultDTO(source);
@@ -190,6 +228,9 @@ export namespace proxy {
 	        this.success = source["success"];
 	        this.message = source["message"];
 	        this.gpoConflict = source["gpoConflict"];
+	        this.tunnelFailed = source["tunnelFailed"];
+	        this.reason = source["reason"];
+	        this.fallbackUsed = source["fallbackUsed"];
 	    }
 	}
 	export class PingResultDTO {
@@ -236,6 +277,11 @@ export namespace proxy {
 	    currentProxy?: ProxyConfig;
 	    mode: string;
 	    uptime: number;
+	    bytesReceived: number;
+	    bytesSent: number;
+	    speedReceived: number;
+	    speedSent: number;
+	    killSwitchActive: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new StatusDTO(source);
@@ -248,6 +294,11 @@ export namespace proxy {
 	        this.currentProxy = this.convertValues(source["currentProxy"], ProxyConfig);
 	        this.mode = source["mode"];
 	        this.uptime = source["uptime"];
+	        this.bytesReceived = source["bytesReceived"];
+	        this.bytesSent = source["bytesSent"];
+	        this.speedReceived = source["speedReceived"];
+	        this.speedSent = source["speedSent"];
+	        this.killSwitchActive = source["killSwitchActive"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

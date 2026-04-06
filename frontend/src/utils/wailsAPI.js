@@ -6,6 +6,7 @@
  */
 
 import {
+  ApplyMode,
   Connect,
   Disconnect,
   DetectCountry,
@@ -16,6 +17,7 @@ import {
   ExportConfig,
   GetStatus,
   GetPlatform,
+  GetVersion,
   GetNetworkStatus,
   GetNetworkTraffic,
   GetLogs,
@@ -28,7 +30,11 @@ import {
   ToggleKillSwitch,
   ToggleAdBlock,
   UpdateRules,
-  SyncProxies
+  SyncProxies,
+  FetchSubscription,
+  RefreshSubscription,
+  AddSubscription,
+  DeleteSubscription,
 } from '../../wailsjs/go/main/App';
 
 export const wailsAPI = {
@@ -112,7 +118,7 @@ export const wailsAPI = {
       return await GetNetworkStatus();
     } catch (e) {
       console.error("wailsAPI.getNetworkStatus error:", e);
-      return { connected: false, ip: "" };
+      return { online: false, latency: 0, checkedAt: 0 };
     }
   },
 
@@ -121,7 +127,7 @@ export const wailsAPI = {
       return await GetNetworkTraffic();
     } catch (e) {
       console.error("wailsAPI.getNetworkTraffic error:", e);
-      return { rx: 0, tx: 0 };
+      return { received: 0, sent: 0 };
     }
   },
 
@@ -172,11 +178,29 @@ export const wailsAPI = {
     }
   },
 
+  getVersion: async () => {
+    try {
+      return await GetVersion();
+    } catch (e) {
+      console.error("wailsAPI.getVersion error:", e);
+      return "";
+    }
+  },
+
   setMode: async (mode) => {
     try {
       return await SetMode(mode);
     } catch (e) {
       console.error("wailsAPI.setMode error:", e);
+      throw e;
+    }
+  },
+
+  applyMode: async (mode) => {
+    try {
+      return await ApplyMode(mode);
+    } catch (e) {
+      console.error("wailsAPI.applyMode error:", e);
       throw e;
     }
   },
@@ -242,7 +266,44 @@ export const wailsAPI = {
       console.error("wailsAPI.updateRules error:", e);
       throw e;
     }
-  }
+  },
+
+  // --- Subscriptions ---
+  fetchSubscription: async (url) => {
+    try {
+      return await FetchSubscription(url);
+    } catch (e) {
+      console.error("wailsAPI.fetchSubscription error:", e);
+      throw e;
+    }
+  },
+
+  refreshSubscription: async (subID) => {
+    try {
+      return await RefreshSubscription(subID);
+    } catch (e) {
+      console.error("wailsAPI.refreshSubscription error:", e);
+      throw e;
+    }
+  },
+
+  addSubscription: async (name, url) => {
+    try {
+      return await AddSubscription(name, url);
+    } catch (e) {
+      console.error("wailsAPI.addSubscription error:", e);
+      throw e;
+    }
+  },
+
+  deleteSubscription: async (subID) => {
+    try {
+      return await DeleteSubscription(subID);
+    } catch (e) {
+      console.error("wailsAPI.deleteSubscription error:", e);
+      throw e;
+    }
+  },
 };
 
 export default wailsAPI;

@@ -169,19 +169,24 @@ const parseVMess = (uri) => {
         const json = JSON.parse(decoded);
 
         if (json.add && json.port) {
+            const security = json.tls === "tls" ? "tls" : "none";
             return {
                 ip: json.add,
                 port: parseInt(json.port, 10),
                 type: "VMESS",
                 name: json.ps || "VMess",
                 username: "",
-                password: "", // Not used in typical logic, UUID handles auth
+                password: "",
                 extra: {
                     uuid: json.id,
                     alterId: json.aid,
-                    transport: json.net,
-                    wsPath: json.path,
-                    tls: json.tls === "tls",
+                    network: json.net || "tcp",
+                    path: json.path || "",
+                    host: json.host || "",
+                    security: security,
+                    sni: json.sni || "",
+                    fp: json.fp || "",
+                    tls: security === "tls",
                 },
             };
         }
@@ -191,30 +196,57 @@ const parseVMess = (uri) => {
     return null;
 };
 
+/** Merge Xray `extra` query JSON into target; mirrors Go mergeVLESSURLEmbeddedExtra. */
+const mergeVLESSURLEmbeddedExtra = (target, raw) => {
+    if (raw == null || String(raw).trim() === "") return;
+    let inner;
+    try {
+        inner = JSON.parse(raw);
+    } catch {
+        try {
+            inner = JSON.parse(decodeURIComponent(raw));
+        } catch {
+            return;
+        }
+    }
+    if (!inner || typeof inner !== "object" || Array.isArray(inner)) return;
+    Object.assign(target, inner);
+    if (!target.x_padding_bytes && inner.xPaddingBytes != null && inner.xPaddingBytes !== "") {
+        target.x_padding_bytes = String(inner.xPaddingBytes);
+    }
+};
+
 const parseVLESS = (uri) => {
     try {
-        const urlStr = uri.replace("vless://", "http://"); 
+        const urlStr = uri.replace("vless://", "http://");
         const url = new URL(urlStr);
-        const uuid = url.username;
-        const host = url.hostname;
-        const port = url.port;
-        const typeStr = url.searchParams.get("type") || "tcp";
-        const security = url.searchParams.get("security") || "none";
-        const path = url.searchParams.get("path") || "";
+        const params = url.searchParams;
+
+        const extra = {};
+        mergeVLESSURLEmbeddedExtra(extra, params.get("extra"));
+
+        extra.uuid = url.username;
+        extra.network = params.get("type") || "tcp";
+        extra.security = params.get("security") || "none";
+        extra.sni = params.get("sni") || "";
+        extra.fp = params.get("fp") || "";
+        extra.pbk = params.get("pbk") || "";
+        extra.sid = params.get("sid") || "";
+        extra.flow = params.get("flow") || "";
+        extra.path = params.get("path") || "";
+        extra.host = params.get("host") || "";
+        extra.alpn = params.get("alpn") || "";
+        extra.mode = params.get("mode") || "";
+        extra.method = params.get("method") || "";
 
         return {
-            ip: host,
-            port: parseInt(port, 10),
+            ip: url.hostname,
+            port: parseInt(url.port, 10),
             type: "VLESS",
             name: decodeURIComponent(url.hash.replace("#", "") || "VLESS"),
             username: "",
             password: "",
-            extra: {
-                uuid: uuid,
-                transport: typeStr,
-                tls: security !== "none",
-                wsPath: path,
-            },
+            extra,
         };
     } catch (e) {
         console.error("VLESS parse error", e);
@@ -226,24 +258,113 @@ const parseTrojan = (uri) => {
     try {
         const urlStr = uri.replace("trojan://", "http://");
         const url = new URL(urlStr);
-        const password = url.username;
-        const host = url.hostname;
-        const port = url.port;
-        const security = url.searchParams.get("security") || "none";
+        const params = url.searchParams;
 
         return {
-            ip: host,
-            port: parseInt(port, 10),
+            ip: url.hostname,
+            port: parseInt(url.port, 10),
             type: "TROJAN",
             name: decodeURIComponent(url.hash.replace("#", "") || "Trojan"),
             username: "",
-            password: password,
+            password: url.username,
             extra: {
-                tls: security !== "none",
+                security: params.get("security") || "tls",
+                sni: params.get("sni") || "",
+                fp: params.get("fp") || "",
+                network: params.get("type") || "tcp",
+                path: params.get("path") || "",
+                host: params.get("host") || "",
+                alpn: params.get("alpn") || "",
             },
         };
     } catch (e) {
         console.error("Trojan parse error", e);
     }
     return null;
+};
+
+export const VPN_TYPES = ["SS", "VMESS", "VLESS", "TROJAN"];
+
+const FLAG_EMOJI_PREFIX = /^[\u{1F1E6}-\u{1F1FF}][\u{1F1E6}-\u{1F1FF}]\s*/u;
+
+/** Убирает дублирование: эмодзи-флаг и префикс кода страны, если он совпадает с proxy.country (например «FI Finland» → «Finland»). */
+export const formatProxyDisplayName = (name, countryCode) => {
+    if (!name || typeof name !== "string") return name || "";
+    let s = name.trim().replace(FLAG_EMOJI_PREFIX, "");
+    const cc = (countryCode || "").toString().toLowerCase();
+    if (/^[a-z]{2}$/.test(cc)) {
+        const re = new RegExp(`^${cc}\\s+`, "i");
+        const next = s.replace(re, "").trim();
+        if (next) s = next;
+    }
+    return s.trim() || name;
+};
+
+/** После refresh подписки сохраняем country с прежних узлов (совпадение ip|port|type). */
+export const mergeSubscriptionRefreshCountries = (
+    prevProxies,
+    updatedProxies,
+    subscriptionURL,
+) => {
+    const oldSub = prevProxies.filter((p) => p.subscriptionUrl === subscriptionURL);
+    const keyOf = (p) =>
+        `${p.ip}|${p.port}|${String(p.type || "").toUpperCase()}`;
+    const oldBy = new Map(oldSub.map((p) => [keyOf(p), p]));
+    return updatedProxies.map((p) => {
+        const old = oldBy.get(keyOf(p));
+        const c = p.country;
+        const bad =
+            !c || c === "unknown" || c === "\u{1F310}" || c === "Unknown";
+        if (
+            old &&
+            bad &&
+            old.country &&
+            old.country !== "unknown" &&
+            old.country !== "\u{1F310}" &&
+            old.country !== "Unknown"
+        ) {
+            return { ...p, country: old.country };
+        }
+        return p;
+    });
+};
+
+/** Имя группы подписки из URL (как extractProviderName в Go). */
+export const subscriptionLabelFromURL = (urlStr) => {
+    try {
+        const u = new URL(urlStr.trim());
+        const host = u.hostname.replace(/^www\./i, "");
+        const parts = host.split(".");
+        if (parts.length >= 2) {
+            const n = parts[parts.length - 2];
+            if (n) return n.charAt(0).toUpperCase() + n.slice(1).toLowerCase();
+        }
+        return host || "Subscription";
+    } catch {
+        return "Subscription";
+    }
+};
+
+export const isVpnType = (type) => VPN_TYPES.includes(type?.toUpperCase());
+
+export const isSubscriptionURL = (text) => {
+    const trimmed = text.trim();
+    return /^https?:\/\/.+/.test(trimmed) && !trimmed.includes("\n");
+};
+
+export const getProtocolLabel = (proxy) => {
+    if (!proxy?.extra || !isVpnType(proxy.type)) return proxy?.type || "";
+    const extra = typeof proxy.extra === "string" ? JSON.parse(proxy.extra) : proxy.extra;
+    const type = proxy.type?.toUpperCase();
+    const security = extra.security || "";
+    const network = extra.network || "tcp";
+
+    let label = type;
+    if (security === "reality") label += " + Reality";
+    else if (security === "tls") label += " + TLS";
+    if (network === "ws" || network === "websocket") label += " + WS";
+    else if (network === "grpc") label += " + gRPC";
+    else if (network === "xhttp") label += " + XHTTP";
+    else if (network === "h2" || network === "http") label += " + H2";
+    return label;
 };

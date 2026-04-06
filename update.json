@@ -1,6 +1,6 @@
 {
-  "version": "2.2.2",
-  "releaseTitle": "Result Proxy v2.2.2 - Hotfix environment variables",
-  "releaseNotes": "Добавлена возможность менять переменные сред, чтобы лучше проксировались все приложения.",
+  "version": "3.0.0",
+  "releaseTitle": "Result Proxy v3.0.0",
+  "releaseNotes": "Версия 3.0.0.",
   "downloadUrl": "https://result-proxy.ru/"
 }

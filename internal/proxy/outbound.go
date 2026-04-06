@@ -9,6 +9,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"strings"
 )
 
 // parseExtra safely decodes the proxy.Extra JSON blob into a map.
@@ -82,12 +83,14 @@ func buildProxyOutbound(proxy ProxyConfig) SBOutbound {
 
 	case "VLESS", "vless":
 		uuid := getStringField(extra, "uuid", "")
+		flow := getStringField(extra, "flow", "")
 		out := SBOutbound{
 			Type:       "vless",
 			Tag:        "proxy",
 			Server:     proxy.IP,
 			ServerPort: proxy.Port,
 			UUID:       uuid,
+			Flow:       flow,
 		}
 		applyTLSAndTransport(&out, extra, proxy.IP)
 		return out
@@ -100,18 +103,24 @@ func buildProxyOutbound(proxy ProxyConfig) SBOutbound {
 			ServerPort: proxy.Port,
 			Password:   proxy.Password,
 		}
-		// Trojan всегда использует TLS — включаем по умолчанию.
 		sni := getStringField(extra, "sni", proxy.IP)
 		insecure := getBoolField(extra, "insecure")
+		fp := getStringField(extra, "fp", "")
 		out.TLS = &SBOutboundTLS{
 			Enabled:    true,
 			ServerName: sni,
 			Insecure:   insecure,
 		}
+		if fp != "" {
+			out.TLS.UTLS = &SBUTLS{Enabled: true, Fingerprint: fp}
+		}
+		if alpnStr := getStringField(extra, "alpn", ""); alpnStr != "" {
+			out.TLS.ALPN = splitALPN(alpnStr)
+		}
 		applyTransportOnly(&out, extra)
 		return out
 
-	default: // "HTTP", "http"
+	default: // "HTTP", "http", "HTTPS", "https"
 		return SBOutbound{
 			Type:       "http",
 			Tag:        "proxy",
@@ -123,30 +132,77 @@ func buildProxyOutbound(proxy ProxyConfig) SBOutbound {
 	}
 }
 
-// applyTLSAndTransport применяет TLS и транспорт на основе extra-полей.
-// Используется для VMess и VLess.
+// applyTLSAndTransport applies TLS (including Reality) and transport based on extra fields.
+// Used for VMess and VLess.
 func applyTLSAndTransport(out *SBOutbound, extra map[string]interface{}, defaultSNI string) {
-	if getBoolField(extra, "tls") {
+	security := getStringField(extra, "security", "none")
+
+	switch security {
+	case "reality":
+		sni := getStringField(extra, "sni", defaultSNI)
+		fp := getStringField(extra, "fp", "chrome")
+		pbk := getStringField(extra, "pbk", "")
+		sid := getStringField(extra, "sid", "")
+		out.TLS = &SBOutboundTLS{
+			Enabled:    true,
+			ServerName: sni,
+			UTLS:       &SBUTLS{Enabled: true, Fingerprint: fp},
+			Reality:    &SBReality{Enabled: true, PublicKey: pbk, ShortID: sid},
+		}
+	case "tls":
 		sni := getStringField(extra, "sni", defaultSNI)
 		insecure := getBoolField(extra, "insecure")
-		out.TLS = &SBOutboundTLS{
+		fp := getStringField(extra, "fp", "")
+		tls := &SBOutboundTLS{
 			Enabled:    true,
 			ServerName: sni,
 			Insecure:   insecure,
 		}
+		if fp != "" {
+			tls.UTLS = &SBUTLS{Enabled: true, Fingerprint: fp}
+		}
+		if alpnStr := getStringField(extra, "alpn", ""); alpnStr != "" {
+			alpnList := splitALPN(alpnStr)
+			netw := getStringField(extra, "network", "")
+			if netw == "xhttp" || netw == "splithttp" {
+				tls.ALPN = xhttpPreferH2ALPN(alpnList)
+			} else {
+				tls.ALPN = alpnList
+			}
+		}
+		out.TLS = tls
+	default:
+		if getBoolField(extra, "tls") {
+			sni := getStringField(extra, "sni", defaultSNI)
+			insecure := getBoolField(extra, "insecure")
+			out.TLS = &SBOutboundTLS{
+				Enabled:    true,
+				ServerName: sni,
+				Insecure:   insecure,
+			}
+		}
 	}
+
 	applyTransportOnly(out, extra)
 }
 
-// applyTransportOnly применяет транспортный слой (WS, gRPC) без TLS.
+// applyTransportOnly applies the transport layer (WS, gRPC, HTTP/2, XHTTP).
 func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 	network := getStringField(extra, "network", "tcp")
 	switch network {
 	case "ws", "websocket":
+		path := getStringField(extra, "ws-path", "")
+		if path == "" {
+			path = getStringField(extra, "path", "/")
+		}
+		host := getStringField(extra, "ws-host", "")
+		if host == "" {
+			host = getStringField(extra, "host", "")
+		}
 		out.Transport = &SBOutboundTransport{
 			Type: "ws",
-			Path: getStringField(extra, "ws-path", "/"),
-			Host: getStringField(extra, "ws-host", ""),
+			Path: path,
+			Host: host,
 		}
 	case "grpc":
 		out.Transport = &SBOutboundTransport{
@@ -159,5 +215,182 @@ func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 			Host: getStringField(extra, "http-host", ""),
 			Path: getStringField(extra, "http-path", "/"),
 		}
+	case "xhttp", "splithttp":
+		host := getStringField(extra, "host", "")
+		xPadding := xhttpPaddingFromExtra(extra)
+		if xPadding == "" {
+			xPadding = "100-1000"
+		}
+		mode := getStringField(extra, "mode", "auto")
+		if mode == "" {
+			mode = "auto"
+		}
+		uplink := stringFromExtraValue(extra["uplink_http_method"])
+		if uplink == "" {
+			uplink = stringFromExtraValue(extra["method"])
+		}
+		headers := xhttpHeadersFromExtra(extra)
+		xmuxRaw := xmuxJSONFromExtra(extra)
+		out.Transport = &SBOutboundTransport{
+			Type:                 "xhttp",
+			Path:                 getStringField(extra, "path", "/"),
+			Host:                 host,
+			Mode:                 mode,
+			UplinkHTTPMethod:     uplink,
+			XPaddingBytes:        xPadding,
+			Headers:              headers,
+			NoGRPCHeader:         boolPtrFromExtra(extra, "noGRPCHeader", "no_grpc_header"),
+			NoSSEHeader:          boolPtrFromExtra(extra, "noSSEHeader", "no_sse_header"),
+			ScMaxEachPostBytes:   rangeRawFromExtra(extra, "scMaxEachPostBytes", "sc_max_each_post_bytes"),
+			ScMinPostsIntervalMs: rangeRawFromExtra(extra, "scMinPostsIntervalMs", "sc_min_posts_interval_ms"),
+			ScStreamUpServerSecs: rangeRawFromExtra(extra, "scStreamUpServerSecs", "sc_stream_up_server_secs"),
+			Xmux:                 xmuxRaw,
+		}
 	}
+}
+
+// xmuxJSONFromExtra maps Xray share-link xmux keys to sing-box-extended JSON field names.
+func xmuxJSONFromExtra(extra map[string]interface{}) json.RawMessage {
+	v, ok := extra["xmux"]
+	if !ok || v == nil {
+		return nil
+	}
+	m, ok := v.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	rename := map[string]string{
+		"maxConcurrency":   "max_concurrency",
+		"maxConnections":   "max_connections",
+		"cMaxReuseTimes":   "c_max_reuse_times",
+		"hMaxRequestTimes": "h_max_request_times",
+		"hMaxReusableSecs": "h_max_reusable_secs",
+		"hKeepAlivePeriod": "h_keep_alive_period",
+	}
+	out := make(map[string]interface{}, len(m))
+	for k, val := range m {
+		if nk, ok := rename[k]; ok {
+			out[nk] = val
+		} else {
+			out[k] = val
+		}
+	}
+	raw, err := json.Marshal(out)
+	if err != nil || len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	return raw
+}
+
+func rangeRawFromExtra(extra map[string]interface{}, camel, snake string) json.RawMessage {
+	var v interface{}
+	switch {
+	case extra[snake] != nil:
+		v = extra[snake]
+	case extra[camel] != nil:
+		v = extra[camel]
+	default:
+		return nil
+	}
+	switch t := v.(type) {
+	case string:
+		if strings.TrimSpace(t) == "" {
+			return nil
+		}
+		raw, _ := json.Marshal(t)
+		return raw
+	case map[string]interface{}:
+		raw, _ := json.Marshal(t)
+		return raw
+	case float64:
+		raw, _ := json.Marshal(int64(t))
+		return raw
+	default:
+		raw, _ := json.Marshal(v)
+		return raw
+	}
+}
+
+func boolPtrFromExtra(extra map[string]interface{}, camel, snake string) *bool {
+	var v interface{}
+	if x, ok := extra[snake]; ok {
+		v = x
+	} else if x, ok := extra[camel]; ok {
+		v = x
+	} else {
+		return nil
+	}
+	b, ok := v.(bool)
+	if !ok {
+		return nil
+	}
+	return &b
+}
+
+// xhttpPaddingFromExtra returns sing-box x_padding_bytes from extra (snake_case or Xray camelCase).
+func xhttpPaddingFromExtra(extra map[string]interface{}) string {
+	if s := stringFromExtraValue(extra["x_padding_bytes"]); s != "" {
+		return s
+	}
+	return stringFromExtraValue(extra["xPaddingBytes"])
+}
+
+// xhttpHeadersFromExtra builds transport headers from extra["headers"] (object from VLESS `extra` JSON).
+func xhttpHeadersFromExtra(extra map[string]interface{}) map[string]string {
+	v, ok := extra["headers"]
+	if !ok || v == nil {
+		return nil
+	}
+	m, ok := v.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	out := make(map[string]string)
+	for k, val := range m {
+		s := stringFromExtraValue(val)
+		if s != "" {
+			out[k] = s
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// xhttpPreferH2ALPN ensures the first ALPN is not h3. sing-box-extended xhttp uses
+// tlsConfig.NextProtos()[0] to choose HTTP/2 (TCP) vs HTTP/3 (UDP); h3 first breaks
+// many servers that only serve TLS+h2 on 443.
+func xhttpPreferH2ALPN(alpn []string) []string {
+	if len(alpn) == 0 {
+		return []string{"h2", "http/1.1"}
+	}
+	if alpn[0] != "h3" {
+		return alpn
+	}
+	var rest []string
+	hasH2 := false
+	for _, p := range alpn {
+		if p == "h2" {
+			hasH2 = true
+			continue
+		}
+		rest = append(rest, p)
+	}
+	if hasH2 {
+		return append([]string{"h2"}, rest...)
+	}
+	return append([]string{"h2"}, alpn...)
+}
+
+// splitALPN splits a comma-separated ALPN string into a slice.
+func splitALPN(alpn string) []string {
+	var result []string
+	for _, s := range strings.Split(alpn, ",") {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			result = append(result, s)
+		}
+	}
+	return result
 }

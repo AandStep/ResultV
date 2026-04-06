@@ -205,7 +205,7 @@ func (l *Logger) add(msg, logType, source, icon, domain string) {
 
 	// Push event outside the lock to avoid deadlocks.
 	if emit != nil {
-		emit("log:new", entry)
+		emit("log", entry)
 	}
 
 	// Also print to stdout for debugging.
