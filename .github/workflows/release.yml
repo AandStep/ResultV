@@ -34,22 +34,31 @@ jobs:
         shell: pwsh
         run: |
           choco install nsis -y
-          $nsisCandidates = @(
-            "$env:ProgramFiles\NSIS",
-            "${env:ProgramFiles(x86)}\NSIS",
-            "C:\ProgramData\chocolatey\bin"
+          $makensisCandidates = @(
+            "C:\ProgramData\chocolatey\bin\makensis.exe",
+            "$env:ProgramFiles\NSIS\makensis.exe",
+            "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
           )
-          foreach ($candidate in $nsisCandidates) {
+          $makensis = $null
+          foreach ($candidate in $makensisCandidates) {
             if (Test-Path $candidate) {
-              $candidate | Out-File -FilePath $env:GITHUB_PATH -Append
+              $makensis = $candidate
+              break
             }
           }
-          $makensis = Get-Command makensis.exe -ErrorAction SilentlyContinue
+          if (-not $makensis) {
+            $found = Get-ChildItem -Path "C:\ProgramData\chocolatey" -Filter "makensis.exe" -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) {
+              $makensis = $found.FullName
+            }
+          }
           if (-not $makensis) {
             Write-Error "makensis.exe not found after NSIS installation"
             exit 1
           }
-          makensis /VERSION
+          Split-Path -Parent $makensis | Out-File -FilePath $env:GITHUB_PATH -Append
+          "NSISDIR=$(Split-Path -Parent $makensis)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          & $makensis /VERSION
 
       - name: Build Windows app and installer
         shell: pwsh
