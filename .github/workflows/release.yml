@@ -37,17 +37,19 @@ jobs:
       - name: Validate Windows artifacts
         shell: pwsh
         run: |
-          $portable = "build/bin/ResultProxy.exe"
+          $portable = Get-ChildItem -Path "build/bin" -Filter "*.exe" |
+            Where-Object { $_.Name -notlike "*-installer.exe" } |
+            Select-Object -First 1
           $installer = Get-ChildItem -Path "build/bin" -Filter "*-installer.exe" | Select-Object -First 1
-          if (-not (Test-Path $portable)) {
-            Write-Error "Portable executable not found: $portable"
+          if (-not $portable) {
+            Write-Error "Portable executable not found in build/bin"
             exit 1
           }
           if (-not $installer) {
             Write-Error "Installer executable not found in build/bin"
             exit 1
           }
-          "PORTABLE_PATH=$portable" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PORTABLE_PATH=build/bin/$($portable.Name)" | Out-File -FilePath $env:GITHUB_ENV -Append
           "INSTALLER_PATH=build/bin/$($installer.Name)" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Upload Windows artifacts
