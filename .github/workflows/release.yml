@@ -32,7 +32,24 @@ jobs:
 
       - name: Install NSIS
         shell: pwsh
-        run: choco install nsis -y
+        run: |
+          choco install nsis -y
+          $nsisCandidates = @(
+            "$env:ProgramFiles\NSIS",
+            "${env:ProgramFiles(x86)}\NSIS",
+            "C:\ProgramData\chocolatey\bin"
+          )
+          foreach ($candidate in $nsisCandidates) {
+            if (Test-Path $candidate) {
+              $candidate | Out-File -FilePath $env:GITHUB_PATH -Append
+            }
+          }
+          $makensis = Get-Command makensis.exe -ErrorAction SilentlyContinue
+          if (-not $makensis) {
+            Write-Error "makensis.exe not found after NSIS installation"
+            exit 1
+          }
+          makensis /VERSION
 
       - name: Build Windows app and installer
         shell: pwsh
