@@ -30,6 +30,10 @@ jobs:
           $goBin = "$(go env GOPATH)/bin"
           "$goBin" | Out-File -FilePath $env:GITHUB_PATH -Append
 
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis -y
+
       - name: Build Windows app and installer
         shell: pwsh
         run: wails build -clean -nsis -platform windows/amd64
