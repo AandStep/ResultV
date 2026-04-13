@@ -120,7 +120,7 @@ jobs:
           let notesText = update.releaseNotes.replace(/\. /g, '.\n-');
           if (!notesText.startsWith('-')) notesText = '-' + notesText;
           if (notesText.endsWith('-')) notesText = notesText.slice(0, -1);
-          const title = update.releaseTitle || 'Bug Fixes & Improvements';
+          const title = String(update.releaseTitle || '').trim() || 'Bug Fixes & Improvements';
           const releaseBody = 'Что нового в версии ' + update.version + '?\n\n' + notesText + '\n\n🌐 Официальный сайт: ' + new URL(update.downloadUrl).hostname;
           fs.writeFileSync('RELEASE_BODY.txt', releaseBody);
           const fsOut = require('fs');
