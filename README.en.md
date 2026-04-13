@@ -2,7 +2,7 @@
   <img src="public/logo.png" width="128" alt="ResultProxy logo">
 </p>
 
-<h1 align="center">ResultProxy</h1>
+<h1 align="center">ResultV (prev. ResultProxy)</h1>
 
 <p align="center">
   <b>Desktop proxy client for Windows (macOS/Linux support coming soon) powered by Wails, Go, and sing-box.</b><br>
@@ -33,7 +33,7 @@
 
 ## Overview
 
-ResultProxy **3.0.0** is a native desktop application built with **[Wails v2](https://wails.io/)**. The UI is **React 18** with **Vite** and **Tailwind CSS**; traffic is handled by a **Go** backend and **[sing-box](https://github.com/SagerNet/sing-box)** (with project-specific build tags in `wails.json`). The interface is localized with **i18next** (English and Russian).
+ResultV **3.0.0** is a native desktop application built with **[Wails v2](https://wails.io/)**. The UI is **React 18** with **Vite** and **Tailwind CSS**; traffic is handled by a **Go** backend and **[sing-box](https://github.com/SagerNet/sing-box)** (with project-specific build tags in `wails.json`). The interface is localized with **i18next** (English and Russian).
 
 **Prebuilt releases:** GitHub Actions currently publishes **Windows amd64** artifacts (portable `.exe` and NSIS installer) when a `v*` tag is pushed. **macOS and Linux** code paths exist in the repository, but automated CI releases are currently Windows-only; other platforms will be available later due to the full migration of the project to the Go stack.
 
