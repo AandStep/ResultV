@@ -137,6 +137,18 @@
       "title": "Ad Blocker",
       "desc": "Automatically block ads and trackers when connected through proxy."
     },
+    "lan_listen": {
+      "toggle_title": "Listen on local network",
+      "toggle_desc": "Allow other devices on your local network to connect to this proxy. Use only on trusted networks.",
+      "port_title": "Local port",
+      "port_desc": "Empty or 0 means auto. A fixed port is convenient for connecting other devices.",
+      "port_placeholder": "0 (auto)",
+      "port_apply": "Apply",
+      "addr_title": "Client address",
+      "addr_auto": "The port will be selected automatically after connection.",
+      "addr_unknown": "Could not determine IP. Use this PC's local network IP and port {{port}}.",
+      "port_invalid": "Port must be a number from 1 to 65535, or empty/0 (auto)."
+    },
     "quic": {
       "title": "QUIC (UDP/443)",
       "desc": "On: better speed and compatibility for YouTube/Google. Off: compatibility mode for networks where QUIC is unstable."
@@ -183,7 +195,6 @@
       "fast_add": "Quickly add domains to exceptions:",
       "tooltip": "If the list contains a general mask (e.g., .ru) and a specific domain (e.g., avito.ru), the specific domain will be proxied (acting as an exception to the exclusion rule)."
     },
-
     "apps": {
       "title": "Exception Applications",
       "desc1": "Traffic from these apps will connect directly. ",
