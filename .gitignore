@@ -22,6 +22,8 @@ release
 *.ntvs*
 *.njsproj
 *.sln
+.agent
+.cursor
 
 
 # Claude Superpowers
