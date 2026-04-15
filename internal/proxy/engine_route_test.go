@@ -207,10 +207,53 @@ func TestBuildTunnelModeConfig_DNSServersPresent(t *testing.T) {
 	}
 }
 
+func TestBuildTunnelModeConfig_SSTunnelHasTCPDNSDetour(t *testing.T) {
+	cfg := BuildTunnelModeConfig(EngineConfig{
+		Mode:  ProxyModeTunnel,
+		Proxy: ProxyConfig{Type: "ss"},
+	})
+	if cfg.DNS == nil {
+		t.Fatal("dns missing")
+	}
+	hasTCP := false
+	for _, s := range cfg.DNS.Servers {
+		if s.Type == "tcp" && s.Detour == "proxy" {
+			hasTCP = true
+			break
+		}
+	}
+	if !hasTCP {
+		t.Fatalf("expected at least one tcp dns server with proxy detour, got: %+v", cfg.DNS.Servers)
+	}
+}
+
+func TestBuildTunnelModeConfig_CustomDNSUniqueTagsAndTCPForSSTunnel(t *testing.T) {
+	cfg := BuildTunnelModeConfig(EngineConfig{
+		Mode:       ProxyModeTunnel,
+		Proxy:      ProxyConfig{Type: "SS"},
+		DNSServers: []string{"8.8.8.8", "1.1.1.1"},
+	})
+	if cfg.DNS == nil {
+		t.Fatal("dns missing")
+	}
+	seenTags := map[string]struct{}{}
+	tcpCount := 0
+	for _, s := range cfg.DNS.Servers {
+		if _, ok := seenTags[s.Tag]; ok {
+			t.Fatalf("duplicate dns tag found: %q in %+v", s.Tag, cfg.DNS.Servers)
+		}
+		seenTags[s.Tag] = struct{}{}
+		if s.Type == "tcp" && s.Detour == "proxy" {
+			tcpCount++
+		}
+	}
+	if tcpCount < 2 {
+		t.Fatalf("expected tcp detour servers for each custom dns, got %+v", cfg.DNS.Servers)
+	}
+}
+
 func TestBuildTunnelModeConfig_IPv4OnlyServerForcesIPv4DNS(t *testing.T) {
-	
-	
-	
+
 	cfg := BuildTunnelModeConfig(EngineConfig{
 		Mode:  ProxyModeTunnel,
 		Proxy: ProxyConfig{IP: "185.126.67.168", Port: 443, Type: "hysteria2"},
@@ -222,7 +265,6 @@ func TestBuildTunnelModeConfig_IPv4OnlyServerForcesIPv4DNS(t *testing.T) {
 		t.Fatalf("expected ipv4_only DNS strategy for IPv4-only server, got: %q", cfg.DNS.Strategy)
 	}
 
-	
 	cfg2 := BuildTunnelModeConfig(EngineConfig{
 		Mode:  ProxyModeTunnel,
 		Proxy: ProxyConfig{IP: "1.2.3.4", Port: 443, Type: "vless"},
@@ -233,9 +275,7 @@ func TestBuildTunnelModeConfig_IPv4OnlyServerForcesIPv4DNS(t *testing.T) {
 }
 
 func TestBuildRoute_TunnelMode_ServerIPBypassBeforeSniff(t *testing.T) {
-	
-	
-	
+
 	cfg := EngineConfig{
 		Mode:  ProxyModeTunnel,
 		Proxy: ProxyConfig{IP: "185.126.67.168", Port: 443, Type: "hysteria2"},
@@ -270,5 +310,49 @@ func TestBuildRoute_TunnelMode_ServerIPBypassBeforeSniff(t *testing.T) {
 	if bypassIdx >= sniffIdx {
 		t.Fatalf("server IP bypass (idx=%d) must come BEFORE sniff (idx=%d) to prevent routing loops, rules=%+v",
 			bypassIdx, sniffIdx, route.Rules)
+	}
+}
+
+func TestSplitDNSServer(t *testing.T) {
+	cases := []struct {
+		in       string
+		wantHost string
+		wantPort int
+	}{
+		{in: "8.8.8.8", wantHost: "8.8.8.8", wantPort: 0},
+		{in: "1.1.1.1:5353", wantHost: "1.1.1.1", wantPort: 5353},
+		{in: "[2606:4700:4700::1111]:53", wantHost: "2606:4700:4700::1111", wantPort: 53},
+	}
+	for _, tc := range cases {
+		host, port := splitDNSServer(tc.in)
+		if host != tc.wantHost || port != tc.wantPort {
+			t.Fatalf("splitDNSServer(%q) = (%q,%d), want (%q,%d)", tc.in, host, port, tc.wantHost, tc.wantPort)
+		}
+	}
+}
+
+func TestBuildProxyModeConfig_CustomDNSHaveUniqueTags(t *testing.T) {
+	cfg := BuildProxyModeConfig(EngineConfig{
+		Mode:       ProxyModeProxy,
+		ListenAddr: "127.0.0.1:14081",
+		Proxy:      ProxyConfig{Type: "SS", IP: "example.com", Port: 443, Password: "p"},
+		DNSServers: []string{"8.8.8.8", "1.1.1.1"},
+	})
+	if cfg.DNS == nil {
+		t.Fatal("dns missing")
+	}
+	seenTags := map[string]struct{}{}
+	nonLocal := 0
+	for _, s := range cfg.DNS.Servers {
+		if _, ok := seenTags[s.Tag]; ok {
+			t.Fatalf("duplicate dns tag found: %q in %+v", s.Tag, cfg.DNS.Servers)
+		}
+		seenTags[s.Tag] = struct{}{}
+		if s.Type != "local" {
+			nonLocal++
+		}
+	}
+	if nonLocal < 2 {
+		t.Fatalf("expected at least two custom dns servers, got %+v", cfg.DNS.Servers)
 	}
 }

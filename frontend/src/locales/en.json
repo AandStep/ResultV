@@ -137,6 +137,16 @@
       "title": "Ad Blocker",
       "desc": "Automatically block ads and trackers when connected through proxy."
     },
+    "dns": {
+      "title": "DNS Servers",
+      "desc": "Choose a DNS provider or enter custom DNS servers separated by commas.",
+      "preset_auto": "Auto (default)",
+      "preset_google": "Google DNS",
+      "preset_cloudflare": "Cloudflare DNS",
+      "preset_quad9": "Quad9 DNS",
+      "custom_placeholder": "Example: 8.8.8.8, 1.1.1.1",
+      "apply": "Apply"
+    },
     "lan_listen": {
       "toggle_title": "Listen on local network",
       "toggle_desc": "Allow other devices on your local network to connect to this proxy. Use only on trusted networks.",

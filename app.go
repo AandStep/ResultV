@@ -45,6 +45,8 @@ import (
 	"resultproxy-wails/internal/system"
 )
 
+var stableHWIDProvider = config.StableHardwareID
+
 
 
 type App struct {
@@ -842,6 +844,71 @@ func parseSubscriptionUserInfoHeader(v string) (upload, download, total, expire 
 	return upload, download, total, expire
 }
 
+func parseSubscriptionHeaderText(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	if strings.HasPrefix(strings.ToLower(v), "base64:") {
+		raw := strings.TrimSpace(v[len("base64:"):])
+		for _, enc := range [](*base64.Encoding){base64.StdEncoding, base64.URLEncoding, base64.RawStdEncoding, base64.RawURLEncoding} {
+			if decoded, err := enc.DecodeString(raw); err == nil {
+				return strings.TrimSpace(string(decoded))
+			}
+		}
+	}
+	return v
+}
+
+func headerIsTruthy(h http.Header, key string) bool {
+	v := strings.ToLower(strings.TrimSpace(h.Get(key)))
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func subscriptionEmptyBodyError(h http.Header) error {
+	title := parseSubscriptionHeaderText(h.Get("Profile-Title"))
+	announce := parseSubscriptionHeaderText(h.Get("Announce"))
+	supportURL := strings.TrimSpace(h.Get("Support-Url"))
+	hwidLimit := headerIsTruthy(h, "X-Hwid-Limit") || headerIsTruthy(h, "X-Hwid-Max-Devices-Reached")
+	hwidNotSupported := headerIsTruthy(h, "X-Hwid-Not-Supported")
+
+	reason := "подписка вернула пустой ответ"
+	if hwidLimit {
+		reason = "достигнут лимит устройств для подписки"
+	} else if hwidNotSupported {
+		reason = "провайдер требует передачу HWID"
+	}
+
+	details := make([]string, 0, 3)
+	if title != "" {
+		details = append(details, title)
+	}
+	if announce != "" {
+		details = append(details, announce)
+	}
+	if supportURL != "" {
+		details = append(details, "Поддержка: "+supportURL)
+	}
+	if len(details) == 0 {
+		return errors.New(reason)
+	}
+	return fmt.Errorf("%s. %s", reason, strings.Join(details, " | "))
+}
+
+func (a *App) subscriptionHWID() string {
+	hwid, err := stableHWIDProvider(a.getUserDataPath())
+	if err != nil {
+		a.log.Warning(fmt.Sprintf("Не удалось получить HWID для запроса подписки: %v", err))
+		return ""
+	}
+	return strings.TrimSpace(hwid)
+}
+
 
 func subscriptionIconCandidates(subURL string, h http.Header) []string {
 	parsed, err := url.Parse(subURL)
@@ -1020,7 +1087,16 @@ func discoverIconFromSubscriptionPage(client *http.Client, subURL string) string
 
 func (a *App) fetchSubscriptionFromURL(subURL string) ([]config.ProxyEntry, int64, int64, int64, int64, string, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(subURL)
+	req, err := http.NewRequest(http.MethodGet, subURL, nil)
+	if err != nil {
+		return nil, 0, 0, 0, 0, "", fmt.Errorf("creating subscription request: %w", err)
+	}
+	req.Header.Set("User-Agent", fmt.Sprintf("ResultProxyPC/%s", productVersionFromWailsJSON()))
+	if hwid := a.subscriptionHWID(); hwid != "" {
+		req.Header.Set("x-hwid", hwid)
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, 0, 0, 0, 0, "", fmt.Errorf("fetching subscription: %w", err)
 	}
@@ -1033,16 +1109,12 @@ func (a *App) fetchSubscriptionFromURL(subURL string) ([]config.ProxyEntry, int6
 	up, down, tot, exp := parseSubscriptionUserInfoHeader(resp.Header.Get("Subscription-Userinfo"))
 	iconURL := resolveSubscriptionIcon(client, subURL, resp.Header)
 
-	bodyBytes := make([]byte, 0, 1024*64)
-	buf := make([]byte, 4096)
-	for {
-		n, readErr := resp.Body.Read(buf)
-		if n > 0 {
-			bodyBytes = append(bodyBytes, buf[:n]...)
-		}
-		if readErr != nil {
-			break
-		}
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, up, down, tot, exp, iconURL, fmt.Errorf("reading subscription body: %w", err)
+	}
+	if strings.TrimSpace(strings.TrimPrefix(string(bodyBytes), "\uFEFF")) == "" {
+		return nil, up, down, tot, exp, iconURL, subscriptionEmptyBodyError(resp.Header)
 	}
 
 	entries, err := proxy.ParseSubscriptionBody(string(bodyBytes))

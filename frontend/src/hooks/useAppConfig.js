@@ -39,6 +39,7 @@ export const useAppConfig = (addLog) => {
         theme: "dark",
         localPort: 0,
         listenLan: false,
+        dnsServers: [],
     });
     const [showProtocolModal, setShowProtocolModal] = useState(false);
     const [platform, setPlatform] = useState("windows");
@@ -276,6 +277,27 @@ export const useAppConfig = (addLog) => {
             setSettings(nextSettings);
             persistSettings(nextSettings).catch(console.error);
             wailsAPI.toggleAdBlock(value).catch(err => console.error("Ad block error:", err));
+        } else if (key === "dnsServers") {
+            const normalized = Array.isArray(value)
+                ? value
+                    .map((v) => String(v || "").trim())
+                    .filter(Boolean)
+                    .filter((v, idx, arr) => arr.indexOf(v) === idx)
+                : [];
+            const nextSettings = { ...settings, [key]: normalized };
+            setSettings(nextSettings);
+            try {
+                await persistSettings(nextSettings);
+                const status = await wailsAPI.getStatus();
+                if (status?.currentProxy) {
+                    await wailsAPI.applyMode(nextSettings.mode || "proxy");
+                }
+            } catch (err) {
+                console.error("DNS settings error:", err);
+                const rollbackSettings = { ...settings, [key]: previousValue };
+                setSettings(rollbackSettings);
+                await persistSettings(rollbackSettings).catch(console.error);
+            }
         } else {
             const nextSettings = { ...settings, [key]: value };
             setSettings(nextSettings);

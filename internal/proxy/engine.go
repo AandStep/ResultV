@@ -25,35 +25,33 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
 
-
 type ProxyMode string
 
 const (
-	ProxyModeProxy  ProxyMode = "proxy"  
-	ProxyModeTunnel ProxyMode = "tunnel" 
+	ProxyModeProxy  ProxyMode = "proxy"
+	ProxyModeTunnel ProxyMode = "tunnel"
 )
-
 
 type ProxyConfig struct {
 	IP       string `json:"ip"`
 	Port     int    `json:"port"`
-	Type     string `json:"type"` 
+	Type     string `json:"type"`
 	Username string `json:"username"`
 	Password string `json:"password"`
-	
+
 	URI   string          `json:"uri,omitempty"`
 	Extra json.RawMessage `json:"extra,omitempty"`
 }
 
-
 type EngineConfig struct {
 	Proxy        ProxyConfig
 	Mode         ProxyMode
-	ListenAddr   string 
+	ListenAddr   string
 	RoutingMode  RoutingMode
 	Whitelist    []string
 	AppWhitelist []string
@@ -65,23 +63,15 @@ type EngineConfig struct {
 	DataDir      string
 }
 
-
-
 type Engine interface {
-	
 	Start(ctx context.Context, cfg EngineConfig) error
-	
+
 	Stop() error
-	
+
 	IsRunning() bool
-	
+
 	GetTrafficStats() (up, down int64)
 }
-
-
-
-
-
 
 type SingBoxConfig struct {
 	Log          *SBLog          `json:"log,omitempty"`
@@ -110,7 +100,7 @@ type SBLog struct {
 type SBDNS struct {
 	Servers  []SBDNSServer `json:"servers"`
 	Rules    []SBDNSRule   `json:"rules,omitempty"`
-	Strategy string        `json:"strategy,omitempty"` 
+	Strategy string        `json:"strategy,omitempty"`
 }
 
 type SBDNSServer struct {
@@ -119,13 +109,13 @@ type SBDNSServer struct {
 	Server          string `json:"server,omitempty"`
 	ServerPort      int    `json:"server_port,omitempty"`
 	Detour          string `json:"detour,omitempty"`
-	AddressStrategy string `json:"address_strategy,omitempty"` 
+	AddressStrategy string `json:"address_strategy,omitempty"`
 }
 
 type SBDNSRule struct {
 	Domain []string `json:"domain,omitempty"`
 	Server string   `json:"server"`
-	Action string   `json:"action,omitempty"` 
+	Action string   `json:"action,omitempty"`
 }
 
 type SBInbound struct {
@@ -133,11 +123,11 @@ type SBInbound struct {
 	Tag                 string   `json:"tag"`
 	Listen              string   `json:"listen,omitempty"`
 	ListenPort          int      `json:"listen_port,omitempty"`
-	Address             []string `json:"address,omitempty"`               
-	Stack               string   `json:"stack,omitempty"`                 
+	Address             []string `json:"address,omitempty"`
+	Stack               string   `json:"stack,omitempty"`
 	AutoRoute           bool     `json:"auto_route,omitempty"`
 	StrictRoute         bool     `json:"strict_route,omitempty"`
-	RouteExcludeAddress []string `json:"route_exclude_address,omitempty"` 
+	RouteExcludeAddress []string `json:"route_exclude_address,omitempty"`
 }
 
 type SBOutbound struct {
@@ -145,16 +135,16 @@ type SBOutbound struct {
 	Tag        string           `json:"tag"`
 	Server     string           `json:"server,omitempty"`
 	ServerPort int              `json:"server_port,omitempty"`
-	Username   string           `json:"username,omitempty"` 
+	Username   string           `json:"username,omitempty"`
 	Password   string           `json:"password,omitempty"`
-	Method     string           `json:"method,omitempty"`    
-	Version    string           `json:"version,omitempty"`   
-	UUID       string           `json:"uuid,omitempty"`      
-	Flow       string           `json:"flow,omitempty"`      
-	UpMbps     int              `json:"up_mbps,omitempty"`   
-	DownMbps   int              `json:"down_mbps,omitempty"` 
+	Method     string           `json:"method,omitempty"`
+	Version    string           `json:"version,omitempty"`
+	UUID       string           `json:"uuid,omitempty"`
+	Flow       string           `json:"flow,omitempty"`
+	UpMbps     int              `json:"up_mbps,omitempty"`
+	DownMbps   int              `json:"down_mbps,omitempty"`
 	Obfs       *SBHysteria2Obfs `json:"obfs,omitempty"`
-	
+
 	TLS       *SBOutboundTLS       `json:"tls,omitempty"`
 	Transport *SBOutboundTransport `json:"transport,omitempty"`
 }
@@ -163,7 +153,6 @@ type SBHysteria2Obfs struct {
 	Type     string `json:"type,omitempty"`
 	Password string `json:"password,omitempty"`
 }
-
 
 type SBOutboundTLS struct {
 	Enabled    bool       `json:"enabled"`
@@ -224,12 +213,10 @@ type SBWireGuardAmnezia struct {
 	ITime int64  `json:"itime,omitempty"`
 }
 
-
 type SBUTLS struct {
 	Enabled     bool   `json:"enabled"`
 	Fingerprint string `json:"fingerprint,omitempty"`
 }
-
 
 type SBReality struct {
 	Enabled   bool   `json:"enabled"`
@@ -237,16 +224,15 @@ type SBReality struct {
 	ShortID   string `json:"short_id,omitempty"`
 }
 
-
 type SBOutboundTransport struct {
 	Type          string            `json:"type"`
-	Path          string            `json:"path,omitempty"`            
-	Host          string            `json:"host,omitempty"`            
-	ServiceName   string            `json:"service_name,omitempty"`    
-	Mode          string            `json:"mode,omitempty"`            
-	XPaddingBytes string            `json:"x_padding_bytes,omitempty"` 
-	Headers       map[string]string `json:"headers,omitempty"`         
-	
+	Path          string            `json:"path,omitempty"`
+	Host          string            `json:"host,omitempty"`
+	ServiceName   string            `json:"service_name,omitempty"`
+	Mode          string            `json:"mode,omitempty"`
+	XPaddingBytes string            `json:"x_padding_bytes,omitempty"`
+	Headers       map[string]string `json:"headers,omitempty"`
+
 	UplinkHTTPMethod     string          `json:"uplink_http_method,omitempty"`
 	NoGRPCHeader         *bool           `json:"no_grpc_header,omitempty"`
 	NoSSEHeader          *bool           `json:"no_sse_header,omitempty"`
@@ -272,11 +258,8 @@ type SBRouteRule struct {
 	ProcessName      []string `json:"process_name,omitempty"`
 	ProcessPathRegex []string `json:"process_path_regex,omitempty"`
 	Outbound         string   `json:"outbound,omitempty"`
-	Action           string   `json:"action,omitempty"` 
+	Action           string   `json:"action,omitempty"`
 }
-
-
-
 
 func effectiveDataDir(cfg EngineConfig) string {
 	if cfg.DataDir != "" {
@@ -316,21 +299,19 @@ func appWhitelistPathRegexes(names []string) []string {
 	return out
 }
 
-
-
 func BuildProxyModeConfig(cfg EngineConfig) SingBoxConfig {
 	port := cfg.LocalPort
 	if port == 0 {
 		port = getFreeLocalPort(14081)
 	}
-	
+
 	host, _ := splitHostPort(cfg.ListenAddr, "127.0.0.1", port)
 
 	dd := effectiveDataDir(cfg)
 	config := SingBoxConfig{
-		Log:          &SBLog{Level: "error", Disabled: true},
-		DNS:          buildDNS(cfg),
-		Endpoints:    buildEndpoints(cfg.Proxy),
+		Log:       &SBLog{Level: "error", Disabled: true},
+		DNS:       buildDNS(cfg),
+		Endpoints: buildEndpoints(cfg.Proxy),
 		Inbounds: []SBInbound{{
 			Type:       "mixed",
 			Tag:        "mixed-in",
@@ -345,8 +326,6 @@ func BuildProxyModeConfig(cfg EngineConfig) SingBoxConfig {
 	return config
 }
 
-
-
 func BuildTunnelModeConfig(cfg EngineConfig) SingBoxConfig {
 	tunIPv4 := "172.19.0.1/30"
 	if cfg.TunIPv4 != "" {
@@ -358,37 +337,20 @@ func BuildTunnelModeConfig(cfg EngineConfig) SingBoxConfig {
 
 	pt := strings.ToUpper(strings.TrimSpace(cfg.Proxy.Type))
 
-	
-	
-	
-	
 	if pt == "WIREGUARD" || pt == "AMNEZIAWG" {
 		tunStack = "system"
 		strictRoute = false
 	}
 
-	
-	
-	
-	
-	
 	if pt == "HYSTERIA2" {
 		strictRoute = false
-		
+
 	}
 
 	if pt == "WIREGUARD" || pt == "AMNEZIAWG" {
 		tunAddresses = []string{tunIPv4}
 	}
 
-	
-	
-	
-	
-	
-	
-	
-	
 	var routeExclude []string
 	if pt != "WIREGUARD" && pt != "AMNEZIAWG" {
 		if serverIP := net.ParseIP(cfg.Proxy.IP); serverIP != nil {
@@ -427,12 +389,12 @@ func buildOutbounds(proxy ProxyConfig) []SBOutbound {
 	if pt == "WIREGUARD" || pt == "AMNEZIAWG" {
 		return []SBOutbound{
 			{Type: "direct", Tag: "direct"},
-			{Type: "block", Tag: "block"}, 
+			{Type: "block", Tag: "block"},
 		}
 	}
 	outbounds := []SBOutbound{
 		{Type: "direct", Tag: "direct"},
-		{Type: "block", Tag: "block"}, 
+		{Type: "block", Tag: "block"},
 		buildProxyOutbound(proxy),
 	}
 	return outbounds
@@ -440,30 +402,51 @@ func buildOutbounds(proxy ProxyConfig) []SBOutbound {
 
 func buildDNS(cfg EngineConfig) *SBDNS {
 	if cfg.Mode == ProxyModeTunnel {
-		
-		
-		
-		
+
 		pt := strings.ToUpper(strings.TrimSpace(cfg.Proxy.Type))
 		isEndpoint := pt == "WIREGUARD" || pt == "AMNEZIAWG"
 
 		detour := "proxy"
 		if isEndpoint {
-			detour = "" 
+			detour = ""
 		}
 
 		servers := []SBDNSServer{}
 		if len(cfg.DNSServers) > 0 {
-			for _, srv := range cfg.DNSServers {
-				servers = append(servers, SBDNSServer{Type: "udp", Tag: "custom", Server: srv, Detour: detour})
+			for i, raw := range cfg.DNSServers {
+				server, port := splitDNSServer(raw)
+				if server == "" {
+					continue
+				}
+				srvType := "udp"
+				if detour != "" {
+					srvType = "tcp"
+				}
+				servers = append(servers, SBDNSServer{
+					Type:       srvType,
+					Tag:        fmt.Sprintf("custom-%d", i+1),
+					Server:     server,
+					ServerPort: port,
+					Detour:     detour,
+				})
 			}
 			servers = append(servers, SBDNSServer{Type: "local", Tag: "local"})
 		} else {
-			servers = []SBDNSServer{
-				{Type: "udp", Tag: "udp", Server: "8.8.8.8", Detour: detour},
-				{Type: "tls", Tag: "google", Server: "8.8.8.8", Detour: detour},
-				{Type: "tls", Tag: "cloudflare", Server: "1.1.1.1", Detour: detour},
-				{Type: "local", Tag: "local"},
+			if detour != "" {
+				servers = []SBDNSServer{
+					{Type: "tcp", Tag: "google-tcp", Server: "8.8.8.8", Detour: detour},
+					{Type: "tcp", Tag: "cloudflare-tcp", Server: "1.1.1.1", Detour: detour},
+					{Type: "tls", Tag: "google-tls", Server: "8.8.8.8", Detour: detour},
+					{Type: "tls", Tag: "cloudflare-tls", Server: "1.1.1.1", Detour: detour},
+					{Type: "local", Tag: "local"},
+				}
+			} else {
+				servers = []SBDNSServer{
+					{Type: "udp", Tag: "udp", Server: "8.8.8.8", Detour: detour},
+					{Type: "tls", Tag: "google", Server: "8.8.8.8", Detour: detour},
+					{Type: "tls", Tag: "cloudflare", Server: "1.1.1.1", Detour: detour},
+					{Type: "local", Tag: "local"},
+				}
 			}
 		}
 
@@ -471,12 +454,8 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			Servers: servers,
 		}
 
-		
 		dns.Strategy = "ipv4_only"
 
-		
-		
-		
 		if detour != "" && cfg.Proxy.IP != "" && net.ParseIP(cfg.Proxy.IP) == nil {
 			dns.Rules = append(dns.Rules, SBDNSRule{
 				Domain: []string{cfg.Proxy.IP},
@@ -489,8 +468,17 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 
 	servers := []SBDNSServer{}
 	if len(cfg.DNSServers) > 0 {
-		for _, srv := range cfg.DNSServers {
-			servers = append(servers, SBDNSServer{Type: "udp", Tag: "custom", Server: srv})
+		for i, raw := range cfg.DNSServers {
+			server, port := splitDNSServer(raw)
+			if server == "" {
+				continue
+			}
+			servers = append(servers, SBDNSServer{
+				Type:       "udp",
+				Tag:        fmt.Sprintf("custom-%d", i+1),
+				Server:     server,
+				ServerPort: port,
+			})
 		}
 		servers = append(servers, SBDNSServer{Type: "local", Tag: "local"})
 	} else {
@@ -506,6 +494,31 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 	}
 }
 
+func splitDNSServer(raw string) (string, int) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return "", 0
+	}
+	if host, portStr, err := net.SplitHostPort(s); err == nil {
+		if n, err := strconv.Atoi(portStr); err == nil && n > 0 {
+			return host, n
+		}
+		return host, 0
+	}
+	if strings.Count(s, ":") == 1 {
+		parts := strings.SplitN(s, ":", 2)
+		if len(parts) == 2 {
+			host := strings.TrimSpace(parts[0])
+			if host != "" {
+				if n, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil && n > 0 {
+					return host, n
+				}
+			}
+		}
+	}
+	return s, 0
+}
+
 func buildRoute(cfg EngineConfig) *SBRoute {
 	route := &SBRoute{
 		Final:      "proxy",
@@ -514,11 +527,6 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 
 	var rules []SBRouteRule
 
-	
-	
-	
-	
-	
 	if cfg.Mode == ProxyModeTunnel {
 		if serverIP := net.ParseIP(cfg.Proxy.IP); serverIP != nil {
 			cidr := cfg.Proxy.IP + "/32"
@@ -531,7 +539,7 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 				Outbound: "direct",
 			})
 		} else if cfg.Proxy.IP != "" {
-			
+
 			rules = append(rules, SBRouteRule{
 				Action:   "route",
 				Domain:   []string{cfg.Proxy.IP},
@@ -540,19 +548,15 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		}
 	}
 
-	
-	
 	rules = append(rules, SBRouteRule{
 		Action: "sniff",
 	})
 
-	
 	rules = append(rules, SBRouteRule{
 		Protocol: []string{"dns"},
 		Action:   "hijack-dns",
 	})
 
-	
 	isEndpointProtocol := strings.EqualFold(strings.TrimSpace(cfg.Proxy.Type), "wireguard") ||
 		strings.EqualFold(strings.TrimSpace(cfg.Proxy.Type), "amneziawg")
 	if cfg.Mode == ProxyModeTunnel && !isEndpointProtocol {
@@ -568,7 +572,6 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		}
 	}
 
-	
 	if rx := appWhitelistPathRegexes(cfg.AppWhitelist); len(rx) > 0 {
 		rules = append(rules, SBRouteRule{
 			Action:           "route",
@@ -577,8 +580,6 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		})
 	}
 
-	
-	
 	if len(cfg.Whitelist) > 0 {
 		seen := make(map[string]struct{}, len(cfg.Whitelist))
 		var normalized []string
@@ -646,7 +647,7 @@ func getFreeLocalPort(defaultPort int) int {
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return 14081 
+		return 14081
 	}
 	defer ln.Close()
 	return ln.Addr().(*net.TCPAddr).Port
@@ -667,7 +668,6 @@ func splitHostPort(addr, defaultHost string, defaultPort int) (string, int) {
 	return host, port
 }
 
-
 func PingProxy(ip string, port int) (latencyMs int64, reachable bool, reason string) {
 	start := time.Now()
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", ip, port), 5*time.Second)
@@ -679,19 +679,13 @@ func PingProxy(ip string, port int) (latencyMs int64, reachable bool, reason str
 	return elapsed.Milliseconds(), true, ""
 }
 
-
-
-
-
 func PingHysteria2QUIC(ip string, port int) (latencyMs int64, reachable bool, reason, checkType string) {
-	
-	
-	
+
 	latency, ok, r := PingProxyUDP(ip, port)
 	if ok {
 		return latency, true, "", "udp"
 	}
-	
+
 	tcpLat, tcpOK, tcpR := PingProxy(ip, port)
 	if tcpOK {
 		return tcpLat, true, "", "tcp_fallback"
@@ -701,11 +695,6 @@ func PingHysteria2QUIC(ip string, port int) (latencyMs int64, reachable bool, re
 	}
 	return 0, false, r, "udp"
 }
-
-
-
-
-
 
 func PingProxyUDP(ip string, port int) (latencyMs int64, reachable bool, reason string) {
 	addr := net.JoinHostPort(ip, fmt.Sprintf("%d", port))
@@ -723,18 +712,17 @@ func PingProxyUDP(ip string, port int) (latencyMs int64, reachable bool, reason 
 	elapsed := time.Since(start)
 	if readErr != nil {
 		if ne, ok := readErr.(net.Error); ok && ne.Timeout() {
-			
-			
+
 			return -1, true, ""
 		}
 		msg := strings.ToLower(readErr.Error())
 		if strings.Contains(msg, "refused") {
 			return 0, false, "connection_refused"
 		}
-		
+
 		return -1, true, ""
 	}
-	
+
 	return elapsed.Milliseconds(), true, ""
 }
 

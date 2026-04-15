@@ -141,3 +141,33 @@ func TestHysteria2OutboundConfigParses(t *testing.T) {
 		t.Fatalf("parsing options: %v", err)
 	}
 }
+
+func TestSSTunnelConfigParsesWithDNS(t *testing.T) {
+	extra := map[string]interface{}{
+		"method": "chacha20-ietf-poly1305",
+	}
+	raw, err := json.Marshal(extra)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := BuildTunnelModeConfig(EngineConfig{
+		Proxy: ProxyConfig{
+			IP:       "example.com",
+			Port:     443,
+			Type:     "SS",
+			Password: "pass",
+			Extra:    raw,
+		},
+		Mode:       ProxyModeTunnel,
+		DNSServers: []string{"8.8.8.8", "1.1.1.1"},
+	})
+	j, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := include.Context(context.Background())
+	var opt option.Options
+	if err := singjson.UnmarshalContext(ctx, j, &opt); err != nil {
+		t.Fatalf("parsing options: %v", err)
+	}
+}

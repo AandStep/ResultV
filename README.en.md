@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-3.0.1-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-3.0.2-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/desktop-Wails-27272f.svg" alt="Wails">
   <img src="https://img.shields.io/badge/backend-Go-00ADD8.svg" alt="Go">
   <img src="https://img.shields.io/badge/frontend-React_18-61dafb.svg" alt="React">
@@ -33,7 +33,7 @@
 
 ## Overview
 
-ResultV **3.0.1** is a native desktop application built with **[Wails v2](https://wails.io/)**. The UI is **React 18** with **Vite** and **Tailwind CSS**; traffic is handled by a **Go** backend and **[sing-box](https://github.com/SagerNet/sing-box)** (with project-specific build tags in `wails.json`). The interface is localized with **i18next** (English and Russian).
+ResultV **3.0.2** is a native desktop application built with **[Wails v2](https://wails.io/)**. The UI is **React 18** with **Vite** and **Tailwind CSS**; traffic is handled by a **Go** backend and **[sing-box](https://github.com/SagerNet/sing-box)** (with project-specific build tags in `wails.json`). The interface is localized with **i18next** (English and Russian).
 
 **Prebuilt releases:** GitHub Actions currently publishes **Windows amd64** artifacts (portable `.exe` and NSIS installer) when a `v*` tag is pushed. **macOS and Linux** code paths exist in the repository, but automated CI releases are currently Windows-only; other platforms will be available later due to the full migration of the project to the Go stack.
 
@@ -66,6 +66,7 @@ ResultV **3.0.1** is a native desktop application built with **[Wails v2](https:
 - **WireGuard** and **AmneziaWG** require **Tunnel** mode; they are **not** available in plain Proxy mode (enforced in `internal/proxy/manager.go`).
 - **Tunnel** mode on Windows requires **running the app as Administrator** (privilege check before connect).
 - **Kill Switch** on Windows may require **administrator** privileges for firewall-style rules (`internal/system/killswitch_windows.go`).
+- Some subscription providers enforce **HWID device limits**; the app sends a stable `x-hwid` when fetching subscriptions and shows a clear reason if the provider returns an empty response due to that limit.
 - **VMESS, Trojan, and SS** are **less tested** than VLESS and some other stacks; if you hit failures, contact **@resultpoint_manager** on Telegram.
 
 ---

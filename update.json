@@ -1,6 +1,6 @@
 {
-  "version": "3.0.1",
-  "releaseTitle": "Local network listening, autostart fix, rename to ResultV",
-  "releaseNotes": "Пофикшен баг с отсутсвием автозапуска. Добавлена возможность слушать локальную сеть, чтобы подключаться к приложению с разных ПК, а также возможность самостоятельно выбрать порт. Переименование приложения в ResultV.",
+  "version": "3.0.2",
+  "releaseTitle": "DNS stability fixes for SS and custom DNS settings",
+  "releaseNotes": "Исправлена работа DNS для Shadowsocks в режиме Tunnel. Добавлен выбор DNS-серверов в настройках приложения (пресеты и ручной ввод).",
   "downloadUrl": "https://result-proxy.ru/"
 }

@@ -70,6 +70,14 @@ func NewCryptoService(userDataPath string) (*CryptoService, error) {
 	return cs, nil
 }
 
+func StableHardwareID(userDataPath string) (string, error) {
+	machineID, _, err := getHardwareID(userDataPath)
+	if err != nil {
+		return "", err
+	}
+	return machineID, nil
+}
+
 
 
 func NewCryptoServiceWithID(machineID string) *CryptoService {

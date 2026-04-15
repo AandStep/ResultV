@@ -47,7 +47,21 @@ export const SettingsView = () => {
   const [localPortInput, setLocalPortInput] = useState(
     settings?.localPort ? String(settings.localPort) : "",
   );
+  const [dnsInput, setDnsInput] = useState(
+    Array.isArray(settings?.dnsServers) ? settings.dnsServers.join(", ") : "",
+  );
+  const [dnsPreset, setDnsPreset] = useState("custom");
   const [lanIPs, setLanIPs] = useState([]);
+
+  const DNS_PRESETS = useMemo(
+    () => ({
+      auto: [],
+      google: ["8.8.8.8", "8.8.4.4"],
+      cloudflare: ["1.1.1.1", "1.0.0.1"],
+      quad9: ["9.9.9.9", "149.112.112.112"],
+    }),
+    [],
+  );
 
   const showNotify = (msg, isError = false) => {
     setNotify({ msg, isError });
@@ -182,6 +196,30 @@ export const SettingsView = () => {
   }, [settings?.localPort]);
 
   useEffect(() => {
+    const list = Array.isArray(settings?.dnsServers) ? settings.dnsServers : [];
+    setDnsInput(list.join(", "));
+    const toKey = (arr) => arr.join(",");
+    const current = toKey(list);
+    if (current === "") {
+      setDnsPreset("auto");
+      return;
+    }
+    if (current === toKey(DNS_PRESETS.google)) {
+      setDnsPreset("google");
+      return;
+    }
+    if (current === toKey(DNS_PRESETS.cloudflare)) {
+      setDnsPreset("cloudflare");
+      return;
+    }
+    if (current === toKey(DNS_PRESETS.quad9)) {
+      setDnsPreset("quad9");
+      return;
+    }
+    setDnsPreset("custom");
+  }, [settings?.dnsServers, DNS_PRESETS]);
+
+  useEffect(() => {
     if (!settings?.listenLan) return;
     wailsAPI.getLANIPs().then(setLanIPs).catch(() => setLanIPs([]));
   }, [settings?.listenLan]);
@@ -211,6 +249,39 @@ export const SettingsView = () => {
       return;
     }
     await updateSetting("localPort", n);
+  };
+
+  const parseDNSInput = (raw) => {
+    const parts = String(raw || "")
+      .split(/[\s,]+/g)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const seen = new Set();
+    const result = [];
+    for (const part of parts) {
+      if (!seen.has(part)) {
+        seen.add(part);
+        result.push(part);
+      }
+    }
+    return result;
+  };
+
+  const commitCustomDNS = async () => {
+    const list = parseDNSInput(dnsInput);
+    await updateSetting("dnsServers", list);
+    setDnsInput(list.join(", "));
+    setDnsPreset(list.length ? "custom" : "auto");
+  };
+
+  const applyDNSPreset = async (preset) => {
+    setDnsPreset(preset);
+    if (preset === "custom") {
+      return;
+    }
+    const list = DNS_PRESETS[preset] || [];
+    setDnsInput(list.join(", "));
+    await updateSetting("dnsServers", list);
   };
 
   return (
@@ -252,6 +323,69 @@ export const SettingsView = () => {
           isOn={settings.adblock}
           onToggle={() => updateSetting("adblock", !settings.adblock)}
         />
+      </div>
+
+      <div className="p-6 bg-zinc-900 rounded-3xl border border-zinc-800">
+        <h3 className="text-white font-bold text-lg mb-2">
+          {t("settings.dns.title")}
+        </h3>
+        <p className="text-zinc-500 text-sm mb-4">{t("settings.dns.desc")}</p>
+
+        <div className="grid sm:grid-cols-2 gap-3 mb-4">
+          <button
+            onClick={() => applyDNSPreset("auto")}
+            className={`px-4 py-3 rounded-xl font-medium transition-colors border ${dnsPreset === "auto" ? "bg-[#007E3A] text-white border-[#007E3A]" : "bg-zinc-800 hover:bg-zinc-700 text-white border-zinc-700"}`}
+          >
+            {t("settings.dns.preset_auto")}
+          </button>
+          <button
+            onClick={() => applyDNSPreset("google")}
+            className={`px-4 py-3 rounded-xl font-medium transition-colors border ${dnsPreset === "google" ? "bg-[#007E3A] text-white border-[#007E3A]" : "bg-zinc-800 hover:bg-zinc-700 text-white border-zinc-700"}`}
+          >
+            {t("settings.dns.preset_google")}
+          </button>
+          <button
+            onClick={() => applyDNSPreset("cloudflare")}
+            className={`px-4 py-3 rounded-xl font-medium transition-colors border ${dnsPreset === "cloudflare" ? "bg-[#007E3A] text-white border-[#007E3A]" : "bg-zinc-800 hover:bg-zinc-700 text-white border-zinc-700"}`}
+          >
+            {t("settings.dns.preset_cloudflare")}
+          </button>
+          <button
+            onClick={() => applyDNSPreset("quad9")}
+            className={`px-4 py-3 rounded-xl font-medium transition-colors border ${dnsPreset === "quad9" ? "bg-[#007E3A] text-white border-[#007E3A]" : "bg-zinc-800 hover:bg-zinc-700 text-white border-zinc-700"}`}
+          >
+            {t("settings.dns.preset_quad9")}
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <input
+            placeholder={t("settings.dns.custom_placeholder")}
+            className="min-w-[260px] flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white outline-none focus:border-[#007E3A] transition-colors focus:ring-0"
+            value={dnsInput}
+            onChange={(e) => {
+              setDnsInput(e.target.value);
+              if (dnsPreset !== "custom") setDnsPreset("custom");
+            }}
+            onBlur={() => {
+              if (dnsPreset === "custom") {
+                commitCustomDNS();
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                commitCustomDNS();
+              }
+            }}
+          />
+          <button
+            onClick={() => commitCustomDNS()}
+            className="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-white hover:text-[#00A819] rounded-xl font-medium transition-colors"
+          >
+            {t("settings.dns.apply")}
+          </button>
+        </div>
       </div>
 
       <div className="space-y-4">
