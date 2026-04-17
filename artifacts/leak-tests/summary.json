@@ -1,0 +1,20 @@
+﻿{
+    "timestamp":  "2026-04-14T00:51:07.4393360+07:00",
+    "outputDir":  "C:\\ResultProxyPC\\artifacts\\leak-tests",
+    "checks":  {
+                   "portProbeLeakCount":  0,
+                   "dnsLeakCount":  2,
+                   "ipv6LeakDetected":  false,
+                   "killSwitchLeakCount":  6,
+                   "splitRoutingFailures":  0,
+                   "artifactLeakCount":  0,
+                   "sideChannelNewPorts":  0
+               },
+    "gates":  {
+                  "p0Pass":  false,
+                  "failedLeakIds":  [
+                                        "L-DNS",
+                                        "L-KS"
+                                    ]
+              }
+}

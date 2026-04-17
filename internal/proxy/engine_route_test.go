@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -354,5 +355,55 @@ func TestBuildProxyModeConfig_CustomDNSHaveUniqueTags(t *testing.T) {
 	}
 	if nonLocal < 2 {
 		t.Fatalf("expected at least two custom dns servers, got %+v", cfg.DNS.Servers)
+	}
+}
+
+func TestBuildProxyModeConfig_CustomDNSUseProxyDetour(t *testing.T) {
+	cfg := BuildProxyModeConfig(EngineConfig{
+		Mode:       ProxyModeProxy,
+		ListenAddr: "127.0.0.1:14081",
+		Proxy:      ProxyConfig{Type: "TROJAN", IP: "docs.meowmeowcat.top", Port: 7443, Password: "p"},
+		DNSServers: []string{"8.8.8.8", "1.1.1.1"},
+	})
+	if cfg.DNS == nil {
+		t.Fatal("dns missing")
+	}
+	custom := 0
+	for _, s := range cfg.DNS.Servers {
+		if strings.HasPrefix(s.Tag, "custom-") {
+			custom++
+			if s.Type != "tcp" || s.Detour != "proxy" {
+				t.Fatalf("expected custom dns via proxy tcp, got %+v", s)
+			}
+		}
+	}
+	if custom != 2 {
+		t.Fatalf("expected 2 custom dns servers, got %+v", cfg.DNS.Servers)
+	}
+}
+
+func TestBuildProxyModeConfig_ProxyDomainResolvedLocallyForDNSDetour(t *testing.T) {
+	cfg := BuildProxyModeConfig(EngineConfig{
+		Mode:       ProxyModeProxy,
+		ListenAddr: "127.0.0.1:14081",
+		Proxy:      ProxyConfig{Type: "TROJAN", IP: "docs.meowmeowcat.top", Port: 7443, Password: "p"},
+	})
+	if cfg.DNS == nil {
+		t.Fatal("dns missing")
+	}
+	foundRule := false
+	for _, r := range cfg.DNS.Rules {
+		if r.Server != "local" {
+			continue
+		}
+		for _, d := range r.Domain {
+			if d == "docs.meowmeowcat.top" {
+				foundRule = true
+				break
+			}
+		}
+	}
+	if !foundRule {
+		t.Fatalf("expected local dns rule for proxy domain, got rules=%+v", cfg.DNS.Rules)
 	}
 }

@@ -1,0 +1,14 @@
+﻿{
+    "timestamp":  "2026-04-14T00:51:07.1108679+07:00",
+    "roots":  [
+                  "%LOCALAPPDATA%\\ResultV",
+                  "%APPDATA%\\ResultV",
+                  "%TEMP%"
+              ],
+    "maxFilesPerRoot":  120,
+    "maxFileSizeBytes":  2097152,
+    "findings":  [
+
+                 ],
+    "leakCount":  0
+}

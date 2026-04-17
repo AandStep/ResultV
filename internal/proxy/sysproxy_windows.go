@@ -170,8 +170,8 @@ func (w *WindowsSystemProxy) buildBypassList(whitelist []string) string {
 
 	var parts []string
 	for _, d := range safeList {
+		parts = append(parts, d)
 		parts = append(parts, "*."+d)
-		parts = append(parts, "*"+d+"*")
 	}
 	parts = append(parts, "<local>")
 	return strings.Join(parts, ";")

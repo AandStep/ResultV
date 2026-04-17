@@ -147,6 +147,8 @@ type SBOutbound struct {
 
 	TLS       *SBOutboundTLS       `json:"tls,omitempty"`
 	Transport *SBOutboundTransport `json:"transport,omitempty"`
+	
+	DomainStrategy string `json:"domain_strategy,omitempty"`
 }
 
 type SBHysteria2Obfs struct {
@@ -229,6 +231,7 @@ type SBOutboundTransport struct {
 	Path          string            `json:"path,omitempty"`
 	Host          string            `json:"host,omitempty"`
 	ServiceName   string            `json:"service_name,omitempty"`
+	Authority     string            `json:"authority,omitempty"`
 	Mode          string            `json:"mode,omitempty"`
 	XPaddingBytes string            `json:"x_padding_bytes,omitempty"`
 	Headers       map[string]string `json:"headers,omitempty"`
@@ -342,9 +345,8 @@ func BuildTunnelModeConfig(cfg EngineConfig) SingBoxConfig {
 		strictRoute = false
 	}
 
-	if pt == "HYSTERIA2" {
+	if pt == "HYSTERIA2" || pt == "TROJAN" {
 		strictRoute = false
-
 	}
 
 	if pt == "WIREGUARD" || pt == "AMNEZIAWG" {
@@ -466,6 +468,12 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		return dns
 	}
 
+	detour := "proxy"
+	pt := strings.ToUpper(strings.TrimSpace(cfg.Proxy.Type))
+	if pt == "WIREGUARD" || pt == "AMNEZIAWG" {
+		detour = ""
+	}
+
 	servers := []SBDNSServer{}
 	if len(cfg.DNSServers) > 0 {
 		for i, raw := range cfg.DNSServers {
@@ -473,25 +481,47 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			if server == "" {
 				continue
 			}
+			srvType := "udp"
+			if detour != "" {
+				srvType = "tcp"
+			}
 			servers = append(servers, SBDNSServer{
-				Type:       "udp",
+				Type:       srvType,
 				Tag:        fmt.Sprintf("custom-%d", i+1),
 				Server:     server,
 				ServerPort: port,
+				Detour:     detour,
 			})
 		}
 		servers = append(servers, SBDNSServer{Type: "local", Tag: "local"})
 	} else {
-		servers = []SBDNSServer{
-			{Type: "udp", Tag: "google", Server: "8.8.8.8"},
-			{Type: "udp", Tag: "cloudflare", Server: "1.1.1.1"},
-			{Type: "local", Tag: "local"},
+		if detour != "" {
+			servers = []SBDNSServer{
+				{Type: "tcp", Tag: "google-tcp", Server: "8.8.8.8", Detour: detour},
+				{Type: "tcp", Tag: "cloudflare-tcp", Server: "1.1.1.1", Detour: detour},
+				{Type: "tls", Tag: "google-tls", Server: "8.8.8.8", Detour: detour},
+				{Type: "tls", Tag: "cloudflare-tls", Server: "1.1.1.1", Detour: detour},
+				{Type: "local", Tag: "local"},
+			}
+		} else {
+			servers = []SBDNSServer{
+				{Type: "udp", Tag: "google", Server: "8.8.8.8"},
+				{Type: "udp", Tag: "cloudflare", Server: "1.1.1.1"},
+				{Type: "local", Tag: "local"},
+			}
 		}
 	}
 
-	return &SBDNS{
+	dns := &SBDNS{
 		Servers: servers,
 	}
+	if detour != "" && cfg.Proxy.IP != "" && net.ParseIP(cfg.Proxy.IP) == nil {
+		dns.Rules = append(dns.Rules, SBDNSRule{
+			Domain: []string{cfg.Proxy.IP},
+			Server: "local",
+		})
+	}
+	return dns
 }
 
 func splitDNSServer(raw string) (string, int) {

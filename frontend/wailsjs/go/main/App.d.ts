@@ -11,6 +11,8 @@ export function ApplyMode(arg1:string):Promise<proxy.ConnectResultDTO>;
 
 export function Connect(arg1:proxy.ProxyConfig,arg2:config.RoutingRules,arg3:boolean,arg4:boolean):Promise<proxy.ConnectResultDTO>;
 
+export function DecryptHappLink(arg1:string,arg2:string):Promise<string>;
+
 export function DeleteSubscription(arg1:string):Promise<void>;
 
 export function DetectCountry(arg1:string):Promise<string>;

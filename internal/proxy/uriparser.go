@@ -550,13 +550,68 @@ func parseTrojanURI(uri string) (config.ProxyEntry, error) {
 	}
 
 	params := u.Query()
+	network := firstNonEmpty(
+		params.Get("network"),
+		params.Get("type"),
+		"tcp",
+	)
+	network = strings.ToLower(strings.TrimSpace(network))
+	isGrpcNetwork := network == "grpc"
+
+	var sni string
+	if isGrpcNetwork {
+		sni = firstNonEmpty(
+			params.Get("sni"),
+			params.Get("peer"),
+			params.Get("serverName"),
+			params.Get("servername"),
+			params.Get("server_name"),
+		)
+	} else {
+		sni = firstNonEmpty(
+			params.Get("sni"),
+			params.Get("serverName"),
+			params.Get("servername"),
+			params.Get("server_name"),
+			params.Get("peer"),
+		)
+	}
+	insecure := parseBoolFlexible(firstNonEmpty(
+		params.Get("insecure"),
+		params.Get("allowInsecure"),
+		params.Get("allow_insecure"),
+		params.Get("skip-cert-verify"),
+		params.Get("skip_cert_verify"),
+	))
 	extra := map[string]interface{}{
-		"sni":      params.Get("sni"),
+		"sni":      sni,
 		"fp":       params.Get("fp"),
-		"network":  paramOr(params, "type", "tcp"),
+		"network":  network,
 		"path":     params.Get("path"),
 		"host":     params.Get("host"),
 		"security": paramOr(params, "security", "tls"),
+		"alpn":     params.Get("alpn"),
+		"insecure": insecure,
+		"pbk":      params.Get("pbk"),
+		"sid":      params.Get("sid"),
+		"spx":      params.Get("spx"),
+		"flow":     params.Get("flow"),
+	}
+	if grpcServiceName := firstNonEmpty(
+		params.Get("grpc-service-name"),
+		params.Get("serviceName"),
+		params.Get("service_name"),
+		params.Get("grpc_service_name"),
+	); grpcServiceName != "" {
+		extra["grpc-service-name"] = grpcServiceName
+		extra["serviceName"] = grpcServiceName
+	}
+	if grpcAuthority := firstNonEmpty(
+		params.Get("authority"),
+		params.Get("grpc-authority"),
+		params.Get("grpc_authority"),
+	); grpcAuthority != "" {
+		extra["authority"] = grpcAuthority
 	}
 
 	extraJSON, _ := json.Marshal(extra)

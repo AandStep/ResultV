@@ -14,6 +14,10 @@ export function Connect(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['Connect'](arg1, arg2, arg3, arg4);
 }
 
+export function DecryptHappLink(arg1, arg2) {
+  return window['go']['main']['App']['DecryptHappLink'](arg1, arg2);
+}
+
 export function DeleteSubscription(arg1) {
   return window['go']['main']['App']['DeleteSubscription'](arg1);
 }

@@ -1,0 +1,43 @@
+﻿{
+    "timestamp":  "2026-04-14T00:50:51.2098814+07:00",
+    "expectedServers":  [
+                            "10.10.0.53"
+                        ],
+    "domains":  [
+                    "example.com",
+                    "cloudflare.com"
+                ],
+    "findings":  [
+                     {
+                         "domain":  "example.com",
+                         "serverName":  null,
+                         "serverAddress":  "172.19.0.2",
+                         "raw":  "Сервер:  UnKnown\r\nAddress:  172.19.0.2\r\n\r\nИмя:     example.com\r\nAddresses:  104.20.23.154\r\n\t  172.66.147.243\r\n\r\nЌҐ § б«г¦Ёў ойЁ© ¤®ўҐаЁп ®вўҐв:",
+                         "exitCode":  0
+                     },
+                     {
+                         "domain":  "cloudflare.com",
+                         "serverName":  null,
+                         "serverAddress":  "172.19.0.2",
+                         "raw":  "Сервер:  UnKnown\r\nAddress:  172.19.0.2\r\n\r\nИмя:     cloudflare.com\r\nAddresses:  104.16.132.229\r\n\t  104.16.133.229\r\n\r\nЌҐ § б«г¦Ёў ойЁ© ¤®ўҐаЁп ®вўҐв:",
+                         "exitCode":  0
+                     }
+                 ],
+    "leakCount":  2,
+    "unexpectedResolvers":  [
+                                {
+                                    "domain":  "example.com",
+                                    "serverName":  null,
+                                    "serverAddress":  "172.19.0.2",
+                                    "raw":  "Сервер:  UnKnown\r\nAddress:  172.19.0.2\r\n\r\nИмя:     example.com\r\nAddresses:  104.20.23.154\r\n\t  172.66.147.243\r\n\r\nЌҐ § б«г¦Ёў ойЁ© ¤®ўҐаЁп ®вўҐв:",
+                                    "exitCode":  0
+                                },
+                                {
+                                    "domain":  "cloudflare.com",
+                                    "serverName":  null,
+                                    "serverAddress":  "172.19.0.2",
+                                    "raw":  "Сервер:  UnKnown\r\nAddress:  172.19.0.2\r\n\r\nИмя:     cloudflare.com\r\nAddresses:  104.16.132.229\r\n\t  104.16.133.229\r\n\r\nЌҐ § б«г¦Ёў ойЁ© ¤®ўҐаЁп ®вўҐв:",
+                                    "exitCode":  0
+                                }
+                            ]
+}

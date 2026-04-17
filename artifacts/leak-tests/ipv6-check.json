@@ -1,0 +1,16 @@
+﻿{
+    "timestamp":  "2026-04-14T00:50:53.2995621+07:00",
+    "ipCheckUrl":  "https://ifconfig.me/ip",
+    "expectIPv6Reachable":  false,
+    "ipv4":  {
+                 "exitCode":  0,
+                 "response":  "185.126.67.168"
+             },
+    "ipv6":  {
+                 "exitCode":  6,
+                 "response":  "curl: (6) Could not resolve host: ifconfig.me",
+                 "reachable":  false
+             },
+    "leakId":  "L-IPV6",
+    "leakDetected":  false
+}

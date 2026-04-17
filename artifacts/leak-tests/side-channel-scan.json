@@ -1,0 +1,24 @@
+﻿{
+    "timestamp":  "2026-04-14T00:51:07.4280351+07:00",
+    "leakId":  "L-SIDE",
+    "processes":  [
+                      {
+                          "Id":  12900,
+                          "ProcessName":  "ResultV",
+                          "Path":  null
+                      }
+                  ],
+    "listens":  [
+
+                ],
+    "baselinePath":  "artifacts\\leak-tests\\side-channel-baseline.json",
+    "baselinePorts":  [
+
+                      ],
+    "currentPorts":  [
+
+                     ],
+    "newPortsSinceBaseline":  [
+
+                              ]
+}

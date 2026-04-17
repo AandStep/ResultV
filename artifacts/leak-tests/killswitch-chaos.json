@@ -1,0 +1,61 @@
+﻿{
+    "timestamp":  "2026-04-14T00:51:05.5262099+07:00",
+    "probeUrl":  "https://ifconfig.me/ip",
+    "killed":  [
+                   {
+                       "process":  "ResultV",
+                       "id":  12900
+                   }
+               ],
+    "probes":  [
+                   {
+                       "iteration":  1,
+                       "probe":  {
+                                     "exitCode":  0,
+                                     "response":  "185.126.67.168",
+                                     "directEgressSucceeded":  true
+                                 }
+                   },
+                   {
+                       "iteration":  2,
+                       "probe":  {
+                                     "exitCode":  0,
+                                     "response":  "185.126.67.168",
+                                     "directEgressSucceeded":  true
+                                 }
+                   },
+                   {
+                       "iteration":  3,
+                       "probe":  {
+                                     "exitCode":  0,
+                                     "response":  "185.126.67.168",
+                                     "directEgressSucceeded":  true
+                                 }
+                   },
+                   {
+                       "iteration":  4,
+                       "probe":  {
+                                     "exitCode":  0,
+                                     "response":  "185.126.67.168",
+                                     "directEgressSucceeded":  true
+                                 }
+                   },
+                   {
+                       "iteration":  5,
+                       "probe":  {
+                                     "exitCode":  0,
+                                     "response":  "185.126.67.168",
+                                     "directEgressSucceeded":  true
+                                 }
+                   },
+                   {
+                       "iteration":  6,
+                       "probe":  {
+                                     "exitCode":  0,
+                                     "response":  "185.126.67.168",
+                                     "directEgressSucceeded":  true
+                                 }
+                   }
+               ],
+    "leakCount":  6
+}

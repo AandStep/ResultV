@@ -1,0 +1,14 @@
+﻿{
+    "timestamp":  "2026-04-14T00:50:49.1126087+07:00",
+    "ipCheckUrl":  "https://ifconfig.me/ip",
+    "appProcessNames":  [
+                            "ResultV",
+                            "sing-box"
+                        ],
+    "maxPorts":  30,
+    "scannedPortCount":  0,
+    "leakCount":  0,
+    "findings":  [
+
+                 ]
+}

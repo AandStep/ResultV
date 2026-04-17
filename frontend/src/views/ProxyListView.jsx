@@ -37,32 +37,6 @@ import {
 } from "../utils/proxyParser";
 import wailsAPI from "../utils/wailsAPI";
 
-const subscriptionLogoSrcCache = new Map();
-
-const isDataImageUrl = (value) =>
-  typeof value === "string" && value.startsWith("data:image/");
-
-const resolveSubscriptionLogoSrc = async (url) => {
-  if (!url) return "";
-  if (!isDataImageUrl(url)) return url;
-
-  const cached = subscriptionLogoSrcCache.get(url);
-  if (cached?.resolved) return cached.resolved;
-  if (cached?.pending) return cached.pending;
-
-  const pending = fetch(url)
-    .then((response) => response.blob())
-    .then((blob) => URL.createObjectURL(blob))
-    .catch(() => url)
-    .then((resolved) => {
-      subscriptionLogoSrcCache.set(url, { resolved });
-      return resolved;
-    });
-
-  subscriptionLogoSrcCache.set(url, { pending });
-  return pending;
-};
-
 function formatTrafficBytes(n) {
   if (n == null || Number.isNaN(n)) return "0";
   const v = Number(n);
@@ -75,37 +49,54 @@ function formatTrafficBytes(n) {
   return `${kb.toFixed(0)} KB`;
 }
 
-function SubscriptionHeaderIcon({ url }) {
+function SubscriptionHeaderIcon({ url, subscriptionUrl }) {
   const [failed, setFailed] = useState(false);
-  const [resolvedSrc, setResolvedSrc] = useState(() =>
-    isDataImageUrl(url) ? subscriptionLogoSrcCache.get(url)?.resolved || "" : url || "",
-  );
+  const [candidateIndex, setCandidateIndex] = useState(0);
+
+  const candidates = useMemo(() => {
+    const out = [];
+    const add = (value) => {
+      if (!value || out.includes(value)) return;
+      out.push(value);
+    };
+    if (typeof url === "string" && url.startsWith("data:image/")) {
+      add(url);
+    }
+    try {
+      const u = new URL(subscriptionUrl || "");
+      const base = `${u.protocol}//${u.host}`;
+      add(`${base}/assets/favicon-32x32.png`);
+      add(`${base}/assets/favicon.ico`);
+      add(`${base}/favicon.ico`);
+    } catch {}
+    return out;
+  }, [url, subscriptionUrl]);
 
   useEffect(() => {
-    let cancelled = false;
     setFailed(false);
+    setCandidateIndex(0);
+  }, [url, subscriptionUrl]);
 
-    resolveSubscriptionLogoSrc(url).then((src) => {
-      if (!cancelled) {
-        setResolvedSrc(src);
-      }
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [url]);
-
-  if (failed || !resolvedSrc) return null;
+  const src = candidates[candidateIndex] || "";
+  if (!src) return null;
   return (
     <div className="w-10 h-10 rounded-xl shrink-0 border border-zinc-700/50 bg-zinc-800 flex items-center justify-center">
-      <img
-        src={resolvedSrc}
-        alt=""
-        referrerPolicy="no-referrer"
-        className="w-7 h-7 rounded-lg object-contain"
-        onError={() => setFailed(true)}
-      />
+      {failed ? (
+        <Activity className="w-5 h-5 text-zinc-500" />
+      ) : (
+        <img
+          src={src}
+          alt=""
+          className="w-7 h-7 rounded-lg object-contain"
+          onError={() => {
+            if (candidateIndex + 1 < candidates.length) {
+              setCandidateIndex((i) => i + 1);
+            } else {
+              setFailed(true);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -483,7 +474,11 @@ export const ProxyListView = () => {
                       className="flex min-h-14 flex-1 min-w-0 items-center gap-3 rounded-xl bg-zinc-800/70 border border-zinc-700/60 px-3 py-2 text-left outline-none focus:outline-none focus:ring-2 focus:ring-[#00A819]/25 focus-visible:outline-none hover:border-zinc-600/80 transition-colors group/hdr"
                     >
                       {isSub && (
-                        <SubscriptionHeaderIcon url={subMeta?.iconUrl} />
+                        <SubscriptionHeaderIcon
+                          key={`${subMeta?.id}-${subMeta?.iconUrl || ""}`}
+                          url={subMeta?.iconUrl}
+                          subscriptionUrl={subMeta?.url}
+                        />
                       )}
                       <div className="flex min-w-0 flex-1 items-center gap-2">
                         <h3 className="text-lg font-bold truncate text-white transition-colors group-hover/hdr:text-zinc-100">

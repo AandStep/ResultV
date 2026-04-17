@@ -15,11 +15,26 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+export const decryptHappLinks = async (text) => {
+    if (!text || typeof text !== "string") return text;
+    if (!text.includes("happ://crypt")) return text;
+
+    try {
+        if (window.go && window.go.main && window.go.main.App && window.go.main.App.DecryptHappLink) {
+            return await window.go.main.App.DecryptHappLink(text, "");
+        }
+    } catch (err) {
+        console.error("Failed to decrypt happ link via backend", err);
+    }
+    return text;
+};
+
 export const parseProxies = (content) => {
     if (!content || typeof content !== "string") return [];
 
     const wireguardProxy = parseWireGuardConf(content);
     if (wireguardProxy) return [wireguardProxy];
+
 
     const lines = content
         .split(/\r?\n/)
@@ -264,6 +279,33 @@ const parseTrojan = (uri) => {
         const urlStr = uri.replace("trojan://", "http://");
         const url = new URL(urlStr);
         const params = url.searchParams;
+        const network = String(params.get("network") || params.get("type") || "tcp").toLowerCase();
+        const sni = params.get("sni") ||
+            params.get("serverName") ||
+            params.get("servername") ||
+            params.get("server_name") ||
+            params.get("peer") ||
+            "";
+        const insecureRaw = String(
+            params.get("insecure") ||
+            params.get("allowInsecure") ||
+            params.get("allow_insecure") ||
+            params.get("skip-cert-verify") ||
+            params.get("skip_cert_verify") ||
+            ""
+        ).trim().toLowerCase();
+        const insecure = insecureRaw === "1" || insecureRaw === "true" || insecureRaw === "yes" || insecureRaw === "on";
+        const grpcServiceName =
+            params.get("grpc-service-name") ||
+            params.get("serviceName") ||
+            params.get("service_name") ||
+            params.get("grpc_service_name") ||
+            "";
+        const authority =
+            params.get("authority") ||
+            params.get("grpc-authority") ||
+            params.get("grpc_authority") ||
+            "";
 
         return {
             ip: url.hostname,
@@ -274,12 +316,21 @@ const parseTrojan = (uri) => {
             password: url.username,
             extra: {
                 security: params.get("security") || "tls",
-                sni: params.get("sni") || "",
+                sni,
                 fp: params.get("fp") || "",
-                network: params.get("type") || "tcp",
+                network,
                 path: params.get("path") || "",
                 host: params.get("host") || "",
                 alpn: params.get("alpn") || "",
+                insecure,
+                peer: params.get("peer") || "",
+                "grpc-service-name": grpcServiceName,
+                serviceName: grpcServiceName,
+                authority,
+                pbk: params.get("pbk") || "",
+                sid: params.get("sid") || "",
+                spx: params.get("spx") || "",
+                flow: params.get("flow") || "",
             },
         };
     } catch (e) {
@@ -612,18 +663,16 @@ export const sanitizeVpnExtraForEdit = (extra, { type, network, security, uuid, 
         ex.network = net;
     }
 
-    if (t === "VLESS" || t === "VMESS") {
+    if (t === "VLESS" || t === "VMESS" || t === "TROJAN") {
         ex.security = sec;
-        ex.uuid = uuid;
+        if (t !== "TROJAN") {
+            ex.uuid = uuid;
+        }
         if (sec === "none") {
             delete ex.tls;
             const f = String(ex.flow || "");
             if (/xtls|vision/i.test(f)) ex.flow = "";
         }
-        sanitizeAlpnIfNotXhttp(ex, net);
-    }
-
-    if (t === "TROJAN") {
         sanitizeAlpnIfNotXhttp(ex, net);
     }
 

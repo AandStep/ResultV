@@ -1,0 +1,22 @@
+﻿{
+    "timestamp":  "2026-04-14T00:51:06.6045096+07:00",
+    "leakId":  "L-SPLIT",
+    "total":  2,
+    "failed":  0,
+    "results":  [
+                    {
+                        "command":  "curl.exe --max-time 4 --silent --show-error https://ifconfig.me/ip",
+                        "expectedRoute":  "bypass",
+                        "exitCode":  0,
+                        "output":  "185.126.67.168",
+                        "success":  true
+                    },
+                    {
+                        "command":  "curl.exe --max-time 4 --silent --show-error https://ifconfig.me/ip",
+                        "expectedRoute":  "tunnel",
+                        "exitCode":  0,
+                        "output":  "185.126.67.168",
+                        "success":  true
+                    }
+                ]
+}

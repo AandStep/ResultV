@@ -37,3 +37,8 @@ build/windows/installer/tmp/*
 *.timestamp-*.mjs
 /tmp.exe
 *~
+
+# Secrets
+.env
+.env.*
+!.env.example

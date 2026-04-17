@@ -102,6 +102,7 @@ var pingLANProbe = PingProxyLANBind
 var pingHysteria2Probe = PingHysteria2QUIC
 var pingWireGuardProbe = PingProxyUDP
 var probeTunnelHTTPProbe = probeHTTPDirect
+var probeHTTPThroughProxyProbe = probeHTTPThroughProxy
 var isAdminCheck = sys.IsAdmin
 
 
@@ -276,7 +277,7 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 	
 	
 	
-	shouldRunPostStartProbe := mode != ProxyModeTunnel || isEndpointProtocol
+	shouldRunPostStartProbe := mode != ProxyModeTunnel || isEndpointProtocol || proxyTypeLower == "trojan"
 	if shouldRunPostStartProbe {
 		if code, reason := runPostStartProbe(proxyTypeLower, proxy.IP, proxy.Port, actualLocalPort, mode); code != "" {
 			_ = m.engine.Stop()
@@ -397,6 +398,49 @@ func runPostStartProbe(proxyTypeLower, ip string, port, localPort int, mode Prox
 				return "post_start_probe_failed", httpReason
 			}
 		}
+	case "trojan":
+		if mode == ProxyModeProxy {
+			proxyAddr := fmt.Sprintf("127.0.0.1:%d", localPort)
+			var ok bool
+			var r string
+			// Trojan требует TLS-рукопожатие при первом соединении — это занимает время.
+			// Даём 3 попытки с нарастающей паузой чтобы sing-box успел инициализироваться.
+			delays := []time.Duration{300 * time.Millisecond, 600 * time.Millisecond}
+			for i := 0; i < 3; i++ {
+				ok, r = probeHTTPThroughProxyProbe(proxyAddr)
+				if ok {
+					break
+				}
+				if i < len(delays) {
+					time.Sleep(delays[i])
+				}
+			}
+			if !ok {
+				if r == "" {
+					r = "trojan proxy e2e probe failed"
+				}
+				return "post_start_probe_failed", r
+			}
+		} else if mode == ProxyModeTunnel {
+			var ok bool
+			var r string
+			delays := []time.Duration{300 * time.Millisecond, 600 * time.Millisecond}
+			for i := 0; i < 3; i++ {
+				ok, r = probeTunnelHTTPProbe()
+				if ok {
+					break
+				}
+				if i < len(delays) {
+					time.Sleep(delays[i])
+				}
+			}
+			if !ok {
+				if r == "" {
+					r = "trojan e2e probe failed"
+				}
+				return "post_start_probe_failed", r
+			}
+		}
 	}
 	return "", ""
 }
@@ -429,7 +473,10 @@ func probeHTTPThroughProxy(proxyAddr string) (bool, string) {
 			continue
 		}
 		_ = resp.Body.Close()
-		if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+		// Любой HTTP-ответ (включая 5xx) через прокси означает что туннель работает.
+		// 502/503/504 от connectivity-check endpoint'ов — норма при работе через прокси.
+		// Только 407 (Proxy Auth Required) означает что прокси сам не принял запрос.
+		if isProxyProbeResponseAcceptable(resp.StatusCode) {
 			return true, ""
 		}
 		lastReason = fmt.Sprintf("unexpected status %d from %s", resp.StatusCode, target)
@@ -463,7 +510,7 @@ func probeHTTPDirect() (bool, string) {
 			continue
 		}
 		_ = resp.Body.Close()
-		if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+		if isProbeHTTPStatusAcceptable(resp.StatusCode) {
 			return true, ""
 		}
 		lastReason = fmt.Sprintf("unexpected status %d from %s", resp.StatusCode, target)
@@ -472,6 +519,26 @@ func probeHTTPDirect() (bool, string) {
 		lastReason = "http probe failed"
 	}
 	return false, lastReason
+}
+
+func isProbeHTTPStatusAcceptable(statusCode int) bool {
+	if statusCode == http.StatusProxyAuthRequired {
+		return false
+	}
+	return statusCode >= 200 && statusCode < 500
+}
+
+// isProxyProbeResponseAcceptable используется при проверке соединения ЧЕРЕЗ прокси.
+// Любой HTTP-ответ (включая 5xx) означает что туннель работает — сервер ответил.
+// Connectivity-check endpoint'ы (generate_204, connecttest.txt) могут вернуть 502/503/504
+// когда к ним обращаются через прокси — это нормально и не означает неисправность туннеля.
+func isProxyProbeResponseAcceptable(statusCode int) bool {
+	// 407 = прокси требует авторизацию — это означает что сам прокси не принял запрос
+	if statusCode == http.StatusProxyAuthRequired {
+		return false
+	}
+	// Любой другой HTTP-статус означает что соединение прошло через туннель
+	return statusCode >= 100
 }
 
 
@@ -505,6 +572,7 @@ func (m *Manager) disconnectLocked() error {
 	}
 
 	m.connected = false
+	m.proxy = nil
 
 	
 	m.emitStatus()

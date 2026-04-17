@@ -66,9 +66,25 @@ export const useDaemonStatus = (
                 if (!isSwitchingRef.current) {
                     setIsConnected(data.isConnected);
                     if (data.currentProxy) {
+                        const currentID = String(data.currentProxy.id || "").trim();
+                        const currentIP = String(data.currentProxy.ip || "").trim().toLowerCase();
+                        const currentType = String(data.currentProxy.type || "").trim().toLowerCase();
+                        const currentPort = Number(data.currentProxy.port || 0);
                         const localMatchedProxy = proxies.find(
-                            (p) =>
-                                p.id === data.currentProxy.id || p.ip === data.currentProxy.ip,
+                            (p) => {
+                                const proxyID = String(p.id || "").trim();
+                                if (currentID && proxyID && proxyID === currentID) {
+                                    return true;
+                                }
+                                const proxyIP = String(p.ip || "").trim().toLowerCase();
+                                const proxyType = String(p.type || "").trim().toLowerCase();
+                                const proxyPort = Number(p.port || 0);
+                                return (
+                                    proxyIP === currentIP &&
+                                    proxyPort === currentPort &&
+                                    proxyType === currentType
+                                );
+                            },
                         );
                         setActiveProxy(localMatchedProxy || data.currentProxy);
                     }

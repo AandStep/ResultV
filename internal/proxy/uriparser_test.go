@@ -91,7 +91,7 @@ func TestXHTTPOmitPaddingWhenAbsent(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buildProxyOutbound(ProxyConfig{IP: entry.IP, Port: entry.Port, Type: entry.Type, Extra: entry.Extra})
-	
+
 	if out.Transport == nil || out.Transport.XPaddingBytes != "100-1000" {
 		t.Fatalf("expected default XPaddingBytes, got %q", out.Transport.XPaddingBytes)
 	}
@@ -226,6 +226,277 @@ func TestVLESSURIGrpcServiceNameBuildsOutboundTransport(t *testing.T) {
 	}
 	if out.Transport.ServiceName != "api" {
 		t.Fatalf("transport service_name: %v", out.Transport.ServiceName)
+	}
+}
+
+func TestTrojanURIWithRealityBuildsOutbound(t *testing.T) {
+	raw := "trojan://secret@one.meowmeowcat.top:7443?type=tcp&headerType=none&security=reality&sni=google.com&fp=chrome&pbk=-lCQjfUSO29QFSrFrbIyHPfaSQzjIWRg7lMhaPStUzA&sid=f2b30c6723854005&spx=%2F#Node"
+	entry, err := ParseProxyURI(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if entry.Type != "TROJAN" {
+		t.Fatalf("expected TROJAN, got %s", entry.Type)
+	}
+
+	var extra map[string]interface{}
+	if err := json.Unmarshal(entry.Extra, &extra); err != nil {
+		t.Fatalf("extra json: %v", err)
+	}
+	if extra["security"] != "reality" {
+		t.Fatalf("security: %v", extra["security"])
+	}
+	if extra["pbk"] != "-lCQjfUSO29QFSrFrbIyHPfaSQzjIWRg7lMhaPStUzA" {
+		t.Fatalf("pbk: %v", extra["pbk"])
+	}
+	if extra["sid"] != "f2b30c6723854005" {
+		t.Fatalf("sid: %v", extra["sid"])
+	}
+
+	out := buildProxyOutbound(ProxyConfig{
+		IP:       entry.IP,
+		Port:     entry.Port,
+		Type:     entry.Type,
+		Password: entry.Password,
+		Extra:    entry.Extra,
+	})
+
+	if out.TLS == nil {
+		t.Fatalf("tls is nil")
+	}
+	if out.TLS.Reality == nil {
+		t.Fatalf("tls.reality is nil")
+	}
+	if !out.TLS.Reality.Enabled {
+		t.Fatalf("reality is not enabled")
+	}
+	if out.TLS.Reality.PublicKey != "-lCQjfUSO29QFSrFrbIyHPfaSQzjIWRg7lMhaPStUzA" {
+		t.Fatalf("public_key: %v", out.TLS.Reality.PublicKey)
+	}
+	if out.TLS.Reality.ShortID != "f2b30c6723854005" {
+		t.Fatalf("short_id: %v", out.TLS.Reality.ShortID)
+	}
+	if len(out.TLS.ALPN) > 0 {
+		t.Fatalf("expected empty ALPN for Reality, got: %v", out.TLS.ALPN)
+	}
+}
+
+func TestTrojanURIGrpcAndTLSAliasesBuildsOutbound(t *testing.T) {
+	raw := "trojan://secret@example.com:443?type=grpc&serviceName=api&authority=grpc.example.com&peer=edge.example.com&allowInsecure=1#Node"
+	entry, err := ParseProxyURI(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if entry.Type != "TROJAN" {
+		t.Fatalf("expected TROJAN, got %s", entry.Type)
+	}
+
+	var extra map[string]interface{}
+	if err := json.Unmarshal(entry.Extra, &extra); err != nil {
+		t.Fatalf("extra json: %v", err)
+	}
+	if extra["network"] != "grpc" {
+		t.Fatalf("network: %v", extra["network"])
+	}
+	if extra["grpc-service-name"] != "api" {
+		t.Fatalf("grpc-service-name: %v", extra["grpc-service-name"])
+	}
+	if extra["serviceName"] != "api" {
+		t.Fatalf("serviceName: %v", extra["serviceName"])
+	}
+	if extra["authority"] != "grpc.example.com" {
+		t.Fatalf("authority: %v", extra["authority"])
+	}
+	if extra["sni"] != "edge.example.com" {
+		t.Fatalf("sni: %v", extra["sni"])
+	}
+	insecure, ok := extra["insecure"].(bool)
+	if !ok || !insecure {
+		t.Fatalf("insecure: %v", extra["insecure"])
+	}
+
+	out := buildProxyOutbound(ProxyConfig{
+		IP:       entry.IP,
+		Port:     entry.Port,
+		Type:     entry.Type,
+		Password: entry.Password,
+		Extra:    entry.Extra,
+	})
+	if out.Transport == nil || out.Transport.Type != "grpc" {
+		t.Fatalf("transport: %+v", out.Transport)
+	}
+	if out.Transport.ServiceName != "api" {
+		t.Fatalf("service_name: %v", out.Transport.ServiceName)
+	}
+	if out.Transport.Authority != "grpc.example.com" {
+		t.Fatalf("authority: %v", out.Transport.Authority)
+	}
+	if out.TLS == nil || out.TLS.ServerName != "edge.example.com" || !out.TLS.Insecure {
+		t.Fatalf("tls: %+v", out.TLS)
+	}
+}
+
+func TestTrojanURINetworkGrpcParamBuildsOutbound(t *testing.T) {
+	raw := "trojan://secret@example.com:443?network=grpc&grpc-service-name=api&authority=grpc.example.com&peer=edge.example.com&allowInsecure=1#Node"
+	entry, err := ParseProxyURI(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if entry.Type != "TROJAN" {
+		t.Fatalf("expected TROJAN, got %s", entry.Type)
+	}
+
+	var extra map[string]interface{}
+	if err := json.Unmarshal(entry.Extra, &extra); err != nil {
+		t.Fatalf("extra json: %v", err)
+	}
+	if extra["network"] != "grpc" {
+		t.Fatalf("network: %v", extra["network"])
+	}
+	if extra["grpc-service-name"] != "api" {
+		t.Fatalf("grpc-service-name: %v", extra["grpc-service-name"])
+	}
+	if extra["serviceName"] != "api" {
+		t.Fatalf("serviceName: %v", extra["serviceName"])
+	}
+	if extra["authority"] != "grpc.example.com" {
+		t.Fatalf("authority: %v", extra["authority"])
+	}
+	if extra["sni"] != "edge.example.com" {
+		t.Fatalf("sni: %v", extra["sni"])
+	}
+
+	out := buildProxyOutbound(ProxyConfig{
+		IP:       entry.IP,
+		Port:     entry.Port,
+		Type:     entry.Type,
+		Password: entry.Password,
+		Extra:    entry.Extra,
+	})
+	if out.Transport == nil || out.Transport.Type != "grpc" {
+		t.Fatalf("transport: %+v", out.Transport)
+	}
+	if out.Transport.ServiceName != "api" {
+		t.Fatalf("service_name: %v", out.Transport.ServiceName)
+	}
+	if out.Transport.Authority != "grpc.example.com" {
+		t.Fatalf("authority: %v", out.Transport.Authority)
+	}
+	if out.TLS == nil || out.TLS.ServerName != "edge.example.com" || !out.TLS.Insecure {
+		t.Fatalf("tls: %+v", out.TLS)
+	}
+}
+
+func TestTrojanURITcpUsesPeerAsSNIFallback(t *testing.T) {
+	raw := "trojan://secret@example.com:443?peer=apple.com&allowInsecure=1#Node"
+	entry, err := ParseProxyURI(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if entry.Type != "TROJAN" {
+		t.Fatalf("expected TROJAN, got %s", entry.Type)
+	}
+
+	var extra map[string]interface{}
+	if err := json.Unmarshal(entry.Extra, &extra); err != nil {
+		t.Fatalf("extra json: %v", err)
+	}
+	if extra["network"] != "tcp" {
+		t.Fatalf("network: %v", extra["network"])
+	}
+	if sni, ok := extra["sni"].(string); !ok || sni != "apple.com" {
+		t.Fatalf("expected peer fallback as sni for tcp, got %v", extra["sni"])
+	}
+
+	out := buildProxyOutbound(ProxyConfig{
+		IP:       entry.IP,
+		Port:     entry.Port,
+		Type:     entry.Type,
+		Password: entry.Password,
+		Extra:    entry.Extra,
+	})
+	if out.Transport != nil {
+		t.Fatalf("expected nil transport for tcp, got %+v", out.Transport)
+	}
+	if out.TLS == nil || out.TLS.ServerName != "apple.com" || !out.TLS.Insecure {
+		t.Fatalf("tls: %+v", out.TLS)
+	}
+}
+
+func TestTrojanURIUsesServerNameAlias(t *testing.T) {
+	raw := "trojan://secret@example.com:443?type=tcp&server_name=edge.example.com&peer=apple.com&allowInsecure=1#Node"
+	entry, err := ParseProxyURI(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := buildProxyOutbound(ProxyConfig{
+		IP:       entry.IP,
+		Port:     entry.Port,
+		Type:     entry.Type,
+		Password: entry.Password,
+		Extra:    entry.Extra,
+	})
+	if out.Transport != nil {
+		t.Fatalf("expected nil transport for tcp, got %+v", out.Transport)
+	}
+	if out.TLS == nil || out.TLS.ServerName != "edge.example.com" || !out.TLS.Insecure {
+		t.Fatalf("tls: %+v", out.TLS)
+	}
+}
+
+func TestTrojanURITcpPreservesExplicitSni(t *testing.T) {
+	// When the user explicitly sets sni= in the URI, it must be honoured
+	// regardless of the insecure flag. The old code incorrectly overrode
+	// it with the server IP for non-insecure TCP connections.
+	raw := "trojan://secret@example.com:443?type=tcp&sni=edge.example.com&allowInsecure=0#Node"
+	entry, err := ParseProxyURI(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := buildProxyOutbound(ProxyConfig{
+		IP:       entry.IP,
+		Port:     entry.Port,
+		Type:     entry.Type,
+		Password: entry.Password,
+		Extra:    entry.Extra,
+	})
+
+	if out.Transport != nil {
+		t.Fatalf("expected nil transport for tcp, got %+v", out.Transport)
+	}
+	if out.TLS == nil {
+		t.Fatalf("tls is nil")
+	}
+	// Explicit sni= must be preserved, not silently replaced with the server IP.
+	if out.TLS.ServerName != "edge.example.com" {
+		t.Fatalf("tls server_name: want %q got %q", "edge.example.com", out.TLS.ServerName)
+	}
+	if out.TLS.Insecure {
+		t.Fatalf("expected insecure=false, got true")
+	}
+}
+
+func TestTrojanURIUsesHostAsSNIWhenSNIAbsent(t *testing.T) {
+	raw := "trojan://secret@example.com:443?type=tcp&host=edge.example.com&allowInsecure=1#Node"
+	entry, err := ParseProxyURI(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := buildProxyOutbound(ProxyConfig{
+		IP:       entry.IP,
+		Port:     entry.Port,
+		Type:     entry.Type,
+		Password: entry.Password,
+		Extra:    entry.Extra,
+	})
+	if out.Transport != nil {
+		t.Fatalf("expected nil transport for tcp, got %+v", out.Transport)
+	}
+	if out.TLS == nil || out.TLS.ServerName != "edge.example.com" || !out.TLS.Insecure {
+		t.Fatalf("tls: %+v", out.TLS)
 	}
 }
 
