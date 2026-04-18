@@ -395,12 +395,15 @@ export const useAppConfig = (addLog) => {
 
     const handleBulkSaveProxies = useCallback(
         async (proxiesData, setActiveTab, defaultProtocol) => {
-            const VPN_TYPES = ["SS", "VMESS", "VLESS", "TROJAN", "WIREGUARD", "AMNEZIAWG", "HYSTERIA2"];
+            const VPN_TYPES = ["SS", "VMESS", "VLESS", "TROJAN", "WIREGUARD", "AMNEZIAWG", "HYSTERIA2", "AUTO"];
             const now = Date.now();
             const finalProxies = await Promise.all(
                 proxiesData.map(async (p, index) => {
-                    const countryCode = await detectCountry(p.ip);
-                    const isVpn = VPN_TYPES.includes(p.type);
+                    const isVpn = VPN_TYPES.includes(p.type?.toUpperCase());
+                    // Skip country detection for AUTO entries (no real host).
+                    const countryCode = (p.type?.toUpperCase() === "AUTO" || !p.ip)
+                        ? (p.country || "")
+                        : await detectCountry(p.ip);
                     return {
                         ...p,
                         id: String(p.id || now + index),
@@ -412,7 +415,7 @@ export const useAppConfig = (addLog) => {
             );
 
             setProxies((prev) => {
-                const VPN_SET = new Set(["SS", "VMESS", "VLESS", "TROJAN", "WIREGUARD", "AMNEZIAWG", "HYSTERIA2"]);
+                const VPN_SET = new Set(["SS", "VMESS", "VLESS", "TROJAN", "WIREGUARD", "AMNEZIAWG", "HYSTERIA2", "AUTO"]);
                 const newKeys = new Set(
                     finalProxies
                         .filter((p) => VPN_SET.has(p.type))
