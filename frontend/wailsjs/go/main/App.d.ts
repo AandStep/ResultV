@@ -9,6 +9,8 @@ export function AddSubscription(arg1:string,arg2:string):Promise<Array<config.Pr
 
 export function ApplyMode(arg1:string):Promise<proxy.ConnectResultDTO>;
 
+export function CancelConnect():Promise<void>;
+
 export function Connect(arg1:proxy.ProxyConfig,arg2:config.RoutingRules,arg3:boolean,arg4:boolean):Promise<proxy.ConnectResultDTO>;
 
 export function DeleteSubscription(arg1:string):Promise<void>;
@@ -39,13 +41,19 @@ export function GetStatus():Promise<proxy.StatusDTO>;
 
 export function GetVersion():Promise<string>;
 
+export function HandleDeepLink(arg1:string):Promise<void>;
+
 export function ImportConfig(arg1:string):Promise<void>;
 
 export function IsAdmin():Promise<boolean>;
 
 export function IsAutostartEnabled():Promise<boolean>;
 
+export function ParseSubscriptionText(arg1:string):Promise<Array<config.ProxyEntry>>;
+
 export function PingProxy(arg1:string,arg2:number,arg3:string):Promise<proxy.PingResultDTO>;
+
+export function QueueDeepLink(arg1:string):Promise<void>;
 
 export function RefreshSubscription(arg1:string):Promise<Array<config.ProxyEntry>>;
 

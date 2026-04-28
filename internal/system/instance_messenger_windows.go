@@ -20,6 +20,7 @@ package system
 import (
 	"os"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"unsafe"
@@ -92,7 +93,7 @@ var (
 	procGetModuleHandleW   = dllKernel32.NewProc("GetModuleHandleW")
 )
 
-func InitSingletonMessenger(onActivate func()) (cleanup func()) {
+func InitSingletonMessenger(onActivate func(payload string)) (cleanup func()) {
 	mxName, err := windows.UTF16PtrFromString(mutexName)
 	if err != nil {
 		return func() {}
@@ -100,7 +101,7 @@ func InitSingletonMessenger(onActivate func()) (cleanup func()) {
 	_, err = windows.CreateMutex(nil, false, mxName)
 	secondInstance := err == windows.ERROR_ALREADY_EXISTS || err == windows.ERROR_ACCESS_DENIED
 	if secondInstance {
-		notifyRunningInstance()
+		notifyRunningInstance(extractDeepLinkArg(os.Args))
 		os.Exit(0)
 	}
 
@@ -125,7 +126,14 @@ func InitSingletonMessenger(onActivate func()) (cleanup func()) {
 			if uint32(uMsg) == wmCopydata {
 				cd := (*copyDataStruct)(unsafe.Pointer(lParam))
 				if cd != nil && cd.dwData == copyMagic && onActivate != nil {
-					go onActivate()
+					payload := ""
+					if cd.cbData > 0 && cd.lpData != 0 {
+						buf := make([]byte, cd.cbData)
+						src := unsafe.Slice((*byte)(unsafe.Pointer(cd.lpData)), cd.cbData)
+						copy(buf, src)
+						payload = string(buf)
+					}
+					go onActivate(payload)
 				}
 				return 0
 			}
@@ -186,7 +194,7 @@ func InitSingletonMessenger(onActivate func()) (cleanup func()) {
 	}
 }
 
-func notifyRunningInstance() {
+func notifyRunningInstance(payload string) {
 	classPtr, err := windows.UTF16PtrFromString(bridgeClass)
 	if err != nil {
 		return
@@ -201,7 +209,34 @@ func notifyRunningInstance() {
 	}
 	var cds copyDataStruct
 	cds.dwData = copyMagic
+	if payload != "" {
+		buf := []byte(payload)
+		cds.cbData = uint32(len(buf))
+		cds.lpData = uintptr(unsafe.Pointer(&buf[0]))
+		procSendMessageW.Call(hwnd, uintptr(wmCopydata), 0, uintptr(unsafe.Pointer(&cds)))
+		runtime.KeepAlive(buf)
+		return
+	}
 	cds.cbData = 0
 	cds.lpData = 0
 	procSendMessageW.Call(hwnd, uintptr(wmCopydata), 0, uintptr(unsafe.Pointer(&cds)))
+}
+
+func extractDeepLinkArg(args []string) string {
+	return ExtractDeepLinkArg(args)
+}
+
+// ExtractDeepLinkArg scans process args for the first resultv: URL.
+func ExtractDeepLinkArg(args []string) string {
+	const scheme = "resultv:"
+	if len(args) <= 1 {
+		return ""
+	}
+	for _, a := range args[1:] {
+		s := strings.TrimSpace(a)
+		if len(s) > len(scheme) && strings.EqualFold(s[:len(scheme)], scheme) {
+			return s
+		}
+	}
+	return ""
 }

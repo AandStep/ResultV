@@ -40,11 +40,13 @@ export const useAppConfig = (addLog) => {
         localPort: 0,
         listenLan: false,
         dnsServers: [],
+        favorites: [],
     });
     const [showProtocolModal, setShowProtocolModal] = useState(false);
     const [platform, setPlatform] = useState("windows");
     const [subscriptions, setSubscriptions] = useState([]);
     const modeApplyingRef = useRef(false);
+    const [isApplyingMode, setIsApplyingMode] = useState(false);
     const [appDialog, setAppDialog] = useState({
         isOpen: false,
         title: "",
@@ -194,6 +196,7 @@ export const useAppConfig = (addLog) => {
         if (key === "mode") {
             if (modeApplyingRef.current) return;
             modeApplyingRef.current = true;
+            setIsApplyingMode(true);
             setSettings((prev) => ({ ...prev, [key]: value }));
             try {
                 const result = await wailsAPI.applyMode(value);
@@ -235,6 +238,7 @@ export const useAppConfig = (addLog) => {
                 addLog(`Ошибка применения режима: ${err?.message || err}`, "error");
             } finally {
                 modeApplyingRef.current = false;
+                setIsApplyingMode(false);
             }
             return;
         }
@@ -305,7 +309,20 @@ export const useAppConfig = (addLog) => {
         }
     }, [settings, addLog, showAlertDialog, persistSettings, t]);
 
-    
+    const toggleFavorite = useCallback((id) => {
+        const idStr = String(id);
+        setSettings((prev) => {
+            const cur = Array.isArray(prev.favorites) ? prev.favorites.map(String) : [];
+            const next = cur.includes(idStr)
+                ? cur.filter((x) => x !== idStr)
+                : [...cur, idStr];
+            const nextSettings = { ...prev, favorites: next };
+            persistSettings(nextSettings).catch(console.error);
+            return nextSettings;
+        });
+    }, [persistSettings]);
+
+
     useEffect(() => {
         if (!isConfigLoaded || subscriptions.length === 0) return;
 
@@ -442,6 +459,8 @@ export const useAppConfig = (addLog) => {
         settings,
         setSettings,
         updateSetting,
+        toggleFavorite,
+        isApplyingMode,
         handleSaveProxy,
         handleBulkSaveProxies,
         showProtocolModal,

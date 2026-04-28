@@ -414,12 +414,12 @@ func TestConnect_AmneziaWGTunnelFailsWhenE2EProbeFails(t *testing.T) {
 	if res.ErrorCode != "post_start_probe_failed" {
 		t.Fatalf("unexpected error code: %q", res.ErrorCode)
 	}
-	if httpCalls != 1 {
-		t.Fatalf("expected single http e2e probe attempt for amneziawg, got %d", httpCalls)
+	if httpCalls != 4 {
+		t.Fatalf("expected 4 http e2e probe attempts for amneziawg, got %d", httpCalls)
 	}
 }
 
-func TestConnect_WireGuardTunnelE2EProbeStaysSingleAttempt(t *testing.T) {
+func TestConnect_WireGuardTunnelE2EProbeRetriesThreeTimes(t *testing.T) {
 	prevAdmin := isAdminCheck
 	prevWG := pingWireGuardProbe
 	prevHTTP := probeTunnelHTTPProbe
@@ -463,8 +463,8 @@ func TestConnect_WireGuardTunnelE2EProbeStaysSingleAttempt(t *testing.T) {
 	if res.Success {
 		t.Fatalf("expected failure, got %+v", res)
 	}
-	if httpCalls != 1 {
-		t.Fatalf("expected single http probe attempt for wireguard, got %d", httpCalls)
+	if httpCalls != 3 {
+		t.Fatalf("expected 3 http probe attempts for wireguard, got %d", httpCalls)
 	}
 }
 
@@ -601,8 +601,8 @@ func TestConnect_AmneziaWGTunnelStopsSessionWhenE2EProbeFails(t *testing.T) {
 	if res.ErrorCode != "post_start_probe_failed" {
 		t.Fatalf("unexpected error code: %q", res.ErrorCode)
 	}
-	if httpCalls != 1 {
-		t.Fatalf("expected single http e2e probe attempt for amneziawg, got %d", httpCalls)
+	if httpCalls != 4 {
+		t.Fatalf("expected 4 http e2e probe attempts for amneziawg, got %d", httpCalls)
 	}
 	if engine.stopCalls == 0 {
 		t.Fatalf("expected engine stop on failed e2e probe")

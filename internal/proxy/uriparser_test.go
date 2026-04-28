@@ -92,8 +92,11 @@ func TestXHTTPOmitPaddingWhenAbsent(t *testing.T) {
 	}
 	out := buildProxyOutbound(ProxyConfig{IP: entry.IP, Port: entry.Port, Type: entry.Type, Extra: entry.Extra})
 
-	if out.Transport == nil || out.Transport.XPaddingBytes != "100-1000" {
-		t.Fatalf("expected default XPaddingBytes, got %q", out.Transport.XPaddingBytes)
+	if out.Transport == nil {
+		t.Fatal("expected transport")
+	}
+	if out.Transport.XPaddingBytes != "100-1000" {
+		t.Fatalf("expected default XPaddingBytes '100-1000' when absent, got %q", out.Transport.XPaddingBytes)
 	}
 }
 
@@ -136,6 +139,141 @@ func TestXHTTPPassthroughXmuxScNoGRPC(t *testing.T) {
 	}
 	if tr.ScMaxEachPostBytes == nil {
 		t.Fatal("sc_max_each_post_bytes")
+	}
+}
+
+func TestParseJSONOutboundXhttpSettingsVLESS(t *testing.T) {
+	body := `[{"outbounds":[{"tag":"xhttp-node","protocol":"vless","settings":{"vnext":[{"address":"cdn.example.com","port":443,"users":[{"id":"af815621-b245-4149-89da-dd184cfc4b3d","encryption":"none","flow":""}]}]},"streamSettings":{"network":"xhttp","security":"tls","tlsSettings":{"serverName":"cdn.example.com","fingerprint":"chrome"},"xhttpSettings":{"path":"/api/v2","host":"cdn.example.com","mode":"stream-one","method":"POST","extra":{"xPaddingBytes":"200-800"}}}}],"remarks":"XHTTP Node"}]`
+	entries, err := ParseSubscriptionBody(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	e := entries[0]
+	if e.Type != "VLESS" {
+		t.Fatalf("type: %s", e.Type)
+	}
+	var extra map[string]interface{}
+	if err := json.Unmarshal(e.Extra, &extra); err != nil {
+		t.Fatalf("extra json: %v", err)
+	}
+	if extra["network"] != "xhttp" {
+		t.Fatalf("network: %v", extra["network"])
+	}
+	if extra["path"] != "/api/v2" {
+		t.Fatalf("path: %v", extra["path"])
+	}
+	if extra["host"] != "cdn.example.com" {
+		t.Fatalf("host: %v", extra["host"])
+	}
+	if extra["mode"] != "stream-one" {
+		t.Fatalf("mode: %v", extra["mode"])
+	}
+	if extra["method"] != "POST" {
+		t.Fatalf("method: %v", extra["method"])
+	}
+
+	out := buildProxyOutbound(ProxyConfig{IP: e.IP, Port: e.Port, Type: e.Type, Extra: e.Extra})
+	tr := out.Transport
+	if tr == nil || tr.Type != "xhttp" {
+		t.Fatalf("transport: %+v", tr)
+	}
+	if tr.Path != "/api/v2" {
+		t.Fatalf("transport.Path: %q", tr.Path)
+	}
+	if tr.Host != "cdn.example.com" {
+		t.Fatalf("transport.Host: %q", tr.Host)
+	}
+	if tr.Mode != "stream-one" {
+		t.Fatalf("transport.Mode: %q", tr.Mode)
+	}
+	if tr.UplinkHTTPMethod != "POST" {
+		t.Fatalf("transport.UplinkHTTPMethod: %q", tr.UplinkHTTPMethod)
+	}
+	if tr.XPaddingBytes != "200-800" {
+		t.Fatalf("transport.XPaddingBytes: %q", tr.XPaddingBytes)
+	}
+}
+
+func TestParseJSONOutboundXhttpSettingsTrojan(t *testing.T) {
+	body := `[{"outbounds":[{"tag":"trojan-xhttp","protocol":"trojan","settings":{"servers":[{"address":"sv1.example.com","port":443,"password":"s3cr3t"}]},"streamSettings":{"network":"xhttp","security":"tls","tlsSettings":{"serverName":"sv1.example.com"},"xhttpSettings":{"path":"/trojan","host":"sv1.example.com","mode":"auto"}}}],"remarks":"Trojan XHTTP"}]`
+	entries, err := ParseSubscriptionBody(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	e := entries[0]
+	if e.Type != "TROJAN" {
+		t.Fatalf("type: %s", e.Type)
+	}
+	var extra map[string]interface{}
+	if err := json.Unmarshal(e.Extra, &extra); err != nil {
+		t.Fatalf("extra json: %v", err)
+	}
+	if extra["path"] != "/trojan" {
+		t.Fatalf("path: %v", extra["path"])
+	}
+	if extra["mode"] != "auto" {
+		t.Fatalf("mode: %v", extra["mode"])
+	}
+}
+
+func TestParseJSONOutboundXhttpHostArray(t *testing.T) {
+	body := `[{"outbounds":[{"tag":"xhttp-host-array","protocol":"vless","settings":{"vnext":[{"address":"1.2.3.4","port":80,"users":[{"id":"af815621-b245-4149-89da-dd184cfc4b3d","encryption":"none"}]}]},"streamSettings":{"network":"xhttp","security":"none","xhttpSettings":{"path":"/","host":["cdn.example.com","alt.example.com"]}}}],"remarks":"XHTTP Array Host"}]`
+	entries, err := ParseSubscriptionBody(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	var extra map[string]interface{}
+	if err := json.Unmarshal(entries[0].Extra, &extra); err != nil {
+		t.Fatalf("extra json: %v", err)
+	}
+	if extra["host"] != "cdn.example.com" {
+		t.Fatalf("host (from array): %v", extra["host"])
+	}
+}
+
+func TestParseTrojanURIXhttpModeMethod(t *testing.T) {
+	q := url.Values{}
+	q.Set("network", "xhttp")
+	q.Set("path", "/tr")
+	q.Set("host", "edge.example.com")
+	q.Set("mode", "stream-one")
+	q.Set("method", "POST")
+	q.Set("security", "tls")
+	q.Set("sni", "edge.example.com")
+	line := "trojan://pass123@edge.example.com:443?" + q.Encode() + "#TrojanXHTTP"
+	entry, err := ParseProxyURI(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var extra map[string]interface{}
+	if err := json.Unmarshal(entry.Extra, &extra); err != nil {
+		t.Fatal(err)
+	}
+	if extra["mode"] != "stream-one" {
+		t.Fatalf("mode: %v", extra["mode"])
+	}
+	if extra["method"] != "POST" {
+		t.Fatalf("method: %v", extra["method"])
+	}
+	out := buildProxyOutbound(ProxyConfig{IP: entry.IP, Port: entry.Port, Type: entry.Type, Password: entry.Password, Extra: entry.Extra})
+	tr := out.Transport
+	if tr == nil || tr.Type != "xhttp" {
+		t.Fatalf("transport: %+v", tr)
+	}
+	if tr.Mode != "stream-one" {
+		t.Fatalf("transport.Mode: %q", tr.Mode)
+	}
+	if tr.UplinkHTTPMethod != "POST" {
+		t.Fatalf("transport.UplinkHTTPMethod: %q", tr.UplinkHTTPMethod)
 	}
 }
 
@@ -328,8 +466,8 @@ func TestTrojanURIGrpcAndTLSAliasesBuildsOutbound(t *testing.T) {
 	if out.Transport.ServiceName != "api" {
 		t.Fatalf("service_name: %v", out.Transport.ServiceName)
 	}
-	if out.Transport.Authority != "grpc.example.com" {
-		t.Fatalf("authority: %v", out.Transport.Authority)
+	if out.Transport.Authority != "" {
+		t.Fatalf("authority must be empty in sing-box grpc transport, got %q", out.Transport.Authority)
 	}
 	if out.TLS == nil || out.TLS.ServerName != "edge.example.com" || !out.TLS.Insecure {
 		t.Fatalf("tls: %+v", out.TLS)
@@ -379,8 +517,8 @@ func TestTrojanURINetworkGrpcParamBuildsOutbound(t *testing.T) {
 	if out.Transport.ServiceName != "api" {
 		t.Fatalf("service_name: %v", out.Transport.ServiceName)
 	}
-	if out.Transport.Authority != "grpc.example.com" {
-		t.Fatalf("authority: %v", out.Transport.Authority)
+	if out.Transport.Authority != "" {
+		t.Fatalf("authority must be empty in sing-box grpc transport, got %q", out.Transport.Authority)
 	}
 	if out.TLS == nil || out.TLS.ServerName != "edge.example.com" || !out.TLS.Insecure {
 		t.Fatalf("tls: %+v", out.TLS)

@@ -38,14 +38,16 @@ const (
 )
 
 type ProxyConfig struct {
+	ID       string `json:"id,omitempty"`
 	IP       string `json:"ip"`
 	Port     int    `json:"port"`
 	Type     string `json:"type"`
 	Username string `json:"username"`
 	Password string `json:"password"`
 
-	URI   string          `json:"uri,omitempty"`
-	Extra json.RawMessage `json:"extra,omitempty"`
+	URI             string          `json:"uri,omitempty"`
+	Extra           json.RawMessage `json:"extra,omitempty"`
+	SubscriptionURL string          `json:"subscriptionUrl,omitempty"`
 }
 
 type EngineConfig struct {
@@ -140,6 +142,7 @@ type SBOutbound struct {
 	Method     string           `json:"method,omitempty"`
 	Version    string           `json:"version,omitempty"`
 	UUID       string           `json:"uuid,omitempty"`
+	AlterId    int              `json:"alter_id,omitempty"`
 	Flow       string           `json:"flow,omitempty"`
 	UpMbps     int              `json:"up_mbps,omitempty"`
 	DownMbps   int              `json:"down_mbps,omitempty"`
@@ -365,6 +368,8 @@ func BuildTunnelModeConfig(cfg EngineConfig) SingBoxConfig {
 	}
 
 	dd := effectiveDataDir(cfg)
+	outbounds := buildOutbounds(cfg.Proxy)
+
 	config := SingBoxConfig{
 		Log:       &SBLog{Level: "error", Disabled: false},
 		DNS:       buildDNS(cfg),
@@ -378,7 +383,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) SingBoxConfig {
 			StrictRoute:         strictRoute,
 			RouteExcludeAddress: routeExclude,
 		}},
-		Outbounds:    buildOutbounds(cfg.Proxy),
+		Outbounds:    outbounds,
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
 	}
@@ -468,12 +473,10 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		return dns
 	}
 
-	detour := "proxy"
-	pt := strings.ToUpper(strings.TrimSpace(cfg.Proxy.Type))
-	if pt == "WIREGUARD" || pt == "AMNEZIAWG" {
-		detour = ""
-	}
-
+	// proxy mode: прямой UDP DNS без detour.
+	// Роутинг DNS через proxy-outbound создаёт circular dependency:
+	// DNS нужен для резолва трафика → DNS идёт через proxy → proxy нужно соединение → ...
+	// В proxy-режиме DNS-leaks несущественны (приложения используют системный прокси).
 	servers := []SBDNSServer{}
 	if len(cfg.DNSServers) > 0 {
 		for i, raw := range cfg.DNSServers {
@@ -481,47 +484,23 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			if server == "" {
 				continue
 			}
-			srvType := "udp"
-			if detour != "" {
-				srvType = "tcp"
-			}
 			servers = append(servers, SBDNSServer{
-				Type:       srvType,
+				Type:       "udp",
 				Tag:        fmt.Sprintf("custom-%d", i+1),
 				Server:     server,
 				ServerPort: port,
-				Detour:     detour,
 			})
 		}
 		servers = append(servers, SBDNSServer{Type: "local", Tag: "local"})
 	} else {
-		if detour != "" {
-			servers = []SBDNSServer{
-				{Type: "tcp", Tag: "google-tcp", Server: "8.8.8.8", Detour: detour},
-				{Type: "tcp", Tag: "cloudflare-tcp", Server: "1.1.1.1", Detour: detour},
-				{Type: "tls", Tag: "google-tls", Server: "8.8.8.8", Detour: detour},
-				{Type: "tls", Tag: "cloudflare-tls", Server: "1.1.1.1", Detour: detour},
-				{Type: "local", Tag: "local"},
-			}
-		} else {
-			servers = []SBDNSServer{
-				{Type: "udp", Tag: "google", Server: "8.8.8.8"},
-				{Type: "udp", Tag: "cloudflare", Server: "1.1.1.1"},
-				{Type: "local", Tag: "local"},
-			}
+		servers = []SBDNSServer{
+			{Type: "udp", Tag: "google", Server: "8.8.8.8"},
+			{Type: "udp", Tag: "cloudflare", Server: "1.1.1.1"},
+			{Type: "local", Tag: "local"},
 		}
 	}
 
-	dns := &SBDNS{
-		Servers: servers,
-	}
-	if detour != "" && cfg.Proxy.IP != "" && net.ParseIP(cfg.Proxy.IP) == nil {
-		dns.Rules = append(dns.Rules, SBDNSRule{
-			Domain: []string{cfg.Proxy.IP},
-			Server: "local",
-		})
-	}
-	return dns
+	return &SBDNS{Servers: servers}
 }
 
 func splitDNSServer(raw string) (string, int) {
@@ -590,6 +569,17 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	isEndpointProtocol := strings.EqualFold(strings.TrimSpace(cfg.Proxy.Type), "wireguard") ||
 		strings.EqualFold(strings.TrimSpace(cfg.Proxy.Type), "amneziawg")
 	if cfg.Mode == ProxyModeTunnel && !isEndpointProtocol {
+		// Probe domains must go through the proxy outbound, even when issued
+		// from the app's own process. Without this, the self-direct rule below
+		// would route the post-start HTTP probe out via direct, masking a broken
+		// SS/VLESS/VMESS tunnel as healthy.
+		if len(tunnelProbeDomains) > 0 {
+			rules = append(rules, SBRouteRule{
+				Action:   "route",
+				Domain:   append([]string(nil), tunnelProbeDomains...),
+				Outbound: "proxy",
+			})
+		}
 		if exe, err := os.Executable(); err == nil {
 			if base := filepath.Base(exe); base != "" && base != "." {
 				rx := `(?i)(^|[\\/])` + regexp.QuoteMeta(base) + `$`

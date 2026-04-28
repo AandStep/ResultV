@@ -45,8 +45,15 @@ func main() {
 	}
 	app.SetTrayIcon(appIcon)
 
-	cleanupMessenger := system.InitSingletonMessenger(func() {
+	if link := system.ExtractDeepLinkArg(os.Args); link != "" {
+		app.QueueDeepLink(link)
+	}
+
+	cleanupMessenger := system.InitSingletonMessenger(func(payload string) {
 		app.restoreMainWindow()
+		if payload != "" {
+			app.HandleDeepLink(payload)
+		}
 	})
 	defer cleanupMessenger()
 

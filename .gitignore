@@ -24,6 +24,7 @@ release
 *.sln
 .agent
 .cursor
+.claude
 
 
 # Claude Superpowers
@@ -38,7 +39,14 @@ build/windows/installer/tmp/*
 /tmp.exe
 *~
 
-# Secrets
+# Local test artifacts
+/ResultV_test.exe
+/test.html
+
+# Secrets and private build tools
 .env
 .env.*
 !.env.example
+tools/encrypt-sub/
+build-release.bat
+build-release.sh

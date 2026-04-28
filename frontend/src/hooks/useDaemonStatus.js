@@ -27,6 +27,8 @@ export const useDaemonStatus = (
     setActiveProxy,
     isSwitchingRef,
     addLog,
+    settings,
+    activeProxy,
 ) => {
     const [isProxyDead, setIsProxyDead] = useState(false);
     const [stats, setStats] = useState({ download: 0, upload: 0 });
@@ -86,7 +88,31 @@ export const useDaemonStatus = (
                                 );
                             },
                         );
-                        setActiveProxy(localMatchedProxy || data.currentProxy);
+
+                        let resolvedProxy = localMatchedProxy || data.currentProxy;
+
+                        if (activeProxy && activeProxy.type?.toUpperCase() !== "AUTO") {
+                            // If the user explicitly selected a non-AUTO proxy and the daemon
+                            // is connected to the same IP:port:type, keep showing that proxy.
+                            // This prevents a different proxy with the same address (e.g. a
+                            // renamed AUTO member) from overriding the display.
+                            const activeIP = String(activeProxy.ip || "").trim().toLowerCase();
+                            const activePort = Number(activeProxy.port || 0);
+                            const activeType = String(activeProxy.type || "").trim().toLowerCase();
+                            if (activeIP === currentIP && activePort === currentPort && activeType === currentType) {
+                                resolvedProxy = activeProxy;
+                            }
+                        } else if (localMatchedProxy && activeProxy?.type?.toUpperCase() === "AUTO") {
+                            try {
+                                const extra = typeof activeProxy.extra === 'string' ? JSON.parse(activeProxy.extra) : (activeProxy.extra || {});
+                                const memberIds = (extra.members || []).map(String);
+                                if (memberIds.includes(String(localMatchedProxy.id))) {
+                                    resolvedProxy = activeProxy;
+                                }
+                            } catch (e) {}
+                        }
+
+                        setActiveProxy(resolvedProxy);
                     }
                 }
 
@@ -115,6 +141,7 @@ export const useDaemonStatus = (
         setActiveProxy,
         setFailedProxy,
         isSwitchingRef,
+        activeProxy,
     ]);
 
     return { isProxyDead, stats, speedHistory, daemonStatus };

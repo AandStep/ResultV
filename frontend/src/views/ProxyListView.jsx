@@ -25,6 +25,7 @@ import {
   ChevronDown,
   RefreshCw,
   Zap,
+  Star,
 } from "lucide-react";
 import { FlagIcon } from "../components/ui/FlagIcon";
 import { useConfigContext } from "../context/ConfigContext";
@@ -120,7 +121,13 @@ export const ProxyListView = () => {
     subscriptions,
     setSubscriptions,
     showConfirmDialog,
+    settings,
+    toggleFavorite,
   } = useConfigContext();
+  const favoriteIds = useMemo(
+    () => new Set((settings?.favorites || []).map(String)),
+    [settings?.favorites],
+  );
   const {
     deleteProxy: performDelete,
     selectAndConnect,
@@ -139,8 +146,28 @@ export const ProxyListView = () => {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  const parseExtra = (raw) => {
+    if (Array.isArray(raw) && typeof raw[0] === "number") {
+      // Wails encodes json.RawMessage as a byte array in some contexts.
+      try { return JSON.parse(String.fromCharCode(...raw)); } catch { return {}; }
+    }
+    if (typeof raw === "string") { try { return JSON.parse(raw); } catch { return {}; } }
+    return raw || {};
+  };
+
+  const autoMemberIds = useMemo(() => {
+    const ids = new Set();
+    proxies.forEach((p) => {
+      if (p.type?.toUpperCase() === "AUTO") {
+        const extra = parseExtra(p.extra);
+        (extra?.members || []).forEach((id) => ids.add(String(id)));
+      }
+    });
+    return ids;
+  }, [proxies]);
+
   const filteredAndSortedProxies = useMemo(() => {
-    let result = [...proxies];
+    let result = proxies.filter((p) => !autoMemberIds.has(String(p.id)));
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       result = result.filter(
@@ -160,7 +187,7 @@ export const ProxyListView = () => {
       );
     }
     return result;
-  }, [proxies, searchQuery, sortBy]);
+  }, [proxies, searchQuery, sortBy, autoMemberIds]);
 
   const groupedProxies = useMemo(() => {
     const groups = {};
@@ -176,8 +203,15 @@ export const ProxyListView = () => {
       if (b === myKey) return -1;
       return a.localeCompare(b);
     });
-    return entries;
-  }, [filteredAndSortedProxies, t]);
+    return entries.map(([name, list]) => {
+      const sorted = [...list].sort((a, b) => {
+        const af = favoriteIds.has(String(a.id)) ? 0 : 1;
+        const bf = favoriteIds.has(String(b.id)) ? 0 : 1;
+        return af - bf;
+      });
+      return [name, sorted];
+    });
+  }, [filteredAndSortedProxies, t, favoriteIds]);
 
   const hasProviders = useMemo(
     () => proxies.some((p) => p.provider),
@@ -191,7 +225,12 @@ export const ProxyListView = () => {
       return [[myProxiesLabel, []]];
     }
     if (!hasProviders) {
-      return [[myProxiesLabel, filteredAndSortedProxies]];
+      const sorted = [...filteredAndSortedProxies].sort((a, b) => {
+        const af = favoriteIds.has(String(a.id)) ? 0 : 1;
+        const bf = favoriteIds.has(String(b.id)) ? 0 : 1;
+        return af - bf;
+      });
+      return [[myProxiesLabel, sorted]];
     }
     const entries = [...groupedProxies];
     if (!entries.some(([name]) => name === myProxiesLabel)) {
@@ -204,6 +243,7 @@ export const ProxyListView = () => {
     groupedProxies,
     filteredAndSortedProxies,
     myProxiesLabel,
+    favoriteIds,
   ]);
 
   const editProxy = (proxy) => {
@@ -295,22 +335,6 @@ export const ProxyListView = () => {
   };
 
   const handleCardConnect = (proxy) => {
-    if (proxy.type?.toUpperCase() === "AUTO") {
-      const extra =
-        typeof proxy.extra === "string"
-          ? JSON.parse(proxy.extra)
-          : proxy.extra;
-      const memberIds = (extra?.members || []).map(String);
-      const members = proxies.filter((p) => memberIds.includes(String(p.id)));
-      const validPings = members
-        .filter((p) => pings[p.id] && /^\d+/.test(String(pings[p.id])))
-        .sort(
-          (a, b) => parseInt(pings[a.id], 10) - parseInt(pings[b.id], 10),
-        );
-      const target = validPings[0] || members[0];
-      if (target) selectAndConnect(target);
-      return;
-    }
     selectAndConnect(proxy);
   };
 
@@ -318,16 +342,14 @@ export const ProxyListView = () => {
     const isActive = isConnected && activeProxy?.id === proxy.id;
     const isFromSubscription = Boolean(proxy.subscriptionUrl);
     const isAutoProxy = proxy.type?.toUpperCase() === "AUTO";
+    const isFav = favoriteIds.has(String(proxy.id));
     const protocolInfo = isVpnType(proxy.type) ? getProtocolLabel(proxy) : proxy.type;
     const protocolLabel = isAutoProxy ? t("proxyList.autoType") : protocolInfo;
 
     // For AUTO cards: compute best ping from member servers.
     const autoBestPing = isAutoProxy
       ? (() => {
-          const extra =
-            typeof proxy.extra === "string"
-              ? JSON.parse(proxy.extra)
-              : proxy.extra;
+          const extra = parseExtra(proxy.extra);
           const memberIds = (extra?.members || []).map(String);
           const arr = memberIds
             .map((id) => pings[id])
@@ -347,7 +369,7 @@ export const ProxyListView = () => {
       ["Timeout", "Error", "Unavailable", "Refused"].includes(pings[proxy.id]);
 
     const ipDisplay = isFromSubscription
-      ? t("proxyList.ipHidden")
+      ? null
       : `${proxy.ip}:${proxy.port}`;
 
     return (
@@ -373,20 +395,34 @@ export const ProxyListView = () => {
                 {protocolLabel}
               </span>
             </div>
-            <p className="text-xs text-zinc-400 font-mono mt-1 truncate">
-              {ipDisplay}
-            </p>
+            {ipDisplay && (
+              <p className="text-xs text-zinc-400 font-mono mt-1 truncate">
+                {ipDisplay}
+              </p>
+            )}
           </div>
         </div>
 
         <div className="flex items-center justify-between mt-auto pt-2 gap-2">
           <div
             className={`text-xs flex items-center shrink-0 ${pingIsError ? "text-rose-500" : "text-zinc-500"}`}
+            title={t("proxyList.pingTooltip")}
           >
             <Activity className="w-3.5 h-3.5 mr-1 shrink-0" />{" "}
             {pingDisplay}
           </div>
           <div className="flex space-x-1.5 shrink-0">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleFavorite(proxy.id);
+              }}
+              title={isFav ? t("proxyList.unfavoriteAria") : t("proxyList.favoriteAria")}
+              aria-label={isFav ? t("proxyList.unfavoriteAria") : t("proxyList.favoriteAria")}
+              className={`p-2 rounded-xl transition-colors shrink-0 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${isFav ? "bg-amber-400/15 text-amber-400 hover:bg-amber-400/25" : "bg-zinc-800 text-zinc-400 hover:text-amber-400 hover:bg-amber-400/10"}`}
+            >
+              <Star className={`w-3.5 h-3.5 ${isFav ? "fill-amber-400" : ""}`} />
+            </button>
             {!isFromSubscription && (
               <button
                 onClick={(e) => {

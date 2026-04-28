@@ -102,6 +102,42 @@ func TestBuildRoute_TunnelMode_IncludesSelfDirectRule(t *testing.T) {
 	}
 }
 
+func TestBuildRoute_TunnelMode_ProbeDomainsRoutedThroughProxyBeforeSelfDirect(t *testing.T) {
+	cfg := EngineConfig{
+		Mode:  ProxyModeTunnel,
+		Proxy: ProxyConfig{Type: "ss"},
+	}
+	route := buildRoute(cfg)
+	if route == nil {
+		t.Fatal("expected non-nil route")
+	}
+
+	probeIdx := -1
+	selfDirectIdx := -1
+	for i, r := range route.Rules {
+		if r.Outbound == "proxy" && len(r.Domain) > 0 {
+			for _, d := range r.Domain {
+				if d == "connectivitycheck.gstatic.com" {
+					probeIdx = i
+					break
+				}
+			}
+		}
+		if r.Outbound == "direct" && len(r.ProcessPathRegex) > 0 {
+			selfDirectIdx = i
+		}
+	}
+	if probeIdx < 0 {
+		t.Fatalf("expected probe-domain → proxy rule, rules=%+v", route.Rules)
+	}
+	if selfDirectIdx < 0 {
+		t.Fatalf("expected self-direct rule for non-endpoint protocol")
+	}
+	if probeIdx > selfDirectIdx {
+		t.Fatalf("probe-domain rule (idx=%d) must precede self-direct rule (idx=%d)", probeIdx, selfDirectIdx)
+	}
+}
+
 func TestBuildRoute_TunnelMode_WireGuardDoesNotIncludeSelfDirectRule(t *testing.T) {
 	cfg := EngineConfig{
 		Mode:  ProxyModeTunnel,
@@ -358,7 +394,9 @@ func TestBuildProxyModeConfig_CustomDNSHaveUniqueTags(t *testing.T) {
 	}
 }
 
-func TestBuildProxyModeConfig_CustomDNSUseProxyDetour(t *testing.T) {
+func TestBuildProxyModeConfig_CustomDNSDirectUDP(t *testing.T) {
+	// proxy-режим: custom DNS servers должны быть прямыми UDP без detour.
+	// DNS через detour: proxy создавал circular dependency и ломал все соединения.
 	cfg := BuildProxyModeConfig(EngineConfig{
 		Mode:       ProxyModeProxy,
 		ListenAddr: "127.0.0.1:14081",
@@ -372,8 +410,8 @@ func TestBuildProxyModeConfig_CustomDNSUseProxyDetour(t *testing.T) {
 	for _, s := range cfg.DNS.Servers {
 		if strings.HasPrefix(s.Tag, "custom-") {
 			custom++
-			if s.Type != "tcp" || s.Detour != "proxy" {
-				t.Fatalf("expected custom dns via proxy tcp, got %+v", s)
+			if s.Type != "udp" || s.Detour != "" {
+				t.Fatalf("expected direct udp dns (no detour) in proxy mode, got %+v", s)
 			}
 		}
 	}
@@ -382,7 +420,8 @@ func TestBuildProxyModeConfig_CustomDNSUseProxyDetour(t *testing.T) {
 	}
 }
 
-func TestBuildProxyModeConfig_ProxyDomainResolvedLocallyForDNSDetour(t *testing.T) {
+func TestBuildProxyModeConfig_NoDNSRulesInProxyMode(t *testing.T) {
+	// proxy-режим: без detour не нужны DNS-правила для домена прокси-сервера.
 	cfg := BuildProxyModeConfig(EngineConfig{
 		Mode:       ProxyModeProxy,
 		ListenAddr: "127.0.0.1:14081",
@@ -391,19 +430,7 @@ func TestBuildProxyModeConfig_ProxyDomainResolvedLocallyForDNSDetour(t *testing.
 	if cfg.DNS == nil {
 		t.Fatal("dns missing")
 	}
-	foundRule := false
-	for _, r := range cfg.DNS.Rules {
-		if r.Server != "local" {
-			continue
-		}
-		for _, d := range r.Domain {
-			if d == "docs.meowmeowcat.top" {
-				foundRule = true
-				break
-			}
-		}
-	}
-	if !foundRule {
-		t.Fatalf("expected local dns rule for proxy domain, got rules=%+v", cfg.DNS.Rules)
+	if len(cfg.DNS.Rules) != 0 {
+		t.Fatalf("expected no dns rules in proxy mode, got rules=%+v", cfg.DNS.Rules)
 	}
 }

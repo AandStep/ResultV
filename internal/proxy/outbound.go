@@ -45,6 +45,18 @@ func getBoolField(extra map[string]interface{}, key string) bool {
 	return false
 }
 
+func getIntField(extra map[string]interface{}, key string, defaultVal int) int {
+	switch v := extra[key].(type) {
+	case int:
+		return v
+	case float64:
+		return int(v)
+	case int64:
+		return int(v)
+	}
+	return defaultVal
+}
+
 func extraSecurityExplicitlyNone(extra map[string]interface{}) bool {
 	if extra == nil {
 		return false
@@ -61,9 +73,7 @@ func extraSecurityExplicitlyNone(extra map[string]interface{}) bool {
 }
 
 func buildProxyOutbound(proxy ProxyConfig) SBOutbound {
-	out := buildProxyOutboundRaw(proxy)
-	out.DomainStrategy = "ipv4_only"
-	return out
+	return buildProxyOutboundRaw(proxy)
 }
 
 func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
@@ -137,12 +147,14 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 	case "VMESS", "vmess":
 
 		uuid := getStringField(extra, "uuid", "")
+		alterId := getIntField(extra, "alterId", 0)
 		out := SBOutbound{
 			Type:       "vmess",
 			Tag:        "proxy",
 			Server:     proxy.IP,
 			ServerPort: proxy.Port,
 			UUID:       uuid,
+			AlterId:    alterId,
 		}
 		applyTLSAndTransport(&out, extra, proxy.IP)
 		return out
@@ -314,12 +326,23 @@ func applyTLSAndTransport(out *SBOutbound, extra map[string]interface{}, default
 	}
 
 	applyTransportOnly(out, extra)
-	if out.TLS != nil && len(out.TLS.ALPN) == 0 {
-
+	if out.TLS != nil && out.Transport != nil && (out.Transport.Type == "xhttp" || out.Transport.Type == "splithttp") {
+		// xhttp and splithttp REQUIRE h2 ALPN to function properly, even for Reality.
+		if len(out.TLS.ALPN) == 0 {
+			out.TLS.ALPN = []string{"h2", "http/1.1"}
+		} else {
+			out.TLS.ALPN = xhttpPreferH2ALPN(out.TLS.ALPN, false)
+		}
+	} else if out.TLS != nil && len(out.TLS.ALPN) == 0 {
 		isReality := out.TLS.Reality != nil && out.TLS.Reality.Enabled
 		if !isReality {
 			network := getStringField(extra, "network", "tcp")
-			out.TLS.ALPN = defaultALPNForNetwork(network)
+			// Для plain TCP (VLESS/VMESS без транспорта) оставляем ALPN пустым —
+			// sing-box использует дефолт, что совместимо с любой серверной конфигурацией.
+			// Для HTTP-транспортов (grpc, xhttp, ws, h2) ALPN важен для фреймирования.
+			if network != "tcp" && network != "" {
+				out.TLS.ALPN = defaultALPNForNetwork(network)
+			}
 		}
 	}
 }
@@ -349,11 +372,10 @@ func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 		if serviceName == "" {
 			serviceName = getStringField(extra, "service_name", "")
 		}
-		authority := getStringField(extra, "authority", "")
 		out.Transport = &SBOutboundTransport{
 			Type:        "grpc",
 			ServiceName: serviceName,
-			Authority:   authority,
+			// authority is not supported by sing-box gRPC transport; SNI goes into tls.server_name
 		}
 	case "http", "h2":
 		out.Transport = &SBOutboundTransport{
@@ -364,9 +386,6 @@ func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 	case "xhttp", "splithttp":
 		host := getStringField(extra, "host", "")
 		xPadding := xhttpPaddingFromExtra(extra)
-		if xPadding == "" {
-			xPadding = "100-1000"
-		}
 		mode := getStringField(extra, "mode", "auto")
 		if mode == "" {
 			mode = "auto"
@@ -473,10 +492,24 @@ func boolPtrFromExtra(extra map[string]interface{}, camel, snake string) *bool {
 }
 
 func xhttpPaddingFromExtra(extra map[string]interface{}) string {
-	if s := stringFromExtraValue(extra["x_padding_bytes"]); s != "" {
-		return s
+	s := stringFromExtraValue(extra["x_padding_bytes"])
+	if s == "" {
+		s = stringFromExtraValue(extra["xPaddingBytes"])
 	}
-	return stringFromExtraValue(extra["xPaddingBytes"])
+	s = sanitizeXPaddingBytes(s)
+	if s == "" {
+		// sing-box requires x_padding_bytes for xhttp; absence is treated as "disabled" and rejected
+		return "100-1000"
+	}
+	return s
+}
+
+func sanitizeXPaddingBytes(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "0", "0-0", "disable", "disabled", "none", "false":
+		return ""
+	}
+	return s
 }
 
 func xhttpHeadersFromExtra(extra map[string]interface{}) map[string]string {

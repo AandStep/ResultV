@@ -76,8 +76,9 @@ type AppSettings struct {
 	LastSelectedProxyID string   `json:"lastSelectedProxyId,omitempty"`  
 	LocalPort           int      `json:"localPort,omitempty"`            
 	ListenLAN           bool     `json:"listenLan,omitempty"`
-	DNSServers          []string `json:"dnsServers,omitempty"`           
-	TunIPv4             string   `json:"tunIpv4,omitempty"`              
+	DNSServers          []string `json:"dnsServers,omitempty"`
+	TunIPv4             string   `json:"tunIpv4,omitempty"`
+	Favorites           []string `json:"favorites,omitempty"`
 }
 
 

@@ -23,6 +23,8 @@ import {
   Pencil,
   ChevronDown,
   Activity,
+  Zap,
+  Star,
 } from "lucide-react";
 import { FlagIcon } from "../components/ui/FlagIcon";
 import { SpeedChart } from "../components/ui/SpeedChart";
@@ -38,7 +40,7 @@ import {
 
 export const HomeView = () => {
   const { t } = useTranslation();
-  const { proxies, setEditingProxy, setActiveTab, settings, updateSetting, showAlertDialog } = useConfigContext();
+  const { proxies, setEditingProxy, setActiveTab, settings, updateSetting, toggleFavorite, showAlertDialog, isApplyingMode } = useConfigContext();
   const {
     isConnected,
     isConnecting,
@@ -47,6 +49,7 @@ export const HomeView = () => {
     setFailedProxy,
     disconnectOnly,
     toggleConnection,
+    cancelConnect,
     activeProxy,
     stats,
     speedHistory,
@@ -81,12 +84,47 @@ export const HomeView = () => {
   };
   const goToProxyList = () => setActiveTab("list");
 
+  const autoMemberIds = useMemo(() => {
+    const ids = new Set();
+    proxies.forEach((p) => {
+      if (p.type?.toUpperCase() === "AUTO") {
+        let extra = {};
+        if (typeof p.extra === "string") {
+            try { extra = JSON.parse(p.extra); } catch {}
+        } else if (p.extra) {
+            extra = p.extra;
+        }
+        (extra?.members || []).forEach((id) => ids.add(String(id)));
+      }
+    });
+    return ids;
+  }, [proxies]);
+
+  const filteredProxies = useMemo(() => {
+      return proxies.filter(p => !autoMemberIds.has(String(p.id)));
+  }, [proxies, autoMemberIds]);
+
+  const favoriteIds = useMemo(
+    () => new Set((settings?.favorites || []).map(String)),
+    [settings?.favorites],
+  );
+
+  const favoriteProxies = useMemo(
+    () => filteredProxies.filter((p) => favoriteIds.has(String(p.id))),
+    [filteredProxies, favoriteIds],
+  );
+
+  const nonFavoriteProxies = useMemo(
+    () => filteredProxies.filter((p) => !favoriteIds.has(String(p.id))),
+    [filteredProxies, favoriteIds],
+  );
+
   const groupedByProvider = useMemo(() => {
     const groups = {};
-    proxies.forEach((proxy) => {
+    nonFavoriteProxies.forEach((proxy) => {
       const providerKey = proxy.provider || t("proxyList.myProxies") || "Мои прокси";
       if (!groups[providerKey]) groups[providerKey] = {};
-      const countryCode = proxy.country || "Unknown";
+      const countryCode = proxy.type?.toUpperCase() === "AUTO" ? "Auto" : (proxy.country || "Unknown");
       if (!groups[providerKey][countryCode]) groups[providerKey][countryCode] = [];
       groups[providerKey][countryCode].push(proxy);
     });
@@ -100,9 +138,13 @@ export const HomeView = () => {
       })
       .map(([provider, countries]) => ({
         provider,
-        countries: Object.entries(countries).sort(([a], [b]) => a.localeCompare(b)),
+        countries: Object.entries(countries).sort(([a], [b]) => {
+          if (a === "Auto") return -1;
+          if (b === "Auto") return 1;
+          return a.localeCompare(b);
+        }),
       }));
-  }, [proxies, t]);
+  }, [nonFavoriteProxies, t]);
 
   const hasProviders = proxies.some((p) => p.provider);
   
@@ -138,17 +180,17 @@ export const HomeView = () => {
           className={`absolute inset-0 rounded-full blur-2xl transition-all duration-700 ${isConnected ? (isProxyDead ? "bg-rose-500/40 animate-pulse" : "bg-[#007E3A]/40") : isError ? "bg-rose-500/20 animate-pulse" : hasProxies ? "bg-zinc-800/10 group-hover:bg-zinc-800/20" : ""}`}
         ></div>
         <button
-          disabled={isConnecting || (!hasProxies && !isConnected)}
+          disabled={!hasProxies && !isConnected && !isConnecting}
           onClick={
-            isError
-              ? () => {
-                  disconnectOnly();
-                }
+            isConnecting
+              ? cancelConnect
+              : isError
+              ? disconnectOnly
               : toggleConnection
           }
           className={`relative border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none flex items-center justify-center w-48 h-48 rounded-full transition-all duration-300 transform active:scale-95 ${
             isConnecting
-              ? "bg-gradient-to-br from-zinc-800 to-zinc-900 border-4 border-[#007E3A] text-[#007E3A] shadow-2xl shadow-[#007E3A]/30 opacity-80 cursor-not-allowed scale-95"
+              ? "bg-gradient-to-br from-zinc-800 to-zinc-900 border-4 border-amber-500 text-amber-400 shadow-2xl shadow-amber-500/30 scale-95 hover:border-rose-500 hover:text-rose-400 cursor-pointer"
               : !hasProxies && !isConnected
               ? "bg-zinc-900 border-4 border-zinc-800 text-zinc-600 opacity-50 cursor-not-allowed"
               : isConnected
@@ -169,6 +211,7 @@ export const HomeView = () => {
       {}
       <div className="flex items-center bg-zinc-900 rounded-full p-1 border border-zinc-800">
         <button
+          disabled={isApplyingMode}
           onClick={() => {
             const isEndpointProtocol = displayProxy && ["WIREGUARD", "AMNEZIAWG"].includes(String(displayProxy.type).toUpperCase());
             if (isEndpointProtocol) {
@@ -182,6 +225,8 @@ export const HomeView = () => {
             }
           }}
           className={`px-6 py-2 rounded-full text-sm font-bold transition-all border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${
+            isApplyingMode ? "opacity-60 cursor-wait " : ""
+          }${
             displayProxy && ["WIREGUARD", "AMNEZIAWG"].includes(String(displayProxy.type).toUpperCase())
               ? "text-zinc-600 cursor-not-allowed"
               : settings.mode === "proxy"
@@ -192,8 +237,11 @@ export const HomeView = () => {
           {t("home.modeProxy") || "ПРОКСИ"}
         </button>
         <button
+          disabled={isApplyingMode}
           onClick={() => updateSetting("mode", "tunnel")}
           className={`px-6 py-2 rounded-full text-sm font-bold transition-all border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${
+            isApplyingMode ? "opacity-60 cursor-wait " : ""
+          }${
             settings.mode === "tunnel"
               ? "bg-[#007E3A] text-white"
               : "text-zinc-400 hover:text-white"
@@ -240,10 +288,14 @@ export const HomeView = () => {
                 className={`w-12 h-12 flex items-center justify-center rounded-2xl shrink-0 transition-colors ${isConnected ? (isProxyDead ? "bg-rose-500/20 text-rose-500" : "bg-[#007E3A]/20 text-[#007E3A]") : isError ? "bg-rose-500/10 text-rose-500" : "bg-zinc-800 text-zinc-500 group-hover:bg-zinc-700"}`}
               >
                 {displayProxy ? (
-                  <FlagIcon
-                    code={displayProxy.country}
-                    className="w-[1.65rem] rounded-sm shadow-sm"
-                  />
+                  displayProxy.type?.toUpperCase() === "AUTO" ? (
+                    <Zap className="w-[1.65rem] h-[1.65rem] text-[#00A819]" />
+                  ) : (
+                    <FlagIcon
+                      code={displayProxy.country}
+                      className="w-[1.65rem] rounded-sm shadow-sm"
+                    />
+                  )
                 ) : (
                   <Globe className="w-[1.65rem] h-[1.65rem]" />
                 )}
@@ -257,7 +309,7 @@ export const HomeView = () => {
                     ? formatProxyDisplayName(displayProxy.name, displayProxy.country)
                     : t("home.emptyServer")}
                 </p>
-                {displayProxy && (
+                {displayProxy && !displayProxy.subscriptionUrl && (
                   <p className="text-xs text-zinc-500 font-mono mt-1 truncate leading-tight">
                     {displayProxy.ip}:{displayProxy.port} ({isVpnType(displayProxy.type) ? getProtocolLabel(displayProxy) : displayProxy.type})
                   </p>
@@ -266,15 +318,17 @@ export const HomeView = () => {
             </div>
 
             <div className="flex items-center space-x-1 shrink-0 ml-4">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEditProxy(displayProxy);
-                }}
-                className={`p-2 rounded-xl transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${(isProxyDead && isConnected) || isError ? "text-rose-500/50 hover:text-rose-500 hover:bg-rose-500/10" : "text-zinc-600 hover:text-[#007E3A] hover:bg-[#007E3A]/10"}`}
-              >
-                <Pencil className="w-[1.05rem] h-[1.05rem]" />
-              </button>
+              {displayProxy && !displayProxy.subscriptionUrl && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEditProxy(displayProxy);
+                  }}
+                  className={`p-2 rounded-xl transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${(isProxyDead && isConnected) || isError ? "text-rose-500/50 hover:text-rose-500 hover:bg-rose-500/10" : "text-zinc-600 hover:text-[#007E3A] hover:bg-[#007E3A]/10"}`}
+                >
+                  <Pencil className="w-[1.05rem] h-[1.05rem]" />
+                </button>
+              )}
               <div
                 className={`p-2 rounded-xl transition-colors text-zinc-500 group-hover:text-zinc-300`}
               >
@@ -287,6 +341,17 @@ export const HomeView = () => {
 
           {isProxyListOpen && (
             <div className="space-y-2 border-t border-zinc-800/50 bg-zinc-950/50 p-2 animate-in slide-in-from-top-2 duration-200">
+              {favoriteProxies.length > 0 && (
+                <div className="space-y-1 mb-2">
+                  <div className="flex items-center px-3 py-1 space-x-2">
+                    <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                      {t("home.favorites")}
+                    </span>
+                  </div>
+                  {favoriteProxies.map((proxy) => renderDropdownItem(proxy))}
+                </div>
+              )}
               {hasProviders ? (
                 groupedByProvider.map(({ provider, countries }) => (
                   <div key={provider} className="space-y-1 mb-2 last:mb-0">
@@ -298,10 +363,14 @@ export const HomeView = () => {
                     {countries.map(([country, countryProxies]) => (
                       <div key={`${provider}-${country}`} className="space-y-1">
                         <div className="flex items-center px-3 py-0.5 space-x-2">
-                          <FlagIcon
-                            code={country}
-                            className="w-4 h-auto rounded-[2px] opacity-70"
-                          />
+                          {country === "Auto" ? (
+                            <Zap className="w-4 h-4 text-[#00A819]" />
+                          ) : (
+                            <FlagIcon
+                              code={country}
+                              className="w-4 h-auto rounded-[2px] opacity-70"
+                            />
+                          )}
                           <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
                             {country}
                           </span>
@@ -313,23 +382,29 @@ export const HomeView = () => {
                 ))
               ) : (
                 Object.entries(
-                  proxies.reduce((acc, proxy) => {
-                    const countryCode = proxy.country || "Unknown";
+                  nonFavoriteProxies.reduce((acc, proxy) => {
+                    const countryCode = proxy.type?.toUpperCase() === "AUTO" ? "Auto" : (proxy.country || "Unknown");
                     if (!acc[countryCode]) acc[countryCode] = [];
                     acc[countryCode].push(proxy);
                     return acc;
                   }, {}),
                 )
-                  .sort(([countryA], [countryB]) =>
-                    countryA.localeCompare(countryB),
-                  )
+                  .sort(([countryA], [countryB]) => {
+                    if (countryA === "Auto") return -1;
+                    if (countryB === "Auto") return 1;
+                    return countryA.localeCompare(countryB);
+                  })
                   .map(([country, countryProxies]) => (
                     <div key={country} className="space-y-1 mb-2 last:mb-0">
                       <div className="flex items-center px-3 py-1 space-x-2">
-                        <FlagIcon
-                          code={country}
-                          className="w-5 h-auto rounded-[2px] opacity-70"
-                        />
+                        {country === "Auto" ? (
+                          <Zap className="w-5 h-5 text-[#00A819]" />
+                        ) : (
+                          <FlagIcon
+                            code={country}
+                            className="w-5 h-auto rounded-[2px] opacity-70"
+                          />
+                        )}
                         <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">
                           {country}
                         </span>
@@ -354,12 +429,14 @@ export const HomeView = () => {
 
       {isError ? (
         <div className="flex space-x-4 w-full animate-in slide-in-from-bottom-4 fade-in duration-300">
-          <button
-            onClick={() => onEditProxy(displayProxy)}
-            className="flex-1 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-white py-4 rounded-3xl font-bold transition-colors"
-          >
-            {t("home.editData")}
-          </button>
+          {displayProxy && !displayProxy.subscriptionUrl && (
+            <button
+              onClick={() => onEditProxy(displayProxy)}
+              className="flex-1 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-white py-4 rounded-3xl font-bold transition-colors"
+            >
+              {t("home.editData")}
+            </button>
+          )}
           <button
             onClick={() => {
               setFailedProxy(null);
@@ -479,6 +556,7 @@ export const HomeView = () => {
 
   function renderDropdownItem(proxy) {
     const isActive = activeProxy?.id === proxy.id;
+    const isFav = favoriteIds.has(String(proxy.id));
     return (
       <div
         key={proxy.id}
@@ -491,10 +569,14 @@ export const HomeView = () => {
       >
         <div className="flex items-center space-x-4 min-w-0">
           <div className="shrink-0 flex items-center justify-center w-10 h-10 bg-zinc-800/50 rounded-lg border border-zinc-700/50">
-            <FlagIcon
-              code={proxy.country}
-              className="w-6 h-auto rounded-[2px]"
-            />
+            {proxy.type?.toUpperCase() === "AUTO" ? (
+              <Zap className="w-5 h-5 text-[#00A819]" />
+            ) : (
+              <FlagIcon
+                code={proxy.country}
+                className="w-6 h-auto rounded-[2px]"
+              />
+            )}
           </div>
           <div className="min-w-0">
             <h4
@@ -503,16 +585,35 @@ export const HomeView = () => {
               {formatProxyDisplayName(proxy.name, proxy.country)}
             </h4>
             <p className="text-xs text-zinc-500 font-mono mt-0.5 truncate">
-              {proxy.ip}:{proxy.port}
-              {isVpnType(proxy.type) && (
-                <span className="ml-1 text-[#007E3A]">
-                  {" "}({getProtocolLabel(proxy)})
+              {proxy.subscriptionUrl ? (
+                <span className="text-[#007E3A]">
+                  {isVpnType(proxy.type) ? getProtocolLabel(proxy) : proxy.type}
                 </span>
+              ) : (
+                <>
+                  {proxy.ip}:{proxy.port}
+                  {isVpnType(proxy.type) && (
+                    <span className="ml-1 text-[#007E3A]">
+                      {" "}({getProtocolLabel(proxy)})
+                    </span>
+                  )}
+                </>
               )}
             </p>
           </div>
         </div>
         <div className="flex items-center space-x-3 shrink-0 ml-3">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleFavorite(proxy.id);
+            }}
+            title={isFav ? t("home.unfavorite") : t("home.favorite")}
+            aria-label={isFav ? t("home.unfavorite") : t("home.favorite")}
+            className={`p-1 rounded-md transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${isFav ? "text-amber-400 hover:text-amber-300" : "text-zinc-600 hover:text-amber-400"}`}
+          >
+            <Star className={`w-4 h-4 ${isFav ? "fill-amber-400" : ""}`} />
+          </button>
           <div
             className={`text-xs flex items-center ${pings[proxy.id] === "Timeout" || pings[proxy.id] === "Error" || pings[proxy.id] === "Unavailable" ? "text-rose-500" : "text-zinc-500"}`}
           >

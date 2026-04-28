@@ -35,8 +35,50 @@ export const useDaemonControl = (
     isSwitchingRef,
     addLog,
     showAlertDialog,
+    pings,
 ) => {
     const { t } = useTranslation();
+
+    const AUTO_MAX_ATTEMPTS = 5;
+
+    const getConnectCandidates = useCallback((proxyToResolve) => {
+        if (proxyToResolve?.type?.toUpperCase() !== "AUTO") {
+            return [proxyToResolve];
+        }
+        try {
+            const extra = typeof proxyToResolve.extra === 'string'
+                ? JSON.parse(proxyToResolve.extra)
+                : (proxyToResolve.extra || {});
+            const memberIds = (extra.members || []).map(String);
+            const members = proxies.filter(p => memberIds.includes(String(p.id)));
+            if (members.length === 0) return [proxyToResolve];
+
+            const pingScore = (id) => {
+                const v = pings[id];
+                if (!v) return null;
+                if (v === "Online") return Number.MAX_SAFE_INTEGER - 1;
+                const m = /^(\d+)/.exec(String(v));
+                return m ? parseInt(m[1], 10) : null;
+            };
+
+            const scored = [];
+            const unscored = [];
+            for (const member of members) {
+                const score = pingScore(member.id);
+                if (score !== null) scored.push({ member, score });
+                else unscored.push(member);
+            }
+            scored.sort((a, b) => a.score - b.score);
+            const ordered = [...scored.map(x => x.member), ...unscored];
+            return ordered.length > 0 ? ordered : [proxyToResolve];
+        } catch (e) {
+            return [proxyToResolve];
+        }
+    }, [proxies, pings]);
+
+    const isTerminalErrorCode = (code) =>
+        code === "tun_privileges" || code === "proxy_not_supported";
+
     const disconnectOnly = useCallback(async () => {
         if (isSwitchingRef.current) return;
 
@@ -82,21 +124,35 @@ export const useDaemonControl = (
                 setIsConnected(false);
             } else {
                 setIsConnecting(true);
+                const isAuto = targetProxy?.type?.toUpperCase() === "AUTO";
+                const candidates = getConnectCandidates(targetProxy).slice(0, isAuto ? AUTO_MAX_ATTEMPTS : 1);
                 addLog(`Подключение к ${targetProxy.name}...`, "info");
                 setActiveProxy(targetProxy);
                 if (String(settings?.lastSelectedProxyId) !== String(targetProxy.id)) {
                     updateSetting("lastSelectedProxyId", targetProxy.id);
                 }
 
-                const res = await wailsAPI.connect(
-                    { ...targetProxy, port: parseInt(targetProxy.port, 10) || 0 },
-                    routingRules,
-                    settings.killswitch || false,
-                    settings.adblock || false
-                );
+                let res = null;
+                for (let i = 0; i < candidates.length; i++) {
+                    const candidate = candidates[i];
+                    if (isAuto && i > 0) {
+                        const label = candidate.name || `${candidate.ip}:${candidate.port}`;
+                        addLog(`Auto: пробуем следующий узел (${label})...`, "info");
+                        try { await wailsAPI.disconnect(); } catch {}
+                    }
+                    res = await wailsAPI.connect(
+                        { ...candidate, port: parseInt(candidate.port, 10) || 0 },
+                        routingRules,
+                        settings.killswitch || false,
+                        settings.adblock || false
+                    );
+                    if (res.success) break;
+                    if (isTerminalErrorCode(res.errorCode)) break;
+                    if (!isAuto) break;
+                }
 
-                if (!res.success) {
-                    if (res.errorCode === "tun_privileges") {
+                if (!res?.success) {
+                    if (res?.errorCode === "tun_privileges") {
                         setIsConnecting(false);
                         addLog(
                             res.message || t("tunnel.adminMessage"),
@@ -114,9 +170,12 @@ export const useDaemonControl = (
                         }, 3000);
                         return;
                     }
-                    const reason = res.reason ? ` Причина: ${res.reason}` : "";
-                    const code = res.errorCode ? ` Код: ${res.errorCode}` : "";
-                    throw new Error((res.message || "Unknown proxy connection error") + code + reason);
+                    const reason = res?.reason ? ` Причина: ${res.reason}` : "";
+                    const code = res?.errorCode ? ` Код: ${res.errorCode}` : "";
+                    const prefix = isAuto && candidates.length > 1
+                        ? `Auto: все ${candidates.length} попытки не удались. `
+                        : "";
+                    throw new Error(prefix + (res?.message || "Unknown proxy connection error") + code + reason);
                 }
 
                 addLog("Соединение установлено.", "success");
@@ -126,9 +185,9 @@ export const useDaemonControl = (
                         addLog("Подключение работает в fallback-режиме без TUN.", "warning");
                     }
                 }
-                
-                
-                
+
+
+
                 setIsConnected(true);
                 setIsConnecting(false);
             }
@@ -158,6 +217,7 @@ export const useDaemonControl = (
         updateSetting,
         showAlertDialog,
         t,
+        getConnectCandidates,
     ]);
 
     const selectAndConnect = useCallback(
@@ -170,6 +230,10 @@ export const useDaemonControl = (
                 isSwitchingRef.current = true;
                 setFailedProxy(null);
                 if (setActiveTab) setActiveTab("home");
+
+                const isAuto = proxy?.type?.toUpperCase() === "AUTO";
+                const candidates = getConnectCandidates(proxy).slice(0, isAuto ? AUTO_MAX_ATTEMPTS : 1);
+
                 setActiveProxy(proxy);
                 if (String(settings?.lastSelectedProxyId) !== String(proxy.id)) {
                     updateSetting("lastSelectedProxyId", proxy.id);
@@ -182,15 +246,27 @@ export const useDaemonControl = (
                 }
 
                 setIsConnecting(true);
-                const res = await wailsAPI.connect(
-                    { ...proxy, port: parseInt(proxy.port, 10) || 0 },
-                    routingRules,
-                    settings.killswitch || false,
-                    settings.adblock || false
-                );
+                let res = null;
+                for (let i = 0; i < candidates.length; i++) {
+                    const candidate = candidates[i];
+                    if (isAuto && i > 0) {
+                        const label = candidate.name || `${candidate.ip}:${candidate.port}`;
+                        addLog(`Auto: пробуем следующий узел (${label})...`, "info");
+                        try { await wailsAPI.disconnect(); } catch {}
+                    }
+                    res = await wailsAPI.connect(
+                        { ...candidate, port: parseInt(candidate.port, 10) || 0 },
+                        routingRules,
+                        settings.killswitch || false,
+                        settings.adblock || false
+                    );
+                    if (res.success) break;
+                    if (isTerminalErrorCode(res.errorCode)) break;
+                    if (!isAuto) break;
+                }
 
-                if (!res.success) {
-                    if (res.errorCode === "tun_privileges") {
+                if (!res?.success) {
+                    if (res?.errorCode === "tun_privileges") {
                         setIsConnecting(false);
                         addLog(
                             res.message || t("tunnel.adminMessage"),
@@ -208,9 +284,12 @@ export const useDaemonControl = (
                         }, 2000);
                         return;
                     }
-                    const reason = res.reason ? ` Причина: ${res.reason}` : "";
-                    const code = res.errorCode ? ` Код: ${res.errorCode}` : "";
-                    throw new Error((res.message || "Ошибка смены прокси: Узел отклонил подключение") + code + reason);
+                    const reason = res?.reason ? ` Причина: ${res.reason}` : "";
+                    const code = res?.errorCode ? ` Код: ${res.errorCode}` : "";
+                    const prefix = isAuto && candidates.length > 1
+                        ? `Auto: все ${candidates.length} попытки не удались. `
+                        : "";
+                    throw new Error(prefix + (res?.message || "Ошибка смены прокси: Узел отклонил подключение") + code + reason);
                 }
 
                 setIsConnected(true);
@@ -247,6 +326,7 @@ export const useDaemonControl = (
             updateSetting,
             showAlertDialog,
             t,
+            getConnectCandidates,
         ],
     );
 
@@ -288,5 +368,22 @@ export const useDaemonControl = (
         ],
     );
 
-    return { disconnectOnly, toggleConnection, selectAndConnect, deleteProxy };
+    const cancelConnect = useCallback(async () => {
+        // Full disconnect on cancel: backend CancelConnect aborts the probe ctx,
+        // and Disconnect additionally stops the engine and clears sys proxy —
+        // without this, sing-box keeps running and the next Connect fails with
+        // "engine already running".
+        isSwitchingRef.current = true;
+        try {
+            await wailsAPI.disconnect();
+        } catch (e) {
+            // ignore
+        }
+        setIsConnected(false);
+        setIsConnecting(false);
+        setFailedProxy(null);
+        isSwitchingRef.current = false;
+    }, [setIsConnecting, setIsConnected, setFailedProxy, isSwitchingRef]);
+
+    return { disconnectOnly, toggleConnection, selectAndConnect, deleteProxy, cancelConnect };
 };

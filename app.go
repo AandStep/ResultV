@@ -74,6 +74,9 @@ type App struct {
 	smartProvider proxy.BlockedListProvider
 
 	startInTray bool
+
+	deepLinkMu      sync.Mutex
+	pendingDeepLink string
 }
 
 func NewApp() *App {
@@ -95,6 +98,50 @@ func (a *App) GetVersion() string {
 	return productVersionFromWailsJSON()
 }
 
+// QueueDeepLink stores a resultv:// URL to be processed once startup finishes.
+// Called from main() before Wails has booted.
+func (a *App) QueueDeepLink(url string) {
+	if !proxy.IsDeepLink(url) {
+		return
+	}
+	a.deepLinkMu.Lock()
+	a.pendingDeepLink = url
+	a.deepLinkMu.Unlock()
+}
+
+// HandleDeepLink decrypts a resultv:// URL and forwards the decoded payload
+// to the frontend, which routes it through the regular "Add subscription"
+// flow (preview modal → user confirms → import). Called both from main() at
+// startup and from the singleton messenger when a second instance is launched
+// with a deep link.
+func (a *App) HandleDeepLink(url string) {
+	if a == nil || a.config == nil {
+		a.QueueDeepLink(url)
+		return
+	}
+	if !proxy.IsDeepLink(url) {
+		return
+	}
+	payload, err := proxy.DecodeDeepLink(url)
+	if err != nil {
+		a.log.Error(fmt.Sprintf("Не удалось обработать ссылку resultv://: %v", err))
+		if a.ctx != nil {
+			wailsRuntime.EventsEmit(a.ctx, "deeplink:error", err.Error())
+		}
+		return
+	}
+
+	a.restoreMainWindow()
+
+	if a.ctx == nil {
+		a.QueueDeepLink(url)
+		return
+	}
+	wailsRuntime.EventsEmit(a.ctx, "deeplink:received", map[string]interface{}{
+		"payload": payload,
+	})
+}
+
 func (a *App) startup(ctx context.Context) {
 	a.ctx, a.cancel = context.WithCancel(ctx)
 
@@ -103,6 +150,10 @@ func (a *App) startup(ctx context.Context) {
 	})
 
 	a.log.Info("ResultV запускается...")
+
+	if err := system.RegisterResultVProtocol(); err != nil {
+		a.log.Warning(fmt.Sprintf("[СИСТЕМА] Не удалось зарегистрировать resultv://: %v", err))
+	}
 
 	if err := system.MigrateLegacyUserData(); err != nil {
 		a.log.Warning(fmt.Sprintf("[CONFIG] Ошибка миграции legacy-данных: %v", err))
@@ -176,6 +227,20 @@ func (a *App) startup(ctx context.Context) {
 			a.markQuitRequested()
 			wailsRuntime.Quit(a.ctx)
 		},
+		OnUnexpectedExit: func() {
+			// Systray died without Stop() being called. If the window is
+			// hidden to tray at this point, the app is unrecoverable
+			// (no icon, no window, singleton mutex held). Exit so the
+			// user can relaunch cleanly.
+			a.stateMu.Lock()
+			quit := a.quitRequested
+			a.stateMu.Unlock()
+			if !quit && a.trayHidden.Load() != 0 {
+				a.log.Warning("Трей неожиданно завершился при скрытом окне — завершение процесса")
+				time.Sleep(300 * time.Millisecond)
+				os.Exit(0)
+			}
+		},
 	})
 	a.tray.Start()
 	a.refreshTrayProxyList()
@@ -202,34 +267,56 @@ func (a *App) startup(ctx context.Context) {
 	}
 
 	a.log.Success("ResultV готов к работе")
+
+	a.deepLinkMu.Lock()
+	queued := a.pendingDeepLink
+	a.pendingDeepLink = ""
+	a.deepLinkMu.Unlock()
+	if queued != "" {
+		go a.HandleDeepLink(queued)
+	}
 }
 
 func (a *App) shutdown(ctx context.Context) {
 	a.log.Info("ResultV завершает работу...")
 
-	if a.taskbarUnhook != nil {
-		a.taskbarUnhook()
-		a.taskbarUnhook = nil
-	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
 
-	if a.netmon != nil {
-		a.netmon.Stop()
-	}
+		if a.taskbarUnhook != nil {
+			a.taskbarUnhook()
+			a.taskbarUnhook = nil
+		}
 
-	if a.tray != nil {
-		a.tray.Stop()
-	}
+		if a.netmon != nil {
+			a.netmon.Stop()
+		}
 
-	if a.killSwitch != nil && a.killSwitch.IsEnabled() {
-		_ = a.killSwitch.Disable()
-	}
+		if a.tray != nil {
+			a.tray.Stop()
+		}
 
-	if a.proxy != nil {
-		a.proxy.Shutdown()
-	}
+		if a.killSwitch != nil && a.killSwitch.IsEnabled() {
+			_ = a.killSwitch.Disable()
+		}
 
-	if a.cancel != nil {
-		a.cancel()
+		if a.proxy != nil {
+			a.proxy.Shutdown()
+		}
+
+		if a.cancel != nil {
+			a.cancel()
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		// Shutdown hung (likely sing-box instance.Close() blocking) — force exit
+		// so the singleton mutex is released and the user can relaunch.
+		a.log.Warning("Завершение зависло — принудительный выход")
+		os.Exit(0)
 	}
 }
 
@@ -367,6 +454,12 @@ func dnsServersFromProxyExtra(proxyDTO proxy.ProxyConfig) []string {
 		return v
 	}
 	return nil
+}
+
+func (a *App) CancelConnect() {
+	if a.proxy != nil {
+		a.proxy.CancelConnect()
+	}
 }
 
 func (a *App) Disconnect() error {
@@ -1109,7 +1202,46 @@ func discoverIconFromSubscriptionPage(client *http.Client, subURL string) string
 	return pickIconFromSubscriptionHTML(client, subURL, html)
 }
 
+// resolveEncryptedSubscriptionURL unwraps an RVSUB1-encrypted URL paste. Returns
+// the decrypted URL when the input is encrypted; an empty string when the input
+// is plaintext (caller keeps the original); an error when the payload decrypts
+// to something that isn't a single http(s) URL.
+func resolveEncryptedSubscriptionURL(input string) (string, error) {
+	if !proxy.IsEncryptedSubscription(input) {
+		return "", nil
+	}
+	plain, err := proxy.DecryptSubscription(input)
+	if err != nil {
+		return "", fmt.Errorf("decrypting subscription URL: %w", err)
+	}
+	plain = strings.TrimSpace(plain)
+	if strings.ContainsAny(plain, "\r\n") {
+		return "", fmt.Errorf("decrypted payload contains multiple lines — paste it in the content field, not the URL field")
+	}
+	lower := strings.ToLower(plain)
+	if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
+		return "", fmt.Errorf("decrypted payload is not a URL — paste it in the content field instead")
+	}
+	return plain, nil
+}
+
+func normalizeSubscriptionURL(subURL string) string {
+	if u, err := url.Parse(subURL); err == nil && u.Host == "my.impio.space" {
+		if !strings.HasSuffix(strings.TrimRight(u.Path, "/"), "/json") {
+			u.Path = strings.TrimRight(u.Path, "/") + "/json"
+			return u.String()
+		}
+	}
+	return subURL
+}
+
 func (a *App) fetchSubscriptionFromURL(subURL string) ([]config.ProxyEntry, int64, int64, int64, int64, string, string, error) {
+	if resolved, err := resolveEncryptedSubscriptionURL(subURL); err != nil {
+		return nil, 0, 0, 0, 0, "", "", err
+	} else if resolved != "" {
+		subURL = resolved
+	}
+	subURL = normalizeSubscriptionURL(subURL)
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Timeout: 15 * time.Second, Jar: jar}
 
@@ -1165,34 +1297,50 @@ func (a *App) fetchSubscriptionFromURL(subURL string) ([]config.ProxyEntry, int6
 	}
 
 	primaryUA := fmt.Sprintf("ResultV/%s", productVersionFromWailsJSON())
-	entries, up, down, tot, exp, iconURL, profileTitle, isJSON, err := doFetch(primaryUA)
+	entries, up, down, tot, exp, iconURL, profileTitle, isJSON, primaryErr := doFetch(primaryUA)
+
+	tryHapp := false
+	var err error
+	if primaryErr != nil {
+		tryHapp = true
+	} else {
+		hasHysteria := false
+		for _, e := range entries {
+			t := strings.ToUpper(e.Type)
+			if strings.Contains(t, "HYSTERIA") || strings.Contains(t, "HY2") {
+				hasHysteria = true
+				break
+			}
+		}
+		// Try Happ when primary lacks Hysteria2 and is not JSON (provider
+		// may offer a richer config to Happ UA).
+		if !hasHysteria && !isJSON {
+			tryHapp = true
+		}
+	}
+
+	if tryHapp {
+		fbEntries, fbUp, fbDown, fbTot, fbExp, fbIcon, fbTitle, _, fbErr := doFetch("Happ/1.0")
+		if fbErr == nil && len(fbEntries) > 0 {
+			if primaryErr != nil || len(fbEntries) > len(entries) {
+				a.log.Info("Retrying with Happ User-Agent...")
+				a.log.Success(fmt.Sprintf("Happ fallback: %d entries", len(fbEntries)))
+				entries = fbEntries
+				up, down, tot, exp = fbUp, fbDown, fbTot, fbExp
+				if fbIcon != "" {
+					iconURL = fbIcon
+				}
+				if fbTitle != "" {
+					profileTitle = fbTitle
+				}
+			}
+		} else if primaryErr != nil {
+			err = primaryErr
+		}
+	}
+
 	if err != nil {
 		return nil, 0, 0, 0, 0, "", "", err
-	}
-
-	hasHysteria := false
-	for _, e := range entries {
-		t := strings.ToUpper(e.Type)
-		if strings.Contains(t, "HYSTERIA") || strings.Contains(t, "HY2") {
-			hasHysteria = true
-			break
-		}
-	}
-
-	if !hasHysteria && !isJSON {
-		a.log.Info("No Hysteria2 found and not JSON. Retrying with Happ User-Agent...")
-		fbEntries, fbUp, fbDown, fbTot, fbExp, fbIcon, fbTitle, fbIsJSON, fbErr := doFetch("Happ/1.0")
-		if fbErr == nil && fbIsJSON && len(fbEntries) >= len(entries) {
-			a.log.Success(fmt.Sprintf("Fallback successful, got %d entries via Happ UA", len(fbEntries)))
-			entries = fbEntries
-			up, down, tot, exp = fbUp, fbDown, fbTot, fbExp
-			if fbIcon != "" {
-				iconURL = fbIcon
-			}
-			if fbTitle != "" {
-				profileTitle = fbTitle
-			}
-		}
 	}
 
 	providerName := extractProviderName(subURL)
@@ -1209,46 +1357,98 @@ func (a *App) fetchSubscriptionFromURL(subURL string) ([]config.ProxyEntry, int6
 	// Remove sentinel/routing-only entries that have no real host (0.0.0.0).
 	entries = proxy.FilterInvalidSubscriptionEntries(entries)
 
-	// Auto-mode detection: when every entry shares the same base name (ignoring
-	// a leading flag emoji), treat the subscription as an "auto" group — create a
-	// virtual AUTO entry that resolves to the best member at connect time, and
-	// rename each individual server to a unique "<flag> TYPE #N" label.
-	if len(entries) > 1 && proxy.AllSameBaseName(entries) {
-		_, sharedName := proxy.StripLeadingFlagEmoji(entries[0].Name)
-
-		memberIDs := make([]string, len(entries))
-		for i := range entries {
-			flagEmoji, _ := proxy.StripLeadingFlagEmoji(entries[i].Name)
-			typeName := strings.ToUpper(entries[i].Type)
+	autoCreated := false
+	var individualMembers []config.ProxyEntry
+	if autoMembers, autoName, indv, splitOK := proxy.SplitAutoEntries(entries); splitOK && len(autoMembers) > 1 {
+		individualMembers = indv
+		// Rename auto members to "<flag> TYPE #N" labels.
+		memberIDs := make([]string, len(autoMembers))
+		for i := range autoMembers {
+			flagEmoji, _ := proxy.StripLeadingFlagEmoji(autoMembers[i].Name)
+			typeName := strings.ToUpper(autoMembers[i].Type)
 			if flagEmoji != "" {
-				entries[i].Name = fmt.Sprintf("%s %s #%d", flagEmoji, typeName, i+1)
+				autoMembers[i].Name = fmt.Sprintf("%s %s #%d", flagEmoji, typeName, i+1)
 			} else {
-				entries[i].Name = fmt.Sprintf("%s #%d", typeName, i+1)
+				autoMembers[i].Name = fmt.Sprintf("%s #%d", typeName, i+1)
 			}
-			memberIDs[i] = entries[i].ID
+			memberIDs[i] = autoMembers[i].ID
 		}
 
 		membersJSON, _ := json.Marshal(map[string]interface{}{"members": memberIDs})
-		// Use a stable CRC32 ID so the AUTO entry survives subscription refreshes.
 		autoID := fmt.Sprintf("%x", crc32.ChecksumIEEE([]byte(subURL+"auto")))
 		autoEntry := config.ProxyEntry{
 			ID:              autoID,
-			Name:            sharedName,
+			Name:            autoName,
 			Type:            "AUTO",
 			SubscriptionURL: subURL,
 			Provider:        providerName,
 			Extra:           json.RawMessage(membersJSON),
 		}
-		entries = append([]config.ProxyEntry{autoEntry}, entries...)
+		// AUTO entry first, then auto members (hidden), then individual entries.
+		entries = make([]config.ProxyEntry, 0, 1+len(autoMembers)+len(individualMembers))
+		entries = append(entries, autoEntry)
+		entries = append(entries, autoMembers...)
+		entries = append(entries, individualMembers...)
+		autoCreated = true
 	}
 
-	a.log.Success(fmt.Sprintf("Подписка загружена: %d серверов", len(entries)))
+	if !autoCreated {
+		if sharedName, ok := proxy.ExtractAutoGroupName(entries); len(entries) > 1 && ok {
+			memberIDs := make([]string, len(entries))
+			for i := range entries {
+				flagEmoji, _ := proxy.StripLeadingFlagEmoji(entries[i].Name)
+				typeName := strings.ToUpper(entries[i].Type)
+				if flagEmoji != "" {
+					entries[i].Name = fmt.Sprintf("%s %s #%d", flagEmoji, typeName, i+1)
+				} else {
+					entries[i].Name = fmt.Sprintf("%s #%d", typeName, i+1)
+				}
+				memberIDs[i] = entries[i].ID
+			}
+
+			membersJSON, _ := json.Marshal(map[string]interface{}{"members": memberIDs})
+			autoID := fmt.Sprintf("%x", crc32.ChecksumIEEE([]byte(subURL+"auto")))
+			autoEntry := config.ProxyEntry{
+				ID:              autoID,
+				Name:            sharedName,
+				Type:            "AUTO",
+				SubscriptionURL: subURL,
+				Provider:        providerName,
+				Extra:           json.RawMessage(membersJSON),
+			}
+			entries = append([]config.ProxyEntry{autoEntry}, entries...)
+			autoCreated = true
+		}
+	}
+	visibleCount := len(entries)
+	if autoCreated {
+		visibleCount = 1 + len(individualMembers)
+	} else if len(entries) > 1 {
+		// Fallback auto calculation
+		if _, ok := proxy.ExtractAutoGroupName(entries); ok {
+			visibleCount = 1 // Only the AUTO entry is visible
+		}
+	}
+
+	a.log.Success(fmt.Sprintf("Подписка загружена: %d серверов", visibleCount))
 	return entries, up, down, tot, exp, iconURL, profileTitle, nil
 }
 
 func (a *App) FetchSubscription(subURL string) ([]config.ProxyEntry, error) {
 	entries, _, _, _, _, _, _, err := a.fetchSubscriptionFromURL(subURL)
 	return entries, err
+}
+
+func (a *App) ParseSubscriptionText(text string) ([]config.ProxyEntry, error) {
+	// If the input is an RVSUB1-encrypted single-line URL, fetch it instead of
+	// trying to parse the URL as if it were a list of proxy URIs.
+	if proxy.IsEncryptedSubscription(text) {
+		if resolved, err := resolveEncryptedSubscriptionURL(text); err == nil && resolved != "" {
+			entries, _, _, _, _, _, _, ferr := a.fetchSubscriptionFromURL(resolved)
+			return entries, ferr
+		}
+	}
+	return proxy.ParseSubscriptionBody(text)
 }
 
 func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
@@ -1302,7 +1502,30 @@ func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
 		a.log.Error(fmt.Sprintf("Ошибка сохранения после обновления подписки: %v", err))
 	}
 
-	a.log.Success(fmt.Sprintf("Подписка '%s' обновлена: %d серверов", displayName, len(entries)))
+	visibleCount := len(entries)
+	memberIDs := make(map[string]bool)
+	for _, e := range entries {
+		if e.Type == "AUTO" {
+			var extra map[string]interface{}
+			if err := json.Unmarshal(e.Extra, &extra); err == nil {
+				if mems, ok := extra["members"].([]interface{}); ok {
+					for _, m := range mems {
+						if ms, ok := m.(string); ok {
+							memberIDs[ms] = true
+						}
+					}
+				}
+			}
+		}
+	}
+	visibleCount = 0
+	for _, e := range entries {
+		if !memberIDs[e.ID] {
+			visibleCount++
+		}
+	}
+
+	a.log.Success(fmt.Sprintf("Подписка '%s' обновлена: %d серверов", displayName, visibleCount))
 	return entries, nil
 }
 
@@ -1312,9 +1535,31 @@ func (a *App) AddSubscription(name, subURL string) ([]config.ProxyEntry, error) 
 	}
 
 	cfg := a.config.GetConfig()
-	for _, s := range cfg.Subscriptions {
-		if s.URL == subURL {
+	staleIdx := -1
+	for i, s := range cfg.Subscriptions {
+		if s.URL != subURL {
+			continue
+		}
+		hasProxies := false
+		for _, p := range cfg.Proxies {
+			if p.SubscriptionURL == subURL {
+				hasProxies = true
+				break
+			}
+		}
+		if hasProxies {
 			return nil, fmt.Errorf("подписка с этим URL уже добавлена")
+		}
+		// Subscription record is orphaned (proxies were deleted but the
+		// subscription metadata stayed). Drop it so the new import can take
+		// its place.
+		staleIdx = i
+		break
+	}
+	if staleIdx >= 0 {
+		cfg.Subscriptions = append(cfg.Subscriptions[:staleIdx], cfg.Subscriptions[staleIdx+1:]...)
+		if err := a.config.SaveConfig(cfg); err != nil {
+			return nil, fmt.Errorf("clearing stale subscription: %w", err)
 		}
 	}
 
@@ -1349,7 +1594,30 @@ func (a *App) AddSubscription(name, subURL string) ([]config.ProxyEntry, error) 
 		return nil, fmt.Errorf("saving subscription: %w", err)
 	}
 
-	a.log.Success(fmt.Sprintf("Подписка '%s' добавлена: %d серверов", displayName, len(entries)))
+	visibleCount := len(entries)
+	memberIDs := make(map[string]bool)
+	for _, e := range entries {
+		if e.Type == "AUTO" {
+			var extra map[string]interface{}
+			if err := json.Unmarshal(e.Extra, &extra); err == nil {
+				if mems, ok := extra["members"].([]interface{}); ok {
+					for _, m := range mems {
+						if ms, ok := m.(string); ok {
+							memberIDs[ms] = true
+						}
+					}
+				}
+			}
+		}
+	}
+	visibleCount = 0
+	for _, e := range entries {
+		if !memberIDs[e.ID] {
+			visibleCount++
+		}
+	}
+
+	a.log.Success(fmt.Sprintf("Подписка '%s' добавлена: %d серверов", displayName, visibleCount))
 	return entries, nil
 }
 
@@ -1373,6 +1641,35 @@ func (a *App) DeleteSubscription(subID string) error {
 	}
 	cfg.Subscriptions = newSubs
 	return a.config.SaveConfig(cfg)
+}
+
+// visibleSubscriptionCount returns the number of entries the user actually
+// sees in the list view: every entry minus the ones hidden behind an AUTO
+// group as members.
+func visibleSubscriptionCount(entries []config.ProxyEntry) int {
+	memberIDs := make(map[string]bool)
+	for _, e := range entries {
+		if !strings.EqualFold(e.Type, "AUTO") || len(e.Extra) == 0 {
+			continue
+		}
+		var extra map[string]interface{}
+		if err := json.Unmarshal(e.Extra, &extra); err != nil {
+			continue
+		}
+		mems, _ := extra["members"].([]interface{})
+		for _, m := range mems {
+			if ms, ok := m.(string); ok {
+				memberIDs[ms] = true
+			}
+		}
+	}
+	visible := 0
+	for _, e := range entries {
+		if !memberIDs[e.ID] {
+			visible++
+		}
+	}
+	return visible
 }
 
 func extractProviderName(subURL string) string {
@@ -1423,6 +1720,21 @@ func (a *App) restoreMainWindow() {
 
 	wailsRuntime.WindowSetAlwaysOnTop(a.ctx, true)
 	wailsRuntime.WindowSetAlwaysOnTop(a.ctx, false)
+
+	go a.verifyWindowOrExit()
+}
+
+// verifyWindowOrExit checks that the main window became visible after a restore
+// attempt. If WebView2 has crashed (common after system sleep/suspend), the
+// window will never appear even though the process is still alive. In that case
+// we exit so the user can relaunch cleanly — the singleton mutex releases on
+// exit, unblocking the new instance.
+func (a *App) verifyWindowOrExit() {
+	time.Sleep(400 * time.Millisecond)
+	if !system.IsMainWindowVisible() {
+		a.log.Warning("Окно не стало видимым после восстановления — возможно WebView2 завис. Перезапустите приложение.")
+		os.Exit(0)
+	}
 }
 
 func (a *App) refreshTrayProxyList() {
@@ -1496,6 +1808,9 @@ func (a *App) connectFromTray(proxyID string) error {
 }
 
 func (a *App) resolveProxyID(proxyDTO proxy.ProxyConfig) string {
+	if proxyDTO.ID != "" {
+		return proxyDTO.ID
+	}
 	if a.config == nil {
 		return ""
 	}
