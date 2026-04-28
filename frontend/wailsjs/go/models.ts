@@ -40,6 +40,7 @@ export namespace config {
 	    listenLan?: boolean;
 	    dnsServers?: string[];
 	    tunIpv4?: string;
+	    favorites?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new AppSettings(source);
@@ -58,6 +59,7 @@ export namespace config {
 	        this.listenLan = source["listenLan"];
 	        this.dnsServers = source["dnsServers"];
 	        this.tunIpv4 = source["tunIpv4"];
+	        this.favorites = source["favorites"];
 	    }
 	}
 	export class ProxyEntry {
@@ -264,6 +266,7 @@ export namespace proxy {
 	    }
 	}
 	export class ProxyConfig {
+	    id?: string;
 	    ip: string;
 	    port: number;
 	    type: string;
@@ -271,6 +274,7 @@ export namespace proxy {
 	    password: string;
 	    uri?: string;
 	    extra?: number[];
+	    subscriptionUrl?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProxyConfig(source);
@@ -278,6 +282,7 @@ export namespace proxy {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
 	        this.ip = source["ip"];
 	        this.port = source["port"];
 	        this.type = source["type"];
@@ -285,6 +290,7 @@ export namespace proxy {
 	        this.password = source["password"];
 	        this.uri = source["uri"];
 	        this.extra = source["extra"];
+	        this.subscriptionUrl = source["subscriptionUrl"];
 	    }
 	}
 	export class StatusDTO {

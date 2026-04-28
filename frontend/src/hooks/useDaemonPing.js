@@ -27,6 +27,7 @@ export const useDaemonPing = (proxies, isConfigLoaded) => {
         const fetchPings = async () => {
             const newPings = {};
             for (const p of proxies) {
+                if (p.type?.toUpperCase() === "AUTO") continue;
                 try {
                     const data = await wailsAPI.ping(p.ip, parseInt(p.port, 10) || 0, p.type || "");
                     if (data && data.reachable) {

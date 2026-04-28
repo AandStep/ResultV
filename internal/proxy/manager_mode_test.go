@@ -233,13 +233,18 @@ func TestConnect_TunnelRequiresAdmin(t *testing.T) {
 func TestConnect_Hysteria2PostStartProbeFailure(t *testing.T) {
 	prevAdmin := isAdminCheck
 	prevHY2 := pingHysteria2Probe
+	prevHTTPProxy := probeHTTPThroughProxyProbe
 	isAdminCheck = func() bool { return true }
 	pingHysteria2Probe = func(ip string, port int) (int64, bool, string, string) {
 		return 0, false, "quic timeout", "quic"
 	}
+	// HTTP-проба тоже должна упасть: только сетевая ошибка убеждает нас что QUIC сервер недоступен.
+	// Если HTTP-проба успешна — это уже другой сценарий (misconfiguration), не этот тест.
+	probeHTTPThroughProxyProbe = func(string) (bool, string) { return false, "timeout" }
 	defer func() {
 		isAdminCheck = prevAdmin
 		pingHysteria2Probe = prevHY2
+		probeHTTPThroughProxyProbe = prevHTTPProxy
 	}()
 
 	log := logger.New()
@@ -409,12 +414,12 @@ func TestConnect_AmneziaWGTunnelFailsWhenE2EProbeFails(t *testing.T) {
 	if res.ErrorCode != "post_start_probe_failed" {
 		t.Fatalf("unexpected error code: %q", res.ErrorCode)
 	}
-	if httpCalls != 1 {
-		t.Fatalf("expected single http e2e probe attempt for amneziawg, got %d", httpCalls)
+	if httpCalls != 4 {
+		t.Fatalf("expected 4 http e2e probe attempts for amneziawg, got %d", httpCalls)
 	}
 }
 
-func TestConnect_WireGuardTunnelE2EProbeStaysSingleAttempt(t *testing.T) {
+func TestConnect_WireGuardTunnelE2EProbeRetriesThreeTimes(t *testing.T) {
 	prevAdmin := isAdminCheck
 	prevWG := pingWireGuardProbe
 	prevHTTP := probeTunnelHTTPProbe
@@ -458,8 +463,94 @@ func TestConnect_WireGuardTunnelE2EProbeStaysSingleAttempt(t *testing.T) {
 	if res.Success {
 		t.Fatalf("expected failure, got %+v", res)
 	}
-	if httpCalls != 1 {
-		t.Fatalf("expected single http probe attempt for wireguard, got %d", httpCalls)
+	if httpCalls != 3 {
+		t.Fatalf("expected 3 http probe attempts for wireguard, got %d", httpCalls)
+	}
+}
+
+func TestConnect_TrojanTunnelFailsWhenE2EProbeFails(t *testing.T) {
+	prevAdmin := isAdminCheck
+	prevHTTP := probeTunnelHTTPProbe
+	isAdminCheck = func() bool { return true }
+	probeTunnelHTTPProbe = func() (bool, string) { return false, "timeout" }
+	defer func() {
+		isAdminCheck = prevAdmin
+		probeTunnelHTTPProbe = prevHTTP
+	}()
+
+	host, port, closeFn := startReachableTCP(t)
+	defer closeFn()
+
+	log := logger.New()
+	engine := &stubEngine{}
+	m := NewManager(log)
+	m.engine = engine
+
+	res := m.Connect(
+		context.Background(),
+		ProxyConfig{IP: host, Port: port, Type: "trojan", Password: "x"},
+		ProxyModeTunnel,
+		ModeGlobal,
+		nil,
+		nil,
+		false,
+		false,
+		0,
+		false,
+		nil,
+		"",
+	)
+	if res.Success {
+		t.Fatalf("expected failure when e2e probe fails, got %+v", res)
+	}
+	if res.ErrorCode != "post_start_probe_failed" {
+		t.Fatalf("unexpected error code: %q", res.ErrorCode)
+	}
+	if engine.stopCalls == 0 {
+		t.Fatal("expected engine stop on failed e2e probe")
+	}
+}
+
+func TestConnect_TrojanProxyFailsWhenE2EProbeFails(t *testing.T) {
+	prevAdmin := isAdminCheck
+	prevHTTPProxy := probeHTTPThroughProxyProbe
+	isAdminCheck = func() bool { return true }
+	probeHTTPThroughProxyProbe = func(string) (bool, string) { return false, "timeout" }
+	defer func() {
+		isAdminCheck = prevAdmin
+		probeHTTPThroughProxyProbe = prevHTTPProxy
+	}()
+
+	host, port, closeFn := startReachableTCP(t)
+	defer closeFn()
+
+	log := logger.New()
+	engine := &stubEngine{}
+	m := NewManager(log)
+	m.engine = engine
+
+	res := m.Connect(
+		context.Background(),
+		ProxyConfig{IP: host, Port: port, Type: "trojan", Password: "x"},
+		ProxyModeProxy,
+		ModeGlobal,
+		nil,
+		nil,
+		false,
+		false,
+		0,
+		false,
+		nil,
+		"",
+	)
+	if res.Success {
+		t.Fatalf("expected failure when e2e proxy probe fails, got %+v", res)
+	}
+	if res.ErrorCode != "post_start_probe_failed" {
+		t.Fatalf("unexpected error code: %q", res.ErrorCode)
+	}
+	if engine.stopCalls == 0 {
+		t.Fatal("expected engine stop on failed proxy e2e probe")
 	}
 }
 
@@ -510,8 +601,8 @@ func TestConnect_AmneziaWGTunnelStopsSessionWhenE2EProbeFails(t *testing.T) {
 	if res.ErrorCode != "post_start_probe_failed" {
 		t.Fatalf("unexpected error code: %q", res.ErrorCode)
 	}
-	if httpCalls != 1 {
-		t.Fatalf("expected single http e2e probe attempt for amneziawg, got %d", httpCalls)
+	if httpCalls != 4 {
+		t.Fatalf("expected 4 http e2e probe attempts for amneziawg, got %d", httpCalls)
 	}
 	if engine.stopCalls == 0 {
 		t.Fatalf("expected engine stop on failed e2e probe")
@@ -560,5 +651,108 @@ func TestConnect_AmneziaWGTunnelClearsSystemProxy(t *testing.T) {
 	}
 	if sysProxy.disableCall == 0 {
 		t.Fatalf("expected system proxy disable for amneziawg tunnel")
+	}
+}
+
+func TestConnect_FailedSwitchClearsCurrentProxyInStatus(t *testing.T) {
+	prevAdmin := isAdminCheck
+	prevHTTPProxy := probeHTTPThroughProxyProbe
+	isAdminCheck = func() bool { return true }
+	probeHTTPThroughProxyProbe = func(string) (bool, string) { return true, "" }
+	defer func() {
+		isAdminCheck = prevAdmin
+		probeHTTPThroughProxyProbe = prevHTTPProxy
+	}()
+
+	oldHost, oldPort, closeOld := startReachableTCP(t)
+	defer closeOld()
+	newHost, newPort, closeNew := startReachableTCP(t)
+	defer closeNew()
+
+	log := logger.New()
+	engine := &stubEngine{}
+	sysProxy := &stubSystemProxy{}
+	m := NewManager(log)
+	m.engine = engine
+	m.sysProxy = sysProxy
+
+	ok := m.Connect(
+		context.Background(),
+		ProxyConfig{IP: oldHost, Port: oldPort, Type: "trojan", Password: "x"},
+		ProxyModeProxy,
+		ModeGlobal,
+		nil,
+		nil,
+		false,
+		false,
+		0,
+		false,
+		nil,
+		"",
+	)
+	if !ok.Success {
+		t.Fatalf("initial connect failed: %+v", ok)
+	}
+
+	engine.startErr = errors.New("start failed")
+	res := m.Connect(
+		context.Background(),
+		ProxyConfig{IP: newHost, Port: newPort, Type: "trojan", Password: "x"},
+		ProxyModeProxy,
+		ModeGlobal,
+		nil,
+		nil,
+		false,
+		false,
+		0,
+		false,
+		nil,
+		"",
+	)
+	if res.Success {
+		t.Fatalf("expected failed reconnect, got %+v", res)
+	}
+
+	status := m.GetStatus()
+	if status.IsConnected {
+		t.Fatalf("expected disconnected status, got %+v", status)
+	}
+	if status.CurrentProxy != nil {
+		t.Fatalf("expected nil current proxy after failed switch, got %+v", status.CurrentProxy)
+	}
+}
+
+func TestIsProbeHTTPStatusAcceptable(t *testing.T) {
+	if !isProbeHTTPStatusAcceptable(204) {
+		t.Fatal("expected 204 to be acceptable")
+	}
+	if !isProbeHTTPStatusAcceptable(400) {
+		t.Fatal("expected 400 to be acceptable")
+	}
+	if isProbeHTTPStatusAcceptable(407) {
+		t.Fatal("expected 407 to be rejected")
+	}
+	if isProbeHTTPStatusAcceptable(502) {
+		t.Fatal("expected 502 to be rejected by direct probe")
+	}
+}
+
+func TestIsProxyProbeResponseAcceptable(t *testing.T) {
+	// Через прокси: 502/503/504 от CDN — нормально, туннель работает
+	if !isProxyProbeResponseAcceptable(204) {
+		t.Fatal("expected 204 to be acceptable via proxy")
+	}
+	if !isProxyProbeResponseAcceptable(502) {
+		t.Fatal("expected 502 to be acceptable via proxy (CDN returned error, tunnel works)")
+	}
+	if !isProxyProbeResponseAcceptable(503) {
+		t.Fatal("expected 503 to be acceptable via proxy")
+	}
+	if !isProxyProbeResponseAcceptable(200) {
+		t.Fatal("expected 200 to be acceptable via proxy")
+	}
+	// 407 = прокси сам не принял запрос
+	if isProxyProbeResponseAcceptable(407) {
+		t.Fatal("expected 407 to be rejected (proxy auth required)")
 	}
 }

@@ -19,6 +19,35 @@
 package system
 
 
-func InitSingletonMessenger(onActivate func()) (cleanup func()) {
+func InitSingletonMessenger(onActivate func(payload string)) (cleanup func()) {
 	return func() {}
+}
+
+// ExtractDeepLinkArg scans process args for the first resultv: URL.
+func ExtractDeepLinkArg(args []string) string {
+	const scheme = "resultv:"
+	if len(args) <= 1 {
+		return ""
+	}
+	for _, a := range args[1:] {
+		s := a
+		if len(s) > len(scheme) {
+			lower := s[:len(scheme)]
+			match := true
+			for i := 0; i < len(scheme); i++ {
+				c := lower[i]
+				if c >= 'A' && c <= 'Z' {
+					c += 'a' - 'A'
+				}
+				if c != scheme[i] {
+					match = false
+					break
+				}
+			}
+			if match {
+				return s
+			}
+		}
+	}
+	return ""
 }

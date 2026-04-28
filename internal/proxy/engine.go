@@ -38,14 +38,16 @@ const (
 )
 
 type ProxyConfig struct {
+	ID       string `json:"id,omitempty"`
 	IP       string `json:"ip"`
 	Port     int    `json:"port"`
 	Type     string `json:"type"`
 	Username string `json:"username"`
 	Password string `json:"password"`
 
-	URI   string          `json:"uri,omitempty"`
-	Extra json.RawMessage `json:"extra,omitempty"`
+	URI             string          `json:"uri,omitempty"`
+	Extra           json.RawMessage `json:"extra,omitempty"`
+	SubscriptionURL string          `json:"subscriptionUrl,omitempty"`
 }
 
 type EngineConfig struct {
@@ -140,6 +142,7 @@ type SBOutbound struct {
 	Method     string           `json:"method,omitempty"`
 	Version    string           `json:"version,omitempty"`
 	UUID       string           `json:"uuid,omitempty"`
+	AlterId    int              `json:"alter_id,omitempty"`
 	Flow       string           `json:"flow,omitempty"`
 	UpMbps     int              `json:"up_mbps,omitempty"`
 	DownMbps   int              `json:"down_mbps,omitempty"`
@@ -147,6 +150,8 @@ type SBOutbound struct {
 
 	TLS       *SBOutboundTLS       `json:"tls,omitempty"`
 	Transport *SBOutboundTransport `json:"transport,omitempty"`
+	
+	DomainStrategy string `json:"domain_strategy,omitempty"`
 }
 
 type SBHysteria2Obfs struct {
@@ -229,6 +234,7 @@ type SBOutboundTransport struct {
 	Path          string            `json:"path,omitempty"`
 	Host          string            `json:"host,omitempty"`
 	ServiceName   string            `json:"service_name,omitempty"`
+	Authority     string            `json:"authority,omitempty"`
 	Mode          string            `json:"mode,omitempty"`
 	XPaddingBytes string            `json:"x_padding_bytes,omitempty"`
 	Headers       map[string]string `json:"headers,omitempty"`
@@ -342,9 +348,8 @@ func BuildTunnelModeConfig(cfg EngineConfig) SingBoxConfig {
 		strictRoute = false
 	}
 
-	if pt == "HYSTERIA2" {
+	if pt == "HYSTERIA2" || pt == "TROJAN" {
 		strictRoute = false
-
 	}
 
 	if pt == "WIREGUARD" || pt == "AMNEZIAWG" {
@@ -363,6 +368,8 @@ func BuildTunnelModeConfig(cfg EngineConfig) SingBoxConfig {
 	}
 
 	dd := effectiveDataDir(cfg)
+	outbounds := buildOutbounds(cfg.Proxy)
+
 	config := SingBoxConfig{
 		Log:       &SBLog{Level: "error", Disabled: false},
 		DNS:       buildDNS(cfg),
@@ -376,7 +383,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) SingBoxConfig {
 			StrictRoute:         strictRoute,
 			RouteExcludeAddress: routeExclude,
 		}},
-		Outbounds:    buildOutbounds(cfg.Proxy),
+		Outbounds:    outbounds,
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
 	}
@@ -466,6 +473,10 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		return dns
 	}
 
+	// proxy mode: прямой UDP DNS без detour.
+	// Роутинг DNS через proxy-outbound создаёт circular dependency:
+	// DNS нужен для резолва трафика → DNS идёт через proxy → proxy нужно соединение → ...
+	// В proxy-режиме DNS-leaks несущественны (приложения используют системный прокси).
 	servers := []SBDNSServer{}
 	if len(cfg.DNSServers) > 0 {
 		for i, raw := range cfg.DNSServers {
@@ -489,9 +500,7 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		}
 	}
 
-	return &SBDNS{
-		Servers: servers,
-	}
+	return &SBDNS{Servers: servers}
 }
 
 func splitDNSServer(raw string) (string, int) {
@@ -560,6 +569,17 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	isEndpointProtocol := strings.EqualFold(strings.TrimSpace(cfg.Proxy.Type), "wireguard") ||
 		strings.EqualFold(strings.TrimSpace(cfg.Proxy.Type), "amneziawg")
 	if cfg.Mode == ProxyModeTunnel && !isEndpointProtocol {
+		// Probe domains must go through the proxy outbound, even when issued
+		// from the app's own process. Without this, the self-direct rule below
+		// would route the post-start HTTP probe out via direct, masking a broken
+		// SS/VLESS/VMESS tunnel as healthy.
+		if len(tunnelProbeDomains) > 0 {
+			rules = append(rules, SBRouteRule{
+				Action:   "route",
+				Domain:   append([]string(nil), tunnelProbeDomains...),
+				Outbound: "proxy",
+			})
+		}
 		if exe, err := os.Executable(); err == nil {
 			if base := filepath.Base(exe); base != "" && base != "." {
 				rx := `(?i)(^|[\\/])` + regexp.QuoteMeta(base) + `$`

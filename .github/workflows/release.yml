@@ -71,7 +71,16 @@ jobs:
 
       - name: Build Windows app and installer
         shell: pwsh
-        run: wails build -clean -nsis -platform windows/amd64
+        env:
+          SUBSCRIPTION_ENCRYPT_KEY: ${{ secrets.SUBSCRIPTION_ENCRYPT_KEY }}
+        run: |
+          $key = $env:SUBSCRIPTION_ENCRYPT_KEY
+          if ($key) {
+            wails build -clean -nsis -platform windows/amd64 -ldflags "-X resultproxy-wails/internal/proxy.subscriptionEncryptKey=$key"
+          } else {
+            Write-Warning "Secret SUBSCRIPTION_ENCRYPT_KEY not set — building without decryption key"
+            wails build -clean -nsis -platform windows/amd64
+          }
 
       - name: Validate Windows artifacts
         shell: pwsh
@@ -114,18 +123,47 @@ jobs:
       - name: Parse update.json and format Release Data
         id: prepare_release
         run: |
-          node -e "
+          cat > prepare_release.cjs <<'NODE_EOF'
           const fs = require('fs');
           const update = JSON.parse(fs.readFileSync('update.json', 'utf8'));
-          let notesText = update.releaseNotes.replace(/\. /g, '.\n-');
-          if (!notesText.startsWith('-')) notesText = '-' + notesText;
-          if (notesText.endsWith('-')) notesText = notesText.slice(0, -1);
-          const title = String(update.releaseTitle || '').trim() || 'Bug Fixes & Improvements';
-          const releaseBody = 'Что нового в версии ' + update.version + '?\n\n' + notesText + '\n\n🌐 Официальный сайт: ' + new URL(update.downloadUrl).hostname;
+
+          const pickLang = (v, lang) => {
+            if (v == null) return '';
+            if (typeof v === 'string') return v;
+            return v[lang] || v.ru || v.en || Object.values(v)[0] || '';
+          };
+
+          const formatBullets = (text) => {
+            const t = String(text || '').trim();
+            if (!t) return '';
+            let out = t.replace(/\. /g, '.\n-');
+            if (!out.startsWith('-')) out = '-' + out;
+            if (out.endsWith('-')) out = out.slice(0, -1);
+            return out;
+          };
+
+          const ruNotes = formatBullets(pickLang(update.releaseNotes, 'ru'));
+          const enNotes = formatBullets(pickLang(update.releaseNotes, 'en'));
+          const ruTitle = pickLang(update.releaseTitle, 'ru').trim() || 'Bug Fixes & Improvements';
+          const enTitle = pickLang(update.releaseTitle, 'en').trim() || ruTitle;
+          const host = new URL(update.downloadUrl).hostname;
+
+          const sections = [];
+          if (ruNotes) {
+            sections.push(`Что нового в версии ${update.version}?\n\n${ruNotes}\n\n🌐 Официальный сайт: ${host}`);
+          }
+          if (enNotes && enNotes !== ruNotes) {
+            sections.push(`What's new in version ${update.version}?\n\n${enNotes}\n\n🌐 Official website: ${host}`);
+          }
+          const releaseBody = sections.join('\n\n---\n\n');
           fs.writeFileSync('RELEASE_BODY.txt', releaseBody);
-          const fsOut = require('fs');
-          fsOut.appendFileSync(process.env.GITHUB_OUTPUT, 'release_name=ResultV v' + update.version + ' - ' + title + '\n');
-          "
+
+          const releaseName = enTitle && enTitle !== ruTitle
+            ? `ResultV v${update.version} - ${ruTitle} / ${enTitle}`
+            : `ResultV v${update.version} - ${ruTitle}`;
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `release_name=${releaseName}\n`);
+          NODE_EOF
+          node prepare_release.cjs
 
       - name: Download all workflow assets
         uses: actions/download-artifact@v4

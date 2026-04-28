@@ -16,6 +16,7 @@
  */
 
 import React, { useState, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { Info, Check, Shield } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { VPN_TYPES } from "../../utils/proxyParser";
@@ -24,14 +25,29 @@ const ProtocolSelectionModal = ({ isOpen, onClose, onConfirm, count, proxies = [
   const { t } = useTranslation();
   const [selectedType, setSelectedType] = useState("HTTP");
 
-  const { plainProxies, vpnProxies, vpnSummary } = useMemo(() => {
-    const plain = proxies.filter((p) => !VPN_TYPES.includes(p.type));
-    const vpn = proxies.filter((p) => VPN_TYPES.includes(p.type));
+  const { plainProxies, vpnProxies, vpnSummary, visibleCount } = useMemo(() => {
+    const autoMemberIds = new Set();
+    proxies.forEach((p) => {
+      if (p.type === "AUTO" && p.extra?.members) {
+        p.extra.members.forEach((id) => autoMemberIds.add(id));
+      }
+    });
+
+    const visibleProxies = proxies.filter(p => !autoMemberIds.has(p.id));
+    const plain = visibleProxies.filter((p) => !VPN_TYPES.includes(p.type) && p.type !== "AUTO");
+    const vpn = visibleProxies.filter((p) => VPN_TYPES.includes(p.type) || p.type === "AUTO");
+    
     const summary = {};
     vpn.forEach((p) => {
       summary[p.type] = (summary[p.type] || 0) + 1;
     });
-    return { plainProxies: plain, vpnProxies: vpn, vpnSummary: summary };
+    
+    return { 
+      plainProxies: plain, 
+      vpnProxies: vpn, 
+      vpnSummary: summary, 
+      visibleCount: visibleProxies.length 
+    };
   }, [proxies]);
 
   if (!isOpen) return null;
@@ -44,8 +60,8 @@ const ProtocolSelectionModal = ({ isOpen, onClose, onConfirm, count, proxies = [
     onConfirm(onlyVpn ? null : selectedType);
   };
 
-  return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 animate-in fade-in duration-300">
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 animate-in fade-in duration-300">
       <div
         className="absolute inset-0 bg-black/70 backdrop-blur-md"
         onClick={onClose}
@@ -133,11 +149,12 @@ const ProtocolSelectionModal = ({ isOpen, onClose, onConfirm, count, proxies = [
             onClick={handleConfirm}
             className="flex-[2] bg-[#007E3A] hover:bg-[#005C2A] text-white font-bold py-4 rounded-2xl transition-all shadow-lg shadow-[#007E3A]/20"
           >
-            {t("add.confirmImport", { count: count || proxies.length })}
+            {t("add.confirmImport", { count: visibleCount })}
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 

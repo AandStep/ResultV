@@ -1,6 +1,12 @@
 {
-  "version": "3.0.2",
-  "releaseTitle": "DNS stability fixes for SS and custom DNS settings",
-  "releaseNotes": "Исправлена работа DNS для Shadowsocks в режиме Tunnel. Добавлен выбор DNS-серверов в настройках приложения (пресеты и ручной ввод).",
+  "version": "3.1.0",
+  "releaseTitle": {
+    "ru": "Избранное, deeplink resultv://, новый партнёр impVPN, фикс багов",
+    "en": "Favorites, resultv:// deep links, new partner impVPN, bug fixes"
+  },
+  "releaseNotes": {
+    "ru": "Добавлено избранное на главной и в списке серверов. Поддержка ссылок resultv:// — подписки импортируются прямо из браузера. Новый партнёр impVPN с промокодом result на скидку 20%. ",
+    "en": "Favorites added on the home screen and in the server list. resultv:// deep link support — subscriptions can be imported straight from the browser. New partner impVPN with promo code result for a 20% discount."
+  },
   "downloadUrl": "https://result-proxy.ru/"
 }

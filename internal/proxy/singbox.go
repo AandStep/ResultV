@@ -138,6 +138,7 @@ type trafficTracker struct {
 	logged   sync.Map 
 	count    atomic.Int32
 	capped   atomic.Bool
+	isSub    bool
 }
 
 type trackedConn struct {
@@ -152,6 +153,7 @@ type trackedConn struct {
 	up     atomic.Int64
 	down   atomic.Int64
 	closed atomic.Bool
+	isSub  bool
 }
 
 func isVideoDiagnosticsHost(s string) bool {
@@ -190,16 +192,21 @@ func (c *trackedConn) Close() error {
 	up := c.up.Load()
 	down := c.down.Load()
 	ageMs := time.Since(c.start).Milliseconds()
+	viaStr := fmt.Sprintf(" | via %s", c.server)
+	if c.isSub {
+		viaStr = ""
+	}
+
 	if isVideoDiagnosticsHost(c.host) || isVideoDiagnosticsHost(c.dest) {
-		msg := fmt.Sprintf("[CONN-DIAG] %s -> %s | via %s | status: closed | up=%dB down=%dB age=%dms", c.host, c.dest, c.server, up, down, ageMs)
+		msg := fmt.Sprintf("[CONN-DIAG] %s -> %s%s | status: closed | up=%dB down=%dB age=%dms", c.host, c.dest, viaStr, up, down, ageMs)
 		c.log.LogWithSource(msg, logger.TypeInfo, c.host, "", c.host)
 	}
 	if down == 0 && up < 512 && ageMs < 1200 {
-		msg := fmt.Sprintf("[CONN] %s -> %s | via %s | protocol=%s mode=%s | status: closed_early age=%dms", c.host, c.dest, c.server, c.protocol, c.mode, ageMs)
+		msg := fmt.Sprintf("[CONN] %s -> %s%s | protocol=%s mode=%s | status: closed_early age=%dms", c.host, c.dest, viaStr, c.protocol, c.mode, ageMs)
 		c.log.LogWithSource(msg, logger.TypeWarning, c.host, "", c.host)
 		return err
 	}
-	msg := fmt.Sprintf("[CONN] %s -> %s | via %s | status: closed", c.host, c.dest, c.server)
+	msg := fmt.Sprintf("[CONN] %s -> %s%s | status: closed", c.host, c.dest, viaStr)
 	c.log.LogWithSource(msg, logger.TypeInfo, c.host, "", c.host)
 	return err
 }
@@ -284,6 +291,7 @@ func (e *SingBoxEngine) Start(ctx context.Context, cfg EngineConfig) error {
 		server:   fmt.Sprintf("%s:%d", cfg.Proxy.IP, cfg.Proxy.Port),
 		protocol: strings.ToLower(strings.TrimSpace(cfg.Proxy.Type)),
 		mode:     cfg.Mode,
+		isSub:    cfg.Proxy.SubscriptionURL != "",
 	}
 	instance.Router().AppendTracker(tracker)
 
@@ -296,8 +304,12 @@ func (e *SingBoxEngine) Start(ctx context.Context, cfg EngineConfig) error {
 
 	e.running.Store(true)
 
-	e.log.Success(fmt.Sprintf("[SING-BOX] Конфигурация готова (%s → %s:%d)",
-		cfg.Mode, cfg.Proxy.IP, cfg.Proxy.Port))
+	if cfg.Proxy.SubscriptionURL != "" {
+		e.log.Success(fmt.Sprintf("[SING-BOX] Конфигурация готова (%s)", cfg.Mode))
+	} else {
+		e.log.Success(fmt.Sprintf("[SING-BOX] Конфигурация готова (%s → %s:%d)",
+			cfg.Mode, cfg.Proxy.IP, cfg.Proxy.Port))
+	}
 
 	return nil
 }
@@ -311,17 +323,29 @@ func (e *SingBoxEngine) Stop() error {
 		return nil
 	}
 
-	
 	if e.cancel != nil {
 		e.cancel()
 		e.cancel = nil
 	}
+
 	if e.instance != nil {
-		_ = e.instance.Close()
+		inst := e.instance
 		e.instance = nil
+		// instance.Close() can block indefinitely when sing-box goroutines
+		// are stuck on network I/O (e.g. after system sleep/resume). Run it
+		// in a goroutine with a hard timeout so Shutdown never hangs.
+		closeDone := make(chan struct{}, 1)
+		go func() {
+			_ = inst.Close()
+			closeDone <- struct{}{}
+		}()
+		select {
+		case <-closeDone:
+		case <-time.After(5 * time.Second):
+			e.log.Warning("[SING-BOX] Close() timeout — принудительное завершение")
+		}
 	}
 
-	
 	if e.configPath != "" {
 		os.Remove(e.configPath)
 		e.configPath = ""
@@ -364,6 +388,7 @@ func (t *trafficTracker) RoutedConnection(
 		mode:     t.mode,
 		log:    t.log,
 		start:  time.Now(),
+		isSub:  t.isSub,
 	}
 }
 
@@ -413,7 +438,11 @@ func (t *trafficTracker) logConnection(metadata adapter.InboundContext, outbound
 		return host, dest, false
 	}
 
-	msg := fmt.Sprintf("[CONN] %s -> %s | via %s | status: connected", host, dest, t.server)
+	viaStr := fmt.Sprintf(" | via %s", t.server)
+	if t.isSub {
+		viaStr = ""
+	}
+	msg := fmt.Sprintf("[CONN] %s -> %s%s | status: connected", host, dest, viaStr)
 	t.log.LogWithSource(msg, logger.TypeInfo, host, "", metadata.Domain)
 	return host, dest, true
 }

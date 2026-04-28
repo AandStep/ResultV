@@ -39,16 +39,22 @@ type TrayCallbacks struct {
 	OnQuit            func()
 	OnSelectProxy     func(proxyID string)
 	OnConnectSelected func(proxyID string)
+	// OnUnexpectedExit is called when the systray dies without Stop() being
+	// invoked — typically a Windows message-loop error or session event.
+	// The app should exit if the window is also hidden (zombie state).
+	OnUnexpectedExit func()
 }
 
 
 
 
 type Tray struct {
-	mu        sync.Mutex
-	icon      []byte
-	callbacks TrayCallbacks
-	running   bool
+	mu             sync.Mutex
+	icon           []byte
+	callbacks      TrayCallbacks
+	running        bool
+	exited         chan struct{}
+	stopRequested  bool
 
 	
 	mStatus     *systray.MenuItem
@@ -86,6 +92,7 @@ func NewTray(icon []byte, cb TrayCallbacks) *Tray {
 	return &Tray{
 		icon:            icon,
 		callbacks:       cb,
+		exited:          make(chan struct{}),
 		proxyLookup:     make(map[string]config.ProxyEntry),
 		proxyPings:      make(map[string]int64),
 		serverItems:     make(map[string]*systray.MenuItem),
@@ -116,10 +123,15 @@ func (t *Tray) Start() {
 func (t *Tray) Stop() {
 	t.mu.Lock()
 	running := t.running
+	t.stopRequested = true
 	t.mu.Unlock()
 
 	if running {
 		systray.Quit()
+		select {
+		case <-t.exited:
+		case <-time.After(2 * time.Second):
+		}
 	}
 }
 
@@ -222,7 +234,13 @@ func (t *Tray) onExit() {
 	t.clickDispatcher.stop()
 	t.mu.Lock()
 	t.running = false
+	wasExpected := t.stopRequested
+	cb := t.callbacks.OnUnexpectedExit
 	t.mu.Unlock()
+	close(t.exited)
+	if !wasExpected && cb != nil {
+		go cb()
+	}
 }
 
 

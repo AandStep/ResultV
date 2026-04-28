@@ -33,6 +33,7 @@ import { useCheckUpdate } from "./hooks/useCheckUpdate";
 import UpdateNotificationModal from "./components/ui/UpdateNotificationModal";
 import ProtocolWarningModal from "./components/ui/ProtocolWarningModal";
 import AppDialogModal from "./components/ui/AppDialogModal";
+import DeepLinkImportModal from "./components/ui/DeepLinkImportModal";
 
 const AppContent = () => {
     const { t } = useTranslation();
@@ -112,6 +113,8 @@ const AppContent = () => {
                 onClose={() => closeAppDialog(false)}
                 onConfirm={handleAppDialogConfirm}
             />
+
+            <DeepLinkImportModal />
         </MainLayout>
     );
 };

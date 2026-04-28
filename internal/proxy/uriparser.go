@@ -27,6 +27,34 @@ import (
 	"resultproxy-wails/internal/config"
 )
 
+// getQueryParamCI looks up a URL query parameter case-insensitively.
+// It tries the exact key first, then Title case, then UPPER CASE.
+// This is needed for AWG URIs where providers use Jc/JC/jc interchangeably.
+func getQueryParamCI(params url.Values, key string) string {
+	if v := params.Get(key); v != "" {
+		return v
+	}
+	// Title case: jc → Jc, jmin → Jmin
+	if len(key) > 0 {
+		titled := strings.ToUpper(key[:1]) + key[1:]
+		if v := params.Get(titled); v != "" {
+			return v
+		}
+	}
+	// ALL CAPS: jc → JC
+	if v := params.Get(strings.ToUpper(key)); v != "" {
+		return v
+	}
+	// Brute-force: iterate all keys for case-insensitive match
+	lowerKey := strings.ToLower(key)
+	for k, vals := range params {
+		if strings.ToLower(k) == lowerKey && len(vals) > 0 && vals[0] != "" {
+			return vals[0]
+		}
+	}
+	return ""
+}
+
 
 
 func ParseProxyURI(line string) (config.ProxyEntry, error) {
@@ -46,6 +74,8 @@ func ParseProxyURI(line string) (config.ProxyEntry, error) {
 		return parseHysteria2URI(line)
 	case strings.HasPrefix(line, "wg://"):
 		return parseWireGuardURI(line)
+	case strings.HasPrefix(line, "awg://"):
+		return parseAmneziaWGURI(line)
 	default:
 		return config.ProxyEntry{}, fmt.Errorf("unsupported URI scheme: %s", truncate(line, 30))
 	}
@@ -53,7 +83,11 @@ func ParseProxyURI(line string) (config.ProxyEntry, error) {
 
 
 func ParseSubscriptionBody(body string) ([]config.ProxyEntry, error) {
-	body = normalizeSubscriptionBody(body)
+	decrypted, err := tryDecryptSubscription(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt subscription: %w", err)
+	}
+	body = normalizeSubscriptionBody(decrypted)
 	if body == "" {
 		return nil, fmt.Errorf("subscription is empty")
 	}
@@ -138,29 +172,55 @@ func parseSubscriptionJSON(body string) ([]config.ProxyEntry, bool) {
 	if len(objects) == 0 {
 		return []config.ProxyEntry{}, true
 	}
-	entries := make([]config.ProxyEntry, 0, len(objects))
+	var entries []config.ProxyEntry
 	for _, obj := range objects {
-		entry, ok := parseJSONSubscriptionEntry(obj)
-		if ok {
-			entries = append(entries, entry)
+		parsed := parseJSONSubscriptionEntry(obj)
+		if len(parsed) > 0 {
+			entries = append(entries, parsed...)
 		}
 	}
 	return entries, true
 }
 
-func parseJSONSubscriptionEntry(obj map[string]interface{}) (config.ProxyEntry, bool) {
-	remarks := asString(obj["remarks"])
+func parseJSONSubscriptionEntry(obj map[string]interface{}) []config.ProxyEntry {
+	var entries []config.ProxyEntry
+	
+	// Иногда obj сам является outbound'ом
+	protocol := asString(obj["protocol"])
+	if protocol != "" {
+		if entry, ok := parseJSONOutbound(obj, asString(obj["tag"])); ok {
+			entries = append(entries, entry)
+		}
+	}
+
+	// Иногда obj содержит массив outbounds
 	outbounds, ok := asSlice(obj["outbounds"])
-	if !ok || len(outbounds) == 0 {
+	if ok {
+		for _, ob := range outbounds {
+			if obMap, ok := asMap(ob); ok {
+				remarks := asString(obj["remarks"]) // Top-level remarks
+				if remarks == "" {
+					remarks = asString(obMap["tag"]) // Или используем tag как имя
+				}
+				if entry, ok := parseJSONOutbound(obMap, remarks); ok {
+					entries = append(entries, entry)
+				}
+			}
+		}
+	}
+
+	return entries
+}
+
+func parseJSONOutbound(outbound map[string]interface{}, name string) (config.ProxyEntry, bool) {
+	protocol := strings.ToLower(asString(outbound["protocol"]))
+	if protocol == "freedom" || protocol == "blackhole" || protocol == "dns" {
 		return config.ProxyEntry{}, false
 	}
-	firstOutbound, ok := asMap(outbounds[0])
-	if !ok {
-		return config.ProxyEntry{}, false
-	}
-	protocol := strings.ToLower(asString(firstOutbound["protocol"]))
-	settings, _ := asMap(firstOutbound["settings"])
-	stream, _ := asMap(firstOutbound["streamSettings"])
+
+	settings, _ := asMap(outbound["settings"])
+	stream, _ := asMap(outbound["streamSettings"])
+
 	switch protocol {
 	case "vless", "vmess":
 		vnext, ok := asSlice(settings["vnext"])
@@ -178,7 +238,6 @@ func parseJSONSubscriptionEntry(obj map[string]interface{}) (config.ProxyEntry, 
 		if len(users) > 0 {
 			user, _ = asMap(users[0])
 		}
-		name := remarks
 		if name == "" {
 			name = strings.ToUpper(protocol)
 		}
@@ -201,6 +260,33 @@ func parseJSONSubscriptionEntry(obj map[string]interface{}) (config.ProxyEntry, 
 		if security := asString(stream["security"]); security != "" {
 			extra["security"] = security
 		}
+		// Parse tlsSettings for VLESS/VMESS (alpn, sni, fp, insecure)
+		if tls, ok := asMap(stream["tlsSettings"]); ok {
+			if sni := asString(tls["serverName"]); sni != "" {
+				extra["sni"] = sni
+			}
+			if fp := asString(tls["fingerprint"]); fp != "" {
+				extra["fp"] = fp
+			}
+			if alpn, ok := asSlice(tls["alpn"]); ok && len(alpn) > 0 {
+				var parts []string
+				for _, a := range alpn {
+					if s := asString(a); s != "" {
+						parts = append(parts, s)
+					}
+				}
+				if len(parts) > 0 {
+					extra["alpn"] = strings.Join(parts, ",")
+				}
+			} else if alpnStr := asString(tls["alpn"]); alpnStr != "" {
+				extra["alpn"] = alpnStr
+			}
+			if insecure := tls["allowInsecure"]; insecure != nil {
+				if b, ok := insecure.(bool); ok {
+					extra["insecure"] = b
+				}
+			}
+		}
 		if grpc, ok := asMap(stream["grpcSettings"]); ok {
 			if sn := asString(grpc["serviceName"]); sn != "" {
 				extra["grpc-service-name"] = sn
@@ -218,6 +304,35 @@ func parseJSONSubscriptionEntry(obj map[string]interface{}) (config.ProxyEntry, 
 				if hostHeader := asString(h["Host"]); hostHeader != "" {
 					extra["host"] = hostHeader
 				}
+			}
+		}
+		if xhttp, ok := asMap(stream["xhttpSettings"]); ok {
+			if p := asString(xhttp["path"]); p != "" {
+				extra["path"] = p
+			}
+			switch h := xhttp["host"].(type) {
+			case string:
+				if h != "" {
+					extra["host"] = h
+				}
+			case []interface{}:
+				if len(h) > 0 {
+					if s := asString(h[0]); s != "" {
+						extra["host"] = s
+					}
+				}
+			}
+			if mode := asString(xhttp["mode"]); mode != "" {
+				extra["mode"] = mode
+			}
+			if method := asString(xhttp["method"]); method != "" {
+				extra["method"] = method
+			}
+			if innerExtra, ok := asMap(xhttp["extra"]); ok {
+				for k, v := range innerExtra {
+					extra[k] = v
+				}
+				normalizeVLESSExtraPadding(extra)
 			}
 		}
 		if reality, ok := asMap(stream["realitySettings"]); ok {
@@ -255,7 +370,6 @@ func parseJSONSubscriptionEntry(obj map[string]interface{}) (config.ProxyEntry, 
 		host := asString(server["address"])
 		port := asInt(server["port"])
 		password := asString(server["password"])
-		name := remarks
 		if name == "" {
 			name = "TROJAN"
 		}
@@ -269,6 +383,59 @@ func parseJSONSubscriptionEntry(obj map[string]interface{}) (config.ProxyEntry, 
 		if tls, ok := asMap(stream["tlsSettings"]); ok {
 			if sni := asString(tls["serverName"]); sni != "" {
 				extra["sni"] = sni
+			}
+		}
+		if ws, ok := asMap(stream["wsSettings"]); ok {
+			if p := asString(ws["path"]); p != "" {
+				extra["path"] = p
+			}
+			if h, ok := asMap(ws["headers"]); ok {
+				if hostHeader := asString(h["Host"]); hostHeader != "" {
+					extra["host"] = hostHeader
+				}
+			}
+		}
+		if xhttp, ok := asMap(stream["xhttpSettings"]); ok {
+			if p := asString(xhttp["path"]); p != "" {
+				extra["path"] = p
+			}
+			switch h := xhttp["host"].(type) {
+			case string:
+				if h != "" {
+					extra["host"] = h
+				}
+			case []interface{}:
+				if len(h) > 0 {
+					if s := asString(h[0]); s != "" {
+						extra["host"] = s
+					}
+				}
+			}
+			if mode := asString(xhttp["mode"]); mode != "" {
+				extra["mode"] = mode
+			}
+			if method := asString(xhttp["method"]); method != "" {
+				extra["method"] = method
+			}
+			if innerExtra, ok := asMap(xhttp["extra"]); ok {
+				for k, v := range innerExtra {
+					extra[k] = v
+				}
+				normalizeVLESSExtraPadding(extra)
+			}
+		}
+		if reality, ok := asMap(stream["realitySettings"]); ok {
+			if sni := asString(reality["serverName"]); sni != "" {
+				extra["sni"] = sni
+			}
+			if pbk := asString(reality["publicKey"]); pbk != "" {
+				extra["pbk"] = pbk
+			}
+			if sid := asString(reality["shortId"]); sid != "" {
+				extra["sid"] = sid
+			}
+			if fp := asString(reality["fingerprint"]); fp != "" {
+				extra["fp"] = fp
 			}
 		}
 		extraJSON, _ := json.Marshal(extra)
@@ -294,7 +461,6 @@ func parseJSONSubscriptionEntry(obj map[string]interface{}) (config.ProxyEntry, 
 		port := asInt(server["port"])
 		password := asString(server["password"])
 		method := asString(server["method"])
-		name := remarks
 		if name == "" {
 			name = "Shadowsocks"
 		}
@@ -309,6 +475,44 @@ func parseJSONSubscriptionEntry(obj map[string]interface{}) (config.ProxyEntry, 
 			Type:     "SS",
 			Name:     name,
 			Password: password,
+			Country:  countryFromNameAndHost(name, host),
+			Extra:    extraJSON,
+		}, host != "" && port > 0
+	case "hysteria", "hysteria2", "hy2":
+		host := asString(settings["address"])
+		port := asInt(settings["port"])
+		
+		var auth string
+		if hySettings, ok := asMap(stream["hysteriaSettings"]); ok {
+			auth = asString(hySettings["auth"])
+		}
+		
+		if name == "" {
+			name = "HYSTERIA2"
+		}
+		
+		extra := map[string]interface{}{}
+		extra["password"] = auth
+		
+		if tls, ok := asMap(stream["tlsSettings"]); ok {
+			if sni := asString(tls["serverName"]); sni != "" {
+				extra["sni"] = sni
+			}
+			if fp := asString(tls["fingerprint"]); fp != "" {
+				extra["fp"] = fp
+			}
+			if alpn, ok := asSlice(tls["alpn"]); ok && len(alpn) > 0 {
+				extra["alpn"] = asString(alpn[0])
+			}
+		}
+		
+		extraJSON, _ := json.Marshal(extra)
+		return config.ProxyEntry{
+			IP:       host,
+			Port:     port,
+			Type:     "HYSTERIA2",
+			Name:     name,
+			Password: auth,
 			Country:  countryFromNameAndHost(name, host),
 			Extra:    extraJSON,
 		}, host != "" && port > 0
@@ -550,13 +754,70 @@ func parseTrojanURI(uri string) (config.ProxyEntry, error) {
 	}
 
 	params := u.Query()
+	network := firstNonEmpty(
+		params.Get("network"),
+		params.Get("type"),
+		"tcp",
+	)
+	network = strings.ToLower(strings.TrimSpace(network))
+	isGrpcNetwork := network == "grpc"
+
+	var sni string
+	if isGrpcNetwork {
+		sni = firstNonEmpty(
+			params.Get("sni"),
+			params.Get("peer"),
+			params.Get("serverName"),
+			params.Get("servername"),
+			params.Get("server_name"),
+		)
+	} else {
+		sni = firstNonEmpty(
+			params.Get("sni"),
+			params.Get("serverName"),
+			params.Get("servername"),
+			params.Get("server_name"),
+			params.Get("peer"),
+		)
+	}
+	insecure := parseBoolFlexible(firstNonEmpty(
+		params.Get("insecure"),
+		params.Get("allowInsecure"),
+		params.Get("allow_insecure"),
+		params.Get("skip-cert-verify"),
+		params.Get("skip_cert_verify"),
+	))
 	extra := map[string]interface{}{
-		"sni":      params.Get("sni"),
+		"sni":      sni,
 		"fp":       params.Get("fp"),
-		"network":  paramOr(params, "type", "tcp"),
+		"network":  network,
 		"path":     params.Get("path"),
 		"host":     params.Get("host"),
+		"mode":     params.Get("mode"),
+		"method":   params.Get("method"),
 		"security": paramOr(params, "security", "tls"),
+		"alpn":     params.Get("alpn"),
+		"insecure": insecure,
+		"pbk":      params.Get("pbk"),
+		"sid":      params.Get("sid"),
+		"spx":      params.Get("spx"),
+		"flow":     params.Get("flow"),
+	}
+	if grpcServiceName := firstNonEmpty(
+		params.Get("grpc-service-name"),
+		params.Get("serviceName"),
+		params.Get("service_name"),
+		params.Get("grpc_service_name"),
+	); grpcServiceName != "" {
+		extra["grpc-service-name"] = grpcServiceName
+		extra["serviceName"] = grpcServiceName
+	}
+	if grpcAuthority := firstNonEmpty(
+		params.Get("authority"),
+		params.Get("grpc-authority"),
+		params.Get("grpc_authority"),
+	); grpcAuthority != "" {
+		extra["authority"] = grpcAuthority
 	}
 
 	extraJSON, _ := json.Marshal(extra)
@@ -658,6 +919,83 @@ func parseWireGuardURI(uri string) (config.ProxyEntry, error) {
 
 
 
+
+func parseAmneziaWGURI(uri string) (config.ProxyEntry, error) {
+	u, err := url.Parse(strings.Replace(uri, "awg://", "http://", 1))
+	if err != nil {
+		return config.ProxyEntry{}, fmt.Errorf("parsing AmneziaWG URI: %w", err)
+	}
+	port, _ := strconv.Atoi(u.Port())
+	name := "AmneziaWG"
+	if u.Fragment != "" {
+		name, _ = url.PathUnescape(u.Fragment)
+	}
+	params := u.Query()
+	password, _ := u.User.Password()
+	username := u.User.Username()
+
+	privateKey := params.Get("private_key")
+	if privateKey == "" {
+		privateKey = params.Get("privateKey")
+	}
+	publicKey := firstNonEmpty(params.Get("public_key"), params.Get("publicKey"))
+
+	// If one is missing, fallback to username
+	if privateKey == "" {
+		privateKey = username
+	} else if publicKey == "" {
+		publicKey = username
+	}
+
+	extra := map[string]interface{}{
+		"private_key": privateKey,
+		"public_key":  publicKey,
+		"address":     splitCSV(params.Get("address")),
+		"allowed_ips": splitCSV(firstNonEmpty(params.Get("allowed_ips"), params.Get("allowedIps"))),
+	}
+	if psk := firstNonEmpty(password, params.Get("pre_shared_key"), params.Get("preSharedKey")); psk != "" {
+		extra["pre_shared_key"] = psk
+	}
+	if mtu := strings.TrimSpace(firstNonEmpty(params.Get("mtu"), params.Get("MTU"))); mtu != "" {
+		if v, convErr := strconv.Atoi(mtu); convErr == nil {
+			extra["mtu"] = v
+		}
+	}
+
+	// Amnezia-specific obfuscation parameters.
+	// Use case-insensitive lookup because AmneziaVPN clients emit
+	// capitalized keys (Jc, Jmin, S1, H1, …) while other generators
+	// use lowercase (jc, jmin, s1, h1, …).
+	amnezia := map[string]interface{}{}
+	amneziaIntKeys := []string{"jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4", "itime"}
+	for _, k := range amneziaIntKeys {
+		if v := strings.TrimSpace(getQueryParamCI(params, k)); v != "" {
+			if n, convErr := strconv.ParseInt(v, 10, 64); convErr == nil {
+				amnezia[k] = n
+			}
+		}
+	}
+	amneziaStringKeys := []string{"i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3"}
+	for _, k := range amneziaStringKeys {
+		if v := strings.TrimSpace(getQueryParamCI(params, k)); v != "" {
+			amnezia[k] = v
+		}
+	}
+	if len(amnezia) > 0 {
+		extra["amnezia"] = amnezia
+	}
+
+	extraJSON, _ := json.Marshal(extra)
+	host := u.Hostname()
+	return config.ProxyEntry{
+		IP:      host,
+		Port:    port,
+		Type:    "AMNEZIAWG",
+		Name:    name,
+		Country: countryFromNameAndHost(name, host),
+		Extra:   extraJSON,
+	}, nil
+}
 
 func mergeVLESSURLEmbeddedExtra(dst map[string]interface{}, raw string) {
 	raw = strings.TrimSpace(raw)
@@ -842,4 +1180,180 @@ func countryFromNameAndHost(displayName, hostname string) string {
 		return c
 	}
 	return countryHintFromHostname(hostname)
+}
+
+// StripLeadingFlagEmoji splits "🇷🇺 impVPN Auto" into ("🇷🇺", "impVPN Auto").
+// Returns ("", s) when the string does not start with a regional-indicator pair.
+func StripLeadingFlagEmoji(s string) (emoji, rest string) {
+	s = strings.TrimSpace(s)
+	r1, w1 := utf8.DecodeRuneInString(s)
+	if r1 == utf8.RuneError || w1 == 0 || r1 < riMin || r1 > riMax {
+		return "", s
+	}
+	r2, w2 := utf8.DecodeRuneInString(s[w1:])
+	if r2 == utf8.RuneError || w2 == 0 || r2 < riMin || r2 > riMax {
+		return "", s
+	}
+	return s[:w1+w2], strings.TrimSpace(s[w1+w2:])
+}
+
+// nameBaseParts strips the leading flag emoji, then returns the trimmed remainder.
+// It also removes any explicit separator suffix (" | …", " – …", " — …", " - …").
+func nameBaseParts(raw string) string {
+	_, base := StripLeadingFlagEmoji(raw)
+	for _, sep := range []string{" | ", " – ", " — ", " - "} {
+		if idx := strings.Index(base, sep); idx > 0 {
+			return strings.TrimSpace(base[:idx])
+		}
+	}
+	return base
+}
+
+// lcpRunes returns the longest common UTF-8 prefix of a and b.
+func lcpRunes(a, b string) string {
+	i := 0
+	for i < len(a) && i < len(b) && a[i] == b[i] {
+		i++
+	}
+	// Walk back to a valid UTF-8 boundary.
+	for i > 0 && !utf8.RuneStart(a[i-1]) {
+		i--
+	}
+	return a[:i]
+}
+
+// trimAutoName removes trailing spaces and common separator characters so that
+// e.g. "impVPN Auto " → "impVPN Auto".
+func trimAutoName(s string) string {
+	return strings.TrimRight(s, " \t|-–—")
+}
+
+// ExtractAutoGroupName returns the shared base name and true when every entry
+// shares the same base name after stripping a leading flag emoji and any
+// " | suffix" variant. Returns ("", false) when names differ or are empty.
+//
+// Two detection strategies are tried in order:
+//  1. Exact match after separator-suffix stripping  ("impVPN Auto | VLESS" → "impVPN Auto").
+//  2. Longest-common-prefix across all raw base names ("impVPN Auto VLESS" and
+//     "impVPN Auto HYSTERIA2" → "impVPN Auto"). The LCP must be ≥ 3 runes.
+func ExtractAutoGroupName(entries []config.ProxyEntry) (string, bool) {
+	if len(entries) == 0 {
+		return "", false
+	}
+
+	bases := make([]string, len(entries))
+	for i, e := range entries {
+		bases[i] = nameBaseParts(e.Name)
+	}
+
+	// Strategy 1: exact match after separator stripping.
+	first := bases[0]
+	if first != "" {
+		allSame := true
+		for _, b := range bases[1:] {
+			if b != first {
+				allSame = false
+				break
+			}
+		}
+		if allSame {
+			return first, true
+		}
+	}
+
+	// Strategy 2: longest common prefix of raw (flag-stripped) base names.
+	rawBases := make([]string, len(entries))
+	for i, e := range entries {
+		_, rawBases[i] = StripLeadingFlagEmoji(e.Name)
+	}
+	lcp := rawBases[0]
+	for _, b := range rawBases[1:] {
+		lcp = lcpRunes(lcp, b)
+		if lcp == "" {
+			break
+		}
+	}
+	lcp = trimAutoName(lcp)
+	if utf8.RuneCountInString(lcp) >= 3 {
+		return lcp, true
+	}
+
+	return "", false
+}
+
+// AllSameBaseName returns true when every entry shares the same non-emoji name part.
+func AllSameBaseName(entries []config.ProxyEntry) bool {
+	_, ok := ExtractAutoGroupName(entries)
+	return ok
+}
+
+// FilterInvalidSubscriptionEntries removes sentinel/routing-only entries
+// with no real host (IP == "0.0.0.0").
+func FilterInvalidSubscriptionEntries(entries []config.ProxyEntry) []config.ProxyEntry {
+	out := make([]config.ProxyEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.IP == "0.0.0.0" {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// SplitAutoEntries separates entries whose base name (after stripping a
+// leading flag emoji) contains the word "auto" (case-insensitive) from the
+// rest. This handles providers that send a mix of "Auto" and individual
+// server entries in the same subscription response.
+//
+// Returns:
+//   - autoEntries: entries that belong to the auto group
+//   - autoName: the shared display name for the auto group (e.g. "🚀 impVPN Auto")
+//   - individualEntries: entries that are not part of the auto group
+//   - ok: true when at least 2 auto entries were found with the same base name
+func SplitAutoEntries(entries []config.ProxyEntry) (autoEntries []config.ProxyEntry, autoName string, individualEntries []config.ProxyEntry, ok bool) {
+	if len(entries) == 0 {
+		return nil, "", nil, false
+	}
+
+	for _, e := range entries {
+		_, base := StripLeadingFlagEmoji(e.Name)
+		if containsWordAuto(base) {
+			autoEntries = append(autoEntries, e)
+		} else {
+			individualEntries = append(individualEntries, e)
+		}
+	}
+
+	if len(autoEntries) < 2 {
+		// Not enough auto entries — treat everything as individual.
+		return nil, "", entries, false
+	}
+
+	autoName, ok = ExtractAutoGroupName(autoEntries)
+	if !ok {
+		// Auto entries don't share a common name — fall back.
+		return nil, "", entries, false
+	}
+
+	return autoEntries, autoName, individualEntries, true
+}
+
+// containsWordAuto checks whether s contains the word "auto" as a
+// case-insensitive whole word (not part of "autostart" etc.).
+func containsWordAuto(s string) bool {
+	low := strings.ToLower(s)
+	idx := strings.Index(low, "auto")
+	if idx < 0 {
+		return false
+	}
+	// Check that "auto" is at a word boundary (end of string or followed by
+	// a non-letter character).
+	end := idx + 4
+	if end < len(low) {
+		next := low[end]
+		if next >= 'a' && next <= 'z' {
+			return false
+		}
+	}
+	return true
 }

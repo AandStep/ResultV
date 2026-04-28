@@ -2,7 +2,7 @@
   "sidebar": {
     "offline": "Daemon Offline",
     "home": "Home",
-    "buy": "Buy Proxies",
+    "buy": "Buy Servers",
     "add": "Add Proxy",
     "list": "Server List",
     "rules": "Smart Rules",
@@ -35,7 +35,10 @@
     "download": "Download",
     "upload": "Upload",
     "modeProxy": "PROXY",
-    "modeTunnel": "TUNNEL"
+    "modeTunnel": "TUNNEL",
+    "favorites": "Favorites",
+    "favorite": "Add to favorites",
+    "unfavorite": "Remove from favorites"
   },
   "add": {
     "titleAdd": "Add Configuration",
@@ -220,6 +223,7 @@
     "desc": "Manage your servers",
     "empty": "The server list is empty.",
     "pinging": "Pinging...",
+    "pingTooltip": "Direct TCP latency to server (not through tunnel)",
     "searchPlaceholder": "Search by name or IP...",
     "sortBy": "Sort by",
     "sort": {
@@ -241,6 +245,10 @@
     "subActiveUntil": "Active until: {{date}}",
     "subRefreshHint": "If the subscription does not work, use the refresh button.",
     "noResults": "No proxies found matching your criteria.",
+    "autoType": "Auto",
+    "ipHidden": "Hidden",
+    "favoriteAria": "Add to favorites",
+    "unfavoriteAria": "Remove from favorites",
     "status": {
       "connected": "Connected",
       "connect": "Connect"
@@ -280,8 +288,17 @@
     }
   },
   "buy": {
-    "title": "Buy Proxies",
+    "title": "Buy Servers",
     "desc": "Reliable IPv4 and IPv6 proxies for any tasks from our partners",
+    "vpn_section_title": "Buy VPN",
+    "vpn_section_desc": "impVPN — Just making the internet freer🛸",
+    "proxy_section_title": "Buy Proxies",
+    "proxy_section_desc": "Reliable IPv4 and IPv6 proxies for any tasks from our partners",
+    "imp_vpn": {
+      "discount": "20% off from impVPN",
+      "discount_desc": "Open the Telegram bot via the link below, enter the promo code and get 20% off the best VPN servers",
+      "promo_title": "20% Promo Code"
+    },
     "proxy_seller": {
       "discount": "Discount from Proxy-Seller",
       "discount_desc": "Register on Proxy-Seller using the link below to get a discount on proxies.",
@@ -299,6 +316,7 @@
     },
     "copied": "Copied!",
     "go": "Go to Site",
+    "goBot": "Open Bot",
     "copy": "Copy"
   },
   "common": {
@@ -313,6 +331,12 @@
   },
   "app": {
     "loading": "Loading system..."
+  },
+  "deeplink": {
+    "loadingTitle": "Import via link",
+    "loadingDesc": "Fetching subscription...",
+    "savingDesc": "Saving servers...",
+    "errorTitle": "Import failed"
   },
   "tunnel": {
     "adminTitle": "Administrator rights required",

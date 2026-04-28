@@ -16,6 +16,7 @@
  */
 
 import React, { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { Lock, Link2 } from "lucide-react";
 import { useConfigContext } from "../context/ConfigContext";
 import { useConnectionContext } from "../context/ConnectionContext";
@@ -23,6 +24,7 @@ import { useTranslation } from "react-i18next";
 import {
   parseProxies,
   isSubscriptionURL,
+  isEncryptedSubscription,
   isVpnType,
   subscriptionLabelFromURL,
   parseProxyExtra,
@@ -143,6 +145,34 @@ export const AddProxyView = () => {
       return;
     }
 
+    if (isEncryptedSubscription(text)) {
+      setIsImporting(true);
+      try {
+        const entries = await wailsAPI.parseSubscriptionText(text.trim());
+        if (!entries || entries.length === 0) {
+          showAlertDialog({
+            title: t("common.notice"),
+            message: t("add.noProxiesFound") || "No proxies found.",
+            variant: "warning",
+          });
+          return;
+        }
+        setPendingProxies(entries);
+        setShowSelectionModal(true);
+      } catch (err) {
+        console.error("Encrypted subscription parse error:", err);
+        const detail = err?.message || String(err);
+        showAlertDialog({
+          title: t("common.error"),
+          message: `${t("add.subscriptionError") || "Failed to decrypt subscription."}\n\n${detail}`,
+          variant: "danger",
+        });
+      } finally {
+        setIsImporting(false);
+      }
+      return;
+    }
+
     const proxiesToImport = parseProxies(text).map((proxy) => {
       if (
         (proxy?.type === "WIREGUARD" || proxy?.type === "AMNEZIAWG") &&
@@ -237,8 +267,9 @@ export const AddProxyView = () => {
     e.target.value = "";
   };
 
-  const handleVpnUriSubmit = async () => {
-    const text = vpnUri.trim();
+  const handleVpnUriSubmit = async (overrideText) => {
+    const override = typeof overrideText === "string" ? overrideText : null;
+    let text = (override ?? vpnUri).trim();
     if (!text) return;
 
     if (isSubscriptionURL(text)) {
@@ -260,6 +291,34 @@ export const AddProxyView = () => {
         showAlertDialog({
           title: t("common.error"),
           message: `${t("add.subscriptionError") || "Subscription fetch error"}: ${err}`,
+          variant: "danger",
+        });
+      } finally {
+        setVpnLoading(false);
+      }
+      return;
+    }
+
+    if (isEncryptedSubscription(text)) {
+      setVpnLoading(true);
+      try {
+        const entries = await wailsAPI.parseSubscriptionText(text);
+        if (!entries || entries.length === 0) {
+          showAlertDialog({
+            title: t("common.notice"),
+            message: t("add.noProxiesFound") || "No proxies found.",
+            variant: "warning",
+          });
+          return;
+        }
+        setPendingProxies(entries);
+        setShowSelectionModal(true);
+      } catch (err) {
+        console.error("Encrypted subscription parse error:", err);
+        const detail = err?.message || String(err);
+        showAlertDialog({
+          title: t("common.error"),
+          message: `${t("add.subscriptionError") || "Failed to decrypt subscription."}\n\n${detail}`,
           variant: "danger",
         });
       } finally {
@@ -1728,15 +1787,16 @@ export const AddProxyView = () => {
         </div>
       )}
 
-      {isImporting && importMode !== "bulk" && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
+      {isImporting && importMode !== "bulk" && createPortal(
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9999] flex items-center justify-center">
           <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl flex flex-col items-center space-y-4 shadow-2xl">
             <div className="w-12 h-12 border-4 border-[#007E3A]/30 border-t-[#007E3A] rounded-full animate-spin" />
             <p className="text-white font-medium">
               {t("add.importing") || "Импорт прокси..."}
             </p>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       <ProtocolSelectionModal

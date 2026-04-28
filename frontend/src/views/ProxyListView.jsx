@@ -24,6 +24,8 @@ import {
   Plus,
   ChevronDown,
   RefreshCw,
+  Zap,
+  Star,
 } from "lucide-react";
 import { FlagIcon } from "../components/ui/FlagIcon";
 import { useConfigContext } from "../context/ConfigContext";
@@ -37,32 +39,6 @@ import {
 } from "../utils/proxyParser";
 import wailsAPI from "../utils/wailsAPI";
 
-const subscriptionLogoSrcCache = new Map();
-
-const isDataImageUrl = (value) =>
-  typeof value === "string" && value.startsWith("data:image/");
-
-const resolveSubscriptionLogoSrc = async (url) => {
-  if (!url) return "";
-  if (!isDataImageUrl(url)) return url;
-
-  const cached = subscriptionLogoSrcCache.get(url);
-  if (cached?.resolved) return cached.resolved;
-  if (cached?.pending) return cached.pending;
-
-  const pending = fetch(url)
-    .then((response) => response.blob())
-    .then((blob) => URL.createObjectURL(blob))
-    .catch(() => url)
-    .then((resolved) => {
-      subscriptionLogoSrcCache.set(url, { resolved });
-      return resolved;
-    });
-
-  subscriptionLogoSrcCache.set(url, { pending });
-  return pending;
-};
-
 function formatTrafficBytes(n) {
   if (n == null || Number.isNaN(n)) return "0";
   const v = Number(n);
@@ -75,37 +51,54 @@ function formatTrafficBytes(n) {
   return `${kb.toFixed(0)} KB`;
 }
 
-function SubscriptionHeaderIcon({ url }) {
+function SubscriptionHeaderIcon({ url, subscriptionUrl }) {
   const [failed, setFailed] = useState(false);
-  const [resolvedSrc, setResolvedSrc] = useState(() =>
-    isDataImageUrl(url) ? subscriptionLogoSrcCache.get(url)?.resolved || "" : url || "",
-  );
+  const [candidateIndex, setCandidateIndex] = useState(0);
+
+  const candidates = useMemo(() => {
+    const out = [];
+    const add = (value) => {
+      if (!value || out.includes(value)) return;
+      out.push(value);
+    };
+    if (typeof url === "string" && url.startsWith("data:image/")) {
+      add(url);
+    }
+    try {
+      const u = new URL(subscriptionUrl || "");
+      const base = `${u.protocol}//${u.host}`;
+      add(`${base}/assets/favicon-32x32.png`);
+      add(`${base}/assets/favicon.ico`);
+      add(`${base}/favicon.ico`);
+    } catch {}
+    return out;
+  }, [url, subscriptionUrl]);
 
   useEffect(() => {
-    let cancelled = false;
     setFailed(false);
+    setCandidateIndex(0);
+  }, [url, subscriptionUrl]);
 
-    resolveSubscriptionLogoSrc(url).then((src) => {
-      if (!cancelled) {
-        setResolvedSrc(src);
-      }
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [url]);
-
-  if (failed || !resolvedSrc) return null;
+  const src = candidates[candidateIndex] || "";
+  if (!src) return null;
   return (
     <div className="w-10 h-10 rounded-xl shrink-0 border border-zinc-700/50 bg-zinc-800 flex items-center justify-center">
-      <img
-        src={resolvedSrc}
-        alt=""
-        referrerPolicy="no-referrer"
-        className="w-7 h-7 rounded-lg object-contain"
-        onError={() => setFailed(true)}
-      />
+      {failed ? (
+        <Activity className="w-5 h-5 text-zinc-500" />
+      ) : (
+        <img
+          src={src}
+          alt=""
+          className="w-7 h-7 rounded-lg object-contain"
+          onError={() => {
+            if (candidateIndex + 1 < candidates.length) {
+              setCandidateIndex((i) => i + 1);
+            } else {
+              setFailed(true);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -128,7 +121,13 @@ export const ProxyListView = () => {
     subscriptions,
     setSubscriptions,
     showConfirmDialog,
+    settings,
+    toggleFavorite,
   } = useConfigContext();
+  const favoriteIds = useMemo(
+    () => new Set((settings?.favorites || []).map(String)),
+    [settings?.favorites],
+  );
   const {
     deleteProxy: performDelete,
     selectAndConnect,
@@ -147,8 +146,28 @@ export const ProxyListView = () => {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  const parseExtra = (raw) => {
+    if (Array.isArray(raw) && typeof raw[0] === "number") {
+      // Wails encodes json.RawMessage as a byte array in some contexts.
+      try { return JSON.parse(String.fromCharCode(...raw)); } catch { return {}; }
+    }
+    if (typeof raw === "string") { try { return JSON.parse(raw); } catch { return {}; } }
+    return raw || {};
+  };
+
+  const autoMemberIds = useMemo(() => {
+    const ids = new Set();
+    proxies.forEach((p) => {
+      if (p.type?.toUpperCase() === "AUTO") {
+        const extra = parseExtra(p.extra);
+        (extra?.members || []).forEach((id) => ids.add(String(id)));
+      }
+    });
+    return ids;
+  }, [proxies]);
+
   const filteredAndSortedProxies = useMemo(() => {
-    let result = [...proxies];
+    let result = proxies.filter((p) => !autoMemberIds.has(String(p.id)));
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       result = result.filter(
@@ -168,7 +187,7 @@ export const ProxyListView = () => {
       );
     }
     return result;
-  }, [proxies, searchQuery, sortBy]);
+  }, [proxies, searchQuery, sortBy, autoMemberIds]);
 
   const groupedProxies = useMemo(() => {
     const groups = {};
@@ -184,8 +203,15 @@ export const ProxyListView = () => {
       if (b === myKey) return -1;
       return a.localeCompare(b);
     });
-    return entries;
-  }, [filteredAndSortedProxies, t]);
+    return entries.map(([name, list]) => {
+      const sorted = [...list].sort((a, b) => {
+        const af = favoriteIds.has(String(a.id)) ? 0 : 1;
+        const bf = favoriteIds.has(String(b.id)) ? 0 : 1;
+        return af - bf;
+      });
+      return [name, sorted];
+    });
+  }, [filteredAndSortedProxies, t, favoriteIds]);
 
   const hasProviders = useMemo(
     () => proxies.some((p) => p.provider),
@@ -199,7 +225,12 @@ export const ProxyListView = () => {
       return [[myProxiesLabel, []]];
     }
     if (!hasProviders) {
-      return [[myProxiesLabel, filteredAndSortedProxies]];
+      const sorted = [...filteredAndSortedProxies].sort((a, b) => {
+        const af = favoriteIds.has(String(a.id)) ? 0 : 1;
+        const bf = favoriteIds.has(String(b.id)) ? 0 : 1;
+        return af - bf;
+      });
+      return [[myProxiesLabel, sorted]];
     }
     const entries = [...groupedProxies];
     if (!entries.some(([name]) => name === myProxiesLabel)) {
@@ -212,6 +243,7 @@ export const ProxyListView = () => {
     groupedProxies,
     filteredAndSortedProxies,
     myProxiesLabel,
+    favoriteIds,
   ]);
 
   const editProxy = (proxy) => {
@@ -302,22 +334,57 @@ export const ProxyListView = () => {
     }
   };
 
+  const handleCardConnect = (proxy) => {
+    selectAndConnect(proxy);
+  };
+
   const renderProxyCard = (proxy) => {
     const isActive = isConnected && activeProxy?.id === proxy.id;
+    const isFromSubscription = Boolean(proxy.subscriptionUrl);
+    const isAutoProxy = proxy.type?.toUpperCase() === "AUTO";
+    const isFav = favoriteIds.has(String(proxy.id));
     const protocolInfo = isVpnType(proxy.type) ? getProtocolLabel(proxy) : proxy.type;
+    const protocolLabel = isAutoProxy ? t("proxyList.autoType") : protocolInfo;
+
+    // For AUTO cards: compute best ping from member servers.
+    const autoBestPing = isAutoProxy
+      ? (() => {
+          const extra = parseExtra(proxy.extra);
+          const memberIds = (extra?.members || []).map(String);
+          const arr = memberIds
+            .map((id) => pings[id])
+            .filter((p) => p && /^\d+/.test(String(p)));
+          return arr.length
+            ? arr.sort((a, b) => parseInt(a, 10) - parseInt(b, 10))[0]
+            : null;
+        })()
+      : null;
+
+    const pingDisplay = isAutoProxy
+      ? (autoBestPing ?? t("proxyList.pinging"))
+      : pings[proxy.id] || t("proxyList.pinging");
+
+    const pingIsError =
+      !isAutoProxy &&
+      ["Timeout", "Error", "Unavailable", "Refused"].includes(pings[proxy.id]);
+
+    const ipDisplay = isFromSubscription
+      ? null
+      : `${proxy.ip}:${proxy.port}`;
 
     return (
       <div
         key={proxy.id}
-        onClick={() => selectAndConnect(proxy)}
+        onClick={() => handleCardConnect(proxy)}
         className={`bg-zinc-900 p-4 rounded-[12px] border transition-all flex flex-col cursor-pointer group/card outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${isActive ? "border-[#00A819] shadow-[0_0_20px_rgba(0,168,25,0.1)]" : "border-zinc-800 hover:border-[#00A819] hover:bg-zinc-800/30"}`}
       >
         <div className="flex items-start gap-3 mb-4">
           <div className="shrink-0 flex items-center justify-center w-10 h-10 bg-zinc-800/50 rounded-xl border border-zinc-700/50">
-            <FlagIcon
-              code={proxy.country}
-              className="w-6 rounded-[2px]"
-            />
+            {isAutoProxy ? (
+              <Zap className="w-5 h-5 text-[#00A819]" />
+            ) : (
+              <FlagIcon code={proxy.country} className="w-6 rounded-[2px]" />
+            )}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
@@ -325,32 +392,48 @@ export const ProxyListView = () => {
                 {formatProxyDisplayName(proxy.name, proxy.country)}
               </h3>
               <span className="text-[10px] font-medium px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap bg-zinc-800 text-zinc-300 border border-zinc-700/60">
-                {protocolInfo}
+                {protocolLabel}
               </span>
             </div>
-            <p className="text-xs text-zinc-400 font-mono mt-1 truncate">
-              {proxy.ip}:{proxy.port}
-            </p>
+            {ipDisplay && (
+              <p className="text-xs text-zinc-400 font-mono mt-1 truncate">
+                {ipDisplay}
+              </p>
+            )}
           </div>
         </div>
 
         <div className="flex items-center justify-between mt-auto pt-2 gap-2">
           <div
-            className={`text-xs flex items-center shrink-0 ${pings[proxy.id] === "Timeout" || pings[proxy.id] === "Error" || pings[proxy.id] === "Unavailable" ? "text-rose-500" : "text-zinc-500"}`}
+            className={`text-xs flex items-center shrink-0 ${pingIsError ? "text-rose-500" : "text-zinc-500"}`}
+            title={t("proxyList.pingTooltip")}
           >
             <Activity className="w-3.5 h-3.5 mr-1 shrink-0" />{" "}
-            {pings[proxy.id] || t("proxyList.pinging")}
+            {pingDisplay}
           </div>
           <div className="flex space-x-1.5 shrink-0">
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                editProxy(proxy);
+                toggleFavorite(proxy.id);
               }}
-              className="p-2 bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 rounded-xl transition-colors shrink-0 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none"
+              title={isFav ? t("proxyList.unfavoriteAria") : t("proxyList.favoriteAria")}
+              aria-label={isFav ? t("proxyList.unfavoriteAria") : t("proxyList.favoriteAria")}
+              className={`p-2 rounded-xl transition-colors shrink-0 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${isFav ? "bg-amber-400/15 text-amber-400 hover:bg-amber-400/25" : "bg-zinc-800 text-zinc-400 hover:text-amber-400 hover:bg-amber-400/10"}`}
             >
-              <Pencil className="w-3.5 h-3.5" />
+              <Star className={`w-3.5 h-3.5 ${isFav ? "fill-amber-400" : ""}`} />
             </button>
+            {!isFromSubscription && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  editProxy(proxy);
+                }}
+                className="p-2 bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 rounded-xl transition-colors shrink-0 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+              </button>
+            )}
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -363,7 +446,7 @@ export const ProxyListView = () => {
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                selectAndConnect(proxy);
+                handleCardConnect(proxy);
               }}
               className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-colors shrink-0 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${isActive ? "bg-[#00A819] text-zinc-950 font-bold" : "bg-[#007E3A]/10 text-[#00A819] hover:bg-[#007E3A]/20"}`}
             >
@@ -483,7 +566,11 @@ export const ProxyListView = () => {
                       className="flex min-h-14 flex-1 min-w-0 items-center gap-3 rounded-xl bg-zinc-800/70 border border-zinc-700/60 px-3 py-2 text-left outline-none focus:outline-none focus:ring-2 focus:ring-[#00A819]/25 focus-visible:outline-none hover:border-zinc-600/80 transition-colors group/hdr"
                     >
                       {isSub && (
-                        <SubscriptionHeaderIcon url={subMeta?.iconUrl} />
+                        <SubscriptionHeaderIcon
+                          key={`${subMeta?.id}-${subMeta?.iconUrl || ""}`}
+                          url={subMeta?.iconUrl}
+                          subscriptionUrl={subMeta?.url}
+                        />
                       )}
                       <div className="flex min-w-0 flex-1 items-center gap-2">
                         <h3 className="text-lg font-bold truncate text-white transition-colors group-hover/hdr:text-zinc-100">

@@ -15,7 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import React, { createContext, useContext, useState, useRef } from "react";
+import React, { createContext, useContext, useState, useRef, useEffect } from "react";
 import { useConfigContext } from "./ConfigContext";
 import { useLogContext } from "./LogContext";
 import { useDaemonPing } from "../hooks/useDaemonPing";
@@ -32,6 +32,7 @@ export const ConnectionProvider = ({ children }) => {
         updateSetting,
         isConfigLoaded,
         showAlertDialog,
+        isApplyingMode,
     } = useConfigContext();
     const { addLog } = useLogContext();
 
@@ -41,6 +42,19 @@ export const ConnectionProvider = ({ children }) => {
     const [activeProxy, setActiveProxy] = useState(null);
 
     const isSwitchingRef = useRef(false);
+
+    // Mirror mode-apply state into the connection flags so the UI shows
+    // "reconnecting" instead of briefly flipping to "disconnected" while
+    // the backend disconnect/connect cycle runs.
+    useEffect(() => {
+        if (isApplyingMode) {
+            isSwitchingRef.current = true;
+            setIsConnecting(true);
+        } else {
+            isSwitchingRef.current = false;
+            setIsConnecting(false);
+        }
+    }, [isApplyingMode]);
 
     const pings = useDaemonPing(proxies, isConfigLoaded);
 
@@ -53,9 +67,11 @@ export const ConnectionProvider = ({ children }) => {
         setActiveProxy,
         isSwitchingRef,
         addLog,
+        settings,
+        activeProxy,
     );
 
-    const { disconnectOnly, toggleConnection, selectAndConnect, deleteProxy } = useDaemonControl(
+    const { disconnectOnly, toggleConnection, selectAndConnect, deleteProxy, cancelConnect } = useDaemonControl(
         isConnected,
         setIsConnected,
         setIsConnecting,
@@ -71,6 +87,7 @@ export const ConnectionProvider = ({ children }) => {
         isSwitchingRef,
         addLog,
         showAlertDialog,
+        pings,
     );
 
     const value = {
@@ -89,6 +106,7 @@ export const ConnectionProvider = ({ children }) => {
         toggleConnection,
         selectAndConnect,
         deleteProxy,
+        cancelConnect,
     };
 
     return (

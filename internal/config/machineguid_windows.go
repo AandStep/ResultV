@@ -19,7 +19,9 @@ package config
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
+	"syscall"
 
 	"golang.org/x/sys/windows/registry"
 )
@@ -42,3 +44,16 @@ func windowsMachineGUID() (string, error) {
 	return v, nil
 }
 
+func getWindowsWMIUUID() (string, error) {
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", "(Get-CimInstance -Class Win32_ComputerSystemProduct).UUID")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("powershell get WMI UUID failed: %w", err)
+	}
+	val := strings.TrimSpace(string(out))
+	if val == "" {
+		return "", fmt.Errorf("powershell returned empty WMI UUID")
+	}
+	return val, nil
+}

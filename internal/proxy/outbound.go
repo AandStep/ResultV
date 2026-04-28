@@ -20,11 +20,10 @@ import (
 	"strings"
 )
 
-
 func parseExtra(proxy ProxyConfig) map[string]interface{} {
 	var extra map[string]interface{}
 	if proxy.Extra != nil {
-		json.Unmarshal(proxy.Extra, &extra) 
+		json.Unmarshal(proxy.Extra, &extra)
 	}
 	if extra == nil {
 		extra = make(map[string]interface{})
@@ -39,13 +38,23 @@ func getStringField(extra map[string]interface{}, key, defaultVal string) string
 	return defaultVal
 }
 
-
-
 func getBoolField(extra map[string]interface{}, key string) bool {
 	if val, ok := extra[key].(bool); ok {
 		return val
 	}
 	return false
+}
+
+func getIntField(extra map[string]interface{}, key string, defaultVal int) int {
+	switch v := extra[key].(type) {
+	case int:
+		return v
+	case float64:
+		return int(v)
+	case int64:
+		return int(v)
+	}
+	return defaultVal
 }
 
 func extraSecurityExplicitlyNone(extra map[string]interface{}) bool {
@@ -63,9 +72,11 @@ func extraSecurityExplicitlyNone(extra map[string]interface{}) bool {
 	return strings.EqualFold(strings.TrimSpace(s), "none")
 }
 
-
-
 func buildProxyOutbound(proxy ProxyConfig) SBOutbound {
+	return buildProxyOutboundRaw(proxy)
+}
+
+func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 	extra := parseExtra(proxy)
 
 	switch proxy.Type {
@@ -136,12 +147,14 @@ func buildProxyOutbound(proxy ProxyConfig) SBOutbound {
 	case "VMESS", "vmess":
 
 		uuid := getStringField(extra, "uuid", "")
+		alterId := getIntField(extra, "alterId", 0)
 		out := SBOutbound{
 			Type:       "vmess",
 			Tag:        "proxy",
 			Server:     proxy.IP,
 			ServerPort: proxy.Port,
 			UUID:       uuid,
+			AlterId:    alterId,
 		}
 		applyTLSAndTransport(&out, extra, proxy.IP)
 		return out
@@ -168,24 +181,37 @@ func buildProxyOutbound(proxy ProxyConfig) SBOutbound {
 			ServerPort: proxy.Port,
 			Password:   proxy.Password,
 		}
-		sni := getStringField(extra, "sni", proxy.IP)
-		insecure := getBoolField(extra, "insecure")
-		fp := getStringField(extra, "fp", "")
-		out.TLS = &SBOutboundTLS{
-			Enabled:    true,
-			ServerName: sni,
-			Insecure:   insecure,
+		trojanSNI := firstNonEmpty(
+			getStringField(extra, "sni", ""),
+			getStringField(extra, "serverName", ""),
+			getStringField(extra, "servername", ""),
+			getStringField(extra, "server_name", ""),
+			getStringField(extra, "peer", ""),
+			getStringField(extra, "host", ""),
+			proxy.IP,
+		)
+
+		applyTLSAndTransport(&out, extra, trojanSNI)
+
+		if out.TLS == nil && !extraSecurityExplicitlyNone(extra) {
+			out.TLS = &SBOutboundTLS{
+				Enabled:    true,
+				ServerName: trojanSNI,
+				Insecure:   getBoolField(extra, "insecure"),
+			}
+			if fp := getStringField(extra, "fp", ""); fp != "" {
+				out.TLS.UTLS = &SBUTLS{Enabled: true, Fingerprint: fp}
+			}
+			if alpnStr := getStringField(extra, "alpn", ""); alpnStr != "" {
+				out.TLS.ALPN = xhttpPreferH2ALPN(splitALPN(alpnStr), getBoolField(extra, "insecure_h3_override"))
+			} else {
+				network := getStringField(extra, "network", "tcp")
+				out.TLS.ALPN = defaultALPNForNetwork(network)
+			}
 		}
-		if fp != "" {
-			out.TLS.UTLS = &SBUTLS{Enabled: true, Fingerprint: fp}
-		}
-		if alpnStr := getStringField(extra, "alpn", ""); alpnStr != "" {
-			out.TLS.ALPN = xhttpPreferH2ALPN(splitALPN(alpnStr), getBoolField(extra, "insecure_h3_override"))
-		}
-		applyTransportOnly(&out, extra)
 		return out
 
-	default: 
+	default:
 		return SBOutbound{
 			Type:       "http",
 			Tag:        "proxy",
@@ -234,25 +260,33 @@ func intFromAny(v interface{}) int {
 	return 0
 }
 
-
-
 func applyTLSAndTransport(out *SBOutbound, extra map[string]interface{}, defaultSNI string) {
 	security := getStringField(extra, "security", "none")
+	pbk := getStringField(extra, "pbk", getStringField(extra, "publicKey", getStringField(extra, "public_key", "")))
+
+	if pbk != "" && security != "reality" {
+		security = "reality" // Auto-detect reality if public key is present
+	}
 
 	switch security {
 	case "reality":
 		sni := getStringField(extra, "sni", defaultSNI)
 		fp := getStringField(extra, "fp", "chrome")
-		pbk := getStringField(extra, "pbk", "")
 		if pbk == "" {
-			pbk = getStringField(extra, "publicKey", "")
+			pbk = getStringField(extra, "pbk", getStringField(extra, "publicKey", getStringField(extra, "public_key", "")))
 		}
 		sid := getStringField(extra, "sid", "")
-		out.TLS = &SBOutboundTLS{
+		tlsObj := &SBOutboundTLS{
 			Enabled:    true,
 			ServerName: sni,
 			UTLS:       &SBUTLS{Enabled: true, Fingerprint: fp},
-			Reality:    &SBReality{Enabled: true, PublicKey: pbk, ShortID: sid},
+		}
+		if pbk != "" {
+			tlsObj.Reality = &SBReality{Enabled: true, PublicKey: pbk, ShortID: sid}
+		}
+		out.TLS = tlsObj
+		if alpnStr := getStringField(extra, "alpn", ""); alpnStr != "" {
+			out.TLS.ALPN = xhttpPreferH2ALPN(splitALPN(alpnStr), getBoolField(extra, "insecure_h3_override"))
 		}
 	case "tls":
 		sni := getStringField(extra, "sni", defaultSNI)
@@ -282,12 +316,36 @@ func applyTLSAndTransport(out *SBOutbound, extra map[string]interface{}, default
 				ServerName: sni,
 				Insecure:   insecure,
 			}
+			if fp := getStringField(extra, "fp", ""); fp != "" {
+				out.TLS.UTLS = &SBUTLS{Enabled: true, Fingerprint: fp}
+			}
+			if alpnStr := getStringField(extra, "alpn", ""); alpnStr != "" {
+				out.TLS.ALPN = xhttpPreferH2ALPN(splitALPN(alpnStr), getBoolField(extra, "insecure_h3_override"))
+			}
 		}
 	}
 
 	applyTransportOnly(out, extra)
+	if out.TLS != nil && out.Transport != nil && (out.Transport.Type == "xhttp" || out.Transport.Type == "splithttp") {
+		// xhttp and splithttp REQUIRE h2 ALPN to function properly, even for Reality.
+		if len(out.TLS.ALPN) == 0 {
+			out.TLS.ALPN = []string{"h2", "http/1.1"}
+		} else {
+			out.TLS.ALPN = xhttpPreferH2ALPN(out.TLS.ALPN, false)
+		}
+	} else if out.TLS != nil && len(out.TLS.ALPN) == 0 {
+		isReality := out.TLS.Reality != nil && out.TLS.Reality.Enabled
+		if !isReality {
+			network := getStringField(extra, "network", "tcp")
+			// Для plain TCP (VLESS/VMESS без транспорта) оставляем ALPN пустым —
+			// sing-box использует дефолт, что совместимо с любой серверной конфигурацией.
+			// Для HTTP-транспортов (grpc, xhttp, ws, h2) ALPN важен для фреймирования.
+			if network != "tcp" && network != "" {
+				out.TLS.ALPN = defaultALPNForNetwork(network)
+			}
+		}
+	}
 }
-
 
 func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 	network := getStringField(extra, "network", "tcp")
@@ -317,6 +375,7 @@ func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 		out.Transport = &SBOutboundTransport{
 			Type:        "grpc",
 			ServiceName: serviceName,
+			// authority is not supported by sing-box gRPC transport; SNI goes into tls.server_name
 		}
 	case "http", "h2":
 		out.Transport = &SBOutboundTransport{
@@ -327,9 +386,6 @@ func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 	case "xhttp", "splithttp":
 		host := getStringField(extra, "host", "")
 		xPadding := xhttpPaddingFromExtra(extra)
-		if xPadding == "" {
-			xPadding = "100-1000"
-		}
 		mode := getStringField(extra, "mode", "auto")
 		if mode == "" {
 			mode = "auto"
@@ -357,7 +413,6 @@ func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 		}
 	}
 }
-
 
 func xmuxJSONFromExtra(extra map[string]interface{}) json.RawMessage {
 	v, ok := extra["xmux"]
@@ -436,14 +491,26 @@ func boolPtrFromExtra(extra map[string]interface{}, camel, snake string) *bool {
 	return &b
 }
 
-
 func xhttpPaddingFromExtra(extra map[string]interface{}) string {
-	if s := stringFromExtraValue(extra["x_padding_bytes"]); s != "" {
-		return s
+	s := stringFromExtraValue(extra["x_padding_bytes"])
+	if s == "" {
+		s = stringFromExtraValue(extra["xPaddingBytes"])
 	}
-	return stringFromExtraValue(extra["xPaddingBytes"])
+	s = sanitizeXPaddingBytes(s)
+	if s == "" {
+		// sing-box requires x_padding_bytes for xhttp; absence is treated as "disabled" and rejected
+		return "100-1000"
+	}
+	return s
 }
 
+func sanitizeXPaddingBytes(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "0", "0-0", "disable", "disabled", "none", "false":
+		return ""
+	}
+	return s
+}
 
 func xhttpHeadersFromExtra(extra map[string]interface{}) map[string]string {
 	v, ok := extra["headers"]
@@ -456,6 +523,9 @@ func xhttpHeadersFromExtra(extra map[string]interface{}) map[string]string {
 	}
 	out := make(map[string]string)
 	for k, val := range m {
+		if strings.ToLower(k) == "host" {
+			continue // sing-box rejects "host" inside headers; it goes to the top-level Host field
+		}
 		s := stringFromExtraValue(val)
 		if s != "" {
 			out[k] = s
@@ -466,9 +536,6 @@ func xhttpHeadersFromExtra(extra map[string]interface{}) map[string]string {
 	}
 	return out
 }
-
-
-
 
 func xhttpPreferH2ALPN(alpn []string, skipHack bool) []string {
 	if len(alpn) == 0 {
@@ -492,7 +559,6 @@ func xhttpPreferH2ALPN(alpn []string, skipHack bool) []string {
 	return append([]string{"h2"}, alpn...)
 }
 
-
 func splitALPN(alpn string) []string {
 	var result []string
 	for _, s := range strings.Split(alpn, ",") {
@@ -502,4 +568,22 @@ func splitALPN(alpn string) []string {
 		}
 	}
 	return result
+}
+
+// defaultALPNForNetwork возвращает список ALPN по умолчанию на основе network-транспорта.
+// Для plain TCP (Trojan, VLESS/VMESS без transport) используется только "http/1.1",
+// так как h2 ALPN в Trojan-контексте может привести к тому что сервер согласует HTTP/2,
+// а sing-box продолжит слать Trojan binary framing — это вызывает ERR_SSL_PROTOCOL_ERROR.
+// Для транспортов которые реально используют HTTP/2 (ws, grpc, xhttp, h2) — добавляем h2.
+func defaultALPNForNetwork(network string) []string {
+	switch strings.ToLower(strings.TrimSpace(network)) {
+	case "grpc", "xhttp", "splithttp", "http", "h2":
+		return []string{"h2", "http/1.1"}
+	case "ws", "websocket":
+		// WebSocket работает поверх HTTP/1.1, но многие серверы принимают и h2 upgrade
+		return []string{"h2", "http/1.1"}
+	default:
+		// tcp и прочие: только http/1.1
+		return []string{"http/1.1"}
+	}
 }

@@ -27,6 +27,8 @@ export const useDaemonStatus = (
     setActiveProxy,
     isSwitchingRef,
     addLog,
+    settings,
+    activeProxy,
 ) => {
     const [isProxyDead, setIsProxyDead] = useState(false);
     const [stats, setStats] = useState({ download: 0, upload: 0 });
@@ -66,11 +68,51 @@ export const useDaemonStatus = (
                 if (!isSwitchingRef.current) {
                     setIsConnected(data.isConnected);
                     if (data.currentProxy) {
+                        const currentID = String(data.currentProxy.id || "").trim();
+                        const currentIP = String(data.currentProxy.ip || "").trim().toLowerCase();
+                        const currentType = String(data.currentProxy.type || "").trim().toLowerCase();
+                        const currentPort = Number(data.currentProxy.port || 0);
                         const localMatchedProxy = proxies.find(
-                            (p) =>
-                                p.id === data.currentProxy.id || p.ip === data.currentProxy.ip,
+                            (p) => {
+                                const proxyID = String(p.id || "").trim();
+                                if (currentID && proxyID && proxyID === currentID) {
+                                    return true;
+                                }
+                                const proxyIP = String(p.ip || "").trim().toLowerCase();
+                                const proxyType = String(p.type || "").trim().toLowerCase();
+                                const proxyPort = Number(p.port || 0);
+                                return (
+                                    proxyIP === currentIP &&
+                                    proxyPort === currentPort &&
+                                    proxyType === currentType
+                                );
+                            },
                         );
-                        setActiveProxy(localMatchedProxy || data.currentProxy);
+
+                        let resolvedProxy = localMatchedProxy || data.currentProxy;
+
+                        if (activeProxy && activeProxy.type?.toUpperCase() !== "AUTO") {
+                            // If the user explicitly selected a non-AUTO proxy and the daemon
+                            // is connected to the same IP:port:type, keep showing that proxy.
+                            // This prevents a different proxy with the same address (e.g. a
+                            // renamed AUTO member) from overriding the display.
+                            const activeIP = String(activeProxy.ip || "").trim().toLowerCase();
+                            const activePort = Number(activeProxy.port || 0);
+                            const activeType = String(activeProxy.type || "").trim().toLowerCase();
+                            if (activeIP === currentIP && activePort === currentPort && activeType === currentType) {
+                                resolvedProxy = activeProxy;
+                            }
+                        } else if (localMatchedProxy && activeProxy?.type?.toUpperCase() === "AUTO") {
+                            try {
+                                const extra = typeof activeProxy.extra === 'string' ? JSON.parse(activeProxy.extra) : (activeProxy.extra || {});
+                                const memberIds = (extra.members || []).map(String);
+                                if (memberIds.includes(String(localMatchedProxy.id))) {
+                                    resolvedProxy = activeProxy;
+                                }
+                            } catch (e) {}
+                        }
+
+                        setActiveProxy(resolvedProxy);
                     }
                 }
 
@@ -99,6 +141,7 @@ export const useDaemonStatus = (
         setActiveProxy,
         setFailedProxy,
         isSwitchingRef,
+        activeProxy,
     ]);
 
     return { isProxyDead, stats, speedHistory, daemonStatus };

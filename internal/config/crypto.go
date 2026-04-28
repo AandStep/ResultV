@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,6 +38,7 @@ import (
 const (
 	
 	keySalt = "_ResultProxy_SafeVault_v1"
+	hwidSalt = "_ResultProxy_Sub_HWID_v1"
 )
 
 
@@ -71,11 +73,24 @@ func NewCryptoService(userDataPath string) (*CryptoService, error) {
 }
 
 func StableHardwareID(userDataPath string) (string, error) {
-	machineID, _, err := getHardwareID(userDataPath)
-	if err != nil {
-		return "", err
+	var hwidSource string
+
+	if runtime.GOOS == "windows" {
+		if wmiUUID, err := getWindowsWMIUUID(); err == nil && wmiUUID != "" {
+			hwidSource = wmiUUID
+		}
 	}
-	return machineID, nil
+
+	if hwidSource == "" {
+		machineID, _, err := getHardwareID(userDataPath)
+		if err != nil {
+			return "", err
+		}
+		hwidSource = machineID
+	}
+
+	h := sha256.Sum256([]byte(hwidSource + hwidSalt))
+	return hex.EncodeToString(h[:]), nil
 }
 
 

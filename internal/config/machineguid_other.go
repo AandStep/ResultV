@@ -23,3 +23,6 @@ func windowsMachineGUID() (string, error) {
 	return "", fmt.Errorf("windows MachineGuid not available on this platform")
 }
 
+func getWindowsWMIUUID() (string, error) {
+	return "", fmt.Errorf("WMI not available on this platform")
+}

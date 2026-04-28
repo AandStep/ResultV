@@ -21,6 +21,7 @@ export const parseProxies = (content) => {
     const wireguardProxy = parseWireGuardConf(content);
     if (wireguardProxy) return [wireguardProxy];
 
+
     const lines = content
         .split(/\r?\n/)
         .map((line) => line.trim())
@@ -264,6 +265,33 @@ const parseTrojan = (uri) => {
         const urlStr = uri.replace("trojan://", "http://");
         const url = new URL(urlStr);
         const params = url.searchParams;
+        const network = String(params.get("network") || params.get("type") || "tcp").toLowerCase();
+        const sni = params.get("sni") ||
+            params.get("serverName") ||
+            params.get("servername") ||
+            params.get("server_name") ||
+            params.get("peer") ||
+            "";
+        const insecureRaw = String(
+            params.get("insecure") ||
+            params.get("allowInsecure") ||
+            params.get("allow_insecure") ||
+            params.get("skip-cert-verify") ||
+            params.get("skip_cert_verify") ||
+            ""
+        ).trim().toLowerCase();
+        const insecure = insecureRaw === "1" || insecureRaw === "true" || insecureRaw === "yes" || insecureRaw === "on";
+        const grpcServiceName =
+            params.get("grpc-service-name") ||
+            params.get("serviceName") ||
+            params.get("service_name") ||
+            params.get("grpc_service_name") ||
+            "";
+        const authority =
+            params.get("authority") ||
+            params.get("grpc-authority") ||
+            params.get("grpc_authority") ||
+            "";
 
         return {
             ip: url.hostname,
@@ -274,12 +302,21 @@ const parseTrojan = (uri) => {
             password: url.username,
             extra: {
                 security: params.get("security") || "tls",
-                sni: params.get("sni") || "",
+                sni,
                 fp: params.get("fp") || "",
-                network: params.get("type") || "tcp",
+                network,
                 path: params.get("path") || "",
                 host: params.get("host") || "",
                 alpn: params.get("alpn") || "",
+                insecure,
+                peer: params.get("peer") || "",
+                "grpc-service-name": grpcServiceName,
+                serviceName: grpcServiceName,
+                authority,
+                pbk: params.get("pbk") || "",
+                sid: params.get("sid") || "",
+                spx: params.get("spx") || "",
+                flow: params.get("flow") || "",
             },
         };
     } catch (e) {
@@ -445,6 +482,7 @@ export const VPN_TYPES = [
     "WIREGUARD",
     "AMNEZIAWG",
     "HYSTERIA2",
+    "AUTO",
 ];
 
 const FLAG_EMOJI_PREFIX = /^[\u{1F1E6}-\u{1F1FF}][\u{1F1E6}-\u{1F1FF}]\s*/u;
@@ -471,9 +509,45 @@ export const mergeSubscriptionRefreshCountries = (
     const oldSub = prevProxies.filter((p) => p.subscriptionUrl === subscriptionURL);
     const keyOf = (p) =>
         `${p.ip}|${parseInt(p.port, 10) || 0}|${String(p.type || "").toUpperCase()}`;
-    const oldBy = new Map(oldSub.map((p) => [keyOf(p), p]));
-    return updatedProxies.map((p) => {
-        const old = oldBy.get(keyOf(p));
+
+    // Use namespace-separated keys to prevent collision between auto members and
+    // individual servers that share the same ip:port:type. Members use key|member,
+    // individuals use key. Both types get proper ID continuity across refreshes.
+    const parseRawExtraInline = (raw) => {
+        if (!raw) return {};
+        if (raw instanceof Uint8Array || Array.isArray(raw)) {
+            try { return JSON.parse(String.fromCharCode(...raw)); } catch { return {}; }
+        }
+        if (typeof raw === "string") { try { return JSON.parse(raw); } catch { return {}; } }
+        return raw || {};
+    };
+    const memberKey = (p) => `${keyOf(p)}|member`;
+
+    const oldMemberIds = new Set();
+    oldSub.forEach((p) => {
+        if (p.type?.toUpperCase() === "AUTO") {
+            const extra = parseRawExtraInline(p.extra);
+            (extra?.members || []).forEach((id) => oldMemberIds.add(String(id)));
+        }
+    });
+    const oldBy = new Map();
+    oldSub.forEach((p) => {
+        const key = oldMemberIds.has(String(p.id)) ? memberKey(p) : keyOf(p);
+        oldBy.set(key, p);
+    });
+
+    const freshMemberIds = new Set();
+    updatedProxies.forEach((p) => {
+        if (p.type?.toUpperCase() === "AUTO") {
+            const extra = parseRawExtraInline(p.extra);
+            (extra?.members || []).forEach((id) => freshMemberIds.add(String(id)));
+        }
+    });
+
+    // First pass: build merged array with country/id continuity
+    const merged = updatedProxies.map((p) => {
+        const key = freshMemberIds.has(String(p.id)) ? memberKey(p) : keyOf(p);
+        const old = oldBy.get(key);
         const port = parseInt(p.port, 10) || 0;
         const base = {
             ...p,
@@ -494,6 +568,29 @@ export const mergeSubscriptionRefreshCountries = (
             return { ...base, country: old.country };
         }
         return base;
+    });
+
+    // Second pass: fix AUTO entry member IDs.
+    // The backend assigns fresh time-based IDs each refresh, but the first pass
+    // replaces member IDs with old ones for ping continuity. The AUTO entry's
+    // extra.members still references fresh backend IDs — remap them to merged IDs.
+    const freshToMerged = new Map(
+        updatedProxies.map((p, i) => [String(p.id), String(merged[i].id)])
+    );
+    const parseRawExtra = (raw) => {
+        if (!raw) return {};
+        if (raw instanceof Uint8Array || Array.isArray(raw)) {
+            try { return JSON.parse(String.fromCharCode(...raw)); } catch { return {}; }
+        }
+        if (typeof raw === "string") { try { return JSON.parse(raw); } catch { return {}; } }
+        return raw || {};
+    };
+    return merged.map((p) => {
+        if (p.type?.toUpperCase() !== "AUTO") return p;
+        const extra = parseRawExtra(p.extra);
+        if (!Array.isArray(extra?.members)) return p;
+        const fixedMembers = extra.members.map((id) => freshToMerged.get(String(id)) ?? String(id));
+        return { ...p, extra: { ...extra, members: fixedMembers } };
     });
 };
 
@@ -520,7 +617,11 @@ export const isSubscriptionURL = (text) => {
     return /^https?:\/\/.+/.test(trimmed) && !trimmed.includes("\n");
 };
 
-export const VPN_NETWORK_OPTIONS = ["tcp", "ws", "grpc", "http", "xhttp"];
+export const isEncryptedSubscription = (text) => {
+    return text.trim().startsWith("RVSUB1:");
+};
+
+export const VPN_NETWORK_OPTIONS = ["tcp", "ws", "grpc", "h2", "http", "xhttp"];
 
 export const parseProxyExtra = (raw) => {
     if (raw == null || raw === "") return {};
@@ -539,7 +640,6 @@ export const parseProxyExtra = (raw) => {
 export const normalizeNetworkForSelect = (network) => {
     let n = String(network || "tcp").toLowerCase();
     if (n === "websocket") return "ws";
-    if (n === "h2") return "http";
     if (!VPN_NETWORK_OPTIONS.includes(n)) return "tcp";
     return n;
 };
@@ -612,18 +712,16 @@ export const sanitizeVpnExtraForEdit = (extra, { type, network, security, uuid, 
         ex.network = net;
     }
 
-    if (t === "VLESS" || t === "VMESS") {
+    if (t === "VLESS" || t === "VMESS" || t === "TROJAN") {
         ex.security = sec;
-        ex.uuid = uuid;
+        if (t !== "TROJAN") {
+            ex.uuid = uuid;
+        }
         if (sec === "none") {
             delete ex.tls;
             const f = String(ex.flow || "");
             if (/xtls|vision/i.test(f)) ex.flow = "";
         }
-        sanitizeAlpnIfNotXhttp(ex, net);
-    }
-
-    if (t === "TROJAN") {
         sanitizeAlpnIfNotXhttp(ex, net);
     }
 
@@ -636,6 +734,7 @@ export const sanitizeVpnExtraForEdit = (extra, { type, network, security, uuid, 
 
 export const getProtocolLabel = (proxy) => {
     if (!proxy?.extra || !isVpnType(proxy.type)) return proxy?.type || "";
+    if (proxy.type?.toUpperCase() === "AUTO") return "AUTO";
     const extra = typeof proxy.extra === "string" ? JSON.parse(proxy.extra) : proxy.extra;
     const type = proxy.type?.toUpperCase();
     const security = extra.security || "";

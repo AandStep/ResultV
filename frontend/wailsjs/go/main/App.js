@@ -10,6 +10,10 @@ export function ApplyMode(arg1) {
   return window['go']['main']['App']['ApplyMode'](arg1);
 }
 
+export function CancelConnect() {
+  return window['go']['main']['App']['CancelConnect']();
+}
+
 export function Connect(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['Connect'](arg1, arg2, arg3, arg4);
 }
@@ -70,6 +74,10 @@ export function GetVersion() {
   return window['go']['main']['App']['GetVersion']();
 }
 
+export function HandleDeepLink(arg1) {
+  return window['go']['main']['App']['HandleDeepLink'](arg1);
+}
+
 export function ImportConfig(arg1) {
   return window['go']['main']['App']['ImportConfig'](arg1);
 }
@@ -82,8 +90,16 @@ export function IsAutostartEnabled() {
   return window['go']['main']['App']['IsAutostartEnabled']();
 }
 
+export function ParseSubscriptionText(arg1) {
+  return window['go']['main']['App']['ParseSubscriptionText'](arg1);
+}
+
 export function PingProxy(arg1, arg2, arg3) {
   return window['go']['main']['App']['PingProxy'](arg1, arg2, arg3);
+}
+
+export function QueueDeepLink(arg1) {
+  return window['go']['main']['App']['QueueDeepLink'](arg1);
 }
 
 export function RefreshSubscription(arg1) {

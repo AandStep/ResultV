@@ -15,9 +15,11 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import React, { createContext, useContext, useState } from "react";
+import React, { createContext, useContext, useEffect, useState } from "react";
+import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime";
 import { useAppConfig } from "../hooks/useAppConfig";
 import { useLogContext } from "./LogContext";
+import wailsAPI from "../utils/wailsAPI";
 
 const ConfigContext = createContext();
 
@@ -26,6 +28,43 @@ export const ConfigProvider = ({ children }) => {
     const config = useAppConfig(addLog);
     const [activeTab, setActiveTab] = useState("home");
     const [editingProxy, setEditingProxy] = useState(null);
+    const [pendingDeepLink, setPendingDeepLink] = useState("");
+
+    useEffect(() => {
+        const applyConfig = (cfg) => {
+            if (!cfg) return;
+            if (Array.isArray(cfg.proxies) && config.setProxies) {
+                config.setProxies(
+                    cfg.proxies.map((p) => ({
+                        ...p,
+                        port: parseInt(p.port, 10) || 0,
+                        id: String(p.id),
+                    })),
+                );
+            }
+            if (Array.isArray(cfg.subscriptions) && config.setSubscriptions) {
+                config.setSubscriptions(cfg.subscriptions);
+            }
+        };
+        EventsOn("deeplink:received", (payload) => {
+            const text = String(payload?.payload || "").trim();
+            if (!text) return;
+            setPendingDeepLink(text);
+        });
+        EventsOn("deeplink:error", (msg) => {
+            const text = typeof msg === "string" ? msg : JSON.stringify(msg);
+            addLog(`Ошибка ссылки resultv://: ${text}`, "error");
+        });
+        EventsOn("config:updated", (cfg) => {
+            applyConfig(cfg);
+        });
+        return () => {
+            EventsOff("deeplink:received");
+            EventsOff("deeplink:error");
+            EventsOff("config:updated");
+        };
+
+    }, [addLog, config.setProxies, config.setSubscriptions]);
 
     const value = {
         ...config,
@@ -33,6 +72,8 @@ export const ConfigProvider = ({ children }) => {
         setActiveTab,
         editingProxy,
         setEditingProxy,
+        pendingDeepLink,
+        setPendingDeepLink,
     };
 
     return (

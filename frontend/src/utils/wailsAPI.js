@@ -17,6 +17,7 @@
 
 import {
   ApplyMode,
+  CancelConnect,
   Connect,
   Disconnect,
   DetectCountry,
@@ -43,6 +44,7 @@ import {
   UpdateRules,
   SyncProxies,
   FetchSubscription,
+  ParseSubscriptionText,
   RefreshSubscription,
   AddSubscription,
   DeleteSubscription,
@@ -56,6 +58,14 @@ export const wailsAPI = {
     } catch (e) {
       console.error("wailsAPI.connect error:", e);
       throw e;
+    }
+  },
+
+  cancelConnect: async () => {
+    try {
+      await CancelConnect();
+    } catch (e) {
+      console.error("wailsAPI.cancelConnect error:", e);
     }
   },
 
@@ -294,6 +304,15 @@ export const wailsAPI = {
       return await FetchSubscription(url);
     } catch (e) {
       console.error("wailsAPI.fetchSubscription error:", e);
+      throw e;
+    }
+  },
+
+  parseSubscriptionText: async (text) => {
+    try {
+      return await ParseSubscriptionText(text);
+    } catch (e) {
+      console.error("wailsAPI.parseSubscriptionText error:", e);
       throw e;
     }
   },

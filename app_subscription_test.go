@@ -28,7 +28,7 @@ func TestFetchSubscriptionFromURLSendsHWIDAndParsesEntries(t *testing.T) {
 	defer ts.Close()
 
 	app := NewApp()
-	entries, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL)
+	entries, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestFetchSubscriptionFromURLEmptyBodyReturnsHWIDDiagnostic(t *testing.T) {
 	defer ts.Close()
 
 	app := NewApp()
-	_, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL)
+	_, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -81,5 +81,51 @@ func TestFetchSubscriptionFromURLEmptyBodyReturnsHWIDDiagnostic(t *testing.T) {
 	}
 	if !strings.Contains(got, "https://example.com/support") {
 		t.Fatalf("support url not found: %s", got)
+	}
+}
+
+func TestFetchSubscriptionFromURLProfileTitleOverridesProvider(t *testing.T) {
+	title := "v2RayTun VPN"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Profile-Title", "base64:"+base64.StdEncoding.EncodeToString([]byte(title)))
+		_, _ = w.Write([]byte("vless://af815621-b245-4149-89da-dd184cfc4b3d@example.com:443?type=tcp&security=none#Node"))
+	}))
+	defer ts.Close()
+
+	app := NewApp()
+	entries, _, _, _, _, _, gotTitle, err := app.fetchSubscriptionFromURL(ts.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotTitle != title {
+		t.Fatalf("profile title: want %q got %q", title, gotTitle)
+	}
+	if len(entries) != 1 || entries[0].Provider != title {
+		t.Fatalf("provider: want %q got %q", title, entries[0].Provider)
+	}
+}
+
+func TestPickIconFromSubscriptionHTMLAppleTouchAssetsPath(t *testing.T) {
+	var gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".png") {
+			gotPath = r.URL.Path
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write([]byte{137, 80, 78, 71, 13, 10, 26, 10})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer ts.Close()
+
+	html := `<head><link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon-180x180.png"></head>`
+	client := &http.Client{}
+	icon := pickIconFromSubscriptionHTML(client, ts.URL, html)
+	if icon == "" || !strings.HasPrefix(icon, "data:image/png;base64,") {
+		t.Fatalf("expected inlined png, got %q", icon)
+	}
+	if gotPath != "/assets/apple-touch-icon-180x180.png" {
+		t.Fatalf("fetch path: want /assets/... got %q", gotPath)
 	}
 }

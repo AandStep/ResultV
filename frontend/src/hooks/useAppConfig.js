@@ -40,11 +40,13 @@ export const useAppConfig = (addLog) => {
         localPort: 0,
         listenLan: false,
         dnsServers: [],
+        favorites: [],
     });
     const [showProtocolModal, setShowProtocolModal] = useState(false);
     const [platform, setPlatform] = useState("windows");
     const [subscriptions, setSubscriptions] = useState([]);
     const modeApplyingRef = useRef(false);
+    const [isApplyingMode, setIsApplyingMode] = useState(false);
     const [appDialog, setAppDialog] = useState({
         isOpen: false,
         title: "",
@@ -194,6 +196,7 @@ export const useAppConfig = (addLog) => {
         if (key === "mode") {
             if (modeApplyingRef.current) return;
             modeApplyingRef.current = true;
+            setIsApplyingMode(true);
             setSettings((prev) => ({ ...prev, [key]: value }));
             try {
                 const result = await wailsAPI.applyMode(value);
@@ -235,6 +238,7 @@ export const useAppConfig = (addLog) => {
                 addLog(`Ошибка применения режима: ${err?.message || err}`, "error");
             } finally {
                 modeApplyingRef.current = false;
+                setIsApplyingMode(false);
             }
             return;
         }
@@ -305,7 +309,20 @@ export const useAppConfig = (addLog) => {
         }
     }, [settings, addLog, showAlertDialog, persistSettings, t]);
 
-    
+    const toggleFavorite = useCallback((id) => {
+        const idStr = String(id);
+        setSettings((prev) => {
+            const cur = Array.isArray(prev.favorites) ? prev.favorites.map(String) : [];
+            const next = cur.includes(idStr)
+                ? cur.filter((x) => x !== idStr)
+                : [...cur, idStr];
+            const nextSettings = { ...prev, favorites: next };
+            persistSettings(nextSettings).catch(console.error);
+            return nextSettings;
+        });
+    }, [persistSettings]);
+
+
     useEffect(() => {
         if (!isConfigLoaded || subscriptions.length === 0) return;
 
@@ -395,12 +412,15 @@ export const useAppConfig = (addLog) => {
 
     const handleBulkSaveProxies = useCallback(
         async (proxiesData, setActiveTab, defaultProtocol) => {
-            const VPN_TYPES = ["SS", "VMESS", "VLESS", "TROJAN", "WIREGUARD", "AMNEZIAWG", "HYSTERIA2"];
+            const VPN_TYPES = ["SS", "VMESS", "VLESS", "TROJAN", "WIREGUARD", "AMNEZIAWG", "HYSTERIA2", "AUTO"];
             const now = Date.now();
             const finalProxies = await Promise.all(
                 proxiesData.map(async (p, index) => {
-                    const countryCode = await detectCountry(p.ip);
-                    const isVpn = VPN_TYPES.includes(p.type);
+                    const isVpn = VPN_TYPES.includes(p.type?.toUpperCase());
+                    // Skip country detection for AUTO entries (no real host).
+                    const countryCode = (p.type?.toUpperCase() === "AUTO" || !p.ip)
+                        ? (p.country || "")
+                        : await detectCountry(p.ip);
                     return {
                         ...p,
                         id: String(p.id || now + index),
@@ -412,7 +432,7 @@ export const useAppConfig = (addLog) => {
             );
 
             setProxies((prev) => {
-                const VPN_SET = new Set(["SS", "VMESS", "VLESS", "TROJAN", "WIREGUARD", "AMNEZIAWG", "HYSTERIA2"]);
+                const VPN_SET = new Set(["SS", "VMESS", "VLESS", "TROJAN", "WIREGUARD", "AMNEZIAWG", "HYSTERIA2", "AUTO"]);
                 const newKeys = new Set(
                     finalProxies
                         .filter((p) => VPN_SET.has(p.type))
@@ -439,6 +459,8 @@ export const useAppConfig = (addLog) => {
         settings,
         setSettings,
         updateSetting,
+        toggleFavorite,
+        isApplyingMode,
         handleSaveProxy,
         handleBulkSaveProxies,
         showProtocolModal,
