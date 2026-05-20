@@ -4,12 +4,6 @@
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
-//
-// This file is compiled WITHOUT -fobjc-arc (see dockquit_darwin.go). It uses
-// manual retain/release because the swizzled applicationDockMenu: IMP must
-// return an autoreleased NSMenu the way Apple's docs document — and ARC's
-// objc_autoreleaseReturnValue optimisation through a method_setImplementation
-// hook proved unreliable, deallocating the menu before Dock displayed it.
 
 #import <Cocoa/Cocoa.h>
 #import <objc/runtime.h>
@@ -20,14 +14,10 @@ extern void resultvDockQuitGoCallback(void);
 extern void resultvDockShowGoCallback(void);
 extern void resultvDockMenuRequestedGoCallback(void);
 
-static BOOL gDockMenuInstalled = NO;
-static id gDockQuitFinishLaunchingObserver = nil;
-static id gDockMenuTarget = nil;
-
-// DockMenuTarget hosts the "Показать ResultV" action. The "Завершить ResultV"
-// item targets NSApp directly via the system terminate: selector — that path is
-// already swizzled in terminate_darwin.m and goes through the graceful Wails
-// BeforeClose → runShutdownTasks → os.Exit(0) sequence.
+// DockMenuTarget hosts the dock menu actions. Routed through a dedicated
+// NSObject (rather than swizzling custom selectors onto the Wails AppDelegate)
+// so NSMenu autovalidation has a definite, unambiguous answer from
+// respondsToSelector:.
 @interface ResultVDockMenuTarget : NSObject
 - (void)resultvDockShowAction:(id)sender;
 - (void)resultvDockQuitAction:(id)sender;
@@ -38,44 +28,54 @@ static id gDockMenuTarget = nil;
   resultvDockShowGoCallback();
 }
 - (void)resultvDockQuitAction:(__unused id)sender {
-  // Route through Cocoa's standard terminate: so the same swizzled
+  resultvDockQuitGoCallback();
+  // Route through Cocoa's standard terminate: so the swizzled
   // applicationShouldTerminate: path runs (replyToApplicationShouldTerminate:
   // + graceful Wails BeforeClose).
-  resultvDockQuitGoCallback();
   [NSApp terminate:nil];
 }
 @end
 
-// Build a fresh autoreleased NSMenu every call. Apple's contract for
-// applicationDockMenu: expects the returned menu to be autoreleased; Dock
-// retains it for the duration of the popup and releases when dismissed.
-static NSMenu *resultvBuildDockMenu(void) {
+static BOOL gDockMenuInstalled = NO;
+static id gDockQuitFinishLaunchingObserver = nil;
+static ResultVDockMenuTarget *gDockMenuTarget = nil;
+// Cached menu lives in a static strong reference. Building it on every right-
+// click and returning a local was unreliable: Dock seemed to free the menu
+// before showing it, leaving the user with only the system "Force Quit"
+// fallback. With ARC, a strong static reference keeps the menu alive forever.
+static NSMenu *gDockMenu = nil;
+
+static NSMenu *resultvBuildDockMenuIfNeeded(void) {
+  if (gDockMenu != nil) {
+    return gDockMenu;
+  }
   if (gDockMenuTarget == nil) {
     gDockMenuTarget = [[ResultVDockMenuTarget alloc] init];
   }
 
-  NSMenu *menu = [[[NSMenu alloc] initWithTitle:@""] autorelease];
+  NSMenu *menu = [[NSMenu alloc] initWithTitle:@""];
   [menu setAutoenablesItems:NO];
 
-  NSMenuItem *showItem = [[[NSMenuItem alloc]
+  NSMenuItem *showItem = [[NSMenuItem alloc]
       initWithTitle:@"Показать ResultV"
              action:@selector(resultvDockShowAction:)
-      keyEquivalent:@""] autorelease];
+      keyEquivalent:@""];
   [showItem setTarget:gDockMenuTarget];
   [showItem setEnabled:YES];
   [menu addItem:showItem];
 
   [menu addItem:[NSMenuItem separatorItem]];
 
-  NSMenuItem *quitItem = [[[NSMenuItem alloc]
+  NSMenuItem *quitItem = [[NSMenuItem alloc]
       initWithTitle:@"Завершить ResultV"
              action:@selector(resultvDockQuitAction:)
-      keyEquivalent:@""] autorelease];
+      keyEquivalent:@""];
   [quitItem setTarget:gDockMenuTarget];
   [quitItem setEnabled:YES];
   [menu addItem:quitItem];
 
-  return menu;
+  gDockMenu = menu;
+  return gDockMenu;
 }
 
 static NSMenu *resultvApplicationDockMenu(id self, SEL _cmd, NSApplication *app) {
@@ -83,7 +83,7 @@ static NSMenu *resultvApplicationDockMenu(id self, SEL _cmd, NSApplication *app)
   (void)_cmd;
   (void)app;
   resultvDockMenuRequestedGoCallback();
-  return resultvBuildDockMenu();
+  return resultvBuildDockMenuIfNeeded();
 }
 
 // Force-install applicationDockMenu: on the delegate's class. class_addMethod
@@ -109,12 +109,12 @@ static void resultvInstallDockQuitMenuOnMainThread(void) {
     return;
   }
   resultvForceInstallDockMenu([delegate class]);
+  // Pre-build the menu so the first applicationDockMenu: call returns the same
+  // cached instance from a stable static slot.
+  resultvBuildDockMenuIfNeeded();
   gDockMenuInstalled = YES;
 }
 
-// Late-bound installer: re-installs the swizzle as soon as macOS finishes
-// launching NSApp. At this point Wails has definitely set its delegate and the
-// LaunchServices process registration is complete.
 static void resultvScheduleDockMenuOnFinishLaunching(void) {
   if (gDockQuitFinishLaunchingObserver != nil) {
     return;
@@ -123,17 +123,18 @@ static void resultvScheduleDockMenuOnFinishLaunching(void) {
     id delegate = [NSApp delegate];
     if (delegate != nil) {
       resultvForceInstallDockMenu([delegate class]);
+      resultvBuildDockMenuIfNeeded();
       gDockMenuInstalled = YES;
     }
   };
   if ([NSApp isRunning]) {
     install(nil);
   }
-  gDockQuitFinishLaunchingObserver = [[[NSNotificationCenter defaultCenter]
+  gDockQuitFinishLaunchingObserver = [[NSNotificationCenter defaultCenter]
       addObserverForName:NSApplicationDidFinishLaunchingNotification
                   object:nil
                    queue:[NSOperationQueue mainQueue]
-              usingBlock:install] retain];
+              usingBlock:install];
 }
 
 int resultvInstallDockQuitMenuSync(void) {
