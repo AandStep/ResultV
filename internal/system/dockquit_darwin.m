@@ -16,22 +16,30 @@ extern void resultvDockMenuRequestedGoCallback(void);
 
 static BOOL gDockMenuInstalled = NO;
 static id gDockQuitFinishLaunchingObserver = nil;
+static id gDockMenuTarget = nil;
 
-static void resultvDockQuitAction(id self, SEL _cmd, id sender) {
-  (void)self;
-  (void)_cmd;
-  (void)sender;
-  resultvDockQuitGoCallback();
-}
+// DockMenuTarget hosts the "Показать ResultV" action. The "Завершить ResultV"
+// item targets NSApp directly via the system terminate: selector — that path is
+// already swizzled in terminate_darwin.m and goes through the graceful Wails
+// BeforeClose → runShutdownTasks → os.Exit(0) sequence.
+//
+// Routing the Show item through a dedicated NSObject (rather than swizzling a
+// custom selector onto the Wails AppDelegate) means we don't depend on
+// class_addMethod succeeding against a class hierarchy we don't control —
+// NSMenu's autovalidation simply asks our target whether it respondsToSelector:
+// and gets a definite YES.
+@interface ResultVDockMenuTarget : NSObject
+- (void)resultvDockShowAction:(id)sender;
+@end
 
-static void resultvDockShowAction(id self, SEL _cmd, id sender) {
-  (void)self;
-  (void)_cmd;
-  (void)sender;
+@implementation ResultVDockMenuTarget
+- (void)resultvDockShowAction:(__unused id)sender {
   resultvDockShowGoCallback();
 }
+@end
 
 static NSMenu *resultvApplicationDockMenu(id self, SEL _cmd, NSApplication *app) {
+  (void)self;
   (void)_cmd;
   (void)app;
   // Log every Dock right-click request so we can tell whether macOS is even
@@ -40,30 +48,43 @@ static NSMenu *resultvApplicationDockMenu(id self, SEL _cmd, NSApplication *app)
   // session/uid than the user-session Dock) and is showing only "Force Quit".
   resultvDockMenuRequestedGoCallback();
 
+  if (gDockMenuTarget == nil) {
+    gDockMenuTarget = [[ResultVDockMenuTarget alloc] init];
+  }
+
   NSMenu *menu = [[NSMenu alloc] initWithTitle:@""];
+  // Disable autoenable so the items render enabled even if AppKit's validation
+  // chain misclassifies the targets for any reason (different session, sandbox,
+  // etc.). The actions themselves are safe to call unconditionally.
+  [menu setAutoenablesItems:NO];
 
   NSMenuItem *showItem = [[NSMenuItem alloc] initWithTitle:@"Показать ResultV"
                                                     action:@selector(resultvDockShowAction:)
                                              keyEquivalent:@""];
-  [showItem setTarget:(id)self];
+  [showItem setTarget:gDockMenuTarget];
+  [showItem setEnabled:YES];
   [menu addItem:showItem];
 
   [menu addItem:[NSMenuItem separatorItem]];
 
+  // Use NSApp's own terminate: action for Quit. This selector is guaranteed to
+  // exist, validates as enabled, and triggers applicationShouldTerminate: which
+  // we've already swizzled to run the graceful shutdown sequence.
   NSMenuItem *quitItem = [[NSMenuItem alloc] initWithTitle:@"Завершить ResultV"
-                                                    action:@selector(resultvDockQuitAction:)
+                                                    action:@selector(terminate:)
                                              keyEquivalent:@""];
-  [quitItem setTarget:(id)self];
+  [quitItem setTarget:NSApp];
+  [quitItem setEnabled:YES];
   [menu addItem:quitItem];
 
   return menu;
 }
 
-// Force-replace applicationDockMenu: on the delegate's class. class_addMethod
+// Force-install applicationDockMenu: on the delegate's class. class_addMethod
 // silently no-ops if the selector already exists on the class hierarchy, which
 // is exactly the trap that left users stuck with "Force Quit". Use
 // class_replaceMethod which guarantees the IMP we want regardless of prior
-// state, plus class_addMethod first for safety on a fresh class.
+// state.
 static void resultvForceInstallDockMenu(Class cls) {
   if (cls == NULL) {
     return;
@@ -72,16 +93,6 @@ static void resultvForceInstallDockMenu(Class cls) {
                        (IMP)resultvApplicationDockMenu, "@@:@")) {
     class_replaceMethod(cls, @selector(applicationDockMenu:),
                         (IMP)resultvApplicationDockMenu, "@@:@");
-  }
-  if (!class_addMethod(cls, @selector(resultvDockQuitAction:),
-                       (IMP)resultvDockQuitAction, "v@:@")) {
-    class_replaceMethod(cls, @selector(resultvDockQuitAction:),
-                        (IMP)resultvDockQuitAction, "v@:@");
-  }
-  if (!class_addMethod(cls, @selector(resultvDockShowAction:),
-                       (IMP)resultvDockShowAction, "v@:@")) {
-    class_replaceMethod(cls, @selector(resultvDockShowAction:),
-                        (IMP)resultvDockShowAction, "v@:@");
   }
 }
 
