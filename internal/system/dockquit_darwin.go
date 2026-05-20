@@ -18,7 +18,14 @@
 package system
 
 /*
-#cgo CFLAGS: -x objective-c -fobjc-arc
+// Intentionally compiled WITHOUT -fobjc-arc so we can use manual retain /
+// release / autorelease conventions for the NSMenu we return from the swizzled
+// applicationDockMenu: IMP. ARC inserts objc_autoreleaseReturnValue at the
+// return site, which Dock (compiled by Apple without matching
+// objc_retainAutoreleasedReturnValue handling for our IMP slot) does not pair
+// with — the menu got deallocated before Dock could show it, leaving the user
+// with only the system "Force Quit" fallback.
+#cgo CFLAGS: -x objective-c -fno-objc-arc
 #cgo LDFLAGS: -framework Cocoa
 #include "dockquit_darwin.h"
 */
