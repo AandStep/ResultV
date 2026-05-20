@@ -68,6 +68,18 @@ func resultvDockShowGoCallback() {
 	}
 }
 
+// resultvDockMenuRequestedGoCallback is invoked from applicationDockMenu: every
+// time the Dock asks for our context menu (i.e. user right-clicked the icon).
+// If this log line never appears but "dock menu: installed" did, the swizzle is
+// in place but macOS isn't routing the request to our delegate — typical when
+// the process runs as root in another session and Dock falls back to the
+// hard-coded "Force Quit" entry.
+//
+//export resultvDockMenuRequestedGoCallback
+func resultvDockMenuRequestedGoCallback() {
+	sdbg.Log("dock menu: applicationDockMenu: invoked by Dock (right-click)")
+}
+
 // InstallDockQuitMenu adds applicationDockMenu: to the Wails NSApplication delegate
 // so Dock right-click always offers a graceful quit (same path as Cmd+Q), even
 // when macOS only shows "Force Quit" for the default terminate flow.
