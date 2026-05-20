@@ -17,6 +17,13 @@ extern void resultvDockMenuRequestedGoCallback(void);
 static BOOL gDockMenuInstalled = NO;
 static id gDockQuitFinishLaunchingObserver = nil;
 static id gDockMenuTarget = nil;
+// Cached menu lives in a static strong reference. Building it on every right-
+// click and returning the local was unreliable: this file is compiled with
+// -fobjc-arc but the host (Wails) and Dock are not, so ARC's
+// objc_autoreleaseReturnValue optimisation on the IMP return could leave Dock
+// holding an already-deallocated NSMenu — at which point Dock silently falls
+// back to the hard-coded "Force Quit" menu.
+static NSMenu *gDockMenuCache = nil;
 
 // DockMenuTarget hosts the "Показать ResultV" action. The "Завершить ResultV"
 // item targets NSApp directly via the system terminate: selector — that path is
@@ -38,16 +45,7 @@ static id gDockMenuTarget = nil;
 }
 @end
 
-static NSMenu *resultvApplicationDockMenu(id self, SEL _cmd, NSApplication *app) {
-  (void)self;
-  (void)_cmd;
-  (void)app;
-  // Log every Dock right-click request so we can tell whether macOS is even
-  // routing the request to our delegate. If this never fires, the Dock has
-  // decided the process is unreachable (typical when running as a different
-  // session/uid than the user-session Dock) and is showing only "Force Quit".
-  resultvDockMenuRequestedGoCallback();
-
+static NSMenu *resultvBuildDockMenu(void) {
   if (gDockMenuTarget == nil) {
     gDockMenuTarget = [[ResultVDockMenuTarget alloc] init];
   }
@@ -78,6 +76,22 @@ static NSMenu *resultvApplicationDockMenu(id self, SEL _cmd, NSApplication *app)
   [menu addItem:quitItem];
 
   return menu;
+}
+
+static NSMenu *resultvApplicationDockMenu(id self, SEL _cmd, NSApplication *app) {
+  (void)self;
+  (void)_cmd;
+  (void)app;
+  // Log every Dock right-click request so we can tell whether macOS is even
+  // routing the request to our delegate. If this never fires, the Dock has
+  // decided the process is unreachable (typical when running as a different
+  // session/uid than the user-session Dock) and is showing only "Force Quit".
+  resultvDockMenuRequestedGoCallback();
+
+  if (gDockMenuCache == nil) {
+    gDockMenuCache = resultvBuildDockMenu();
+  }
+  return gDockMenuCache;
 }
 
 // Force-install applicationDockMenu: on the delegate's class. class_addMethod
