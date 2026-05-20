@@ -25,8 +25,11 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"runtime"
 	"sync"
 	"time"
+
+	"resultproxy-wails/internal/sdbg"
 
 	"github.com/getlantern/systray"
 	"resultproxy-wails/internal/config"
@@ -54,6 +57,7 @@ type Tray struct {
 	callbacks      TrayCallbacks
 	running        bool
 	exited         chan struct{}
+	exitOnce       sync.Once
 	stopRequested  bool
 
 	
@@ -126,16 +130,31 @@ func (t *Tray) Stop() {
 	t.stopRequested = true
 	t.mu.Unlock()
 
-	if running {
-		systray.Quit()
-		select {
-		case <-t.exited:
-		case <-time.After(2 * time.Second):
-		}
+	if !running {
+		return
+	}
+
+	if runtime.GOOS == "darwin" {
+		// macOS quit flow goes Wails OnBeforeClose → [NSApp stop:] →
+		// OnShutdown (which is where this Stop() runs). Calling
+		// systray.Quit() here would issue [NSApp terminate:] a second time
+		// after the run loop is already stopped; that's at best a no-op
+		// and at worst sends a stray "Q" message back into Wails. Just
+		// fire onExit ourselves to release any Stop()-callers and let
+		// macOS reclaim the NSStatusItem when the process exits.
+		t.onExit()
+		return
+	}
+
+	systray.Quit()
+	select {
+	case <-t.exited:
+	case <-time.After(2 * time.Second):
 	}
 }
 
 func (t *Tray) onReady() {
+	sdbg.Log("tray.onReady: enter (systray is signaling that NSStatusItem is created on main thread)")
 	t.mu.Lock()
 	t.running = true
 	t.mu.Unlock()
@@ -172,7 +191,7 @@ func (t *Tray) onReady() {
 
 	t.mQuit = systray.AddMenuItem("Выход", "Закрыть ResultV")
 
-	
+	sdbg.Log("tray.onReady: menu items created, starting eventLoop goroutine")
 	go t.eventLoop()
 	t.clickDispatcher.start(t.handleServerClick)
 
@@ -205,42 +224,53 @@ func (t *Tray) onReady() {
 }
 
 func (t *Tray) eventLoop() {
+	sdbg.Log("tray.eventLoop: started, listening on mShow/mDisconnect/mQuit ClickedCh")
 	for {
 		select {
 		case <-t.mShow.ClickedCh:
+			sdbg.Log("tray.eventLoop: mShow click received")
 			t.safeCall(func() {
 				if t.callbacks.OnShowWindow != nil {
 					t.callbacks.OnShowWindow()
 				}
 			})
 		case <-t.mDisconnect.ClickedCh:
+			sdbg.Log("tray.eventLoop: mDisconnect click received")
 			t.safeCall(func() {
 				if t.callbacks.OnDisconnect != nil {
 					t.callbacks.OnDisconnect()
 				}
 			})
 		case <-t.mQuit.ClickedCh:
+			sdbg.Log("tray.eventLoop: mQuit click received — about to call OnQuit callback")
 			t.safeCall(func() {
 				if t.callbacks.OnQuit != nil {
+					sdbg.Log("tray.eventLoop: OnQuit callback is non-nil, invoking it")
 					t.callbacks.OnQuit()
+					sdbg.Log("tray.eventLoop: OnQuit callback returned")
+				} else {
+					sdbg.Log("tray.eventLoop: WARNING: OnQuit callback is NIL — click goes nowhere")
 				}
 			})
+			sdbg.Log("tray.eventLoop: returning (exiting goroutine after mQuit)")
 			return
 		}
 	}
 }
 
 func (t *Tray) onExit() {
-	t.clickDispatcher.stop()
-	t.mu.Lock()
-	t.running = false
-	wasExpected := t.stopRequested
-	cb := t.callbacks.OnUnexpectedExit
-	t.mu.Unlock()
-	close(t.exited)
-	if !wasExpected && cb != nil {
-		go cb()
-	}
+	t.exitOnce.Do(func() {
+		t.clickDispatcher.stop()
+		t.mu.Lock()
+		t.running = false
+		wasExpected := t.stopRequested
+		cb := t.callbacks.OnUnexpectedExit
+		t.mu.Unlock()
+		close(t.exited)
+		if !wasExpected && cb != nil {
+			go cb()
+		}
+	})
 }
 
 

@@ -17,12 +17,52 @@ package systray
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/getlantern/golog"
 )
+
+// sdbgLogShim writes a timestamped diagnostic line to the same shutdown-trace
+// file used by the main package's sdbg helper. This vendored package can't
+// import internal/sdbg (it's a separate Go module via go.mod replace), so we
+// duplicate the minimal logic here. Only used for diagnosing the macOS quit
+// path; safe to remove once the issue is resolved.
+var (
+	sdbgShimMu     sync.Mutex
+	sdbgShimFile   *os.File
+	sdbgShimOpened bool
+)
+
+func sdbgLogShim(format string, args ...interface{}) {
+	sdbgShimMu.Lock()
+	defer sdbgShimMu.Unlock()
+	if !sdbgShimOpened {
+		sdbgShimOpened = true
+		home, _ := os.UserHomeDir()
+		dir := filepath.Join(home, "Library", "Logs", "ResultV")
+		_ = os.MkdirAll(dir, 0o755)
+		path := filepath.Join(dir, "shutdown-trace.log")
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		if err == nil {
+			sdbgShimFile = f
+		} else {
+			fmt.Fprintf(os.Stderr, "[sdbgShim] cannot open trace: %v\n", err)
+		}
+	}
+	msg := fmt.Sprintf(format, args...)
+	stamp := time.Now().Format("15:04:05.000000")
+	line := fmt.Sprintf("[%s pid=%d] %s\n", stamp, os.Getpid(), msg)
+	fmt.Fprint(os.Stderr, line)
+	if sdbgShimFile != nil {
+		_, _ = sdbgShimFile.WriteString(line)
+		_ = sdbgShimFile.Sync()
+	}
+}
 
 var (
 	log = golog.LoggerFor("systray")
@@ -249,11 +289,14 @@ func systrayMenuItemSelected(id uint32) {
 	menuItemsLock.RUnlock()
 	if !ok {
 		log.Errorf("No menu item with ID %v", id)
+		sdbgLogShim("systrayMenuItemSelected(id=%d): NO MENU ITEM FOUND in map", id)
 		return
 	}
+	sdbgLogShim("systrayMenuItemSelected(id=%d): pushing to ClickedCh (title=%q)", id, item.title)
 	select {
 	case item.ClickedCh <- struct{}{}:
-	
+		sdbgLogShim("systrayMenuItemSelected(id=%d): push succeeded", id)
 	default:
+		sdbgLogShim("systrayMenuItemSelected(id=%d): channel full, click DROPPED", id)
 	}
 }

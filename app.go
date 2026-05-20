@@ -68,9 +68,11 @@ type App struct {
 
 	stateMu       sync.Mutex
 	quitRequested bool
+	shutdownOnce  sync.Once
 
 	trayHidden    atomic.Uint32
 	taskbarUnhook func()
+	stopAppHide   func()
 	smartProvider proxy.BlockedListProvider
 
 	startInTray bool
@@ -143,6 +145,7 @@ func (a *App) HandleDeepLink(url string) {
 }
 
 func (a *App) startup(ctx context.Context) {
+	sdbg("startup: enter (BUILD INCLUDES SHUTDOWN-DEBUG INSTRUMENTATION)")
 	a.ctx, a.cancel = context.WithCancel(ctx)
 
 	a.log.SetEmitter(func(eventName string, data any) {
@@ -161,6 +164,17 @@ func (a *App) startup(ctx context.Context) {
 
 	userDataPath := a.getUserDataPath()
 	a.log.Info(fmt.Sprintf("[CONFIG] UserDataDir: %s", userDataPath))
+
+	// Self-heal: if the previous process exited uncleanly (Force Quit, crash)
+	// it may have left macOS system proxy / kill switch state pointing at a
+	// now-dead local port. Undo as much as we can without prompting for root.
+	if cleaned := proxy.CleanupStaleSystemProxy(userDataPath); len(cleaned) > 0 {
+		a.log.Info(fmt.Sprintf("[СИСТЕМА] Сняты остаточные настройки системного прокси с сервисов: %s", strings.Join(cleaned, ", ")))
+	}
+	if system.HasStaleKillSwitchFile() {
+		a.log.Warning("[СИСТЕМА] Обнаружены остатки kill switch от прошлого запуска. Если интернет не работает, выполните в терминале: sudo pfctl -d")
+		system.RemoveStaleKillSwitchFile()
+	}
 
 	cs, err := config.NewCryptoService(userDataPath)
 	if err != nil {
@@ -224,8 +238,11 @@ func (a *App) startup(ctx context.Context) {
 			}
 		},
 		OnQuit: func() {
+			sdbg("tray OnQuit callback fired (user clicked 'Выход')")
 			a.markQuitRequested()
+			sdbg("tray OnQuit: calling wailsRuntime.Quit")
 			wailsRuntime.Quit(a.ctx)
+			sdbg("tray OnQuit: wailsRuntime.Quit returned (it dispatches goroutine for BeforeClose)")
 		},
 		OnUnexpectedExit: func() {
 			// Systray died without Stop() being called. If the window is
@@ -245,6 +262,27 @@ func (a *App) startup(ctx context.Context) {
 	a.tray.Start()
 	a.refreshTrayProxyList()
 	a.startTrayPingLoop()
+
+	// macOS Dock / Cmd+Q: intercept terminate on the main thread (no Wails channel
+	// block) and offer a custom Dock menu instead of system "Force Quit" only.
+	gracefulQuit := func() {
+		a.markQuitRequested()
+		wailsRuntime.Quit(a.ctx)
+	}
+	system.RegisterTerminateHandler(gracefulQuit)
+	system.RegisterDockQuitHandler(gracefulQuit, func() {
+		a.restoreMainWindow()
+	})
+	if !system.InstallTerminateInterceptor() {
+		a.log.Warning("Не удалось перехватить завершение macOS — возможны проблемы с Dock")
+	}
+	if !system.InstallDockQuitMenu() {
+		a.log.Warning("Не удалось установить меню Dock — используйте Cmd+Q или «Выход» в трее")
+	}
+
+	a.stopAppHide = system.StartAppHideObserver(func() {
+		a.trayHidden.Store(1)
+	})
 
 	if system.DetectGPOConflict() {
 		a.log.Warning("[СИСТЕМА] Обнаружен конфликт с групповой политикой (GPO). Настройки прокси могут быть переопределены.")
@@ -277,59 +315,119 @@ func (a *App) startup(ctx context.Context) {
 	}
 }
 
-func (a *App) shutdown(ctx context.Context) {
+// doShutdownCleanup runs the per-subsystem teardown. Pure Go work + a couple
+// of subprocesses (networksetup / pfctl) and CGo into sing-box. Caller must
+// run this from a background goroutine — never on the main goroutine.
+func (a *App) doShutdownCleanup() {
+	sdbg("doShutdownCleanup: enter")
+	if a.taskbarUnhook != nil {
+		sdbg("doShutdownCleanup: taskbarUnhook…")
+		a.taskbarUnhook()
+		a.taskbarUnhook = nil
+		sdbg("doShutdownCleanup: taskbarUnhook done")
+	}
+
+	if a.stopAppHide != nil {
+		sdbg("doShutdownCleanup: stopAppHide…")
+		a.stopAppHide()
+		a.stopAppHide = nil
+		sdbg("doShutdownCleanup: stopAppHide done")
+	}
+
+	if a.netmon != nil {
+		sdbg("doShutdownCleanup: netmon.Stop…")
+		a.netmon.Stop()
+		sdbg("doShutdownCleanup: netmon.Stop done")
+	}
+
+	if a.tray != nil {
+		sdbg("doShutdownCleanup: tray.Stop…")
+		a.tray.Stop()
+		sdbg("doShutdownCleanup: tray.Stop done")
+	}
+
+	if a.killSwitch != nil && a.killSwitch.IsEnabled() {
+		sdbg("doShutdownCleanup: killSwitch.Disable…")
+		_ = a.killSwitch.Disable()
+		sdbg("doShutdownCleanup: killSwitch.Disable done")
+	}
+
+	if a.proxy != nil {
+		sdbg("doShutdownCleanup: proxy.Shutdown…")
+		a.proxy.Shutdown()
+		sdbg("doShutdownCleanup: proxy.Shutdown done")
+	}
+
+	if a.cancel != nil {
+		sdbg("doShutdownCleanup: cancel ctx…")
+		a.cancel()
+		sdbg("doShutdownCleanup: cancel ctx done")
+	}
+	sdbg("doShutdownCleanup: exit")
+}
+
+// runShutdownTasks performs the shutdown cleanup once and then unconditionally
+// terminates the process via os.Exit(0). Designed to be called as `go
+// a.runShutdownTasks()` from BeforeClose — that way the Cocoa main thread
+// stays in the run loop (fully responsive, no "App not responding" dialog)
+// while sing-box, networksetup and the kill switch settle down. The os.Exit
+// is what actually closes the window and removes the entry from Activity
+// Monitor — we never call [NSApp stop:] / [NSApp terminate:] ourselves.
+//
+// Idempotent: only the first caller actually does any work. A concurrent
+// second caller returns immediately; the first caller's os.Exit will kill
+// the whole process (including any extra goroutines blocked here).
+func (a *App) runShutdownTasks() {
+	sdbg("runShutdownTasks: enter (goroutine)")
+	firstCaller := false
+	a.shutdownOnce.Do(func() {
+		firstCaller = true
+	})
+	if !firstCaller {
+		sdbg("runShutdownTasks: not the first caller, returning")
+		return
+	}
+	sdbg("runShutdownTasks: first caller, starting cleanup")
+
 	a.log.Info("ResultV завершает работу...")
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-
-		if a.taskbarUnhook != nil {
-			a.taskbarUnhook()
-			a.taskbarUnhook = nil
-		}
-
-		if a.netmon != nil {
-			a.netmon.Stop()
-		}
-
-		if a.tray != nil {
-			a.tray.Stop()
-		}
-
-		if a.killSwitch != nil && a.killSwitch.IsEnabled() {
-			_ = a.killSwitch.Disable()
-		}
-
-		if a.proxy != nil {
-			a.proxy.Shutdown()
-		}
-
-		if a.cancel != nil {
-			a.cancel()
-		}
+		a.doShutdownCleanup()
 	}()
 
 	select {
 	case <-done:
+		sdbg("runShutdownTasks: cleanup completed within deadline")
 	case <-time.After(10 * time.Second):
-		// Shutdown hung (likely sing-box instance.Close() blocking) — force exit
-		// so the singleton mutex is released and the user can relaunch.
+		// Shutdown hung (typically sing-box instance.Close() stuck in a TUN
+		// device call). Bail out anyway — we'd rather lose the last few
+		// cleanup steps than leave a phantom process holding the singleton
+		// flock and blocking the next launch.
 		a.log.Warning("Завершение зависло — принудительный выход")
-		os.Exit(0)
+		sdbg("runShutdownTasks: 10s WATCHDOG fired, forcing exit")
 	}
+
+	sdbg("runShutdownTasks: calling os.Exit(0) NOW")
+	os.Exit(0)
+}
+
+func (a *App) shutdown(ctx context.Context) {
+	sdbg("OnShutdown callback: enter (main goroutine)")
+	// In the normal flow BeforeClose has already spawned runShutdownTasks in
+	// a goroutine and is about to os.Exit the process. This callback is the
+	// fallback for any future path that reaches OnShutdown directly: never
+	// block the Cocoa main thread — runShutdownTasks ends with os.Exit(0).
+	go a.runShutdownTasks()
+	sdbg("OnShutdown callback: spawned runShutdownTasks goroutine")
 }
 
 func (a *App) BeforeClose(ctx context.Context) bool {
-	a.stateMu.Lock()
-	quitRequested := a.quitRequested
-	a.stateMu.Unlock()
-	if quitRequested {
-		return false
-	}
-	a.trayHidden.Store(1)
-	wailsRuntime.WindowHide(ctx)
-	return true
+	sdbg("App.BeforeClose: Wails invoked our OnBeforeClose hook")
+	r := a.beforeClosePlatform(ctx)
+	sdbg("App.BeforeClose: returning %v", r)
+	return r
 }
 
 func (a *App) GetConfig() (config.AppConfig, error) {
@@ -1758,12 +1856,16 @@ func (a *App) getAppRootDir() string {
 
 func (a *App) markQuitRequested() {
 	a.stateMu.Lock()
+	prev := a.quitRequested
 	a.quitRequested = true
 	a.stateMu.Unlock()
+	sdbg("markQuitRequested called (was=%v)", prev)
 }
 
 func (a *App) restoreMainWindow() {
+	sdbg("restoreMainWindow: enter")
 	if a.ctx == nil {
+		sdbg("restoreMainWindow: ctx is nil, returning")
 		return
 	}
 	a.trayHidden.Store(0)

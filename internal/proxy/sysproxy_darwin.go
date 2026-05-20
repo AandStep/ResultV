@@ -19,9 +19,12 @@ package proxy
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -29,6 +32,94 @@ import (
 // killSwitchSinkhole is an unreachable address used to break all proxied
 // traffic when the kill switch is engaged.
 const killSwitchSinkhole = "127.0.0.1:65535"
+
+// darwinAppliedServicesFile is the on-disk marker storing which network
+// services we configured. Read at startup to undo state that an unclean exit
+// (Force Quit, crash) skipped via Disable().
+const darwinAppliedServicesFile = "darwin_applied_services.json"
+
+var (
+	darwinStateMu  sync.Mutex
+	darwinStateDir string
+)
+
+// SetSystemProxyStateDir installs the directory used for persisting the
+// applied-services marker between launches. The app should call this once
+// during startup, before NewManager / Init.
+func SetSystemProxyStateDir(dir string) {
+	darwinStateMu.Lock()
+	darwinStateDir = dir
+	darwinStateMu.Unlock()
+}
+
+func darwinStatePath() string {
+	darwinStateMu.Lock()
+	dir := darwinStateDir
+	darwinStateMu.Unlock()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, darwinAppliedServicesFile)
+}
+
+func persistAppliedServices(services []string) {
+	path := darwinStatePath()
+	if path == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	data, err := json.Marshal(services)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, data, 0o644)
+}
+
+func clearAppliedServices() {
+	path := darwinStatePath()
+	if path == "" {
+		return
+	}
+	_ = os.Remove(path)
+}
+
+func loadAppliedServices() []string {
+	path := darwinStatePath()
+	if path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var services []string
+	if err := json.Unmarshal(data, &services); err != nil {
+		return nil
+	}
+	return services
+}
+
+// CleanupStaleSystemProxy is called once during application startup to undo
+// macOS networksetup proxy state left behind by an unclean previous exit
+// (Force Quit, kernel panic, ...). Best-effort: errors are swallowed; returns
+// the list of services that were successfully reset.
+func CleanupStaleSystemProxy(stateDir string) []string {
+	SetSystemProxyStateDir(stateDir)
+	services := loadAppliedServices()
+	if len(services) == 0 {
+		return nil
+	}
+	cleaned := make([]string, 0, len(services))
+	for _, svc := range services {
+		if err := disableServiceProxy(svc); err == nil {
+			cleaned = append(cleaned, svc)
+		}
+	}
+	clearAppliedServices()
+	return cleaned
+}
 
 // DarwinSystemProxy configures system-wide HTTP/HTTPS/SOCKS proxy on macOS via
 // the `networksetup` CLI. It applies the configuration to every enabled
@@ -71,6 +162,9 @@ func (d *DarwinSystemProxy) Set(addr string, bypass []string) error {
 		}
 	}
 	d.appliedServices = services
+	// Persist so that the next launch can undo this if the current process
+	// is killed (Force Quit, crash) before Disable() runs.
+	persistAppliedServices(services)
 	return nil
 }
 
@@ -92,6 +186,7 @@ func (d *DarwinSystemProxy) Disable() error {
 			firstErr = err
 		}
 	}
+	clearAppliedServices()
 	return firstErr
 }
 

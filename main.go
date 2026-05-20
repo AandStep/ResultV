@@ -61,6 +61,8 @@ func main() {
 		Height:    720,
 		MinWidth:  800,
 		MinHeight: 600,
+		// macOS: red button hides the app (tray) without OnBeforeClose; Dock Quit still uses OnBeforeClose.
+		HideWindowOnClose: runtime.GOOS == "darwin",
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},

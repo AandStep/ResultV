@@ -30,6 +30,24 @@ import (
 // itself requires elevation.
 const pfRulesPath = "/tmp/resultv-killswitch.conf"
 
+// HasStaleKillSwitchFile reports whether a kill-switch ruleset file from a
+// previous run is still on disk. /tmp is cleared on reboot, so the file's
+// presence within a session is a strong hint that the previous process
+// exited (Force Quit, crash) without calling Disable() — in which case pf
+// may still be loaded with our blocking rules and the user has no internet.
+func HasStaleKillSwitchFile() bool {
+	_, err := os.Stat(pfRulesPath)
+	return err == nil
+}
+
+// RemoveStaleKillSwitchFile deletes the rules file. It does NOT touch the
+// running pf ruleset (`pfctl -d` requires root and would prompt for sudo on
+// every launch); the caller should surface a warning so the user can run
+// `sudo pfctl -d` manually if their internet is blocked.
+func RemoveStaleKillSwitchFile() {
+	_ = os.Remove(pfRulesPath)
+}
+
 // DarwinKillSwitch implements the kill switch via macOS's built-in Packet
 // Filter (pf). When engaged it replaces the active pf ruleset with one that
 // drops all outbound traffic except: loopback, RFC1918/link-local LAN, DNS

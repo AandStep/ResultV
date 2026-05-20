@@ -93,16 +93,19 @@ func showMenuItem(item *MenuItem) {
 
 //export systray_ready
 func systray_ready() {
+	sdbgLogShim("systray_ready (CGo export): called from main thread after setupOnMainThread")
 	systrayReady()
 }
 
 //export systray_on_exit
 func systray_on_exit() {
+	sdbgLogShim("systray_on_exit (CGo export): NSApplicationWillTerminateNotification observer fired")
 	systrayExit()
 }
 
 //export systray_menu_item_selected
 func systray_menu_item_selected(cID C.int) {
+	sdbgLogShim("systray_menu_item_selected (CGo export): menu id=%d", uint32(cID))
 	systrayMenuItemSelected(uint32(cID))
 }
 
