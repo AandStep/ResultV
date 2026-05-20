@@ -58,11 +58,25 @@ type EngineConfig struct {
 	Whitelist    []string
 	AppWhitelist []string
 	AdBlock      bool
+	MITMPort     int // local HTTPS MITM proxy port; 0 disables MITM layer
 	KillSwitch   bool
 	LocalPort    int
 	DNSServers   []string
 	TunIPv4      string
+	TunIPv6      string
+	TunStack     string
 	DataDir      string
+
+	// DNSLeakProtection toggles sing-box `strict_route` on the TUN inbound.
+	// When true (the default for new installs), sing-box installs Windows
+	// Filtering Platform (WFP) rules that drop any outbound packet that
+	// would bypass the TUN. This is the only reliable defence against the
+	// Smart Multi-Homed Name Resolution leak: Windows otherwise issues
+	// DNS queries from every adapter in parallel, and a Russian ISP can
+	// transparently hijack the UDP/53 packets that escape via the LAN
+	// adapter (returning Rostelecom/MSK-IX addresses instead of the
+	// chosen resolver). Has no effect in Proxy mode.
+	DNSLeakProtection bool
 }
 
 type Engine interface {
@@ -88,6 +102,48 @@ type SingBoxConfig struct {
 	Outbounds    []SBOutbound    `json:"outbounds"`
 	Route        *SBRoute        `json:"route,omitempty"`
 	Experimental *SBExperimental `json:"experimental,omitempty"`
+}
+
+type SBRuleSet struct {
+	Type          string           `json:"type,omitempty"`
+	Tag           string           `json:"tag"`
+	Format        string           `json:"format,omitempty"`
+	RemoteOptions SBRemoteRuleSet  `json:"-"`
+	LocalOptions  SBLocalRuleSet   `json:"-"`
+}
+
+type SBRemoteRuleSet struct {
+	URL            string `json:"url,omitempty"`
+	DownloadDetour string `json:"download_detour,omitempty"`
+	UpdateInterval string `json:"update_interval,omitempty"`
+}
+
+type SBLocalRuleSet struct {
+	Path string `json:"path,omitempty"`
+}
+
+// MarshalJSON flattens remote/local options into sing-box rule_set JSON.
+func (r SBRuleSet) MarshalJSON() ([]byte, error) {
+	type head struct {
+		Type   string `json:"type,omitempty"`
+		Tag    string `json:"tag"`
+		Format string `json:"format,omitempty"`
+	}
+	h := head{Type: r.Type, Tag: r.Tag, Format: r.Format}
+	switch r.Type {
+	case "remote":
+		return json.Marshal(struct {
+			head
+			SBRemoteRuleSet
+		}{h, r.RemoteOptions})
+	case "local":
+		return json.Marshal(struct {
+			head
+			SBLocalRuleSet
+		}{h, r.LocalOptions})
+	default:
+		return json.Marshal(h)
+	}
 }
 
 type SBExperimental struct {
@@ -120,9 +176,11 @@ type SBDNSServer struct {
 }
 
 type SBDNSRule struct {
-	Domain []string `json:"domain,omitempty"`
-	Server string   `json:"server"`
-	Action string   `json:"action,omitempty"`
+	Domain           []string `json:"domain,omitempty"`
+	ProcessPathRegex []string `json:"process_path_regex,omitempty"`
+	RuleSet          []string `json:"rule_set,omitempty"`
+	Server           string   `json:"server,omitempty"`
+	Action           string   `json:"action,omitempty"`
 }
 
 type SBInbound struct {
@@ -272,6 +330,7 @@ type SBOutboundTransport struct {
 }
 
 type SBRoute struct {
+	RuleSet     []SBRuleSet   `json:"rule_set,omitempty"`
 	Rules       []SBRouteRule `json:"rules,omitempty"`
 	Final       string        `json:"final,omitempty"`
 	AutoDetect  bool          `json:"auto_detect_interface,omitempty"`
@@ -287,6 +346,7 @@ type SBRouteRule struct {
 	IPCidr           []string `json:"ip_cidr,omitempty"`
 	ProcessName      []string `json:"process_name,omitempty"`
 	ProcessPathRegex []string `json:"process_path_regex,omitempty"`
+	RuleSet          []string `json:"rule_set,omitempty"`
 	Outbound         string   `json:"outbound,omitempty"`
 	Action           string   `json:"action,omitempty"`
 }
@@ -352,7 +412,7 @@ func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 			Listen:     host,
 			ListenPort: port,
 		}},
-		Outbounds:    buildOutbounds(cfg.Proxy),
+		Outbounds:    appendOutbounds(buildOutbounds(cfg.Proxy), cfg),
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
 	}
@@ -365,14 +425,22 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	if cfg.TunIPv4 != "" {
 		tunIPv4 = cfg.TunIPv4
 	}
-	tunAddresses := []string{tunIPv4}
-	// system stack uses the kernel-level WinTun driver. EAC, BattlEye and other
-	// anti-cheats inspect network adapters at boot — gvisor's userspace stack
-	// looks foreign to them and refuses to instantiate (DBD "EAC client cannot
-	// be instantiated"). system stack is transparent to anti-cheat. WG/AWG
-	// always required system stack; others now follow suit.
-	tunStack := "system"
-	strictRoute := false
+	// IPv6 ULA on the TUN keeps IPv6 traffic riding the tunnel. Without
+	// an IPv6 address here, strict_route's WFP filters would silently
+	// blackhole IPv6 — leaving the user without IPv6 connectivity while
+	// connected.
+	tunIPv6 := "fdfe:dcba:9876::1/126"
+	if cfg.TunIPv6 != "" {
+		tunIPv6 = cfg.TunIPv6
+	}
+	tunAddresses := []string{tunIPv4, tunIPv6}
+	tunStack := effectiveTunStack(cfg.TunStack)
+	// strict_route adds WFP filters on Windows that drop outbound packets
+	// bypassing the TUN. This is the only reliable way to stop Smart
+	// Multi-Homed Name Resolution from leaking DNS queries to the LAN
+	// adapter, where Russian ISPs transparently hijack UDP/53 (Rostelecom,
+	// MSK-IX). User-controlled via the "DNS leak protection" toggle.
+	strictRoute := cfg.DNSLeakProtection
 
 	pt := strings.ToUpper(strings.TrimSpace(cfg.Proxy.Type))
 
@@ -407,12 +475,33 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 			StrictRoute:         strictRoute,
 			RouteExcludeAddress: routeExclude,
 		}},
-		Outbounds:    outbounds,
+		Outbounds:    appendOutbounds(outbounds, cfg),
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
 	}
 
 	return sbCfg, nil
+}
+
+func appendOutbounds(base []SBOutbound, cfg EngineConfig) []SBOutbound {
+	if cfg.AdBlock && cfg.MITMPort > 0 {
+		base = append(base, SBOutbound{
+			Type:       "http",
+			Tag:        adBlockMITMOutbound,
+			Server:     "127.0.0.1",
+			ServerPort: cfg.MITMPort,
+		})
+	}
+	return base
+}
+
+func effectiveTunStack(stack string) string {
+	switch strings.ToLower(strings.TrimSpace(stack)) {
+	case "gvisor":
+		return "gvisor"
+	default:
+		return "system"
+	}
 }
 
 func buildOutbounds(proxy ProxyConfig) []SBOutbound {
@@ -494,6 +583,20 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			})
 		}
 
+		// Whitelisted apps (split-tunnel direct) must resolve via the local
+		// system resolver, NOT through the proxy detour. Otherwise the TCP
+		// connection is bypassed but the DNS lookup still rides the tunnel —
+		// for SSH/SFTP clients (WinSCP, etc.) this manifests as silent
+		// "Failed to establish connection" because the encrypted DNS detour
+		// to a public resolver is slower than the SSH handshake timeout.
+		if rx := appWhitelistPathRegexes(cfg.AppWhitelist); len(rx) > 0 {
+			dns.Rules = append(dns.Rules, SBDNSRule{
+				ProcessPathRegex: rx,
+				Server:           "local",
+			})
+		}
+
+		dns.Rules = appendAdBlockDNSRules(cfg, dns.Rules)
 		return dns
 	}
 
@@ -531,7 +634,20 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		}
 	}
 
-	return &SBDNS{Servers: servers}
+	dns := &SBDNS{Servers: servers}
+	dns.Rules = appendAdBlockDNSRules(cfg, dns.Rules)
+	return dns
+}
+
+func appendAdBlockDNSRules(cfg EngineConfig, rules []SBDNSRule) []SBDNSRule {
+	if !cfg.AdBlock {
+		return rules
+	}
+	tags := adBlockRuleSetTags()
+	return append(rules, SBDNSRule{
+		RuleSet: tags,
+		Action:  "reject",
+	})
 }
 
 func splitDNSServer(raw string) (string, int) {
@@ -560,15 +676,17 @@ func splitDNSServer(raw string) (string, int) {
 }
 
 func buildRoute(cfg EngineConfig) *SBRoute {
+	findProcess := len(cfg.AppWhitelist) > 0
+	if cfg.AdBlock && cfg.MITMPort > 0 {
+		findProcess = true
+	}
 	route := &SBRoute{
-		Final:      "proxy",
-		AutoDetect: true,
-		// Enable process matching whenever the user has supplied an app
-		// whitelist. sing-box auto-detects this from process_* rules but
-		// being explicit avoids subtle gotchas where rule reordering or
-		// rule pruning leaves no process_* rule in proxy-mode and matching
-		// silently turns off mid-session.
-		FindProcess: len(cfg.AppWhitelist) > 0,
+		Final:       "proxy",
+		AutoDetect:  true,
+		FindProcess: findProcess,
+	}
+	if cfg.AdBlock {
+		route.RuleSet = buildAdBlockRuleSets(effectiveDataDir(cfg))
 	}
 
 	var rules []SBRouteRule
@@ -602,6 +720,8 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		Protocol: []string{"dns"},
 		Action:   "hijack-dns",
 	})
+
+	rules = appendAdBlockRouteRules(cfg, rules)
 
 	isEndpointProtocol := strings.EqualFold(strings.TrimSpace(cfg.Proxy.Type), "wireguard") ||
 		strings.EqualFold(strings.TrimSpace(cfg.Proxy.Type), "amneziawg")
@@ -692,6 +812,93 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 
 	route.Rules = rules
 	return route
+}
+
+func appendAdBlockRouteRules(cfg EngineConfig, rules []SBRouteRule) []SBRouteRule {
+	if !cfg.AdBlock {
+		return rules
+	}
+	tags := adBlockRuleSetTags()
+	rules = append(rules, SBRouteRule{
+		RuleSet: tags,
+		Action:  "reject",
+	})
+
+	if cfg.MITMPort <= 0 {
+		return rules
+	}
+
+	browserRX := browserProcessPathRegexes()
+	if len(browserRX) == 0 {
+		return rules
+	}
+
+	// Pinning-sensitive domains bypass MITM (direct).
+	for _, d := range adBlockPinningBypassDomains {
+		rules = append(rules, SBRouteRule{
+			Action:   "route",
+			Domain:   []string{d},
+			Outbound: "direct",
+		})
+	}
+
+	// Force TCP TLS through local MITM proxy for browsers.
+	rules = append(rules, SBRouteRule{
+		Action:           "route",
+		ProcessPathRegex: browserRX,
+		Network:          []string{"tcp"},
+		Port:             []int{443},
+		Outbound:         adBlockMITMOutbound,
+	})
+
+	// Block QUIC/HTTP3 so browsers fall back to TCP (MITM cannot inspect QUIC).
+	rules = append(rules, SBRouteRule{
+		Action:           "reject",
+		ProcessPathRegex: browserRX,
+		Network:          []string{"udp"},
+		Port:             []int{443},
+	})
+
+	return rules
+}
+
+// OverlappingProbeDomains returns user-whitelist entries that match (exactly
+// or as a parent suffix) one of the tunnelProbeDomains. These are forced
+// through the proxy outbound by buildRoute regardless of the user's
+// "direct" intent — necessary so the post-start health probe truly
+// transits the tunnel (otherwise a broken SS/VLESS/VMESS would mask as
+// healthy). Callers (Manager.Connect) use this to warn the user that
+// e.g. their ".gstatic.com" rule won't apply to "connectivitycheck.gstatic.com"
+// during the first few seconds of a session.
+func OverlappingProbeDomains(userWhitelist []string) []string {
+	if len(userWhitelist) == 0 || len(tunnelProbeDomains) == 0 {
+		return nil
+	}
+	var hits []string
+	seen := make(map[string]struct{}, len(userWhitelist))
+	for _, raw := range userWhitelist {
+		entry := strings.TrimSpace(raw)
+		if entry == "" {
+			continue
+		}
+		needle := strings.ToLower(strings.TrimPrefix(entry, "."))
+		for _, probe := range tunnelProbeDomains {
+			p := strings.ToLower(probe)
+			if p == needle || strings.HasSuffix(p, "."+needle) {
+				if _, dup := seen[entry]; !dup {
+					seen[entry] = struct{}{}
+					hits = append(hits, entry)
+				}
+				break
+			}
+		}
+	}
+	return hits
+}
+
+// GetFreeLocalPort returns defaultPort if available, otherwise a random free port.
+func GetFreeLocalPort(defaultPort int) int {
+	return getFreeLocalPort(defaultPort)
 }
 
 func getFreeLocalPort(defaultPort int) int {

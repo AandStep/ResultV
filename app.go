@@ -43,8 +43,8 @@ import (
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"resultproxy-wails/internal/adblock"
 	"resultproxy-wails/internal/config"
+	"resultproxy-wails/internal/filter"
 	"resultproxy-wails/internal/logger"
 	"resultproxy-wails/internal/proxy"
 	"resultproxy-wails/internal/system"
@@ -76,6 +76,14 @@ func sameHostReferer(referer, imageURL string) string {
 
 const subscriptionPageUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
+type subscriptionRequestMetadata struct {
+	UserAgent string
+	Platform  string
+	OSVersion string
+	Model     string
+	SendHWID  bool
+}
+
 type App struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -84,7 +92,7 @@ type App struct {
 	crypto     *config.CryptoService
 	config     *config.Manager
 	proxy      *proxy.Manager
-	adblock    *adblock.Blocker
+	filters    *filter.Manager
 	tray       *system.Tray
 	killSwitch system.KillSwitch
 	netmon     *system.NetMonitor
@@ -109,8 +117,7 @@ type App struct {
 
 func NewApp() *App {
 	return &App{
-		log:     logger.New(),
-		adblock: adblock.New(),
+		log: logger.New(),
 	}
 }
 
@@ -124,6 +131,55 @@ func (a *App) SetStartInTray(v bool) {
 
 func (a *App) GetVersion() string {
 	return productVersionFromWailsJSON()
+}
+
+func (a *App) subscriptionRequestMetadata() subscriptionRequestMetadata {
+	settings := config.DefaultConfig().Settings
+	if a.config != nil {
+		settings = a.config.GetConfig().Settings
+	}
+	info := system.SubscriptionDeviceInfo()
+	userAgent := strings.TrimSpace(settings.SubscriptionUserAgent)
+	if userAgent == "" {
+		platform := strings.TrimSpace(info.Platform)
+		if platform == "" {
+			platform = runtime.GOOS
+		}
+		uaPlatform := platform
+		if strings.EqualFold(platform, "windows") {
+			uaPlatform = "Windows"
+		}
+		uaVersion := strings.TrimSpace(info.OSVersion)
+		if uaVersion == "" {
+			uaVersion = runtime.GOOS + "_" + runtime.GOARCH
+		}
+		userAgent = fmt.Sprintf("ResultV/%s/%s/%s", productVersionFromWailsJSON(), uaPlatform, sanitizeUserAgentSegment(uaVersion))
+	}
+	return subscriptionRequestMetadata{
+		UserAgent: userAgent,
+		Platform:  firstNonEmpty(strings.TrimSpace(info.Platform), runtime.GOOS),
+		OSVersion: firstNonEmpty(strings.TrimSpace(info.OSVersion), runtime.GOOS+"_"+runtime.GOARCH),
+		Model:     firstNonEmpty(strings.TrimSpace(info.Model), runtime.GOOS+"_"+runtime.GOARCH),
+		SendHWID:  settings.EffectiveSubscriptionSendHWID(),
+	}
+}
+
+func sanitizeUserAgentSegment(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	replacer := strings.NewReplacer(" ", "_", "\t", "_", "\n", "_", "\r", "_", "/", "_")
+	return replacer.Replace(s)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 // GetUpdateManifest fetches update.json via the Go backend.
@@ -162,6 +218,15 @@ func (a *App) QueueDeepLink(url string) {
 	a.deepLinkMu.Lock()
 	a.pendingDeepLink = url
 	a.deepLinkMu.Unlock()
+}
+
+// DecodeDeepLink unwraps a resultv:// URL into its underlying subscription
+// payload (an http(s) URL, RVSUB1 body, or proxy URI list). Frontend uses this
+// for paste flows so the rest of the import path is identical to the
+// browser-click flow, which receives the already-decoded payload via the
+// "deeplink:received" event.
+func (a *App) DecodeDeepLink(url string) (string, error) {
+	return proxy.DecodeDeepLink(url)
 }
 
 // HandleDeepLink decrypts a resultv:// URL and forwards the decoded payload
@@ -248,9 +313,12 @@ func (a *App) startup(ctx context.Context) {
 	rootDir := a.getAppRootDir()
 	a.initSmartBlockedDomains(userDataPath, rootDir)
 
-	if err := a.adblock.LoadFromCache(userDataPath); err != nil {
-		a.log.Warning(fmt.Sprintf("Кэш AdBlock не загружен: %v", err))
+	a.filters = filter.NewManager(userDataPath)
+	if err := a.filters.LoadCache(); err != nil {
+		a.log.Warning(fmt.Sprintf("[ADBLOCK] Кэш фильтров не загружен: %v", err))
 	}
+	a.proxy.SetAdBlockCoordinator(a)
+	a.initAdBlockFilters()
 
 	a.killSwitch = system.NewKillSwitch()
 	// Best-effort cleanup of any kill-switch firewall rules left over from a
@@ -465,6 +533,7 @@ func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
 	if fromProxy := dnsServersFromProxyExtra(proxyDTO); len(fromProxy) > 0 {
 		dnsServers = fromProxy
 	}
+	a.proxy.SetTunStack(cfg.Settings.EffectiveTunStack())
 
 	result := a.proxy.Connect(
 		a.ctx,
@@ -479,6 +548,8 @@ func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
 		cfg.Settings.ListenLAN,
 		dnsServers,
 		cfg.Settings.TunIPv4,
+		"",
+		cfg.Settings.EffectiveDNSLeakProtection(),
 	)
 
 	if result.Success {
@@ -624,6 +695,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 		if fromProxy := dnsServersFromProxyExtra(prevProxy); len(fromProxy) > 0 {
 			modeSwitchDNS = fromProxy
 		}
+		a.proxy.SetTunStack(cfg.Settings.EffectiveTunStack())
 		result := a.proxy.Connect(
 			a.ctx,
 			prevProxy,
@@ -637,6 +709,8 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 			cfg.Settings.ListenLAN,
 			modeSwitchDNS,
 			cfg.Settings.TunIPv4,
+			"",
+			cfg.Settings.EffectiveDNSLeakProtection(),
 		)
 		if result.Success {
 			serverName := fmt.Sprintf("%s:%d", status.CurrentProxy.IP, status.CurrentProxy.Port)
@@ -673,6 +747,8 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 				cfg.Settings.ListenLAN,
 				modeSwitchDNS,
 				cfg.Settings.TunIPv4,
+				"",
+				cfg.Settings.EffectiveDNSLeakProtection(),
 			)
 			if rollback.Success {
 				if a.tray != nil {
@@ -756,7 +832,194 @@ func (a *App) ToggleAdBlock(enable bool) error {
 	}
 	cfg := a.config.GetConfig()
 	cfg.Settings.AdBlock = enable
-	return a.config.SaveConfig(cfg)
+	if err := a.config.SaveConfig(cfg); err != nil {
+		return err
+	}
+	if a.proxy != nil && a.proxy.GetStatus().IsConnected {
+		result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist)
+		if !result.Success {
+			a.log.Warning(fmt.Sprintf("[ADBLOCK] Переподключение после переключения: %s", result.Message))
+		}
+	}
+	return nil
+}
+
+// StartMITM implements proxy.AdBlockCoordinator.
+func (a *App) StartMITM(upstreamPort int) (int, error) {
+	if a.filters == nil {
+		return 0, fmt.Errorf("filter manager not initialized")
+	}
+	port := proxy.GetFreeLocalPort(18080)
+	if err := a.filters.StartMITM(port, upstreamPort); err != nil {
+		return 0, err
+	}
+	a.log.Info(fmt.Sprintf("[ADBLOCK] MITM-фильтр на 127.0.0.1:%d (upstream :%d)", port, upstreamPort))
+	return port, nil
+}
+
+// StopMITM implements proxy.AdBlockCoordinator.
+func (a *App) StopMITM() {
+	if a.filters != nil {
+		a.filters.StopMITM()
+	}
+}
+
+// AdBlockStatusDTO is exposed to the Wails frontend.
+type AdBlockStatusDTO struct {
+	Enabled            bool   `json:"enabled"`
+	FilterCount        int    `json:"filterCount"`
+	RuleSetsReady      int    `json:"ruleSetsReady"`
+	RuleSetsTotal      int    `json:"ruleSetsTotal"`
+	LastUpdatedUnix    int64  `json:"lastUpdatedUnix"`
+	LastError          string `json:"lastError,omitempty"`
+	CAInstalled        bool   `json:"caInstalled"`
+	NetworkBlocked     uint64 `json:"networkBlocked"`
+	CosmeticBlocked    uint64 `json:"cosmeticBlocked"`
+	UpdateInProgress   bool   `json:"updateInProgress"`
+	UpdatePhase        string `json:"updatePhase,omitempty"`
+	UpdateCurrent      int    `json:"updateCurrent"`
+	UpdateTotal        int    `json:"updateTotal"`
+	UpdateItem         string `json:"updateItem,omitempty"`
+	NetworkBlockActive bool   `json:"networkBlockActive"`
+	NeedsReconnect     bool   `json:"needsReconnect"`
+}
+
+func (a *App) adBlockStatusDTO() AdBlockStatusDTO {
+	enabled := false
+	if a.config != nil {
+		enabled = a.config.GetConfig().Settings.AdBlock
+	}
+	connected := false
+	engineAdBlock := false
+	if a.proxy != nil {
+		st := a.proxy.GetStatus()
+		connected = st.IsConnected
+		engineAdBlock = a.proxy.IsAdBlockActive()
+	}
+	if a.filters == nil {
+		return AdBlockStatusDTO{Enabled: enabled, CAInstalled: filter.CAInstalled()}
+	}
+	s := a.filters.Status(enabled, connected, engineAdBlock)
+	return AdBlockStatusDTO{
+		Enabled:            s.Enabled,
+		FilterCount:        s.FilterCount,
+		RuleSetsReady:      s.RuleSetsReady,
+		RuleSetsTotal:      s.RuleSetsTotal,
+		LastUpdatedUnix:    s.LastUpdatedUnix,
+		LastError:          s.LastError,
+		CAInstalled:        s.CAInstalled,
+		NetworkBlocked:     s.NetworkBlocked,
+		CosmeticBlocked:    s.CosmeticBlocked,
+		UpdateInProgress:   s.UpdateInProgress,
+		UpdatePhase:        s.UpdatePhase,
+		UpdateCurrent:      s.UpdateCurrent,
+		UpdateTotal:        s.UpdateTotal,
+		UpdateItem:         s.UpdateItem,
+		NetworkBlockActive: s.NetworkBlockActive,
+		NeedsReconnect:     s.NeedsReconnect,
+	}
+}
+
+func (a *App) GetAdBlockStatus() AdBlockStatusDTO {
+	return a.adBlockStatusDTO()
+}
+
+func (a *App) emitAdBlockProgress(p filter.UpdateProgress) {
+	if a.ctx != nil {
+		wailsRuntime.EventsEmit(a.ctx, "adblock:update-progress", p)
+	}
+}
+
+func (a *App) UpdateAdBlockFilters() error {
+	if a.filters == nil {
+		return fmt.Errorf("filter manager not initialized")
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, 2*time.Minute)
+	defer cancel()
+	progress := func(p filter.UpdateProgress) {
+		a.emitAdBlockProgress(p)
+	}
+	if err := a.filters.Update(ctx, progress); err != nil {
+		a.log.Warning(fmt.Sprintf("[ADBLOCK] Обновление баз: %v", err))
+		return err
+	}
+	st := a.adBlockStatusDTO()
+	a.log.Success(fmt.Sprintf("[ADBLOCK] Базы блокировки обновлены (%d/%d)", st.RuleSetsReady, st.RuleSetsTotal))
+	if a.proxy != nil && a.proxy.GetStatus().IsConnected && a.config != nil {
+		cfg := a.config.GetConfig()
+		result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist)
+		if !result.Success {
+			a.log.Warning(fmt.Sprintf("[ADBLOCK] Переподключение после обновления: %s", result.Message))
+		}
+	}
+	return nil
+}
+
+func (a *App) InstallAdBlockCA() error {
+	if a.filters == nil {
+		return fmt.Errorf("filter manager not initialized")
+	}
+	if err := a.filters.InstallCA(); err != nil {
+		return err
+	}
+	a.log.Success("[ADBLOCK] Корневой сертификат установлен в хранилище Windows")
+	return nil
+}
+
+func (a *App) IsAdBlockCAInstalled() bool {
+	return filter.CAInstalled()
+}
+
+func (a *App) initAdBlockFilters() {
+	if a.ctx == nil || a.filters == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(a.ctx, 2*time.Minute)
+		defer cancel()
+		if a.filters.NeedsUpdate() {
+			if err := a.filters.Update(ctx, a.emitAdBlockProgress); err != nil {
+				a.log.Warning(fmt.Sprintf("[ADBLOCK] Фоновое обновление баз: %v", err))
+			} else {
+				a.log.Info("[ADBLOCK] Базы блокировки обновлены при запуске")
+			}
+		}
+	}()
+	a.startAdBlockFilterRefresh()
+}
+
+func (a *App) startAdBlockFilterRefresh() {
+	if a.ctx == nil || a.filters == nil {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-a.ctx.Done():
+				return
+			case <-ticker.C:
+				ctx, cancel := context.WithTimeout(a.ctx, 2*time.Minute)
+				err := a.filters.Update(ctx, a.emitAdBlockProgress)
+				cancel()
+				if err != nil {
+					a.log.Warning(fmt.Sprintf("[ADBLOCK] Периодическое обновление: %v", err))
+					continue
+				}
+				a.log.Info("[ADBLOCK] Периодические базы блокировки обновлены")
+				if a.proxy != nil && a.proxy.GetStatus().IsConnected && a.config != nil {
+					cfg := a.config.GetConfig()
+					if cfg.Settings.AdBlock {
+						result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist)
+						if !result.Success {
+							a.log.Warning(fmt.Sprintf("[ADBLOCK] Переподключение: %s", result.Message))
+						}
+					}
+				}
+			}
+		}
+	}()
 }
 
 func (a *App) SetAutostart(enable bool) error {
@@ -1543,6 +1806,7 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 	}
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Timeout: 15 * time.Second, Jar: jar}
+	metadata := a.subscriptionRequestMetadata()
 
 	doFetch := func(userAgent string) ([]config.ProxyEntry, int64, int64, int64, int64, string, string, bool, error) {
 		req, err := http.NewRequest(http.MethodGet, subURL, nil)
@@ -1550,11 +1814,15 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 			return nil, 0, 0, 0, 0, "", "", false, fmt.Errorf("creating subscription request: %w", err)
 		}
 		req.Header.Set("User-Agent", userAgent)
+		// Happ / Remnawave HWID device identification headers.
+		req.Header.Set("x-device-os", metadata.Platform)
+		req.Header.Set("x-ver-os", metadata.OSVersion)
+		req.Header.Set("x-device-model", metadata.Model)
 		// Only attach HWID to HTTPS requests. On plaintext http:// the HWID
 		// would be sniffable end-to-end and would link the user's device
 		// across every network hop and intermediary — the privacy cost
 		// outweighs any HWID-based device-limit check the provider does.
-		if !insecure {
+		if !insecure && metadata.SendHWID {
 			if hwid := a.subscriptionHWID(subURL); hwid != "" {
 				req.Header.Set("x-hwid", hwid)
 			}
@@ -1601,7 +1869,7 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 		return entries, up, down, tot, exp, iconURL, profileTitle, isJSON, nil
 	}
 
-	primaryUA := fmt.Sprintf("ResultV/%s", productVersionFromWailsJSON())
+	primaryUA := metadata.UserAgent
 	entries, up, down, tot, exp, iconURL, profileTitle, isJSON, primaryErr := doFetch(primaryUA)
 
 	tryHapp := false
@@ -1753,6 +2021,19 @@ func (a *App) FetchSubscription(subURL string, allowInsecure bool) ([]config.Pro
 // target — there's no UI-side prompt for paste flows, so plaintext URLs are
 // refused outright.
 func (a *App) ParseSubscriptionText(text string) ([]config.ProxyEntry, error) {
+	if proxy.IsDeepLink(text) {
+		decoded, err := proxy.DecodeDeepLink(text)
+		if err != nil {
+			return nil, err
+		}
+		text = decoded
+	}
+	text = strings.TrimSpace(text)
+	lower := strings.ToLower(text)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		entries, _, _, _, _, _, _, ferr := a.fetchSubscriptionFromURL(text, false)
+		return entries, ferr
+	}
 	if proxy.IsEncryptedSubscription(text) {
 		if resolved, err := resolveEncryptedSubscriptionURL(text); err == nil && resolved != "" {
 			entries, _, _, _, _, _, _, ferr := a.fetchSubscriptionFromURL(resolved, false)
@@ -2238,6 +2519,22 @@ func (a *App) startSmartBlockedRefresh(cachePath string) {
 	}()
 }
 
+func (a *App) prepareForUpdateInstall() error {
+	// Abort any in-flight connect attempt so update teardown is deterministic.
+	a.CancelConnect()
+	if err := a.Disconnect(); err != nil {
+		return fmt.Errorf("disconnect before update install: %w", err)
+	}
+	// Always call Disable() before installer handover. This mirrors shutdown():
+	// stale in-memory state must not leave firewall rules behind.
+	if a.killSwitch != nil {
+		if err := a.killSwitch.Disable(); err != nil {
+			return fmt.Errorf("disable kill switch before update install: %w", err)
+		}
+	}
+	return nil
+}
+
 // StartUpdate begins the in-app update: check manifest → download → verify → install.
 // Progress and status are emitted as Wails events:
 //   - update:progress  { downloaded, total, speedBps }
@@ -2316,14 +2613,18 @@ func (a *App) StartUpdate() {
 		}
 
 		emit("update:verified", nil)
-		emit("update:installing", nil)
+		if err := a.prepareForUpdateInstall(); err != nil {
+			failEvent("install", err.Error())
+			return
+		}
 
+		emit("update:installing", nil)
 		if err := u.Install(path); err != nil {
 			failEvent("install", err.Error())
 			return
 		}
-		// Install staged the update script. Gracefully quit Wails so that
-		// WebView2 releases all exe handles before the script copies the file.
+		// Install is staged. Gracefully quit through Wails so OnShutdown runs
+		// and all proxy/kill-switch cleanup mirrors a normal app exit.
 		emit("update:restarting", nil)
 		time.Sleep(300 * time.Millisecond) // let the event reach the frontend
 		// Ensure BeforeClose allows real process exit (not "hide to tray"),

@@ -766,7 +766,11 @@ export const isSubscriptionURL = (text) => {
 };
 
 export const isEncryptedSubscription = (text) => {
-    return text.trim().startsWith("RVSUB1:");
+    const trimmed = text.trim();
+    return (
+        trimmed.startsWith("RVSUB1:") ||
+        /^resultv:(\/\/)?/i.test(trimmed)
+    );
 };
 
 export const VPN_NETWORK_OPTIONS = ["tcp", "ws", "grpc", "h2", "http", "xhttp"];

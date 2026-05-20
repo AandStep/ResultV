@@ -1,15 +1,15 @@
 {
-  "version": "3.2.0",
+  "version": "",
   "releaseTitle": {
-    "ru": "Бета для NaiveProxy, улучшение безопасности, обновление внутри приложения, фикс KillSwitch",
-    "en": "Beta for NaiveProxy, security improvements, in-app update, KillSwitch fix"
+    "ru": "Расширенене настроек приложения, фикс DNS утечек, UI улучшения, пинг и сортировка по пингу, фиксы багов",
+    "en": "Extended application settings, fixed DNS leaks, UI improvements, ping and sorting by ping, bug fixes"
   },
   "releaseNotes": {
-    "ru": "Добавлена поддержка NaiveProxy, но пока слабо протестирована, если у вас возникнут проблемы присылайте пожалуйста логи в issue. Исправлен туннель режим для macOS. Обновлены белые списки, теперь слушают дочерние процессы. Улучшена общая безопасноть приложения. Теперь после этой версии обновления будут происходить внутри приложения без необходимости заходить на гитхаб самому. Исправлен KillSwitch.",
-    "en": "Added support for NaiveProxy, but it is still poorly tested, If you encounter any problems, please send the logs to the issue. The tunnel mode for macOS has been fixed. The white lists have been updated, now they listen to child processes. The overall security of the application has been improved. Now after this version updates will take place inside the application without the need to go to GitHub yourself. KillSwitch fix."
+    "ru": "Настройки приложения расширены и разделены на удобные группы. Исправлена утечка DNS, проверка через whoer.net показывала российские DNS, теперь утечка устранена. Улучшена UI составляющая, добавлен ручной пинг серверов и сортировка по пингу, обновлены вид подписок, теперь есть заголовки-подсказки. Была вырезана функция блокировки рекламы, требует доработок, ожидайте в следующих обновлениях",
+    "en": "Application settings are extended and divided into convenient groups. DNS leak fixed, check through whoer.net showed Russian DNS, now the leak is eliminated. UI improved, manual ping of servers and sorting by ping added, subscription views updated, now there are header-hints. The function of blocking ads was removed, requires development, wait for the next updates"
   },
   "downloadUrl": "https://result-proxy.ru/",
   "platforms": {
     
   }
-}
+} 

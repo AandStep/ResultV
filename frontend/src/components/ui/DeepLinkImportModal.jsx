@@ -24,7 +24,6 @@ import { isInsecureSubscriptionError } from "../../utils/subscriptionSecurity";
 import {
   isSubscriptionURL,
   isEncryptedSubscription,
-  parseProxies,
   subscriptionLabelFromURL,
 } from "../../utils/proxyParser";
 import { useConfigContext } from "../../context/ConfigContext";
@@ -112,10 +111,19 @@ const DeepLinkImportModal = () => {
 
     (async () => {
       try {
+        // Browser-click flow gives us the already-decoded payload via the
+        // "deeplink:received" event. Paste flow sets `pendingDeepLink` to the
+        // raw resultv:// URL — decode it here so the rest of this effect
+        // operates on the same shape (URL / RVSUB1 body / proxy URI list) in
+        // both flows.
+        let resolved = text;
+        if (/^resultv:(\/\/)?/i.test(resolved)) {
+          resolved = (await wailsAPI.decodeDeepLink(resolved)).trim();
+        }
         let entries;
-        if (isSubscriptionURL(text)) {
+        if (isSubscriptionURL(resolved)) {
           try {
-            entries = await wailsAPI.fetchSubscription(text);
+            entries = await wailsAPI.fetchSubscription(resolved);
           } catch (fetchErr) {
             if (!isInsecureSubscriptionError(fetchErr)) throw fetchErr;
             const ok = await showConfirmDialog({
@@ -131,12 +139,12 @@ const DeepLinkImportModal = () => {
               setStage("error");
               return;
             }
-            entries = await wailsAPI.fetchSubscription(text, true);
+            entries = await wailsAPI.fetchSubscription(resolved, true);
           }
-        } else if (isEncryptedSubscription(text)) {
-          entries = await wailsAPI.parseSubscriptionText(text);
+        } else if (isEncryptedSubscription(resolved)) {
+          entries = await wailsAPI.parseSubscriptionText(resolved);
         } else {
-          entries = parseProxies(text);
+          entries = await wailsAPI.parseSubscriptionText(resolved);
         }
         if (myReq !== reqId.current) return;
         if (!entries || entries.length === 0) {

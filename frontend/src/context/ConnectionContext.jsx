@@ -77,17 +77,16 @@ export const ConnectionProvider = ({ children }) => {
     const { isProxyDead, stats, speedHistory, daemonStatus } = useDaemonStatus(
         isConnected,
         setIsConnected,
+        setIsConnecting,
         proxies,
         failedProxy,
         setFailedProxy,
         setActiveProxy,
         isSwitchingRef,
         addLog,
-        settings,
         activeProxy,
         statusGenerationRef,
         showAlertDialog,
-        updateSetting,
     );
 
     const { disconnectOnly, toggleConnection, selectAndConnect, deleteProxy, cancelConnect } = useDaemonControl(

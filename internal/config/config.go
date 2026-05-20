@@ -26,30 +26,27 @@ import (
 
 var ErrDecryptFailed = errors.New("не удалось расшифровать конфигурацию")
 
-
 type RoutingRules struct {
-	Mode         string   `json:"mode"`         
-	Whitelist    []string `json:"whitelist"`     
-	AppWhitelist []string `json:"appWhitelist"`  
+	Mode         string   `json:"mode"`
+	Whitelist    []string `json:"whitelist"`
+	AppWhitelist []string `json:"appWhitelist"`
 }
-
 
 type ProxyEntry struct {
 	ID       string `json:"id"`
 	IP       string `json:"ip"`
 	Port     int    `json:"port"`
-	Type     string `json:"type"`     
+	Type     string `json:"type"`
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Name     string `json:"name"`
 	Country  string `json:"country"`
-	
+
 	URI             string          `json:"uri,omitempty"`
 	Extra           json.RawMessage `json:"extra,omitempty"`
 	Provider        string          `json:"provider,omitempty"`
 	SubscriptionURL string          `json:"subscriptionUrl,omitempty"`
 }
-
 
 type Subscription struct {
 	ID        string `json:"id"`
@@ -74,22 +71,73 @@ type Subscription struct {
 	AllowInsecure bool `json:"allowInsecure,omitempty"`
 }
 
-
 type AppSettings struct {
-	Autostart           bool     `json:"autostart"`
-	KillSwitch          bool     `json:"killswitch"`
-	AdBlock             bool     `json:"adblock"`
-	Mode                string   `json:"mode"`
-	Language            string   `json:"language"`
-	Theme               string   `json:"theme"`
-	LastSelectedProxyID string   `json:"lastSelectedProxyId,omitempty"`
-	LocalPort           int      `json:"localPort,omitempty"`
-	ListenLAN           bool     `json:"listenLan,omitempty"`
-	DNSServers          []string `json:"dnsServers,omitempty"`
-	TunIPv4             string   `json:"tunIpv4,omitempty"`
-	Favorites           []string `json:"favorites,omitempty"`
+	Autostart                       bool     `json:"autostart"`
+	KillSwitch                      bool     `json:"killswitch"`
+	AdBlock                         bool     `json:"adblock"`
+	Mode                            string   `json:"mode"`
+	Language                        string   `json:"language"`
+	Theme                           string   `json:"theme"`
+	LastSelectedProxyID             string   `json:"lastSelectedProxyId,omitempty"`
+	LocalPort                       int      `json:"localPort,omitempty"`
+	ListenLAN                       bool     `json:"listenLan,omitempty"`
+	DNSServers                      []string `json:"dnsServers,omitempty"`
+	TunIPv4                         string   `json:"tunIpv4,omitempty"`
+	TunStack                        string   `json:"tunStack,omitempty"`
+	Favorites                       []string `json:"favorites,omitempty"`
+	SubscriptionAutoUpdate          *bool    `json:"subscriptionAutoUpdate,omitempty"`
+	SubscriptionUpdateIntervalHours int      `json:"subscriptionUpdateIntervalHours,omitempty"`
+	SubscriptionSendHWID            *bool    `json:"subscriptionSendHWID,omitempty"`
+	SubscriptionUserAgent           string   `json:"subscriptionUserAgent,omitempty"`
+
+	// DNSLeakProtection toggles sing-box `strict_route` on the TUN inbound.
+	// Pointer so legacy configs (where the field is absent) default to ON
+	// via EffectiveDNSLeakProtection — anything else would silently
+	// downgrade existing installs to a leaky state on upgrade.
+	DNSLeakProtection *bool `json:"dnsLeakProtection,omitempty"`
 }
 
+// EffectiveDNSLeakProtection returns true unless the user has explicitly
+// disabled DNS leak protection. Existing configs from before this setting
+// existed have nil here; we treat that as "on" so the upgrade path is safe.
+func (s AppSettings) EffectiveDNSLeakProtection() bool {
+	if s.DNSLeakProtection == nil {
+		return true
+	}
+	return *s.DNSLeakProtection
+}
+
+func (s AppSettings) EffectiveTunStack() string {
+	switch s.TunStack {
+	case "gvisor":
+		return "gvisor"
+	case "system":
+		return "system"
+	default:
+		return "system"
+	}
+}
+
+func (s AppSettings) EffectiveSubscriptionAutoUpdate() bool {
+	if s.SubscriptionAutoUpdate == nil {
+		return true
+	}
+	return *s.SubscriptionAutoUpdate
+}
+
+func (s AppSettings) EffectiveSubscriptionUpdateIntervalHours() int {
+	if s.SubscriptionUpdateIntervalHours < 1 {
+		return 6
+	}
+	return s.SubscriptionUpdateIntervalHours
+}
+
+func (s AppSettings) EffectiveSubscriptionSendHWID() bool {
+	if s.SubscriptionSendHWID == nil {
+		return true
+	}
+	return *s.SubscriptionSendHWID
+}
 
 type AppConfig struct {
 	RoutingRules  RoutingRules   `json:"routingRules"`
@@ -98,8 +146,10 @@ type AppConfig struct {
 	Subscriptions []Subscription `json:"subscriptions,omitempty"`
 }
 
-
 func DefaultConfig() AppConfig {
+	dnsLeakOn := true
+	subscriptionAutoUpdate := true
+	subscriptionSendHWID := true
 	return AppConfig{
 		RoutingRules: RoutingRules{
 			Mode:         "global",
@@ -108,13 +158,17 @@ func DefaultConfig() AppConfig {
 		},
 		Proxies: []ProxyEntry{},
 		Settings: AppSettings{
-			Mode:     "proxy",
-			Language: "ru",
-			Theme:    "dark",
+			Mode:                            "proxy",
+			Language:                        "ru",
+			Theme:                           "dark",
+			TunStack:                        "system",
+			SubscriptionAutoUpdate:          &subscriptionAutoUpdate,
+			SubscriptionUpdateIntervalHours: 6,
+			SubscriptionSendHWID:            &subscriptionSendHWID,
+			DNSLeakProtection:               &dnsLeakOn,
 		},
 	}
 }
-
 
 type Manager struct {
 	mu         sync.RWMutex
@@ -124,15 +178,12 @@ type Manager struct {
 	loaded     bool
 }
 
-
 func NewManager(crypto *CryptoService) *Manager {
 	return &Manager{
 		crypto: crypto,
 		cache:  DefaultConfig(),
 	}
 }
-
-
 
 func (m *Manager) Init(userDataPath string) error {
 	m.mu.Lock()
@@ -239,13 +290,11 @@ func legacyUserDataDir(userDataPath string) string {
 	return filepath.Join(filepath.Dir(userDataPath), "ResultProxy")
 }
 
-
 func (m *Manager) GetConfig() AppConfig {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.cache
 }
-
 
 func (m *Manager) SaveConfig(cfg AppConfig) error {
 	m.mu.Lock()
@@ -255,7 +304,6 @@ func (m *Manager) SaveConfig(cfg AppConfig) error {
 		return fmt.Errorf("config manager not initialized")
 	}
 
-	
 	cfg = ensureDefaults(cfg)
 
 	encrypted, err := m.crypto.Encrypt(cfg)
@@ -277,7 +325,6 @@ func (m *Manager) SaveConfig(cfg AppConfig) error {
 	return nil
 }
 
-
 func (m *Manager) UpdateRoutingRules(rules RoutingRules) error {
 	m.mu.Lock()
 	cfg := m.cache
@@ -286,7 +333,6 @@ func (m *Manager) UpdateRoutingRules(rules RoutingRules) error {
 	cfg.RoutingRules = rules
 	return m.SaveConfig(cfg)
 }
-
 
 func (m *Manager) UpdateSettings(settings AppSettings) error {
 	m.mu.Lock()
@@ -297,7 +343,6 @@ func (m *Manager) UpdateSettings(settings AppSettings) error {
 	return m.SaveConfig(cfg)
 }
 
-
 func (m *Manager) loadLocked() error {
 	if m.configPath == "" {
 		return nil
@@ -306,7 +351,7 @@ func (m *Manager) loadLocked() error {
 	data, err := os.ReadFile(m.configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			
+
 			m.cache = DefaultConfig()
 			m.loaded = true
 			return nil
@@ -325,7 +370,6 @@ func (m *Manager) loadLocked() error {
 	m.loaded = true
 	return nil
 }
-
 
 func ensureDefaults(cfg AppConfig) AppConfig {
 	if cfg.RoutingRules.Mode == "" {

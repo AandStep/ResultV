@@ -21,6 +21,25 @@ import wailsAPI from "../utils/wailsAPI";
 import { detectCountry } from "../utils/network";
 import { mergeSubscriptionRefreshCountries } from "../utils/proxyParser";
 
+const defaultSettings = {
+    autostart: false,
+    killswitch: false,
+    adblock: false,
+    mode: "proxy",
+    language: "ru",
+    theme: "dark",
+    localPort: 0,
+    listenLan: false,
+    dnsServers: [],
+    tunStack: "system",
+    favorites: [],
+    dnsLeakProtection: true,
+    subscriptionAutoUpdate: true,
+    subscriptionUpdateIntervalHours: 6,
+    subscriptionSendHWID: true,
+    subscriptionUserAgent: "",
+};
+
 export const useAppConfig = (addLog) => {
     const { t } = useTranslation();
     const [isConfigLoaded, setIsConfigLoaded] = useState(false);
@@ -30,18 +49,7 @@ export const useAppConfig = (addLog) => {
         whitelist: ["localhost", "127.0.0.1"],
         appWhitelist: [],
     });
-    const [settings, setSettings] = useState({
-        autostart: false,
-        killswitch: false,
-        adblock: false,
-        mode: "proxy",
-        language: "ru",
-        theme: "dark",
-        localPort: 0,
-        listenLan: false,
-        dnsServers: [],
-        favorites: [],
-    });
+    const [settings, setSettings] = useState(defaultSettings);
     const [showProtocolModal, setShowProtocolModal] = useState(false);
     const [platform, setPlatform] = useState("windows");
     const [subscriptions, setSubscriptions] = useState([]);
@@ -160,7 +168,7 @@ export const useAppConfig = (addLog) => {
                         setRoutingRules(config.routingRules);
                     }
                     if (config.settings) {
-                        setSettings(config.settings);
+                        setSettings({ ...defaultSettings, ...config.settings });
                     }
                     if (config.subscriptions && Array.isArray(config.subscriptions)) {
                         setSubscriptions(config.subscriptions);
@@ -278,11 +286,6 @@ export const useAppConfig = (addLog) => {
                 });
                 throw err;
             }
-        } else if (key === "adblock") {
-            const nextSettings = { ...settings, [key]: value };
-            setSettings(nextSettings);
-            persistSettings(nextSettings).catch(console.error);
-            wailsAPI.toggleAdBlock(value).catch(err => console.error("Ad block error:", err));
         } else if (key === "dnsServers") {
             const normalized = Array.isArray(value)
                 ? value
@@ -296,6 +299,7 @@ export const useAppConfig = (addLog) => {
                 await persistSettings(nextSettings);
                 const status = await wailsAPI.getStatus();
                 if (status?.currentProxy) {
+                    setIsApplyingMode(true);
                     await wailsAPI.applyMode(nextSettings.mode || "proxy");
                 }
             } catch (err) {
@@ -303,6 +307,8 @@ export const useAppConfig = (addLog) => {
                 const rollbackSettings = { ...settings, [key]: previousValue };
                 setSettings(rollbackSettings);
                 await persistSettings(rollbackSettings).catch(console.error);
+            } finally {
+                setIsApplyingMode(false);
             }
         } else {
             const nextSettings = { ...settings, [key]: value };
@@ -327,6 +333,7 @@ export const useAppConfig = (addLog) => {
 
     useEffect(() => {
         if (!isConfigLoaded || subscriptions.length === 0) return;
+        if (settings?.subscriptionAutoUpdate === false) return;
 
         const refreshAll = async () => {
             for (const sub of subscriptions) {
@@ -352,9 +359,11 @@ export const useAppConfig = (addLog) => {
             }
         };
 
-        const interval = setInterval(refreshAll, 6 * 60 * 60 * 1000);
+        const hours = parseInt(settings?.subscriptionUpdateIntervalHours, 10);
+        const safeHours = Number.isFinite(hours) && hours >= 1 ? hours : 6;
+        const interval = setInterval(refreshAll, safeHours * 60 * 60 * 1000);
         return () => clearInterval(interval);
-    }, [isConfigLoaded, subscriptions, addLog]);
+    }, [isConfigLoaded, subscriptions, settings?.subscriptionAutoUpdate, settings?.subscriptionUpdateIntervalHours, addLog]);
 
     const handleSaveProxy = useCallback(
         async (

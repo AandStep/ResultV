@@ -39,3 +39,6 @@ Key dependency licenses:
 | github.com/wailsapp/wails | MIT |
 | golang.org/x/sys | BSD-3-Clause |
 | github.com/getlantern/golog | Apache-2.0 |
+| github.com/AdguardTeam/urlfilter | GPL-3.0 |
+| github.com/AdguardTeam/gomitmproxy | MIT |
+| github.com/AdguardTeam/golibs | Apache-2.0 |

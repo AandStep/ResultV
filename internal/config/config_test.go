@@ -17,12 +17,95 @@ package config
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 )
+
+// TestEffectiveDNSLeakProtection_LegacyConfigDefaultsOn verifies the upgrade
+// path: configs written before the DNSLeakProtection field existed have nil
+// here, and we must treat that as ON. Otherwise existing users would
+// silently fall back to a leaky state on first run after upgrade.
+func TestEffectiveDNSLeakProtection_LegacyConfigDefaultsOn(t *testing.T) {
+	// JSON without the dnsLeakProtection field — mimics on-disk config from
+	// a release prior to this feature.
+	raw := []byte(`{"autostart":false,"killswitch":false,"adblock":false,"mode":"proxy","language":"ru","theme":"dark"}`)
+	var s AppSettings
+	if err := json.Unmarshal(raw, &s); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if s.DNSLeakProtection != nil {
+		t.Fatalf("expected nil pointer for missing field, got %v", *s.DNSLeakProtection)
+	}
+	if !s.EffectiveDNSLeakProtection() {
+		t.Fatal("legacy config without dnsLeakProtection must default to true (on)")
+	}
+}
+
+func TestEffectiveDNSLeakProtection_ExplicitlyDisabled(t *testing.T) {
+	off := false
+	s := AppSettings{DNSLeakProtection: &off}
+	if s.EffectiveDNSLeakProtection() {
+		t.Fatal("expected false when user has explicitly disabled DNS leak protection")
+	}
+}
+
+func TestEffectiveDNSLeakProtection_ExplicitlyEnabled(t *testing.T) {
+	on := true
+	s := AppSettings{DNSLeakProtection: &on}
+	if !s.EffectiveDNSLeakProtection() {
+		t.Fatal("expected true when user has explicitly enabled DNS leak protection")
+	}
+}
+
+func TestDefaultConfig_DNSLeakProtectionOn(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.Settings.DNSLeakProtection == nil {
+		t.Fatal("DefaultConfig should set DNSLeakProtection explicitly so fresh installs persist the choice")
+	}
+	if !*cfg.Settings.DNSLeakProtection {
+		t.Fatal("DefaultConfig should enable DNS leak protection by default")
+	}
+}
+
+func TestDefaultConfig_SubscriptionSettingsPreserveCurrentBehavior(t *testing.T) {
+	cfg := DefaultConfig()
+	if !cfg.Settings.EffectiveSubscriptionAutoUpdate() {
+		t.Fatal("subscription auto update should default to on")
+	}
+	if got := cfg.Settings.EffectiveSubscriptionUpdateIntervalHours(); got != 6 {
+		t.Fatalf("subscription update interval: want 6, got %d", got)
+	}
+	if !cfg.Settings.EffectiveSubscriptionSendHWID() {
+		t.Fatal("subscription HWID sending should default to on")
+	}
+	if got := cfg.Settings.EffectiveTunStack(); got != "system" {
+		t.Fatalf("TUN stack default: want system, got %q", got)
+	}
+}
+
+func TestAppSettings_LegacySubscriptionSettingsDefaults(t *testing.T) {
+	raw := []byte(`{"autostart":false,"killswitch":false,"adblock":false,"mode":"proxy","language":"ru","theme":"dark"}`)
+	var s AppSettings
+	if err := json.Unmarshal(raw, &s); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !s.EffectiveSubscriptionAutoUpdate() {
+		t.Fatal("legacy config without subscriptionAutoUpdate must default to true")
+	}
+	if got := s.EffectiveSubscriptionUpdateIntervalHours(); got != 6 {
+		t.Fatalf("legacy interval default: want 6, got %d", got)
+	}
+	if !s.EffectiveSubscriptionSendHWID() {
+		t.Fatal("legacy config without subscriptionSendHWID must default to true")
+	}
+	if got := s.EffectiveTunStack(); got != "system" {
+		t.Fatalf("legacy TUN stack default: want system, got %q", got)
+	}
+}
 
 func TestManagerLoadSaveRoundTrip(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -33,7 +116,6 @@ func TestManagerLoadSaveRoundTrip(t *testing.T) {
 		t.Fatalf("Init failed: %v", err)
 	}
 
-	
 	cfg := mgr.GetConfig()
 	if cfg.RoutingRules.Mode != "global" {
 		t.Errorf("expected default mode 'global', got %q", cfg.RoutingRules.Mode)
@@ -42,7 +124,6 @@ func TestManagerLoadSaveRoundTrip(t *testing.T) {
 		t.Errorf("expected default settings.mode 'proxy', got %q", cfg.Settings.Mode)
 	}
 
-	
 	cfg.RoutingRules.Mode = "smart"
 	cfg.Proxies = []ProxyEntry{
 		{ID: "1", IP: "1.2.3.4", Port: 8080, Type: "http", Name: "Test"},
@@ -51,13 +132,11 @@ func TestManagerLoadSaveRoundTrip(t *testing.T) {
 		t.Fatalf("SaveConfig failed: %v", err)
 	}
 
-	
 	configPath := filepath.Join(tmpDir, "proxy_config.json")
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		t.Fatal("config file was not created")
 	}
 
-	
 	mgr2 := NewManager(cs)
 	if err := mgr2.Init(tmpDir); err != nil {
 		t.Fatalf("Init (reload) failed: %v", err)
@@ -98,7 +177,6 @@ func TestManagerCorruptedFile(t *testing.T) {
 	cs := newTestCrypto()
 	mgr := NewManager(cs)
 
-	
 	if err := mgr.Init(tmpDir); err == nil || !errors.Is(err, ErrDecryptFailed) {
 		t.Fatalf("Init with corrupted file should return ErrDecryptFailed: %v", err)
 	}

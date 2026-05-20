@@ -4,21 +4,6 @@
 //go:build windows
 // +build windows
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 package systray
 
 import (
@@ -34,8 +19,6 @@ import (
 
 	"golang.org/x/sys/windows"
 )
-
-
 
 var (
 	g32                     = windows.NewLazySystemDLL("Gdi32.dll")
@@ -82,9 +65,6 @@ var (
 	pUpdateWindow          = u32.NewProc("UpdateWindow")
 )
 
-
-
-
 type wndClassEx struct {
 	Size, Style                        uint32
 	WndProc                            uintptr
@@ -94,8 +74,6 @@ type wndClassEx struct {
 	IconSm                             windows.Handle
 }
 
-
-
 func (w *wndClassEx) register() error {
 	w.Size = uint32(unsafe.Sizeof(*w))
 	res, _, err := pRegisterClass.Call(uintptr(unsafe.Pointer(w)))
@@ -104,8 +82,6 @@ func (w *wndClassEx) register() error {
 	}
 	return nil
 }
-
-
 
 func (w *wndClassEx) unregister() error {
 	res, _, err := pUnregisterClass.Call(
@@ -117,10 +93,6 @@ func (w *wndClassEx) unregister() error {
 	}
 	return nil
 }
-
-
-
-
 
 type notifyIconData struct {
 	Size                       uint32
@@ -173,8 +145,6 @@ func (nid *notifyIconData) delete() error {
 	return nil
 }
 
-
-
 type menuItemInfo struct {
 	Size, Mask, Type, State     uint32
 	ID                          uint32
@@ -185,12 +155,9 @@ type menuItemInfo struct {
 	BMPItem                     windows.Handle
 }
 
-
-
 type point struct {
 	X, Y int32
 }
-
 
 type winTray struct {
 	instance,
@@ -200,16 +167,13 @@ type winTray struct {
 
 	loadedImages   map[string]windows.Handle
 	muLoadedImages sync.RWMutex
-	
-	
+
 	menus   map[uint32]windows.Handle
 	muMenus sync.RWMutex
-	
+
 	menuOf   map[uint32]windows.Handle
 	muMenuOf sync.RWMutex
-	
-	
-	
+
 	menuItemIcons   map[uint32]windows.Handle
 	muMenuItemIcons sync.RWMutex
 	visibleItems    map[uint32][]uint32
@@ -222,8 +186,6 @@ type winTray struct {
 	wmSystrayMessage,
 	wmTaskbarCreated uint32
 }
-
-
 
 func (t *winTray) setIcon(src string) error {
 	const NIF_ICON = 0x00000002
@@ -241,8 +203,6 @@ func (t *winTray) setIcon(src string) error {
 
 	return t.nid.modify()
 }
-
-
 
 func (t *winTray) setTooltip(src string) error {
 	const NIF_TIP = 0x00000004
@@ -262,8 +222,6 @@ func (t *winTray) setTooltip(src string) error {
 
 var wt winTray
 
-
-
 func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam uintptr) (lResult uintptr) {
 	const (
 		WM_RBUTTONUP  = 0x0205
@@ -276,7 +234,7 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 	switch message {
 	case WM_COMMAND:
 		menuItemId := int32(wParam)
-		
+
 		if menuItemId != -1 {
 			systrayMenuItemSelected(uint32(wParam))
 		}
@@ -284,7 +242,7 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 		pDestroyWindow.Call(uintptr(t.window))
 		t.wcex.unregister()
 	case WM_DESTROY:
-		
+
 		defer pPostQuitMessage.Call(uintptr(int32(0)))
 		fallthrough
 	case WM_ENDSESSION:
@@ -306,13 +264,12 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 		case WM_RBUTTONUP:
 			t.showMenu()
 		}
-	case t.wmTaskbarCreated: 
+	case t.wmTaskbarCreated:
 		t.muNID.Lock()
 		t.nid.add()
 		t.muNID.Unlock()
 	default:
-		
-		
+
 		lResult, _, _ = pDefWindowProc.Call(
 			uintptr(hWnd),
 			uintptr(message),
@@ -325,11 +282,11 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 
 func (t *winTray) initInstance() error {
 	const IDI_APPLICATION = 32512
-	const IDC_ARROW = 32512 
-	
+	const IDC_ARROW = 32512
+
 	const SW_HIDE = 0
 	const CW_USEDEFAULT = 0x80000000
-	
+
 	const (
 		WS_CAPTION     = 0x00C00000
 		WS_MAXIMIZEBOX = 0x00010000
@@ -340,14 +297,13 @@ func (t *winTray) initInstance() error {
 
 		WS_OVERLAPPEDWINDOW = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX
 	)
-	
+
 	const (
 		CS_HREDRAW = 0x0002
 		CS_VREDRAW = 0x0001
 	)
 	const NIF_MESSAGE = 0x00000001
 
-	
 	const WM_USER = 0x0400
 
 	const (
@@ -362,7 +318,7 @@ func (t *winTray) initInstance() error {
 	t.menuItemIcons = make(map[uint32]windows.Handle)
 
 	taskbarEventNamePtr, _ := windows.UTF16PtrFromString("TaskbarCreated")
-	
+
 	res, _, err := pRegisterWindowMessage.Call(
 		uintptr(unsafe.Pointer(taskbarEventNamePtr)),
 	)
@@ -376,14 +332,12 @@ func (t *winTray) initInstance() error {
 	}
 	t.instance = windows.Handle(instanceHandle)
 
-	
 	iconHandle, _, err := pLoadIcon.Call(0, uintptr(IDI_APPLICATION))
 	if iconHandle == 0 {
 		return err
 	}
 	t.icon = windows.Handle(iconHandle)
 
-	
 	cursorHandle, _, err := pLoadCursor.Call(0, uintptr(IDC_ARROW))
 	if cursorHandle == 0 {
 		return err
@@ -406,7 +360,7 @@ func (t *winTray) initInstance() error {
 		Instance:   t.instance,
 		Icon:       t.icon,
 		Cursor:     t.cursor,
-		Background: windows.Handle(6), 
+		Background: windows.Handle(6),
 		ClassName:  classNamePtr,
 		IconSm:     t.icon,
 	}
@@ -456,7 +410,7 @@ func (t *winTray) initInstance() error {
 }
 
 func (t *winTray) createMenu() error {
-	const MIM_APPLYTOSUBMENUS = 0x80000000 
+	const MIM_APPLYTOSUBMENUS = 0x80000000
 
 	menuHandle, _, err := pCreatePopupMenu.Call()
 	if menuHandle == 0 {
@@ -464,7 +418,6 @@ func (t *winTray) createMenu() error {
 	}
 	t.menus[0] = windows.Handle(menuHandle)
 
-	
 	mi := struct {
 		Size, Mask, Style, Max uint32
 		Background             windows.Handle
@@ -515,7 +468,7 @@ func (t *winTray) convertToSubMenu(menuItemId uint32) (windows.Handle, error) {
 }
 
 func (t *winTray) addOrUpdateMenuItem(menuItemId uint32, parentId uint32, title string, disabled, checked bool) error {
-	
+
 	const (
 		MIIM_FTYPE   = 0x00000100
 		MIIM_BITMAP  = 0x00000080
@@ -569,7 +522,7 @@ func (t *winTray) addOrUpdateMenuItem(menuItemId uint32, parentId uint32, title 
 		t.menus[parentId] = menu
 		t.muMenus.Unlock()
 	} else if t.getVisibleItemIndex(parentId, menuItemId) != -1 {
-		
+
 		res, _, err = pSetMenuItemInfo.Call(
 			uintptr(menu),
 			uintptr(menuItemId),
@@ -579,7 +532,7 @@ func (t *winTray) addOrUpdateMenuItem(menuItemId uint32, parentId uint32, title 
 	}
 
 	if res == 0 {
-		
+
 		t.muMenus.RLock()
 		submenu, exists := t.menus[menuItemId]
 		t.muMenus.RUnlock()
@@ -608,7 +561,7 @@ func (t *winTray) addOrUpdateMenuItem(menuItemId uint32, parentId uint32, title 
 }
 
 func (t *winTray) addSeparatorMenuItem(menuItemId, parentId uint32) error {
-	
+
 	const (
 		MIIM_FTYPE = 0x00000100
 		MIIM_ID    = 0x00000002
@@ -643,7 +596,7 @@ func (t *winTray) addSeparatorMenuItem(menuItemId, parentId uint32) error {
 }
 
 func (t *winTray) hideMenuItem(menuItemId, parentId uint32) error {
-	
+
 	const MF_BYCOMMAND = 0x00000000
 	const ERROR_SUCCESS syscall.Errno = 0
 
@@ -726,14 +679,11 @@ func (t *winTray) getVisibleItemIndex(parent, val uint32) int {
 	return -1
 }
 
-
-
 func (t *winTray) loadIconFrom(src string) (windows.Handle, error) {
-	const IMAGE_ICON = 1               
-	const LR_LOADFROMFILE = 0x00000010 
-	const LR_DEFAULTSIZE = 0x00000040  
+	const IMAGE_ICON = 1
+	const LR_LOADFROMFILE = 0x00000010
+	const LR_DEFAULTSIZE = 0x00000040
 
-	
 	t.muLoadedImages.RLock()
 	h, ok := t.loadedImages[src]
 	t.muLoadedImages.RUnlock()
@@ -805,7 +755,7 @@ func registerSystray() {
 }
 
 func nativeLoop() {
-	
+
 	m := &struct {
 		WindowHandle windows.Handle
 		Message      uint32
@@ -817,10 +767,6 @@ func nativeLoop() {
 	for {
 		ret, _, err := pGetMessage.Call(uintptr(unsafe.Pointer(m)), 0, 0, 0)
 
-		
-		
-		
-		
 		switch int32(ret) {
 		case -1:
 			log.Errorf("Error at message loop: %v", err)
@@ -858,9 +804,6 @@ func iconBytesToFilePath(iconBytes []byte) (string, error) {
 	return iconFilePath, nil
 }
 
-
-
-
 func SetIcon(iconBytes []byte) {
 	iconFilePath, err := iconBytesToFilePath(iconBytes)
 	if err != nil {
@@ -873,17 +816,12 @@ func SetIcon(iconBytes []byte) {
 	}
 }
 
-
-
-
-
 func SetTemplateIcon(templateIconBytes []byte, regularIconBytes []byte) {
 	SetIcon(regularIconBytes)
 }
 
-
 func SetTitle(title string) {
-	
+
 }
 
 func (item *MenuItem) parentId() uint32 {
@@ -892,8 +830,6 @@ func (item *MenuItem) parentId() uint32 {
 	}
 	return 0
 }
-
-
 
 func (item *MenuItem) SetIcon(iconBytes []byte) {
 	iconFilePath, err := iconBytesToFilePath(iconBytes)
@@ -924,8 +860,6 @@ func (item *MenuItem) SetIcon(iconBytes []byte) {
 	}
 }
 
-
-
 func SetTooltip(tooltip string) {
 	if err := wt.setTooltip(tooltip); err != nil {
 		log.Errorf("Unable to set tooltip: %v", err)
@@ -940,10 +874,6 @@ func addOrUpdateMenuItem(item *MenuItem) {
 		return
 	}
 }
-
-
-
-
 
 func (item *MenuItem) SetTemplateIcon(templateIconBytes []byte, regularIconBytes []byte) {
 	item.SetIcon(regularIconBytes)

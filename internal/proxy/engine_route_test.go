@@ -16,11 +16,18 @@
 package proxy
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/sagernet/sing-box/include"
+	"github.com/sagernet/sing-box/option"
+	singjson "github.com/sagernet/sing/common/json"
 )
 
 func TestBuildRoute_NestedDomainException_ProducesProxyOverride(t *testing.T) {
@@ -222,6 +229,33 @@ func TestBuildTunnelModeConfig_WireGuardFinalTargetDefined(t *testing.T) {
 	}
 	if err := validateRouteFinalTarget(cfg); err != nil {
 		t.Fatalf("expected valid final target: %v", err)
+	}
+}
+
+func TestBuildTunnelModeConfig_TunStackRespectsConfig(t *testing.T) {
+	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
+		Mode:     ProxyModeTunnel,
+		Proxy:    ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		TunStack: "gvisor",
+	})
+	if len(cfg.Inbounds) == 0 {
+		t.Fatal("expected TUN inbound")
+	}
+	if got := cfg.Inbounds[0].Stack; got != "gvisor" {
+		t.Fatalf("TUN stack: want gvisor, got %q", got)
+	}
+}
+
+func TestBuildTunnelModeConfig_TunStackDefaultsToSystem(t *testing.T) {
+	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
+		Mode:  ProxyModeTunnel,
+		Proxy: ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+	})
+	if len(cfg.Inbounds) == 0 {
+		t.Fatal("expected TUN inbound")
+	}
+	if got := cfg.Inbounds[0].Stack; got != "system" {
+		t.Fatalf("default TUN stack: want system, got %q", got)
 	}
 }
 
@@ -469,6 +503,182 @@ func TestBuildProxyModeConfig_NoAppWhitelistOmitsFindProcess(t *testing.T) {
 	}
 }
 
+func TestOverlappingProbeDomains(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{name: "empty", in: nil, want: nil},
+		{name: "no overlap", in: []string{"example.com", "github.com"}, want: nil},
+		{name: "exact match", in: []string{"connectivitycheck.gstatic.com"}, want: []string{"connectivitycheck.gstatic.com"}},
+		{name: "parent suffix matches", in: []string{"gstatic.com"}, want: []string{"gstatic.com"}},
+		{name: "leading dot tolerated", in: []string{".gstatic.com"}, want: []string{".gstatic.com"}},
+		{name: "case insensitive", in: []string{"GSTATIC.COM"}, want: []string{"GSTATIC.COM"}},
+		{name: "non-parent does not match", in: []string{"gstatic.example.com"}, want: nil},
+		{name: "dedupes", in: []string{"gstatic.com", ".gstatic.com", "gstatic.com"}, want: []string{"gstatic.com", ".gstatic.com"}},
+		{name: "multiple probe roots", in: []string{"gstatic.com", "cloudflare.com"}, want: []string{"gstatic.com", "cloudflare.com"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := OverlappingProbeDomains(c.in)
+			if !reflect.DeepEqual(got, c.want) {
+				t.Fatalf("got %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// TestBuildTunnelModeConfig_AppWhitelistGetsLocalDNSRule verifies that
+// whitelisted processes resolve DNS via the local system resolver
+// instead of the proxy detour. Without this rule, SFTP/SSH clients added
+// to the whitelist would still leak DNS through the tunnel and fail with
+// connection timeouts (the DNS detour is slower than their handshake).
+func TestBuildTunnelModeConfig_AppWhitelistGetsLocalDNSRule(t *testing.T) {
+	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
+		Mode:         ProxyModeTunnel,
+		Proxy:        ProxyConfig{Type: "SS", IP: "1.2.3.4", Port: 443, Password: "p"},
+		AppWhitelist: []string{"WinSCP.exe"},
+	})
+	if cfg.DNS == nil {
+		t.Fatal("dns missing")
+	}
+	var found bool
+	for _, r := range cfg.DNS.Rules {
+		if r.Server != "local" || len(r.ProcessPathRegex) == 0 {
+			continue
+		}
+		for _, rx := range r.ProcessPathRegex {
+			if strings.Contains(rx, "WinSCP") {
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected dns rule routing whitelisted process to local resolver, got rules=%+v", cfg.DNS.Rules)
+	}
+}
+
+// TestBuildTunnelModeConfig_NoAppWhitelistNoProcessDNSRule verifies that
+// no process-DNS rule is emitted when the whitelist is empty.
+func TestBuildTunnelModeConfig_NoAppWhitelistNoProcessDNSRule(t *testing.T) {
+	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
+		Mode:  ProxyModeTunnel,
+		Proxy: ProxyConfig{Type: "SS", IP: "1.2.3.4", Port: 443, Password: "p"},
+	})
+	if cfg.DNS == nil {
+		t.Fatal("dns missing")
+	}
+	for _, r := range cfg.DNS.Rules {
+		if len(r.ProcessPathRegex) > 0 {
+			t.Fatalf("unexpected process_path_regex dns rule with empty whitelist: %+v", r)
+		}
+	}
+}
+
+// TestBuildTunnelModeConfig_StrictRouteRespectsConfig verifies that the
+// strict_route flag on the TUN inbound is driven by EngineConfig.DNSLeakProtection.
+// strict_route on Windows installs WFP filters that drop outbound packets
+// bypassing the TUN — without it, Windows' Smart Multi-Homed Name Resolution
+// leaks parallel DNS queries via the LAN adapter where Russian ISPs
+// transparently hijack UDP/53 (Rostelecom, MSK-IX).
+func TestBuildTunnelModeConfig_StrictRouteRespectsConfig(t *testing.T) {
+	on := mustBuildTunnelModeConfig(t, EngineConfig{
+		Mode:              ProxyModeTunnel,
+		Proxy:             ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		DNSLeakProtection: true,
+	})
+	if len(on.Inbounds) == 0 || on.Inbounds[0].Type != "tun" {
+		t.Fatalf("expected tun inbound, got %+v", on.Inbounds)
+	}
+	if !on.Inbounds[0].StrictRoute {
+		t.Fatalf("expected strict_route=true when DNSLeakProtection on, got %+v", on.Inbounds[0])
+	}
+
+	off := mustBuildTunnelModeConfig(t, EngineConfig{
+		Mode:              ProxyModeTunnel,
+		Proxy:             ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		DNSLeakProtection: false,
+	})
+	if off.Inbounds[0].StrictRoute {
+		t.Fatalf("expected strict_route=false when DNSLeakProtection off, got %+v", off.Inbounds[0])
+	}
+}
+
+// TestBuildTunnelModeConfig_StrictRouteSerializesToJSON guards against a
+// silent regression where the strict_route field stops marshalling — that
+// would let a "DNS leak protection on" config slip through with strict_route
+// missing from the sing-box JSON.
+func TestBuildTunnelModeConfig_StrictRouteSerializesToJSON(t *testing.T) {
+	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
+		Mode:              ProxyModeTunnel,
+		Proxy:             ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		DNSLeakProtection: true,
+	})
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"strict_route":true`) {
+		t.Fatalf("strict_route missing from json:\n%s", string(raw))
+	}
+}
+
+// TestBuildTunnelModeConfig_TunHasIPv6Address verifies that the TUN inbound
+// carries both an IPv4 and an IPv6 address by default. Without an IPv6
+// address, strict_route's WFP filter would silently blackhole all IPv6
+// traffic — leaving the user without IPv6 connectivity while connected.
+func TestBuildTunnelModeConfig_TunHasIPv6Address(t *testing.T) {
+	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
+		Mode:  ProxyModeTunnel,
+		Proxy: ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+	})
+	if len(cfg.Inbounds) == 0 {
+		t.Fatal("missing tun inbound")
+	}
+	var v4, v6 bool
+	for _, a := range cfg.Inbounds[0].Address {
+		if strings.Contains(a, ":") {
+			v6 = true
+		} else if strings.Contains(a, ".") {
+			v4 = true
+		}
+	}
+	if !v4 {
+		t.Fatalf("expected default IPv4 address in tun, got %+v", cfg.Inbounds[0].Address)
+	}
+	if !v6 {
+		t.Fatalf("expected default IPv6 address in tun (otherwise strict_route blackholes v6), got %+v", cfg.Inbounds[0].Address)
+	}
+}
+
+// TestBuildTunnelModeConfig_CustomTunIPv6Respected verifies that
+// EngineConfig.TunIPv6 overrides the default ULA prefix.
+func TestBuildTunnelModeConfig_CustomTunIPv6Respected(t *testing.T) {
+	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
+		Mode:    ProxyModeTunnel,
+		Proxy:   ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		TunIPv6: "fd00:dead:beef::1/64",
+	})
+	if len(cfg.Inbounds) == 0 {
+		t.Fatal("missing tun inbound")
+	}
+	var found bool
+	for _, a := range cfg.Inbounds[0].Address {
+		if a == "fd00:dead:beef::1/64" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("custom TunIPv6 not propagated to tun.address, got %+v", cfg.Inbounds[0].Address)
+	}
+}
+
 // TestBuildRoute_ProxyMode_AppWhitelistGetsDirectRule covers the actual
 // excluded-process rule. In proxy mode the mixed inbound terminates the
 // connection locally; sing-box looks up the originating PID and matches
@@ -495,5 +705,133 @@ func TestBuildRoute_ProxyMode_AppWhitelistGetsDirectRule(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected process_path_regex direct rule with both entries, rules=%+v", route.Rules)
+	}
+}
+
+func TestBuildAdBlockRuleSets_PrefersLocalFiles(t *testing.T) {
+	dir := t.TempDir()
+	rsDir := filepath.Join(dir, "filter", "rulesets")
+	if err := os.MkdirAll(rsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	payload := make([]byte, minLocalSRSBytes+1)
+	for i := range payload {
+		payload[i] = 0x01
+	}
+	if err := os.WriteFile(filepath.Join(rsDir, "ads.srs"), payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sets := buildAdBlockRuleSets(dir)
+	if len(sets) < 1 {
+		t.Fatal("expected rule sets")
+	}
+	if sets[0].Type != "local" || sets[0].LocalOptions.Path == "" {
+		t.Fatalf("expected local ads rule-set, got %+v", sets[0])
+	}
+}
+
+func TestBuildRoute_AdBlock_RejectRuleSets(t *testing.T) {
+	cfg := EngineConfig{AdBlock: true}
+	route := buildRoute(cfg)
+	if route == nil {
+		t.Fatal("expected route")
+	}
+	if len(route.RuleSet) < 1 {
+		t.Fatalf("expected rule_set definitions, got %+v", route.RuleSet)
+	}
+	var rejectFound bool
+	for _, r := range route.Rules {
+		if r.Action == "reject" && len(r.RuleSet) > 0 {
+			rejectFound = true
+			break
+		}
+	}
+	if !rejectFound {
+		t.Fatalf("expected reject rule with rule_set, rules=%+v", route.Rules)
+	}
+}
+
+func TestBuildDNS_AdBlock_RejectRuleSets(t *testing.T) {
+	cfg := EngineConfig{Mode: ProxyModeProxy, AdBlock: true}
+	dns := buildDNS(cfg)
+	if dns == nil {
+		t.Fatal("expected dns")
+	}
+	var rejectFound bool
+	for _, r := range dns.Rules {
+		if r.Action == "reject" && len(r.RuleSet) > 0 {
+			rejectFound = true
+			break
+		}
+	}
+	if !rejectFound {
+		t.Fatalf("expected dns reject rule, rules=%+v", dns.Rules)
+	}
+}
+
+func TestBuildRoute_AdBlockMITM_BrowserRules(t *testing.T) {
+	cfg := EngineConfig{AdBlock: true, MITMPort: 18080}
+	route := buildRoute(cfg)
+	if !route.FindProcess {
+		t.Fatal("expected find_process for MITM browser rules")
+	}
+	var mitmTCP, quicReject bool
+	for _, r := range route.Rules {
+		if r.Outbound == adBlockMITMOutbound && len(r.ProcessPathRegex) > 0 {
+			mitmTCP = true
+		}
+		if r.Action == "reject" && len(r.Network) == 1 && r.Network[0] == "udp" {
+			quicReject = true
+		}
+	}
+	if !mitmTCP {
+		t.Fatalf("expected MITM outbound rule, rules=%+v", route.Rules)
+	}
+	if !quicReject {
+		t.Fatalf("expected QUIC reject for browsers, rules=%+v", route.Rules)
+	}
+}
+
+func TestBuildProxyModeConfig_AdBlock_OutboundMITM(t *testing.T) {
+	cfg := mustBuildProxyModeConfig(t, EngineConfig{
+		AdBlock:  true,
+		MITMPort: 18080,
+		LocalPort: 14081,
+		Proxy: ProxyConfig{IP: "1.2.3.4", Port: 1080, Type: "socks5"},
+	})
+	var mitmOutbound bool
+	for _, o := range cfg.Outbounds {
+		if o.Tag == adBlockMITMOutbound {
+			mitmOutbound = true
+			if o.ServerPort != 18080 {
+				t.Fatalf("mitm port: got %d", o.ServerPort)
+			}
+		}
+	}
+	if !mitmOutbound {
+		t.Fatalf("expected adblock-mitm outbound, outbounds=%+v", cfg.Outbounds)
+	}
+}
+
+func TestBuildProxyModeConfig_AdBlock_SingBoxParses(t *testing.T) {
+	cfg := mustBuildProxyModeConfig(t, EngineConfig{
+		AdBlock:   true,
+		MITMPort:  18080,
+		LocalPort: 14081,
+		Mode:      ProxyModeProxy,
+		ListenAddr: "127.0.0.1:14081",
+		Proxy:     ProxyConfig{IP: "1.2.3.4", Port: 1080, Type: "socks5"},
+	})
+	j, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(j), `"rule_set"`) {
+		t.Fatalf("expected rule_set in config: %s", string(j))
+	}
+	ctx := include.Context(context.Background())
+	var opt option.Options
+	if err := singjson.UnmarshalContext(ctx, j, &opt); err != nil {
+		t.Fatalf("sing-box decode adblock config: %v\n%s", err, j)
 	}
 }

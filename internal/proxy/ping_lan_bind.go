@@ -23,6 +23,8 @@ import (
 	"time"
 )
 
+var pickLANBindIPv4 = preferLANBindIPv4
+
 
 func isEngineTunIPv4(ip net.IP) bool {
 	ip4 := ip.To4()
@@ -117,9 +119,9 @@ func preferLANBindIPv4() (net.IP, error) {
 
 
 func PingProxyLANBind(host string, port int) (latencyMs int64, reachable bool, reason string) {
-	local, err := preferLANBindIPv4()
+	local, err := pickLANBindIPv4()
 	if err != nil {
-		return PingProxy(host, port)
+		return 0, false, "lan_bind_unavailable"
 	}
 	d := net.Dialer{
 		Timeout:   5 * time.Second,
@@ -129,8 +131,58 @@ func PingProxyLANBind(host string, port int) (latencyMs int64, reachable bool, r
 	conn, err := d.Dial("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	elapsed := time.Since(start)
 	if err != nil {
-		return PingProxy(host, port)
+		return 0, false, pingReasonFromError(err)
 	}
 	_ = conn.Close()
 	return elapsed.Milliseconds(), true, ""
+}
+
+func PingProxyUDPLANBind(host string, port int) (latencyMs int64, reachable bool, reason string) {
+	local, err := pickLANBindIPv4()
+	if err != nil {
+		return 0, false, "lan_bind_unavailable"
+	}
+	d := net.Dialer{
+		Timeout:   3 * time.Second,
+		LocalAddr: &net.UDPAddr{IP: local, Port: 0},
+	}
+	conn, err := d.Dial("udp", net.JoinHostPort(host, strconv.Itoa(port)))
+	if err != nil {
+		return 0, false, pingReasonFromError(err)
+	}
+	defer conn.Close()
+
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	start := time.Now()
+	_, _ = conn.Write([]byte{0x00})
+	buf := make([]byte, 1)
+	_, readErr := conn.Read(buf)
+	elapsed := time.Since(start)
+	if readErr != nil {
+		if ne, ok := readErr.(net.Error); ok && ne.Timeout() {
+			return -1, true, ""
+		}
+		msg := strings.ToLower(readErr.Error())
+		if strings.Contains(msg, "refused") {
+			return 0, false, "connection_refused"
+		}
+		return -1, true, ""
+	}
+	return elapsed.Milliseconds(), true, ""
+}
+
+func PingHysteria2QUICLANBind(host string, port int) (latencyMs int64, reachable bool, reason, checkType string) {
+	latency, ok, r := PingProxyUDPLANBind(host, port)
+	if ok {
+		return latency, true, "", "udp_lan_bind"
+	}
+
+	tcpLatency, tcpOK, tcpReason := PingProxyLANBind(host, port)
+	if tcpOK {
+		return tcpLatency, true, "", "tcp_lan_fallback"
+	}
+	if r == "" {
+		r = tcpReason
+	}
+	return 0, false, r, "udp_lan_bind"
 }

@@ -32,20 +32,22 @@ import (
 	"resultproxy-wails/internal/system/processtree"
 )
 
-
 type StatusDTO struct {
-	IsConnected      bool         `json:"isConnected"`
-	IsProxyDead      bool         `json:"isProxyDead"`
-	CurrentProxy     *ProxyConfig `json:"currentProxy"`
-	Mode             ProxyMode    `json:"mode"`
-	Uptime           int64        `json:"uptime"`
-	BytesReceived    int64        `json:"bytesReceived"`
-	BytesSent        int64        `json:"bytesSent"`
-	SpeedReceived    int64        `json:"speedReceived"`
-	SpeedSent        int64        `json:"speedSent"`
-	KillSwitchActive bool         `json:"killSwitchActive"`
+	IsConnected    bool `json:"isConnected"`
+	IsEstablishing bool `json:"isEstablishing"`
+	IsProxyDead    bool `json:"isProxyDead"`
+	// KillSwitchEmergency is true only for real kill-switch incidents:
+	// upstream is dead while kill switch is armed.
+	KillSwitchEmergency bool         `json:"killSwitchEmergency"`
+	CurrentProxy        *ProxyConfig `json:"currentProxy"`
+	Mode                ProxyMode    `json:"mode"`
+	Uptime              int64        `json:"uptime"`
+	BytesReceived       int64        `json:"bytesReceived"`
+	BytesSent           int64        `json:"bytesSent"`
+	SpeedReceived       int64        `json:"speedReceived"`
+	SpeedSent           int64        `json:"speedSent"`
+	KillSwitchActive    bool         `json:"killSwitchActive"`
 }
-
 
 type ConnectResultDTO struct {
 	Success      bool   `json:"success"`
@@ -57,15 +59,12 @@ type ConnectResultDTO struct {
 	ErrorCode    string `json:"errorCode,omitempty"`
 }
 
-
 type PingResultDTO struct {
 	Reachable bool   `json:"reachable"`
 	LatencyMs int64  `json:"latencyMs"`
 	Reason    string `json:"reason,omitempty"`
 	CheckType string `json:"checkType,omitempty"`
 }
-
-
 
 type Manager struct {
 	mu       sync.Mutex
@@ -74,11 +73,13 @@ type Manager struct {
 	engine   Engine
 	router   *Router
 	sysProxy SystemProxy
-
+	sysDNS   SystemDNS
 
 	connected    bool
 	mode         ProxyMode
 	proxy        *ProxyConfig
+	pendingProxy *ProxyConfig
+	pendingMode  ProxyMode
 	killSwitch   bool
 	adBlock      bool
 	routingMode  RoutingMode
@@ -86,16 +87,17 @@ type Manager struct {
 	appWhitelist []string
 	connectedAt  time.Time
 
-
 	prevUp   int64
 	prevDown int64
 	lastTick time.Time
 
-
-	localPort  int
-	listenLAN  bool
-	dnsServers []string
-	tunIPv4    string
+	localPort         int
+	listenLAN         bool
+	dnsServers        []string
+	tunIPv4           string
+	tunIPv6           string
+	tunStack          string
+	dnsLeakProtection bool
 
 	// connect cancellation — guarded by connectCancelMu (separate from mu
 	// so Disconnect/GetStatus can call CancelConnect without deadlock)
@@ -120,12 +122,17 @@ type Manager struct {
 	// upstream dead while kill switch is armed — not on routine Connect.
 	KillSwitchFirewallEngage    func(ProxyConfig, []string)
 	KillSwitchFirewallDisengage func()
+
+	adBlockCoord AdBlockCoordinator
+	mitmPort     int
 }
 
 var pingTCPProbe = PingProxy
 var pingLANProbe = PingProxyLANBind
 var pingHysteria2Probe = PingHysteria2QUIC
+var pingHysteria2LANProbe = PingHysteria2QUICLANBind
 var pingWireGuardProbe = PingProxyUDP
+var pingWireGuardLANProbe = PingProxyUDPLANBind
 var probeTunnelHTTPProbe = probeHTTPDirect
 var probeHTTPThroughProxyProbe = probeHTTPThroughProxy
 var isAdminCheck = sys.IsAdmin
@@ -152,7 +159,6 @@ func tunnelProbeURLs() []string {
 	return out
 }
 
-
 func NewManager(log *logger.Logger) *Manager {
 	router := NewRouter()
 	engine := NewSingBoxEngine(log)
@@ -165,15 +171,23 @@ func NewManager(log *logger.Logger) *Manager {
 	}
 }
 
-
 func (m *Manager) Init(ctx context.Context) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	m.ctx = ctx
 	m.sysProxy = newSystemProxy(m.router)
+	m.sysDNS = NewSystemDNS()
 	m.procTracker = processtree.New(nil)
 	m.procTracker.OnChange(m.onProcessTreeChange)
+
+	// Crash recovery: if a prior run crashed mid-session with the system DNS
+	// pointing at our resolvers, the snapshot on disk is the only way to give
+	// the user back their original DNS. Best-effort — failure here mustn't
+	// block app startup.
+	if err := m.sysDNS.Restore(); err != nil {
+		m.log.Warning(fmt.Sprintf("[СИСТЕМА] Не удалось восстановить DNS из снапшота: %v", err))
+	}
 }
 
 // effectiveAppWhitelist merges user-specified roots with currently-running
@@ -187,6 +201,35 @@ func (m *Manager) effectiveAppWhitelist(userRoots []string) []string {
 	}
 	snap := processtree.Scan(userRoots)
 	return mergeAppWhitelist(userRoots, snap.Descendants)
+}
+
+// warnProbeDomainOverlap logs a one-line notice when the user's
+// domain-whitelist intersects with the tunnel health-probe domains.
+// Probe-domain rules in buildRoute precede the whitelist rules, so
+// e.g. ".gstatic.com" in the whitelist won't actually route
+// connectivitycheck.gstatic.com via direct — that one host is forced
+// through the proxy for the post-start probe. Logging keeps the user
+// from blaming the whitelist for "not working".
+func (m *Manager) warnProbeDomainOverlap(mode ProxyMode, proxyTypeLower string, whitelist []string) {
+	if m == nil || m.log == nil {
+		return
+	}
+	if mode != ProxyModeTunnel {
+		return
+	}
+	if proxyTypeLower == "wireguard" || proxyTypeLower == "amneziawg" {
+		// Endpoint protocols skip the probe-domain route override, so
+		// there's nothing to warn about.
+		return
+	}
+	hits := OverlappingProbeDomains(whitelist)
+	if len(hits) == 0 {
+		return
+	}
+	m.log.Warning(fmt.Sprintf(
+		"[PROXY] Whitelist %v совпадает с probe-доменами (%v). Они принудительно идут через прокси первые ~1-2 сек для health-check — это не баг whitelist.",
+		hits, tunnelProbeDomains,
+	))
 }
 
 // mergeAppWhitelist returns user roots followed by any descendants that
@@ -294,11 +337,39 @@ func (m *Manager) stopProcessTrackerLocked() {
 	m.procTracker.Stop()
 }
 
-
 func (m *Manager) LoadBlockedLists(paths ...string) {
 	m.router.LoadBlockedLists(paths...)
 }
 
+// SetAdBlockCoordinator wires HTTPS MITM filter lifecycle (optional).
+func (m *Manager) SetAdBlockCoordinator(c AdBlockCoordinator) {
+	m.mu.Lock()
+	m.adBlockCoord = c
+	m.mu.Unlock()
+}
+
+func (m *Manager) prepareAdBlock(cfg *EngineConfig, adBlock bool, upstreamPort int) error {
+	m.stopAdBlockMITM()
+	cfg.MITMPort = 0
+	if !adBlock {
+		cfg.AdBlock = false
+		return nil
+	}
+	cfg.AdBlock = true
+	// HTTPS MITM is not wired through sing-box outbounds: routing browser TLS to a
+	// local http outbound breaks tunnel mode (Steam, games, WebView) with
+	// "unexpected EOF" and is fragile with process detection on Windows.
+	// Network blocking via sing-box rule_set reject remains active.
+	_ = upstreamPort
+	return nil
+}
+
+func (m *Manager) stopAdBlockMITM() {
+	if m.adBlockCoord != nil {
+		m.adBlockCoord.StopMITM()
+	}
+	m.mitmPort = 0
+}
 
 // setConnectCancel stores the cancel func for the active Connect operation.
 func (m *Manager) setConnectCancel(cancel context.CancelFunc) {
@@ -326,7 +397,8 @@ func (m *Manager) CancelConnect() {
 func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode,
 	routingMode RoutingMode, whitelist, appWhitelist []string,
 	killSwitch, adBlock bool,
-	localPort int, listenLAN bool, dnsServers []string, tunIPv4 string) ConnectResultDTO {
+	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
+	dnsLeakProtection bool) ConnectResultDTO {
 
 	// ── Phase 1: quick setup under lock ──────────────────────────────────────
 	m.mu.Lock()
@@ -410,21 +482,34 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 	// reload as soon as the tracker's first scan discovers existing children.
 	effectiveAppWhitelist := m.effectiveAppWhitelist(appWhitelist)
 
+	m.warnProbeDomainOverlap(mode, proxyTypeLower, whitelist)
+
 	engineCfg := EngineConfig{
-		Proxy:        proxy,
-		Mode:         mode,
-		ListenAddr:   fmt.Sprintf("%s:%d", listenHost, actualLocalPort),
-		RoutingMode:  routingMode,
-		Whitelist:    whitelist,
-		AppWhitelist: effectiveAppWhitelist,
-		AdBlock:      adBlock,
-		KillSwitch:   killSwitch,
-		LocalPort:    actualLocalPort,
-		DNSServers:   dnsServers,
-		TunIPv4:      tunIPv4,
-		DataDir:      resultProxyDataDir(),
+		Proxy:             proxy,
+		Mode:              mode,
+		ListenAddr:        fmt.Sprintf("%s:%d", listenHost, actualLocalPort),
+		RoutingMode:       routingMode,
+		Whitelist:         whitelist,
+		AppWhitelist:      effectiveAppWhitelist,
+		KillSwitch:        killSwitch,
+		LocalPort:         actualLocalPort,
+		DNSServers:        dnsServers,
+		TunIPv4:           tunIPv4,
+		TunIPv6:           tunIPv6,
+		TunStack:          m.tunStack,
+		DNSLeakProtection: dnsLeakProtection,
+		DataDir:           resultProxyDataDir(),
+	}
+	if err := m.prepareAdBlock(&engineCfg, adBlock, actualLocalPort); err != nil {
+		m.mu.Unlock()
+		return ConnectResultDTO{
+			Success: false,
+			Message: fmt.Sprintf("Блокировка рекламы: %v", err),
+			Reason:  err.Error(),
+		}
 	}
 	if code, err := validateEngineConfig(engineCfg); err != nil {
+		m.stopAdBlockMITM()
 		m.mu.Unlock()
 		return ConnectResultDTO{
 			Success:   false,
@@ -436,6 +521,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 
 	// Release lock before slow engine start + probes so Disconnect/GetStatus
 	// remain responsive while the connection is being established.
+	m.setPendingLocked(proxy, mode)
 	m.mu.Unlock()
 
 	// ── Phase 2: slow operations — no lock held ───────────────────────────────
@@ -452,6 +538,11 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 	// connectCtx отменяется когда Connect() возвращается — если передать его движку,
 	// sing-box начнёт умирать сразу после установки соединения (DNS context canceled).
 	if err := m.engine.Start(ctx, engineCfg); err != nil {
+		m.stopAdBlockMITM()
+		m.mu.Lock()
+		m.clearPendingLocked()
+		m.mu.Unlock()
+		m.emitStatus()
 		tunnelFailed, reason, errorCode := ClassifyEngineStartError(mode, err)
 		m.log.Warning(fmt.Sprintf("[PROXY] sing-box не запустился: %v", err))
 
@@ -477,8 +568,11 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 				m.listenLAN = listenLAN
 				m.dnsServers = dnsServers
 				m.tunIPv4 = tunIPv4
+				m.tunIPv6 = tunIPv6
+				m.dnsLeakProtection = dnsLeakProtection
+				m.clearPendingLocked()
 				m.startHealthWatchdogLocked(proxy, mode)
-				m.emitStatus()
+				m.emitStatusLocked()
 				m.mu.Unlock()
 				return ConnectResultDTO{
 					Success:      true,
@@ -501,9 +595,15 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 		}
 	}
 
+	m.emitStatus()
+
 	proxyExtra := parseExtra(proxy)
 	if code, reason := runPostStartProbe(connectCtx, proxyTypeLower, proxy.IP, proxy.Port, actualLocalPort, mode, proxyExtra); code != "" {
 		_ = m.engine.Stop()
+		m.mu.Lock()
+		m.clearPendingLocked()
+		m.mu.Unlock()
+		m.emitStatus()
 		if code == "cancelled" {
 			return ConnectResultDTO{
 				Success:   false,
@@ -553,6 +653,36 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 		}
 	}
 
+	// Plug DNS leaks for both modes (Windows-side adapter DNS override):
+	//
+	//   Proxy mode — apps that don't honor the system HTTP/SOCKS proxy
+	//   (WinSCP, ssh, native TCP) keep resolving via the DHCP DNS — the
+	//   ISP. Repoint the OS resolver at our upstreams.
+	//
+	//   Tunnel mode — Windows DNS Client uses Smart Multi-Homed Name
+	//   Resolution: queries are sent from every adapter in parallel with
+	//   that adapter's configured DNS as destination. Windows binds those
+	//   sockets to the originating adapter, bypassing the routing table —
+	//   so auto_route's 0.0.0.0/0-via-TUN doesn't pull them in, and the
+	//   hijack-dns rule never fires for those packets. Result: queries
+	//   leak to whatever DNS the LAN adapter has (ISP). Unifying every
+	//   adapter's DNS to our resolvers fixes this: even if a parallel
+	//   query escapes via the LAN adapter, it now reaches 1.1.1.1 instead
+	//   of Yandex/Rostelecom.
+	//
+	// WG/AWG endpoint protocols are skipped — wireguard manages DNS via
+	// peer config and would race with us. Health-probe domains intentionally
+	// keep going through the proxy regardless.
+	skipDNSOverride := isEndpointProtocol
+	if !skipDNSOverride && m.sysDNS != nil {
+		if err := m.sysDNS.Override(dnsOverrideServers(dnsServers)); err != nil {
+			m.log.Warning(fmt.Sprintf("[СИСТЕМА] DNS leak protection не применён: %v", err))
+		} else {
+			m.log.Success("[СИСТЕМА] Системный DNS перенаправлен на защищённые резолверы")
+		}
+	}
+
+	m.clearPendingLocked()
 	m.connected = true
 	m.mode = mode
 	m.proxy = &proxy
@@ -569,9 +699,11 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 	m.listenLAN = listenLAN
 	m.dnsServers = dnsServers
 	m.tunIPv4 = tunIPv4
+	m.tunIPv6 = tunIPv6
+	m.dnsLeakProtection = dnsLeakProtection
 	m.startProcessTrackerLocked()
 	m.startHealthWatchdogLocked(proxy, mode)
-	m.emitStatus()
+	m.emitStatusLocked()
 	m.mu.Unlock()
 
 	if proxy.SubscriptionURL != "" {
@@ -587,12 +719,39 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 	}
 }
 
+// dnsOverrideServers picks resolver IPs to push into the OS resolver list
+// during a Proxy-mode session. User-configured DNS wins; otherwise default
+// to Cloudflare + Google so the user at least leaks to neutral resolvers
+// instead of their ISP. Returns IP literals only (the override layer
+// rejects anything that isn't a numeric address).
+func dnsOverrideServers(custom []string) []string {
+	out := make([]string, 0, 2)
+	seen := make(map[string]struct{}, len(custom))
+	for _, s := range custom {
+		host, _ := splitDNSServer(s)
+		host = strings.TrimSpace(host)
+		if host == "" {
+			continue
+		}
+		if _, dup := seen[host]; dup {
+			continue
+		}
+		seen[host] = struct{}{}
+		out = append(out, host)
+	}
+	if len(out) == 0 {
+		return []string{"1.1.1.1", "8.8.8.8"}
+	}
+	return out
+}
+
 // connectLocked is the internal reconnect path used by SetMode/ReconnectWithRoutingRules.
 // Caller must hold m.mu.
 func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode ProxyMode,
 	routingMode RoutingMode, whitelist, appWhitelist []string,
 	killSwitch, adBlock bool,
-	localPort int, listenLAN bool, dnsServers []string, tunIPv4 string) ConnectResultDTO {
+	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
+	dnsLeakProtection bool) ConnectResultDTO {
 	if m.connected {
 		m.disconnectLocked()
 	}
@@ -636,21 +795,33 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 
 	effectiveAppWhitelist := m.effectiveAppWhitelist(appWhitelist)
 
+	m.warnProbeDomainOverlap(mode, proxyTypeLower, whitelist)
+
 	engineCfg := EngineConfig{
-		Proxy:        proxy,
-		Mode:         mode,
-		ListenAddr:   fmt.Sprintf("%s:%d", listenHost, actualLocalPort),
-		RoutingMode:  routingMode,
-		Whitelist:    whitelist,
-		AppWhitelist: effectiveAppWhitelist,
-		AdBlock:      adBlock,
-		KillSwitch:   killSwitch,
-		LocalPort:    actualLocalPort,
-		DNSServers:   dnsServers,
-		TunIPv4:      tunIPv4,
-		DataDir:      resultProxyDataDir(),
+		Proxy:             proxy,
+		Mode:              mode,
+		ListenAddr:        fmt.Sprintf("%s:%d", listenHost, actualLocalPort),
+		RoutingMode:       routingMode,
+		Whitelist:         whitelist,
+		AppWhitelist:      effectiveAppWhitelist,
+		KillSwitch:        killSwitch,
+		LocalPort:         actualLocalPort,
+		DNSServers:        dnsServers,
+		TunIPv4:           tunIPv4,
+		TunIPv6:           tunIPv6,
+		TunStack:          m.tunStack,
+		DNSLeakProtection: dnsLeakProtection,
+		DataDir:           resultProxyDataDir(),
+	}
+	if err := m.prepareAdBlock(&engineCfg, adBlock, actualLocalPort); err != nil {
+		return ConnectResultDTO{
+			Success: false,
+			Message: fmt.Sprintf("Блокировка рекламы: %v", err),
+			Reason:  err.Error(),
+		}
 	}
 	if code, err := validateEngineConfig(engineCfg); err != nil {
+		m.stopAdBlockMITM()
 		return ConnectResultDTO{
 			Success:   false,
 			Message:   err.Error(),
@@ -659,7 +830,12 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 		}
 	}
 
+	m.setPendingLocked(proxy, mode)
+
 	if err := m.engine.Start(ctx, engineCfg); err != nil {
+		m.stopAdBlockMITM()
+		m.clearPendingLocked()
+		m.emitStatusLocked()
 		tunnelFailed, reason, errorCode := ClassifyEngineStartError(mode, err)
 		m.log.Error(fmt.Sprintf("[PROXY] Ошибка запуска движка: %v", err))
 		return ConnectResultDTO{
@@ -671,6 +847,8 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 		}
 	}
 
+	m.emitStatusLocked()
+
 	probeCtxLocked := ctx
 	if probeCtxLocked == nil {
 		probeCtxLocked = context.Background()
@@ -678,6 +856,8 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 	proxyExtraLocked := parseExtra(proxy)
 	if code, reason := runPostStartProbe(probeCtxLocked, proxyTypeLower, proxy.IP, proxy.Port, actualLocalPort, mode, proxyExtraLocked); code != "" {
 		_ = m.engine.Stop()
+		m.clearPendingLocked()
+		m.emitStatusLocked()
 		return ConnectResultDTO{
 			Success:   false,
 			Message:   reason,
@@ -700,6 +880,17 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 		}
 	}
 
+	// See main Connect() for the full rationale. Tunnel + non-WG/AWG also
+	// needs adapter DNS unified to neutralize Smart Multi-Homed Resolution.
+	if !isEndpointProtocol && m.sysDNS != nil {
+		if err := m.sysDNS.Override(dnsOverrideServers(dnsServers)); err != nil {
+			m.log.Warning(fmt.Sprintf("[СИСТЕМА] DNS leak protection не применён: %v", err))
+		} else {
+			m.log.Success("[СИСТЕМА] Системный DNS перенаправлен на защищённые резолверы")
+		}
+	}
+
+	m.clearPendingLocked()
 	m.connected = true
 	m.mode = mode
 	m.proxy = &proxy
@@ -716,9 +907,11 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 	m.listenLAN = listenLAN
 	m.dnsServers = dnsServers
 	m.tunIPv4 = tunIPv4
+	m.tunIPv6 = tunIPv6
+	m.dnsLeakProtection = dnsLeakProtection
 	m.startProcessTrackerLocked()
 	m.startHealthWatchdogLocked(proxy, mode)
-	m.emitStatus()
+	m.emitStatusLocked()
 
 	if proxy.SubscriptionURL != "" {
 		m.log.Success(fmt.Sprintf("[PROXY] Подключено (%s)", proxy.Type))
@@ -1048,8 +1241,6 @@ func runPostStartProbe(ctx context.Context, proxyTypeLower, ip string, port, loc
 	return "", ""
 }
 
-
-
 func probeHTTPThroughProxy(proxyAddr string) (bool, string) {
 	proxyURL, _ := url.Parse("http://" + proxyAddr)
 	client := &http.Client{
@@ -1136,7 +1327,6 @@ func isProxyProbeResponseAcceptable(statusCode int) bool {
 	return statusCode >= 100
 }
 
-
 func (m *Manager) Disconnect() error {
 	// Abort any in-progress Connect so its goroutines stop.
 	m.CancelConnect()
@@ -1148,6 +1338,7 @@ func (m *Manager) Disconnect() error {
 	// Disconnect() would leave the engine alive, causing the next Connect()
 	// to fail with "engine already running".
 	_ = m.engine.Stop()
+	m.stopAdBlockMITM()
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1163,12 +1354,19 @@ func (m *Manager) Disconnect() error {
 		}
 	}
 
+	if m.sysDNS != nil {
+		if err := m.sysDNS.Restore(); err != nil {
+			m.log.Warning(fmt.Sprintf("[СИСТЕМА] Ошибка восстановления DNS: %v", err))
+		}
+	}
+
 	if m.connected {
 		m.log.Info("[PROXY] Отключение...")
 	}
 	m.connected = false
 	m.proxy = nil
-	m.emitStatus()
+	m.clearPendingLocked()
+	m.emitStatusLocked()
 	return nil
 }
 
@@ -1181,12 +1379,12 @@ func (m *Manager) disconnectLocked() error {
 
 	m.stopProcessTrackerLocked()
 	m.stopHealthWatchdogLocked()
+	m.stopAdBlockMITM()
 
 	if err := m.engine.Stop(); err != nil {
 		m.log.Error(fmt.Sprintf("[PROXY] Ошибка остановки движка: %v", err))
 	}
 
-	
 	if m.sysProxy != nil {
 		if err := m.sysProxy.Disable(); err != nil {
 			m.log.Warning(fmt.Sprintf("[СИСТЕМА] Ошибка отключения прокси: %v", err))
@@ -1195,15 +1393,20 @@ func (m *Manager) disconnectLocked() error {
 		}
 	}
 
+	if m.sysDNS != nil {
+		if err := m.sysDNS.Restore(); err != nil {
+			m.log.Warning(fmt.Sprintf("[СИСТЕМА] Ошибка восстановления DNS: %v", err))
+		}
+	}
+
 	m.connected = false
 	m.proxy = nil
+	m.clearPendingLocked()
 
-	
-	m.emitStatus()
+	m.emitStatusLocked()
 
 	return nil
 }
-
 
 func (m *Manager) SetMode(mode ProxyMode) error {
 	m.mu.Lock()
@@ -1221,7 +1424,6 @@ func (m *Manager) SetMode(mode ProxyMode) error {
 	whitelist := append([]string(nil), m.whitelist...)
 	appWhitelist := append([]string(nil), m.appWhitelist...)
 
-	
 	if wasConnected {
 		m.disconnectLocked()
 	}
@@ -1229,7 +1431,6 @@ func (m *Manager) SetMode(mode ProxyMode) error {
 	m.mode = mode
 	m.log.Info(fmt.Sprintf("[PROXY] Режим изменен: %s", mode))
 
-	
 	if wasConnected && proxy != nil {
 		res := m.connectLocked(
 			m.ctx,
@@ -1244,6 +1445,8 @@ func (m *Manager) SetMode(mode ProxyMode) error {
 			m.listenLAN,
 			m.dnsServers,
 			m.tunIPv4,
+			m.tunIPv6,
+			m.dnsLeakProtection,
 		)
 		if !res.Success {
 			return fmt.Errorf("reconnect after mode switch failed: %s", res.Message)
@@ -1253,7 +1456,11 @@ func (m *Manager) SetMode(mode ProxyMode) error {
 	return nil
 }
 
-
+func (m *Manager) SetTunStack(stack string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.tunStack = stack
+}
 
 func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode RoutingMode, whitelist, appWhitelist []string) ConnectResultDTO {
 	m.mu.Lock()
@@ -1271,10 +1478,18 @@ func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode Rou
 	listenLAN := m.listenLAN
 	dServers := m.dnsServers
 	tIPv4 := m.tunIPv4
+	tIPv6 := m.tunIPv6
+	dnsLeak := m.dnsLeakProtection
 
-	return m.connectLocked(ctx, p, mode, routingMode, whitelist, appWhitelist, killSwitch, adBlock, lPort, listenLAN, dServers, tIPv4)
+	return m.connectLocked(ctx, p, mode, routingMode, whitelist, appWhitelist, killSwitch, adBlock, lPort, listenLAN, dServers, tIPv4, tIPv6, dnsLeak)
 }
 
+// IsAdBlockActive reports whether the running sing-box engine has ad blocking enabled.
+func (m *Manager) IsAdBlockActive() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.adBlock
+}
 
 func (m *Manager) GetStatus() StatusDTO {
 	m.mu.Lock()
@@ -1305,28 +1520,14 @@ func (m *Manager) GetStatus() StatusDTO {
 		m.lastTick = now
 	}
 
-	return StatusDTO{
-		IsConnected:      m.connected,
-		IsProxyDead:      m.proxyDead,
-		CurrentProxy:     m.proxy,
-		Mode:             m.mode,
-		Uptime:           uptime,
-		BytesReceived:    bytesDown,
-		BytesSent:        bytesUp,
-		SpeedReceived:    speedDown,
-		SpeedSent:        speedUp,
-		KillSwitchActive: m.killSwitch,
-	}
+	return m.buildStatusLocked(uptime, bytesDown, bytesUp, speedDown, speedUp)
 }
-
 
 func (m *Manager) GetMode() ProxyMode {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.mode
 }
-
-
 
 func (m *Manager) Ping(ip string, port int, proxyType string) PingResultDTO {
 	m.mu.Lock()
@@ -1342,7 +1543,6 @@ func (m *Manager) Ping(ip string, port int, proxyType string) PingResultDTO {
 
 	ptUpper := strings.ToUpper(strings.TrimSpace(proxyType))
 
-	
 	isActiveProxy := false
 	if activeProxy != nil &&
 		strings.EqualFold(strings.TrimSpace(activeProxy.IP), strings.TrimSpace(ip)) &&
@@ -1354,12 +1554,11 @@ func (m *Manager) Ping(ip string, port int, proxyType string) PingResultDTO {
 	isWireGuard := ptUpper == "WIREGUARD" || ptUpper == "AMNEZIAWG"
 	isUDPProtocol := isHysteria2 || isWireGuard
 
-	
 	if connected && isActiveProxy && isUDPProtocol {
 		if m.engine != nil && m.engine.IsRunning() {
 			reachable = true
 			reason = "session_active"
-			
+
 			latency = -1
 			if isHysteria2 {
 				checkType = "hysteria2_session"
@@ -1367,12 +1566,12 @@ func (m *Manager) Ping(ip string, port int, proxyType string) PingResultDTO {
 				checkType = "wireguard_session"
 			}
 		} else {
-			
+
 			if isHysteria2 {
-				
+
 				latency, reachable, reason, checkType = pingHysteria2Probe(ip, port)
 			} else {
-				
+
 				latency, reachable, reason = pingTCPProbe(ip, port)
 				checkType = "tcp"
 			}
@@ -1380,16 +1579,21 @@ func (m *Manager) Ping(ip string, port int, proxyType string) PingResultDTO {
 		if !reachable {
 			m.log.Warning(fmt.Sprintf("[PING] %s check failed: %s:%d reason=%s", ptUpper, ip, port, reason))
 		}
+	} else if connected && mode == ProxyModeTunnel {
+		if isHysteria2 {
+			latency, reachable, reason, checkType = pingHysteria2LANProbe(ip, port)
+		} else if isWireGuard {
+			latency, reachable, reason = pingWireGuardLANProbe(ip, port)
+			checkType = "udp_lan_bind"
+		} else {
+			latency, reachable, reason = pingLANProbe(ip, port)
+			checkType = "tcp_lan_bind"
+		}
 	} else if isHysteria2 {
-		
 		latency, reachable, reason, checkType = pingHysteria2Probe(ip, port)
 	} else if isWireGuard {
-		
-		latency, reachable, reason = pingTCPProbe(ip, port)
-		checkType = "tcp"
-	} else if connected && mode == ProxyModeTunnel {
-		latency, reachable, reason = pingLANProbe(ip, port)
-		checkType = "tcp_lan_bind"
+		latency, reachable, reason = pingWireGuardProbe(ip, port)
+		checkType = "udp"
 	} else {
 		latency, reachable, reason = pingTCPProbe(ip, port)
 		checkType = "tcp"
@@ -1402,7 +1606,6 @@ func (m *Manager) Ping(ip string, port int, proxyType string) PingResultDTO {
 		CheckType: checkType,
 	}
 }
-
 
 // startHealthWatchdogLocked starts a goroutine that pings the proxy server
 // every 5 seconds. After two consecutive failures it flips m.proxyDead and
@@ -1477,7 +1680,7 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, proxy ProxyConfig, mode
 			if wasDead {
 				m.proxyDead = false
 				m.log.Success("[KILL SWITCH] VPN-сервер снова доступен")
-				m.emitStatus()
+				m.emitStatusLocked()
 				disengageFn = m.KillSwitchFirewallDisengage
 			}
 			m.mu.Unlock()
@@ -1504,7 +1707,7 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, proxy ProxyConfig, mode
 			} else {
 				m.log.Warning(fmt.Sprintf("[PROXY] VPN-сервер %s:%d недоступен", proxy.IP, proxy.Port))
 			}
-			m.emitStatus()
+			m.emitStatusLocked()
 		}
 		m.mu.Unlock()
 		if shouldEngage && engageFn != nil {
@@ -1516,8 +1719,22 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, proxy ProxyConfig, mode
 // probeProxyAlive picks the right probe for the proxy's transport. HYSTERIA2
 // and WireGuard speak UDP, the rest TCP — a plain TCP connect would falsely
 // pass/fail for UDP endpoints.
-func (m *Manager) probeProxyAlive(proxy ProxyConfig, _ ProxyMode) bool {
+func (m *Manager) probeProxyAlive(proxy ProxyConfig, mode ProxyMode) bool {
 	pt := strings.ToUpper(strings.TrimSpace(proxy.Type))
+	if mode == ProxyModeTunnel {
+		switch pt {
+		case "HYSTERIA2":
+			_, reachable, _, _ := pingHysteria2LANProbe(proxy.IP, proxy.Port)
+			return reachable
+		case "WIREGUARD", "AMNEZIAWG":
+			_, reachable, _ := pingWireGuardLANProbe(proxy.IP, proxy.Port)
+			return reachable
+		default:
+			_, reachable, _ := pingLANProbe(proxy.IP, proxy.Port)
+			return reachable
+		}
+	}
+
 	switch pt {
 	case "HYSTERIA2":
 		_, reachable, _, _ := pingHysteria2Probe(proxy.IP, proxy.Port)
@@ -1538,7 +1755,7 @@ func (m *Manager) ToggleKillSwitch(enable bool) error {
 	m.killSwitch = enable
 
 	if !enable && m.sysProxy != nil {
-		
+
 		if !m.connected {
 			if err := m.sysProxy.Disable(); err != nil {
 				return fmt.Errorf("disabling kill switch: %w", err)
@@ -1549,7 +1766,6 @@ func (m *Manager) ToggleKillSwitch(enable bool) error {
 
 	return nil
 }
-
 
 func (m *Manager) Shutdown() {
 	m.mu.Lock()
@@ -1562,18 +1778,53 @@ func (m *Manager) Shutdown() {
 		m.engine.Stop()
 	}
 
-
 	if m.sysProxy != nil {
 		m.sysProxy.DisableSync()
 	}
 }
 
-
 func (m *Manager) GetRouter() *Router {
 	return m.router
 }
 
-func (m *Manager) emitStatus() {
+func (m *Manager) setPendingLocked(proxy ProxyConfig, mode ProxyMode) {
+	p := proxy
+	m.pendingProxy = &p
+	m.pendingMode = mode
+}
+
+func (m *Manager) clearPendingLocked() {
+	m.pendingProxy = nil
+	m.pendingMode = ""
+}
+
+func (m *Manager) buildStatusLocked(uptime, bytesDown, bytesUp, speedDown, speedUp int64) StatusDTO {
+	isEstablishing := m.engine != nil && m.engine.IsRunning() && !m.connected
+	currentProxy := m.proxy
+	if currentProxy == nil && isEstablishing {
+		currentProxy = m.pendingProxy
+	}
+	mode := m.mode
+	if isEstablishing && m.pendingMode != "" {
+		mode = m.pendingMode
+	}
+	return StatusDTO{
+		IsConnected:         m.connected,
+		IsEstablishing:      isEstablishing,
+		IsProxyDead:         m.proxyDead,
+		KillSwitchEmergency: m.proxyDead && m.killSwitch,
+		CurrentProxy:        currentProxy,
+		Mode:                mode,
+		Uptime:              uptime,
+		BytesReceived:       bytesDown,
+		BytesSent:           bytesUp,
+		SpeedReceived:       speedDown,
+		SpeedSent:           speedUp,
+		KillSwitchActive:    m.killSwitch,
+	}
+}
+
+func (m *Manager) emitStatusLocked() {
 	if m.ctx == nil {
 		return
 	}
@@ -1581,13 +1832,22 @@ func (m *Manager) emitStatus() {
 	if m.connected && !m.connectedAt.IsZero() {
 		uptime = int64(time.Since(m.connectedAt).Seconds())
 	}
-	status := StatusDTO{
-		IsConnected:      m.connected,
-		IsProxyDead:      m.proxyDead,
-		CurrentProxy:     m.proxy,
-		Mode:             m.mode,
-		Uptime:           uptime,
-		KillSwitchActive: m.killSwitch,
+	wailsRuntime.EventsEmit(m.ctx, "status:update", m.buildStatusLocked(uptime, 0, 0, 0, 0))
+}
+
+func (m *Manager) emitStatus() {
+	if m.ctx == nil {
+		return
 	}
+	m.mu.Lock()
+	var uptime int64
+	var bytesUp, bytesDown int64
+	var speedUp, speedDown int64
+	if m.connected {
+		uptime = int64(time.Since(m.connectedAt).Seconds())
+		bytesUp, bytesDown = m.engine.GetTrafficStats()
+	}
+	status := m.buildStatusLocked(uptime, bytesDown, bytesUp, speedUp, speedDown)
+	m.mu.Unlock()
 	wailsRuntime.EventsEmit(m.ctx, "status:update", status)
 }

@@ -220,6 +220,7 @@ export const useDaemonControl = (
         } catch (error) {
             bumpGen();
             isSwitchingRef.current = false;
+            setIsConnected(false);
             setIsConnecting(false);
             setIsDisconnecting(false);
             setFailedProxy(targetProxy);
@@ -345,6 +346,7 @@ export const useDaemonControl = (
             } catch (error) {
                 bumpGen();
                 isSwitchingRef.current = false;
+                setIsConnected(false);
                 setIsConnecting(false);
                 setIsDisconnecting(false);
                 setFailedProxy(proxy);

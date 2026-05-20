@@ -41,6 +41,10 @@ import {
   SetAutostart,
   ToggleKillSwitch,
   ToggleAdBlock,
+  GetAdBlockStatus,
+  UpdateAdBlockFilters,
+  InstallAdBlockCA,
+  IsAdBlockCAInstalled,
   UpdateRules,
   SyncProxies,
   FetchSubscription,
@@ -48,6 +52,7 @@ import {
   RefreshSubscription,
   AddSubscription,
   DeleteSubscription,
+  DecodeDeepLink,
   StartUpdate,
   CancelUpdate,
 } from '../../wailsjs/go/main/App';
@@ -305,6 +310,42 @@ export const wailsAPI = {
     }
   },
 
+  getAdBlockStatus: async () => {
+    try {
+      return await GetAdBlockStatus();
+    } catch (e) {
+      console.error("wailsAPI.getAdBlockStatus error:", e);
+      return null;
+    }
+  },
+
+  updateAdBlockFilters: async () => {
+    try {
+      await UpdateAdBlockFilters();
+    } catch (e) {
+      console.error("wailsAPI.updateAdBlockFilters error:", e);
+      throw e;
+    }
+  },
+
+  installAdBlockCA: async () => {
+    try {
+      await InstallAdBlockCA();
+    } catch (e) {
+      console.error("wailsAPI.installAdBlockCA error:", e);
+      throw e;
+    }
+  },
+
+  isAdBlockCAInstalled: async () => {
+    try {
+      return await IsAdBlockCAInstalled();
+    } catch (e) {
+      console.error("wailsAPI.isAdBlockCAInstalled error:", e);
+      return false;
+    }
+  },
+
   updateRules: async (url) => {
     try {
       return await UpdateRules(url);
@@ -335,6 +376,15 @@ export const wailsAPI = {
       return await ParseSubscriptionText(text);
     } catch (e) {
       console.error("wailsAPI.parseSubscriptionText error:", e);
+      throw e;
+    }
+  },
+
+  decodeDeepLink: async (url) => {
+    try {
+      return await DecodeDeepLink(url);
+    } catch (e) {
+      console.error("wailsAPI.decodeDeepLink error:", e);
       throw e;
     }
   },

@@ -154,6 +154,32 @@
   "settings": {
     "title": "Application Settings",
     "desc": "Manage security and system options",
+    "back": "Back to settings",
+    "groups": {
+      "advanced": {
+        "title": "Advanced settings",
+        "desc": "Startup, TUN, and traffic filtering options."
+      },
+      "subscriptions": {
+        "title": "Subscriptions",
+        "desc": "Auto refresh and the data sent to subscription providers."
+      },
+      "security": {
+        "title": "Security",
+        "desc": "Connection protection for failures and DNS leaks."
+      },
+      "network": {
+        "title": "Network",
+        "desc": "DNS, local access, and proxy port."
+      }
+    },
+    "tun_stack": {
+      "title": "TUN mode",
+      "desc": "Choose the TUN network stack. The Windows system stack is used by default.",
+      "default": "Default",
+      "system": "system",
+      "gvisor": "gvisor"
+    },
     "autostart": {
       "title": "Run at startup",
       "desc": "Automatically open application when PC boots."
@@ -162,9 +188,46 @@
       "title": "Enable Kill Switch",
       "desc": "Instantly cut internet connection if proxy goes down."
     },
+    "dns_leak_protection": {
+      "title": "DNS leak protection",
+      "desc": "Blocks Windows' parallel DNS queries from escaping via the LAN adapter. Protects against ISP DNS hijacking (Rostelecom, MSK-IX, etc.). Disable only if it interferes with local-network workflows."
+    },
     "adblock": {
       "title": "Ad Blocker",
-      "desc": "Automatically block ads and trackers when connected through proxy."
+      "desc": "Blocks ad and tracker domains in VPN traffic (sing-box). Works without installing a certificate. On-page banners and in-video YouTube ads need HTTPS filtering (currently disabled for stability).",
+      "network_active": "Blocking active in tunnel",
+      "network_inactive": "Enable ad blocking and connect to a server",
+      "needs_reconnect": "Reconnect to apply ad blocking",
+      "rulesets_updated": "Block lists: {{ready}}/{{total}} · updated {{date}}",
+      "rulesets_partial": "Block lists: {{ready}}/{{total}} (not all downloaded)",
+      "rulesets_unknown": "Block lists not downloaded yet — tap Update",
+      "update_progress": "Downloading {{item}} ({{current}}/{{total}})…",
+      "ca_ok": "MITM root certificate installed (for future in-page filtering)",
+      "ca_missing": "MITM certificate not installed — does not affect network blocking",
+      "install_ca": "Install certificate",
+      "update_filters": "Update block lists",
+      "blocked_stats": "MITM blocked: {{network}} network · {{cosmetic}} cosmetic",
+      "update_ok": "Block lists updated",
+      "update_fail": "Block list update failed",
+      "ca_install_ok": "Certificate installed",
+      "ca_install_fail": "Certificate install failed (admin rights may be required)"
+    },
+    "subscription_auto_update": {
+      "title": "Automatic refresh",
+      "desc": "Periodically refresh all added subscriptions."
+    },
+    "subscription_interval": {
+      "title": "Refresh interval",
+      "desc": "How often to refresh subscriptions, in hours."
+    },
+    "subscription_hwid": {
+      "title": "Send HWID",
+      "desc": "Send the device identifier to HTTPS subscriptions for device-limit checks."
+    },
+    "subscription_user_agent": {
+      "title": "User agent",
+      "desc": "Clear the field to use the default ResultV/<version>/Windows/<OS version> value.",
+      "placeholder": "ResultV/3.2.0/Windows/11_10.0.26200"
     },
     "dns": {
       "title": "DNS Servers",

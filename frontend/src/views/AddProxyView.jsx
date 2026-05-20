@@ -193,6 +193,8 @@ export const AddProxyView = () => {
     setSubscriptions,
     showAlertDialog,
     showConfirmDialog,
+    setPendingDeepLink,
+    setPendingDeepLinkSource,
   } = useConfigContext();
   const {
     activeProxy,
@@ -257,6 +259,21 @@ export const AddProxyView = () => {
   };
 
   const processImport = async (text, sourceName = "") => {
+    const trimmed = (text || "").trim();
+    // resultv:// deep links: hand off to DeepLinkImportModal so paste and
+    // browser-click flows share one code path (fetchSubscription with the
+    // insecure-http consent prompt, then AddSubscription). Without this,
+    // pasted deep links would skip the subscription header creation that
+    // the browser flow performs.
+    if (/^resultv:(\/\/)?/i.test(trimmed)) {
+      setPendingDeepLinkSource(
+        /^resultv:(\/\/)?rvsub\//i.test(trimmed) ? "rvsub" : "",
+      );
+      setPendingDeepLink(trimmed);
+      setBulkText("");
+      setImportMode("single");
+      return;
+    }
     if (isSubscriptionURL(text)) {
       setIsImporting(true);
       try {

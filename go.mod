@@ -3,6 +3,8 @@ module resultproxy-wails
 go 1.26.1
 
 require (
+	github.com/AdguardTeam/gomitmproxy v0.2.1
+	github.com/AdguardTeam/urlfilter v0.23.2
 	github.com/getlantern/systray v1.2.2
 	github.com/google/uuid v1.6.0
 	github.com/mitchellh/go-ps v1.0.0
@@ -10,6 +12,7 @@ require (
 	github.com/sagernet/sing-box v1.13.11
 	github.com/wailsapp/wails/v2 v2.12.0
 	golang.org/x/crypto v0.49.0
+	golang.org/x/sync v0.20.0
 	golang.org/x/sys v0.42.0
 )
 
@@ -17,7 +20,7 @@ require (
 	filippo.io/edwards25519 v1.1.0 // indirect
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
 	github.com/360EntSecGroup-Skylar/excelize v1.4.1 // indirect
-	github.com/AdguardTeam/golibs v0.32.7 // indirect
+	github.com/AdguardTeam/golibs v0.35.3 // indirect
 	github.com/Diniboy1123/connect-ip-go v0.0.0-20260409225322-8d7bb0a858a2 // indirect
 	github.com/GoAdminGroup/go-admin v1.2.26 // indirect
 	github.com/GoAdminGroup/html v0.0.1 // indirect
@@ -33,6 +36,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.26.0 // indirect
 	github.com/anytls/sing-anytls v0.0.11 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
+	github.com/c2h5oh/datasize v0.0.0-20231215233829-aa82cc1e6500 // indirect
 	github.com/caddyserver/certmagic v0.25.2 // indirect
 	github.com/caddyserver/zerossl v0.1.5 // indirect
 	github.com/coder/websocket v1.8.14 // indirect
@@ -47,7 +51,7 @@ require (
 	github.com/enfein/mieru/v3 v3.17.1 // indirect
 	github.com/florianl/go-nfqueue/v2 v2.0.2 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
-	github.com/fxamacker/cbor/v2 v2.7.0 // indirect
+	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.12 // indirect
 	github.com/gaissmai/bart v0.18.0 // indirect
 	github.com/getlantern/context v0.0.0-20190109183933-c447772a6520 // indirect
@@ -191,7 +195,7 @@ require (
 	github.com/tailscale/peercred v0.0.0-20250107143737-35a0c7bd7edc // indirect
 	github.com/tailscale/web-client-prebuilt v0.0.0-20250124233751-d4cd19a26976 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
-	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/tkrajina/go-reflector v0.5.8 // indirect
@@ -216,7 +220,6 @@ require (
 	golang.org/x/mod v0.34.0 // indirect
 	golang.org/x/net v0.52.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/term v0.41.0 // indirect
 	golang.org/x/text v0.35.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
@@ -224,7 +227,7 @@ require (
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10 // indirect
 	golang.zx2c4.com/wireguard/windows v0.5.3 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260209200024-4cfbd4190f57 // indirect
 	google.golang.org/grpc v1.79.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/go-playground/validator.v8 v8.18.2 // indirect

@@ -100,6 +100,43 @@ func TestManagerPing_TunnelUsesLANProbeForNonHysteria2(t *testing.T) {
 	}
 }
 
+func TestManagerPing_TunnelUsesLANProbeForHysteria2(t *testing.T) {
+	m := NewManager(nil)
+	m.connected = true
+	m.mode = ProxyModeTunnel
+	m.proxy = &ProxyConfig{
+		IP:   "9.9.9.9",
+		Port: 443,
+		Type: "hysteria2",
+	}
+
+	oldHY2 := pingHysteria2Probe
+	oldH2LAN := pingHysteria2LANProbe
+	defer func() {
+		pingHysteria2Probe = oldHY2
+		pingHysteria2LANProbe = oldH2LAN
+	}()
+
+	hy2Called := 0
+	hy2LANCalled := 0
+	pingHysteria2Probe = func(_ string, _ int) (int64, bool, string, string) {
+		hy2Called++
+		return 4, true, "", "tcp_fallback"
+	}
+	pingHysteria2LANProbe = func(_ string, _ int) (int64, bool, string, string) {
+		hy2LANCalled++
+		return -1, true, "", "udp_lan_bind"
+	}
+
+	res := m.Ping("1.2.3.4", 443, "hysteria2")
+	if !res.Reachable || res.LatencyMs != -1 || res.CheckType != "udp_lan_bind" {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	if hy2Called != 0 || hy2LANCalled != 1 {
+		t.Fatalf("unexpected calls hy2=%d hy2lan=%d", hy2Called, hy2LANCalled)
+	}
+}
+
 func TestManagerPing_Hysteria2FallsBackToTCPWhenUDPProbeFails(t *testing.T) {
 	m := NewManager(nil)
 	m.connected = false
@@ -138,26 +175,140 @@ func TestManagerPing_Hysteria2FallsBackToTCPWhenUDPProbeFails(t *testing.T) {
 	}
 }
 
-func TestManagerPing_WireGuardUsesTCPProbe(t *testing.T) {
-	
+func TestManagerPing_TunnelUsesLANProbeForWireGuard(t *testing.T) {
 	m := NewManager(nil)
-	m.connected = false
-	m.mode = ProxyModeProxy
+	m.connected = true
+	m.mode = ProxyModeTunnel
 	m.proxy = &ProxyConfig{
-		IP:   "1.2.3.4",
+		IP:   "9.9.9.9",
 		Port: 51820,
 		Type: "wireguard",
 	}
 
 	oldTCP := pingTCPProbe
-	defer func() { pingTCPProbe = oldTCP }()
+	oldWG := pingWireGuardProbe
+	oldWGLAN := pingWireGuardLANProbe
+	defer func() {
+		pingTCPProbe = oldTCP
+		pingWireGuardProbe = oldWG
+		pingWireGuardLANProbe = oldWGLAN
+	}()
+
+	tcpCalled := 0
+	wgCalled := 0
+	wgLANCalled := 0
 
 	pingTCPProbe = func(_ string, _ int) (int64, bool, string) {
-		return 33, true, ""
+		tcpCalled++
+		return 4, true, ""
+	}
+	pingWireGuardProbe = func(_ string, _ int) (int64, bool, string) {
+		wgCalled++
+		return 4, true, ""
+	}
+	pingWireGuardLANProbe = func(_ string, _ int) (int64, bool, string) {
+		wgLANCalled++
+		return -1, true, ""
 	}
 
 	res := m.Ping("1.2.3.4", 51820, "wireguard")
-	if !res.Reachable || res.LatencyMs != 33 || res.CheckType != "tcp" {
+	if !res.Reachable || res.LatencyMs != -1 || res.CheckType != "udp_lan_bind" {
 		t.Fatalf("unexpected result: %+v", res)
+	}
+	if tcpCalled != 0 || wgCalled != 0 || wgLANCalled != 1 {
+		t.Fatalf("unexpected calls tcp=%d wg=%d wglan=%d", tcpCalled, wgCalled, wgLANCalled)
+	}
+}
+
+func TestProbeProxyAlive_TunnelUsesLANProbeForTCPTransports(t *testing.T) {
+	m := NewManager(nil)
+	proxy := ProxyConfig{IP: "1.2.3.4", Port: 443, Type: "http"}
+
+	oldTCP := pingTCPProbe
+	oldLAN := pingLANProbe
+	defer func() {
+		pingTCPProbe = oldTCP
+		pingLANProbe = oldLAN
+	}()
+
+	tcpCalled := 0
+	lanCalled := 0
+	pingTCPProbe = func(_ string, _ int) (int64, bool, string) {
+		tcpCalled++
+		return 0, false, "timeout"
+	}
+	pingLANProbe = func(_ string, _ int) (int64, bool, string) {
+		lanCalled++
+		return 12, true, ""
+	}
+
+	alive := m.probeProxyAlive(proxy, ProxyModeTunnel)
+	if !alive {
+		t.Fatal("expected alive via LAN probe")
+	}
+	if tcpCalled != 0 || lanCalled != 1 {
+		t.Fatalf("unexpected calls tcp=%d lan=%d", tcpCalled, lanCalled)
+	}
+}
+
+func TestProbeProxyAlive_TunnelUsesLANProbeForWireGuard(t *testing.T) {
+	m := NewManager(nil)
+	proxy := ProxyConfig{IP: "1.2.3.4", Port: 51820, Type: "wireguard"}
+
+	oldWG := pingWireGuardProbe
+	oldWGLAN := pingWireGuardLANProbe
+	defer func() {
+		pingWireGuardProbe = oldWG
+		pingWireGuardLANProbe = oldWGLAN
+	}()
+
+	wgCalled := 0
+	wgLANCalled := 0
+	pingWireGuardProbe = func(_ string, _ int) (int64, bool, string) {
+		wgCalled++
+		return 0, false, "timeout"
+	}
+	pingWireGuardLANProbe = func(_ string, _ int) (int64, bool, string) {
+		wgLANCalled++
+		return -1, true, ""
+	}
+
+	alive := m.probeProxyAlive(proxy, ProxyModeTunnel)
+	if !alive {
+		t.Fatal("expected alive via wireguard LAN probe")
+	}
+	if wgCalled != 0 || wgLANCalled != 1 {
+		t.Fatalf("unexpected calls wg=%d wglan=%d", wgCalled, wgLANCalled)
+	}
+}
+
+func TestProbeProxyAlive_TunnelUsesLANProbeForHysteria2(t *testing.T) {
+	m := NewManager(nil)
+	proxy := ProxyConfig{IP: "1.2.3.4", Port: 443, Type: "hysteria2"}
+
+	oldHY2 := pingHysteria2Probe
+	oldH2LAN := pingHysteria2LANProbe
+	defer func() {
+		pingHysteria2Probe = oldHY2
+		pingHysteria2LANProbe = oldH2LAN
+	}()
+
+	hy2Called := 0
+	hy2LANCalled := 0
+	pingHysteria2Probe = func(_ string, _ int) (int64, bool, string, string) {
+		hy2Called++
+		return 0, false, "timeout", "udp"
+	}
+	pingHysteria2LANProbe = func(_ string, _ int) (int64, bool, string, string) {
+		hy2LANCalled++
+		return -1, true, "", "udp_lan_bind"
+	}
+
+	alive := m.probeProxyAlive(proxy, ProxyModeTunnel)
+	if !alive {
+		t.Fatal("expected alive via hysteria2 LAN probe")
+	}
+	if hy2Called != 0 || hy2LANCalled != 1 {
+		t.Fatalf("unexpected calls hy2=%d hy2lan=%d", hy2Called, hy2LANCalled)
 	}
 }
