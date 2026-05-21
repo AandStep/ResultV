@@ -25,7 +25,7 @@ import (
 	"strings"
 )
 
-// runPrivileged runs argv with root privileges and returns combined stdout+stderr.
+// RunPrivileged runs argv with root privileges and returns combined stdout+stderr.
 //
 // Resolution order:
 //  1. If we are already root (euid == 0), exec directly.
@@ -38,9 +38,9 @@ import (
 // The GUI fallback may pop a password dialog, which is acceptable for
 // kill-switch toggling. If neither sudo nor a GUI prompter is available, the
 // error message hints at the missing tool so the UI can surface it.
-func runPrivileged(argv []string) ([]byte, error) {
+func RunPrivileged(argv []string) ([]byte, error) {
 	if len(argv) == 0 {
-		return nil, fmt.Errorf("runPrivileged: empty argv")
+		return nil, fmt.Errorf("RunPrivileged: empty argv")
 	}
 
 	if os.Geteuid() == 0 {
@@ -56,10 +56,10 @@ func runPrivileged(argv []string) ([]byte, error) {
 		// sudo -n failed (likely requires password); fall through to GUI.
 	}
 
-	return runPrivilegedGUI(argv)
+	return RunPrivilegedGUI(argv)
 }
 
-func runPrivilegedGUI(argv []string) ([]byte, error) {
+func RunPrivilegedGUI(argv []string) ([]byte, error) {
 	switch runtime.GOOS {
 	case "darwin":
 		// osascript expects a single shell command. Quote each argument so

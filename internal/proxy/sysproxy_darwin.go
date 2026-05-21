@@ -27,6 +27,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"resultproxy-wails/internal/system"
 )
 
 // killSwitchSinkhole is an unreachable address used to break all proxied
@@ -286,9 +288,19 @@ func disableServiceProxy(svc string) error {
 	return firstErr
 }
 
+// runNetworksetup invokes the `networksetup` CLI for write operations that
+// require root (-setwebproxy, -setsecurewebproxy, -setsocksfirewallproxy and
+// their *state variants). Routed through system.RunPrivileged so the main
+// app process can stay user-owned (which keeps the macOS Dock context menu
+// working) and only this individual command prompts for the admin password
+// via osascript.
+//
+// Read-only `networksetup -listallnetworkservices` does NOT require root and
+// continues to call exec.Command directly (see listEnabledNetworkServices) so
+// it doesn't trigger a password prompt at startup.
 func runNetworksetup(args ...string) error {
-	cmd := exec.Command("networksetup", args...)
-	out, err := cmd.CombinedOutput()
+	argv := append([]string{"networksetup"}, args...)
+	out, err := system.RunPrivileged(argv)
 	if err != nil {
 		return fmt.Errorf("networksetup %s: %s: %w",
 			strings.Join(args, " "),

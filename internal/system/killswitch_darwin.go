@@ -81,7 +81,7 @@ func (k *DarwinKillSwitch) Enable(proxyAddr string) error {
 		return fmt.Errorf("write pf rules: %w", err)
 	}
 
-	if out, err := runPrivileged([]string{"pfctl", "-E", "-f", pfRulesPath}); err != nil {
+	if out, err := RunPrivileged([]string{"pfctl", "-E", "-f", pfRulesPath}); err != nil {
 		return fmt.Errorf("pfctl load: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	k.enabled = true
@@ -96,7 +96,7 @@ func (k *DarwinKillSwitch) Disable() error {
 	}
 	// Best-effort: disable pf and remove the ruleset file. Errors here are
 	// not fatal — the user can always disable pf manually with `sudo pfctl -d`.
-	_, _ = runPrivileged([]string{"pfctl", "-d"})
+	_, _ = RunPrivileged([]string{"pfctl", "-d"})
 	_ = os.Remove(pfRulesPath)
 	k.enabled = false
 	return nil

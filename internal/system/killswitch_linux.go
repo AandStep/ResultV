@@ -141,15 +141,15 @@ func enableNftables(proxyIP string) error {
 		return fmt.Errorf("write nft ruleset: %w", err)
 	}
 	// Remove any leftover table from a previous run before installing.
-	_, _ = runPrivileged([]string{"nft", "delete", "table", "inet", nftTableName})
-	if out, err := runPrivileged([]string{"nft", "-f", nftablesRulesPath}); err != nil {
+	_, _ = RunPrivileged([]string{"nft", "delete", "table", "inet", nftTableName})
+	if out, err := RunPrivileged([]string{"nft", "-f", nftablesRulesPath}); err != nil {
 		return fmt.Errorf("nft load: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
 }
 
 func disableNftables() error {
-	out, err := runPrivileged([]string{"nft", "delete", "table", "inet", nftTableName})
+	out, err := RunPrivileged([]string{"nft", "delete", "table", "inet", nftTableName})
 	_ = os.Remove(nftablesRulesPath)
 	if err != nil {
 		// If the table didn't exist, treat as success.
@@ -188,7 +188,7 @@ func enableIptables(proxyIP string) error {
 	)
 
 	for _, cmd := range steps {
-		if out, err := runPrivileged(cmd); err != nil {
+		if out, err := RunPrivileged(cmd); err != nil {
 			return fmt.Errorf("iptables %s: %s: %w",
 				strings.Join(cmd[1:], " "),
 				strings.TrimSpace(string(out)),
@@ -201,9 +201,9 @@ func enableIptables(proxyIP string) error {
 
 func disableIptables() error {
 	// Order: detach from OUTPUT, flush, then delete the chain.
-	_, _ = runPrivileged([]string{"iptables", "-D", "OUTPUT", "-j", iptablesChainName})
-	_, _ = runPrivileged([]string{"iptables", "-F", iptablesChainName})
-	_, _ = runPrivileged([]string{"iptables", "-X", iptablesChainName})
+	_, _ = RunPrivileged([]string{"iptables", "-D", "OUTPUT", "-j", iptablesChainName})
+	_, _ = RunPrivileged([]string{"iptables", "-F", iptablesChainName})
+	_, _ = RunPrivileged([]string{"iptables", "-X", iptablesChainName})
 	return nil
 }
 
