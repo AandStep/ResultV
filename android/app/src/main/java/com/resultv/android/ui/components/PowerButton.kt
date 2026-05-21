@@ -97,13 +97,15 @@ fun PowerButton(
         else -> Color.Transparent
     }
     val glowSize by animateDpAsState(
-        targetValue = if (connected || errored || connecting) 320.dp else 0.dp,
+        // Container is 260dp now; cap the glow to match so the halo doesn't
+        // pad the parent Column with invisible dead space.
+        targetValue = if (connected || errored || connecting) 260.dp else 0.dp,
         animationSpec = tween(600),
         label = "glow",
     )
 
     Box(
-        modifier = modifier.size(320.dp),
+        modifier = modifier.size(260.dp),
         contentAlignment = Alignment.Center,
     ) {
         // Halo behind the button.
@@ -144,7 +146,9 @@ fun PowerButton(
             Box(contentAlignment = Alignment.Center) {
                 Icon(
                     imageVector = Icons.Filled.PowerSettingsNew,
-                    contentDescription = if (connected) "Disconnect" else "Connect",
+                    contentDescription = stringResource(
+                        if (connected) R.string.action_disconnect else R.string.action_connect,
+                    ),
                     modifier = Modifier.size(96.dp),
                 )
                 if (connecting) {

@@ -1,8 +1,10 @@
 package com.resultv.android.ui.components
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,9 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Public
-import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -36,6 +36,7 @@ import com.resultv.android.theme.Brand
  * when active and shows a leading flag (or AUTO bolt) + name + optional
  * favorite star.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ServerRow(
     name: String,
@@ -45,10 +46,11 @@ fun ServerRow(
     isActive: Boolean,
     isFavorite: Boolean,
     onClick: () -> Unit,
-    onToggleFavorite: (() -> Unit)? = null,
     trailing: @Composable (() -> Unit)? = null,
     /** Latest ping in milliseconds, or null if not yet probed. */
     latencyMs: Int? = null,
+    /** Long-press handler — used by Proxies to open the edit sheet. */
+    onLongClick: (() -> Unit)? = null,
 ) {
     val border = if (isActive) Brand.Green.copy(alpha = 0.45f) else Color.White.copy(alpha = 0.06f)
     val bg = if (isActive) Brand.Green.copy(alpha = 0.10f) else Color.White.copy(alpha = 0.03f)
@@ -67,7 +69,12 @@ fun ServerRow(
             .clip(RoundedCornerShape(18.dp))
             .background(bg)
             .border(1.dp, border, RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick)
+            .let { base ->
+                if (onLongClick != null)
+                    base.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+                else
+                    base.clickable(onClick = onClick)
+            }
             .padding(horizontal = 14.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -126,6 +133,17 @@ fun ServerRow(
             )
         }
 
+        // Favourite marker — small star inline next to ping when set.
+        // Toggle moved to the long-press sheet, so no IconButton here.
+        if (isFavorite) {
+            Icon(
+                imageVector = Icons.Filled.Star,
+                contentDescription = stringResource(R.string.action_unfavorite),
+                tint = Brand.Favorite,
+                modifier = Modifier.size(14.dp),
+            )
+        }
+
         // Latency reading — single number, colour reflects health.
         Text(
             text = if (latencyMs != null) "$latencyMs ms" else "— ms",
@@ -133,28 +151,7 @@ fun ServerRow(
             color = latencyColor,
         )
 
-        if (onToggleFavorite != null) {
-            IconButton(onClick = onToggleFavorite, modifier = Modifier.size(28.dp)) {
-                Icon(
-                    imageVector = if (isFavorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                    contentDescription = stringResource(
-                        if (isFavorite) R.string.action_unfavorite else R.string.action_favorite,
-                    ),
-                    tint = if (isFavorite) Brand.Favorite else Brand.MutedText,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
-        }
-
         if (trailing != null) trailing()
-
-        // Active dot.
-        Box(
-            modifier = Modifier
-                .size(8.dp)
-                .clip(RoundedCornerShape(50))
-                .background(if (isActive) Brand.GreenLight else Color.White.copy(alpha = 0.15f))
-        )
     }
 }
 

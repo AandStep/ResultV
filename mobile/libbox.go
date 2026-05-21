@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -30,7 +31,114 @@ import (
 // Version returns the wrapper version. Bump on every breaking change to
 // the Kotlin-facing API.
 func Version() string {
-	return "0.2.0-poc"
+	return "0.3.0-engine-batch"
+}
+
+// PingResult is the JSON-encoded reply from Ping. Mirrors the desktop's
+// PingResultDTO so callers can build a uniform display.
+//
+//	Reachable=true  + LatencyMs=N  → "N ms"
+//	Reachable=true  + LatencyMs=-1 → "Online" (UDP, no echo)
+//	Reachable=false                → reason carries the failure kind
+//
+// Reason values: "timeout", "connection_refused", "network_unreachable",
+// "no_route_to_host", "connection_closed", "error".
+//
+// CheckType is "tcp", "udp", "tcp_fallback" (Hysteria2 fallback path).
+type PingResult struct {
+	Reachable bool   `json:"reachable"`
+	LatencyMs int64  `json:"latencyMs"`
+	Reason    string `json:"reason,omitempty"`
+	CheckType string `json:"checkType,omitempty"`
+}
+
+// DeepLinkResult is the JSON-encoded reply from DecodeDeepLink.
+//
+//	Plain    — the decrypted payload. Either a single line (http(s) URL
+//	           or a single proxy URI) that the UI hands off to the
+//	           normal subscription/profile import pipeline, or a
+//	           multi-line text body to be parsed line-by-line.
+//	Source   — provenance tag for UI affordances. "rvsub" when the URL
+//	           used the resultv://rvsub/<...> path (forces impVPN logo);
+//	           "" for everything else.
+type DeepLinkResult struct {
+	Plain  string `json:"plain"`
+	Source string `json:"source,omitempty"`
+}
+
+// DecodeDeepLink unwraps a resultv:// (or resultv:) URL into a
+// subscription payload that Kotlin can hand off to the standard import
+// path. Returns JSON-encoded DeepLinkResult; on error the Go-side error
+// is propagated as-is.
+//
+// See internal/proxy/deeplink.go for the supported URL shapes.
+func DecodeDeepLink(rawURL string) (string, error) {
+	plain, err := proxy.DecodeDeepLink(rawURL)
+	if err != nil {
+		return "", err
+	}
+	source := ""
+	if proxy.DeepLinkUsesRvsubPath(rawURL) {
+		source = "rvsub"
+	}
+	res := DeepLinkResult{Plain: plain, Source: source}
+	b, err := json.Marshal(res)
+	if err != nil {
+		return "", fmt.Errorf("marshaling deep link result: %w", err)
+	}
+	return string(b), nil
+}
+
+// IsDeepLink reports whether the URL uses the resultv:// scheme. Cheap
+// pre-check before calling DecodeDeepLink.
+func IsDeepLink(rawURL string) bool {
+	return proxy.IsDeepLink(rawURL)
+}
+
+// Ping probes a proxy server with a protocol-appropriate check and
+// returns the result as a JSON-encoded PingResult. proxyType is the
+// uppercase tag from ProxyEntry.Type ("VLESS", "HYSTERIA2", "WIREGUARD",
+// "AMNEZIAWG", …); empty string falls back to plain TCP connect.
+//
+// This is the binding Kotlin uses to drive ServerRow's latency reading
+// and "sort by ping" without needing a long-lived libbox connection.
+func Ping(ip string, port int, proxyType string) (string, error) {
+	if strings.TrimSpace(ip) == "" {
+		return "", fmt.Errorf("ping: ip is empty")
+	}
+	if port <= 0 || port > 65535 {
+		return "", fmt.Errorf("ping: port %d out of range", port)
+	}
+
+	ptUpper := strings.ToUpper(strings.TrimSpace(proxyType))
+	var (
+		latency   int64
+		reachable bool
+		reason    string
+		checkType string
+	)
+	switch ptUpper {
+	case "HYSTERIA2":
+		latency, reachable, reason, checkType = proxy.PingHysteria2QUIC(ip, port)
+	case "WIREGUARD", "AMNEZIAWG":
+		latency, reachable, reason = proxy.PingProxyUDP(ip, port)
+		checkType = "udp"
+	default:
+		latency, reachable, reason = proxy.PingProxy(ip, port)
+		checkType = "tcp"
+	}
+
+	res := PingResult{
+		Reachable: reachable,
+		LatencyMs: latency,
+		Reason:    reason,
+		CheckType: checkType,
+	}
+	b, err := json.Marshal(res)
+	if err != nil {
+		return "", fmt.Errorf("marshaling ping result: %w", err)
+	}
+	return string(b), nil
 }
 
 // ParseProxyURI parses a single proxy URI (vless://, vmess://, ss://,
@@ -61,10 +169,61 @@ func ParseProxyURI(uri string) (string, error) {
 //
 // Returns the JSON array as a string so gomobile can shuttle it across
 // the JNI boundary; Kotlin re-parses with org.json.
+//
+// Legacy entrypoint: returns only the entry list. Use FetchSubscriptionV2
+// to also receive Subscription-Userinfo / Profile-Title metadata.
 func FetchSubscription(subURL, dataDir string) (string, error) {
+	out, err := fetchSubscription(subURL, dataDir)
+	if err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(out.Entries)
+	if err != nil {
+		return "", fmt.Errorf("marshaling: %w", err)
+	}
+	return string(data), nil
+}
+
+// SubscriptionResponse is the JSON shape returned by FetchSubscriptionV2.
+// Mirrors the desktop's Subscription model: parsed entries + the
+// SIP008-style metadata headers the panel exposed.
+type SubscriptionResponse struct {
+	Entries  json.RawMessage `json:"entries"`
+	UserInfo string          `json:"userInfo,omitempty"` // "upload=…; download=…; total=…; expire=…"
+	Title    string          `json:"title,omitempty"`
+}
+
+// FetchSubscriptionV2 returns the entries together with subscription
+// metadata. Kotlin parses the outer JSON to extract `userInfo` (used by
+// the new traffic/expiry surface) and `title` (default subscription name
+// when the user hasn't typed one).
+func FetchSubscriptionV2(subURL, dataDir string) (string, error) {
+	out, err := fetchSubscription(subURL, dataDir)
+	if err != nil {
+		return "", err
+	}
+	entries, err := json.Marshal(out.Entries)
+	if err != nil {
+		return "", fmt.Errorf("marshaling entries: %w", err)
+	}
+	resp := SubscriptionResponse{
+		Entries:  entries,
+		UserInfo: out.UserInfo,
+		Title:    out.Title,
+	}
+	data, err := json.Marshal(resp)
+	if err != nil {
+		return "", fmt.Errorf("marshaling response: %w", err)
+	}
+	return string(data), nil
+}
+
+// fetchSubscription is the shared fetch path used by both V1 and V2.
+// Returns parsed entries + the metadata captured from the HTTP response.
+func fetchSubscription(subURL, dataDir string) (subscriptionResult, error) {
 	subURL = strings.TrimSpace(subURL)
 	if subURL == "" {
-		return "", fmt.Errorf("subscription URL is empty")
+		return subscriptionResult{}, fmt.Errorf("subscription URL is empty")
 	}
 	subURL = normalizeSubscriptionURL(subURL)
 
@@ -78,43 +237,63 @@ func FetchSubscription(subURL, dataDir string) (string, error) {
 	// Match desktop's User-Agent exactly — provider gating regularly keys
 	// on it, so anything with "(Android)" or version drift breaks parity.
 	primaryUA := "ResultV/3.1.1"
-	primary, primaryDiag, primaryErr := fetchSubscriptionWithUA(subURL, primaryUA, hwid)
+	primaryRes, primaryErr := fetchSubscriptionWithUA(subURL, primaryUA, hwid)
+	primaryDiag := primaryRes.Diag
 
-	tryHapp := primaryErr != nil || !hasHysteria(primary)
+	tryHapp := primaryErr != nil || !hasHysteria(primaryRes.Entries)
 	var fallbackDiag string
 	if tryHapp {
-		if fallback, fbDiag, err := fetchSubscriptionWithUA(subURL, "Happ/1.0", hwid); err == nil && len(fallback) > 0 {
-			fallbackDiag = fbDiag
-			if primaryErr != nil || len(fallback) > len(primary) {
-				primary = fallback
-				primaryDiag = fbDiag
+		if fallback, err := fetchSubscriptionWithUA(subURL, "Happ/1.0", hwid); err == nil && len(fallback.Entries) > 0 {
+			fallbackDiag = fallback.Diag
+			if primaryErr != nil || len(fallback.Entries) > len(primaryRes.Entries) {
+				primaryRes = fallback
+				primaryDiag = fallback.Diag
 				primaryErr = nil
 			}
 		}
 	}
 
 	if primaryErr != nil {
-		return "", primaryErr
+		return subscriptionResult{}, primaryErr
 	}
-	rawCount := len(primary)
-	primary = proxy.FilterInvalidSubscriptionEntries(primary)
-	if len(primary) == 0 {
-		return "", fmt.Errorf(
-			"no valid proxies in subscription (parsed=%d, filtered=%d, url=%s, primary=%s, fallback=%s)",
-			rawCount, rawCount-len(primary), subURL, primaryDiag, fallbackDiag,
+	entries := primaryRes.Entries
+	rawCount := len(entries)
+	// Convert 0.0.0.0 placeholder rows into SECTION labels (matches the
+	// desktop pipeline). impVPN-style helper rows like "👇 выберите конфиг
+	// ниже" stay in list order but are non-clickable.
+	entries = proxy.FinalizeSubscriptionEntries(entries)
+	// A subscription needs at least one real proxy to be useful. SECTION
+	// rows alone don't count.
+	hasReal := false
+	for _, e := range entries {
+		if !strings.EqualFold(strings.TrimSpace(e.Type), "SECTION") {
+			hasReal = true
+			break
+		}
+	}
+	if !hasReal {
+		return subscriptionResult{}, fmt.Errorf(
+			"no valid proxies in subscription (parsed=%d, all sections, url=%s, primary=%s, fallback=%s)",
+			rawCount, subURL, primaryDiag, fallbackDiag,
 		)
 	}
 
 	// Mirror desktop: collapse N "<name> Auto" copies into one virtual AUTO
 	// entry whose Extra carries the member entries inline. mobile picks
 	// members[0] at connect time (latency-based selection comes later).
-	visible := buildAutoAwareEntries(primary)
+	visible := buildAutoAwareEntries(entries)
 
-	data, err := json.Marshal(visible)
-	if err != nil {
-		return "", fmt.Errorf("marshaling: %w", err)
-	}
-	return string(data), nil
+	return subscriptionResult{
+		Entries:  visible,
+		UserInfo: primaryRes.UserInfo,
+		Title:    primaryRes.Title,
+	}, nil
+}
+
+type subscriptionResult struct {
+	Entries  []config.ProxyEntry
+	UserInfo string
+	Title    string
 }
 
 // buildAutoAwareEntries reproduces app.go's auto-bundling: if a subscription
@@ -159,16 +338,26 @@ func marshalAutoMembers(members []config.ProxyEntry) json.RawMessage {
 	return data
 }
 
-// fetchSubscriptionWithUA returns (entries, diag, err) where diag is a
-// short human-readable summary used when the caller wants to surface
-// why a fetch produced zero usable entries.
-func fetchSubscriptionWithUA(subURL, userAgent, hwid string) ([]config.ProxyEntry, string, error) {
+// subscriptionFetchResult bundles the parsed entries with the
+// metadata headers we surface to the UI (subscription-userinfo for
+// traffic quota, profile-title for default subscription name).
+type subscriptionFetchResult struct {
+	Entries  []config.ProxyEntry
+	UserInfo string
+	Title    string
+	Diag     string
+}
+
+// fetchSubscriptionWithUA returns the parsed result + diag string for
+// telemetry. diag is a short human-readable summary used when the
+// caller wants to surface why a fetch produced zero usable entries.
+func fetchSubscriptionWithUA(subURL, userAgent, hwid string) (subscriptionFetchResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, subURL, nil)
 	if err != nil {
-		return nil, "", fmt.Errorf("building request: %w", err)
+		return subscriptionFetchResult{}, fmt.Errorf("building request: %w", err)
 	}
 	req.Header.Set("User-Agent", userAgent)
 	if hwid != "" {
@@ -178,17 +367,17 @@ func fetchSubscriptionWithUA(subURL, userAgent, hwid string) ([]config.ProxyEntr
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, "", fmt.Errorf("fetching subscription: %w", err)
+		return subscriptionFetchResult{}, fmt.Errorf("fetching subscription: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, "", fmt.Errorf("subscription returned HTTP %d", resp.StatusCode)
+		return subscriptionFetchResult{}, fmt.Errorf("subscription returned HTTP %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024))
 	if err != nil {
-		return nil, "", fmt.Errorf("reading body: %w", err)
+		return subscriptionFetchResult{}, fmt.Errorf("reading body: %w", err)
 	}
 
 	preview := string(body)
@@ -200,9 +389,18 @@ func fetchSubscriptionWithUA(subURL, userAgent, hwid string) ([]config.ProxyEntr
 	entries, err := proxy.ParseSubscriptionBody(string(body))
 	diag := fmt.Sprintf("ua=%q bytes=%d preview=%q parsed=%d", userAgent, len(body), preview, len(entries))
 	if err != nil {
-		return nil, diag, fmt.Errorf("parsing subscription (%s): %w", diag, err)
+		return subscriptionFetchResult{Diag: diag}, fmt.Errorf("parsing subscription (%s): %w", diag, err)
 	}
-	return entries, diag, nil
+	// SIP008 / clash convention: traffic quota and expiry come in via
+	// `Subscription-Userinfo`, friendly name in `Profile-Title`. Both
+	// optional — providers that don't set them get empty strings here
+	// and the UI falls back to defaults.
+	return subscriptionFetchResult{
+		Entries:  entries,
+		UserInfo: resp.Header.Get("Subscription-Userinfo"),
+		Title:    resp.Header.Get("Profile-Title"),
+		Diag:     diag,
+	}, nil
 }
 
 func hasHysteria(entries []config.ProxyEntry) bool {
@@ -228,6 +426,27 @@ func normalizeSubscriptionURL(subURL string) string {
 	return subURL
 }
 
+// BuildOptions controls optional knobs on the mobile config builder.
+// Mirrors the user-facing Settings: DNS preset, IPv6 dual-stack,
+// bypass-LAN, log verbosity.
+//
+// gomobile cannot bind structs across the JNI boundary, so callers
+// stringify their options as JSON and pass via the V2 entry point.
+type BuildOptions struct {
+	DNSServers      string `json:"dnsServers"`
+	ExcludedDomains string `json:"excludedDomains"`
+	IPv6            bool   `json:"ipv6"`
+	BypassLAN       bool   `json:"bypassLAN"`
+	LogLevel        string `json:"logLevel"`
+	// SmartMode enables Antizapret-style routing: only listed domains
+	// go through the proxy; everything else (foreign sites, LAN, system
+	// traffic) stays direct. The list is fetched by Mobile.FetchSmartList
+	// and passed back via SmartBlockedDomains as a `\n`-separated string
+	// (gomobile can't bind []string across JNI cleanly).
+	SmartMode               bool   `json:"smartMode"`
+	SmartBlockedDomainsList string `json:"smartBlockedDomainsList,omitempty"`
+}
+
 // BuildSingBoxConfig converts a proxy URI directly into a sing-box JSON
 // config suitable for libbox.CommandServer.StartOrReloadService on
 // Android. The TUN inbound is left in auto_route mode so libbox calls
@@ -243,12 +462,14 @@ func normalizeSubscriptionURL(subURL string) string {
 // bypass the proxy (route via `direct`). Patterns starting with `*.`
 // become domain_suffix matches (`*.ru` → `.ru`); bare hostnames
 // (`yandex.ru`) become exact domain matches. Pass "" for none.
+//
+// Legacy entrypoint — toggles default to IPv4-only, no bypass-LAN,
+// info-level logging. Use BuildSingBoxConfigV2 to pass the new flags.
 func BuildSingBoxConfig(uri string, dataDir string, dnsServers string, excludedDomains string) (string, error) {
-	entry, err := proxy.ParseProxyURI(uri)
-	if err != nil {
-		return "", fmt.Errorf("parsing URI: %w", err)
-	}
-	return buildSingBoxConfigFromEntry(entry, dataDir, dnsServers, excludedDomains)
+	return BuildSingBoxConfigV2(uri, dataDir, encodeOptions(BuildOptions{
+		DNSServers:      dnsServers,
+		ExcludedDomains: excludedDomains,
+	}))
 }
 
 // BuildSingBoxConfigFromEntry is the entry-based counterpart used by
@@ -262,6 +483,26 @@ func BuildSingBoxConfig(uri string, dataDir string, dnsServers string, excludedD
 //
 // See BuildSingBoxConfig for excludedDomains semantics.
 func BuildSingBoxConfigFromEntry(entryJson, dataDir, dnsServers, excludedDomains string) (string, error) {
+	return BuildSingBoxConfigFromEntryV2(entryJson, dataDir, encodeOptions(BuildOptions{
+		DNSServers:      dnsServers,
+		ExcludedDomains: excludedDomains,
+	}))
+}
+
+// BuildSingBoxConfigV2 is the JSON-options variant. Pass `optionsJson`
+// as a stringified BuildOptions ({"dnsServers":"...","ipv6":true,...}).
+// Empty / malformed JSON falls back to all-defaults.
+func BuildSingBoxConfigV2(uri, dataDir, optionsJson string) (string, error) {
+	entry, err := proxy.ParseProxyURI(uri)
+	if err != nil {
+		return "", fmt.Errorf("parsing URI: %w", err)
+	}
+	return buildSingBoxConfigFromEntry(entry, dataDir, decodeOptions(optionsJson))
+}
+
+// BuildSingBoxConfigFromEntryV2 is the JSON-options variant of
+// BuildSingBoxConfigFromEntry.
+func BuildSingBoxConfigFromEntryV2(entryJson, dataDir, optionsJson string) (string, error) {
 	var entry config.ProxyEntry
 	if err := json.Unmarshal([]byte(entryJson), &entry); err != nil {
 		return "", fmt.Errorf("parsing entry JSON: %w", err)
@@ -276,7 +517,114 @@ func BuildSingBoxConfigFromEntry(entryJson, dataDir, dnsServers, excludedDomains
 		}
 		entry = members[0]
 	}
-	return buildSingBoxConfigFromEntry(entry, dataDir, dnsServers, excludedDomains)
+	return buildSingBoxConfigFromEntry(entry, dataDir, decodeOptions(optionsJson))
+}
+
+func encodeOptions(o BuildOptions) string {
+	b, err := json.Marshal(o)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
+}
+
+func decodeOptions(optionsJson string) BuildOptions {
+	var o BuildOptions
+	if strings.TrimSpace(optionsJson) == "" {
+		return o
+	}
+	if err := json.Unmarshal([]byte(optionsJson), &o); err != nil {
+		return BuildOptions{}
+	}
+	return o
+}
+
+// splitSmartList parses the newline-separated blocked-domain list sent by
+// the Kotlin side (SmartListRepository persists it as plain text — gomobile
+// can't shuttle []string cleanly across JNI). Blank lines and `#` comments
+// are tolerated so the list can be edited by hand if needed.
+func splitSmartList(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(raw, "\n") {
+		s := strings.TrimSpace(line)
+		if s == "" || strings.HasPrefix(s, "#") {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// FetchSmartList resolves the user's country and downloads the
+// Antizapret-style blocked-domain list for that country. The list is
+// cached in dataDir/smart-blocked.json (managed by the existing
+// blocked_provider) and returned as a JSON-encoded result the Kotlin side
+// can render:
+//
+//	{
+//	  "domains":   ["instagram.com", "x.com", …],   // normalised, dedup'd
+//	  "country":   "ru",                              // resolved alpha-2
+//	  "source":    "remote" | "cache" | "builtin",
+//	  "error":     ""                                 // non-empty on soft failure
+//	}
+//
+// country may be empty to force auto-detection via the embedded provider;
+// pass a 2-letter ISO code (e.g. "ru") to skip auto-detect (faster, no
+// IP-geolocation request).
+func FetchSmartList(country string, dataDir string) (string, error) {
+	if strings.TrimSpace(dataDir) == "" {
+		return "", fmt.Errorf("dataDir is required for smart-list cache")
+	}
+	provider := proxy.NewHTTPBlockedListProvider()
+	cachePath := filepath.Join(dataDir, "smart-blocked.json")
+
+	cc := strings.ToLower(strings.TrimSpace(country))
+	var result proxy.BlockedDomainsResolveResult
+	if cc != "" {
+		// Caller pinned country (typical: Settings → Smart mode region picker).
+		// Skip the provider's country resolution to avoid the ip-api leak.
+		domains, fetchErr := provider.FetchBlockedDomains(context.Background(), cc)
+		if fetchErr == nil && len(domains) > 0 {
+			cache := proxy.BlockedDomainsCache{
+				Country:   cc,
+				UpdatedAt: time.Now().Unix(),
+				Source:    "remote",
+				Domains:   domains,
+			}
+			_ = proxy.SaveBlockedDomainsCache(cachePath, cache)
+			result = proxy.BlockedDomainsResolveResult{
+				Domains: domains,
+				Country: cc,
+				Source:  "remote",
+			}
+		} else {
+			// Fall through to cache / builtin via the standard resolver.
+			result = proxy.ResolveBlockedDomains(context.Background(), nil, cachePath)
+			if fetchErr != nil {
+				result.Err = fetchErr
+			}
+		}
+	} else {
+		result = proxy.ResolveBlockedDomains(context.Background(), provider, cachePath)
+	}
+
+	out := map[string]interface{}{
+		"domains": result.Domains,
+		"country": result.Country,
+		"source":  result.Source,
+		"error":   "",
+	}
+	if result.Err != nil {
+		out["error"] = result.Err.Error()
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("marshaling smart list: %w", err)
+	}
+	return string(data), nil
 }
 
 // splitDomainPatterns parses a comma-separated list of host patterns into
@@ -319,7 +667,7 @@ func decodeAutoMembers(extra json.RawMessage) ([]config.ProxyEntry, error) {
 	return wrap.Members, nil
 }
 
-func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir, dnsServers, excludedDomains string) (string, error) {
+func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts BuildOptions) (string, error) {
 	if dataDir == "" {
 		return "", fmt.Errorf("dataDir is required on mobile (pass context.filesDir)")
 	}
@@ -334,13 +682,18 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir, dnsServers, e
 			URI:      entry.URI,
 			Extra:    entry.Extra,
 		},
-		Mode:      proxy.ProxyModeTunnel,
-		DataDir:   dataDir,
-		TunIPv4:   "172.19.0.1/30",
-		IsAndroid: true,
+		Mode:            proxy.ProxyModeTunnel,
+		DataDir:         dataDir,
+		TunIPv4:         "172.19.0.1/30",
+		IsAndroid:       true,
+		IPv6:            opts.IPv6,
+		BypassLAN:       opts.BypassLAN,
+		LogLevel:        opts.LogLevel,
+		SmartMode:           opts.SmartMode,
+		SmartBlockedDomains: splitSmartList(opts.SmartBlockedDomainsList),
 	}
-	if dnsServers != "" {
-		for _, p := range strings.Split(dnsServers, ",") {
+	if opts.DNSServers != "" {
+		for _, p := range strings.Split(opts.DNSServers, ",") {
 			if s := strings.TrimSpace(p); s != "" {
 				cfg.DNSServers = append(cfg.DNSServers, s)
 			}
@@ -389,7 +742,7 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir, dnsServers, e
 		// domain is populated from TLS SNI / HTTP Host once `sniff` runs,
 		// after which `domain` / `domain_suffix` matchers can fire.
 		// Putting this rule before sniff means it never matches.
-		if exact, suffix := splitDomainPatterns(excludedDomains); len(exact)+len(suffix) > 0 {
+		if exact, suffix := splitDomainPatterns(opts.ExcludedDomains); len(exact)+len(suffix) > 0 {
 			rule := proxy.SBRouteRule{
 				Domain:       exact,
 				DomainSuffix: suffix,
@@ -418,13 +771,9 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir, dnsServers, e
 			}
 		}
 	}
-	// Crank logging up during PoC so failures (REALITY handshake, XHTTP
-	// transport setup, …) actually surface in logcat. Disable later.
-	if sb.Log == nil {
-		sb.Log = &proxy.SBLog{}
-	}
-	sb.Log.Level = "debug"
-	sb.Log.Disabled = false
+	// Log level is set by EngineConfig.LogLevel above — callers may pass
+	// "debug" while iterating on a new protocol; default is "error" so
+	// release builds don't spam logcat.
 
 	out, err := json.MarshalIndent(sb, "", "  ")
 	if err != nil {

@@ -15,15 +15,21 @@
     <string name="action_save">Сохранить</string>
     <string name="action_back">Назад</string>
     <string name="action_remove">Убрать</string>
+    <string name="action_connect">Подключить</string>
+    <string name="action_disconnect">Отключить</string>
 
     <string name="home_current_server">ТЕКУЩИЙ СЕРВЕР</string>
     <string name="home_no_profile_selected">Профиль не выбран</string>
     <string name="home_no_profiles_yet">Нет профилей — добавьте, чтобы начать.</string>
     <string name="home_view_all_profiles">Показать все %1$d профилей</string>
+    <string name="home_favorites">ИЗБРАННОЕ</string>
     <string name="home_add_server">Добавить сервер</string>
     <string name="home_add_server_subtitle">Вставьте ссылку или URL подписки</string>
     <string name="home_stat_download">ЗАГРУЗКА</string>
     <string name="home_stat_upload">ОТДАЧА</string>
+    <string name="home_banner_duration">ВРЕМЯ</string>
+    <string name="home_banner_download">ВХОД</string>
+    <string name="home_banner_upload">ИСХ</string>
     <string name="action_collapse">Свернуть</string>
     <string name="action_expand">Развернуть</string>
     <string name="action_favorite">В избранное</string>
@@ -44,7 +50,9 @@
     <string name="settings_adblock">Блокировка рекламы</string>
     <string name="settings_adblock_subtitle">Блокировать рекламу через DNS (скоро)</string>
     <string name="settings_ipv6">IPv6</string>
-    <string name="settings_ipv6_subtitle">Сейчас маршрутизация только по IPv4</string>
+    <string name="settings_ipv6_subtitle">Маршрутизировать IPv6-трафик через туннель</string>
+    <string name="settings_bypass_lan">Прямой LAN</string>
+    <string name="settings_bypass_lan_subtitle">Сохранить доступ к принтерам, NAS и роутеру при включённом VPN</string>
     <string name="settings_dns_hint">Выберите пресет или укажите свои серверы (через запятую).</string>
     <string name="settings_dns_custom_placeholder">Свой: 1.1.1.1, 8.8.8.8</string>
     <string name="settings_about_subtitle">Мобильная превью-сборка · Phase 5+</string>
@@ -57,12 +65,25 @@
     <string name="vpn_status_error">Ошибка: %1$s</string>
     <string name="vpn_action_disconnect">Отключить</string>
     <string name="vpn_channel_name">Статус VPN</string>
+    <string name="vpn_revoke_channel_name">Восстановление VPN</string>
+    <string name="vpn_revoke_title">VPN отключён</string>
+    <string name="vpn_revoke_text">Другое приложение перехватило VPN. Нажмите, чтобы подключиться снова.</string>
+    <string name="vpn_revoke_action">Подключить</string>
+    <string name="tile_label_idle">VPN — нажмите для подключения</string>
+    <string name="tile_label_connecting">VPN — подключение…</string>
+    <string name="tile_label_connected">VPN — подключено, нажмите для отключения</string>
 
     <!-- Add screen -->
     <string name="add_quick_clipboard_title">Из буфера</string>
     <string name="add_quick_clipboard_subtitle">Вставить ссылки из буфера</string>
     <string name="add_quick_file_title">Из файла</string>
     <string name="add_quick_file_subtitle">Открыть .txt со ссылками</string>
+    <string name="add_quick_qr_title">Сканер QR</string>
+    <string name="add_quick_qr_subtitle">Камера · ссылка или подписка</string>
+    <string name="add_msg_qr_empty">Сканирование отменено</string>
+    <string name="add_msg_qr_unsupported">Сканер QR недоступен на этом устройстве</string>
+    <string name="add_msg_qr_imported">Импортировано из QR</string>
+    <string name="add_msg_qr_invalid">QR не содержит корректную ссылку или подписку</string>
     <string name="add_msg_file_empty">Файл пуст или не читается</string>
     <string name="add_msg_imported_file">Импортировано: %1$d</string>
     <string name="add_msg_no_valid_uris_file">В файле нет корректных ссылок</string>
@@ -125,6 +146,15 @@
     <string name="manual_field_psk">Pre-shared key</string>
     <string name="manual_field_mtu">MTU</string>
 
+    <!-- Sort menu -->
+    <string name="ping_refresh_cd">Обновить пинг</string>
+    <string name="sort_cd">Сортировка</string>
+    <string name="sort_default">По умолчанию</string>
+    <string name="sort_ping">Пинг</string>
+    <string name="sort_country">Страна</string>
+    <string name="sort_type">Протокол</string>
+    <string name="sort_name">Название</string>
+
     <!-- Proxies screen -->
     <string name="proxies_count">Профилей: %1$d</string>
     <string name="proxies_delete_cd">Удалить профиль</string>
@@ -132,6 +162,34 @@
     <string name="proxies_delete_message">«%1$s» будет удалён.</string>
     <string name="proxies_empty_title">Профилей пока нет</string>
     <string name="proxies_empty_subtitle">Вставьте share-ссылку или URL подписки, чтобы начать.</string>
+    <string name="proxies_standalone_header">Мои прокси · %1$d</string>
+    <string name="proxies_edit_title">Редактировать профиль</string>
+    <string name="proxies_edit_name_label">Название</string>
+    <string name="proxies_action_probe_latency">Проверить задержку</string>
+    <string name="proxies_action_rename">Переименовать</string>
+    <string name="proxies_action_favorite">Добавить в избранное</string>
+    <string name="proxies_action_unfavorite">Убрать из избранного</string>
+
+    <!-- Subscriptions -->
+    <string name="sub_subtitle">%1$d сервер(ов)</string>
+    <string name="sub_traffic_used_unlimited">%1$s / ∞</string>
+    <string name="sub_days_left">Осталось %1$d дней</string>
+    <string name="sub_footer_servers">%1$d серверов</string>
+    <string name="sub_refresh_cd">Обновить подписку</string>
+    <string name="sub_delete_cd">Удалить подписку</string>
+    <string name="sub_delete_title">Удалить подписку?</string>
+    <string name="sub_delete_message">«%1$s» и %2$d привязанных профилей будут удалены.</string>
+    <string name="sub_traffic_used">%1$s / %2$s</string>
+    <string name="sub_expires_in_days">Истекает через %1$d дн.</string>
+    <string name="sub_expired">Срок истёк</string>
+
+    <!-- Deep-link import -->
+    <string name="deeplink_err_decode">Не удалось расшифровать ссылку</string>
+    <string name="deeplink_err_empty">Ссылка пуста</string>
+    <string name="deeplink_err_fetch">Не удалось получить подписку</string>
+    <string name="deeplink_err_no_uris">В ссылке нет валидных серверов</string>
+    <string name="deeplink_imported_subscription">Подписка добавлена · профилей: %1$d</string>
+    <string name="deeplink_imported_profiles">Добавлено профилей: %1$d</string>
 
     <!-- Rules screen -->
     <string name="rules_section_smart_title">Маршрутизация</string>
@@ -139,7 +197,7 @@
     <string name="rules_mode_global">Глобальный</string>
     <string name="rules_mode_global_subtitle">Весь трафик системы идёт через выбранный прокси.</string>
     <string name="rules_mode_smart">Smart (Antizapret)</string>
-    <string name="rules_mode_smart_subtitle">Опциональный режим: прокси активен только для заблокированных сайтов. Скоро — пока работает как Глобальный.</string>
+    <string name="rules_mode_smart_subtitle">Через прокси идут только заблокированные сайты. Список доменов подгружается при первом подключении (~1 МБ).</string>
     <string name="rules_section_domains_title">Исключения по доменам</string>
     <string name="rules_section_domains_subtitle">Эти хосты всегда идут напрямую, в обход прокси.</string>
     <string name="rules_domain_placeholder">например, yandex.ru</string>

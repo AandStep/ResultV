@@ -22,17 +22,25 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.NetworkPing
 import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -47,10 +55,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
 import com.resultv.android.theme.Brand
 import com.resultv.android.ui.components.PowerButton
+import com.resultv.android.ui.components.ProfileEditSheet
+import com.resultv.android.ui.components.ProfileSortMenu
+import com.resultv.android.ui.components.ProfileSortMode
 import com.resultv.android.ui.components.ServerRow
 import com.resultv.android.ui.components.Sparkline
 import com.resultv.android.ui.components.StatusHeader
 import com.resultv.android.ui.components.flagFromCountry
+import com.resultv.android.ui.components.sortProfiles
+import com.resultv.android.vpn.PingRepository
 import com.resultv.android.vpn.Profile
 import com.resultv.android.vpn.ProfileRepository
 import com.resultv.android.vpn.VpnState
@@ -66,7 +79,11 @@ fun HomeScreen(
 ) {
     val status by VpnState.status.collectAsStateWithLifecycle()
     val profilesState by ProfileRepository.state.collectAsStateWithLifecycle()
+    val pings by PingRepository.results.collectAsStateWithLifecycle()
     var dropdownOpen by remember { mutableStateOf(false) }
+    var sortMode by remember { mutableStateOf(ProfileSortMode.Default) }
+    var editingProfileId by remember { mutableStateOf<String?>(null) }
+    var pendingDeleteProfile by remember { mutableStateOf<Profile?>(null) }
 
     val active = profilesState.active
     val canConnect = active != null && (status is VpnStatus.Idle || status is VpnStatus.Error)
@@ -76,9 +93,12 @@ fun HomeScreen(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        // Standardised gap between every block on Home — the toolbar row
+        // sits the same distance above the current-server card as the
+        // speed cards sit above "Add server".
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         StatusHeader(status = status, activeProfileName = active?.name)
 
@@ -88,20 +108,47 @@ fun HomeScreen(
             onClick = onPowerPressed,
         )
 
-        // Active profile selector — tap to expand inline picker.
+        // Toolbar row: left = uptime chip (only when Connected), right =
+        // refresh-ping + sort. Uptime supersedes the previous standalone
+        // 3-cell banner — down/up speeds already live in the cards below.
+        // Fixed row height ≈ 36dp keeps the gap to the next card consistent
+        // with the rest of the Column spacing (default IconButton claims
+        // 48dp which made the toolbar look detached from the card below).
+        Row(
+            modifier = Modifier.fillMaxWidth().height(36.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            (status as? VpnStatus.Connected)?.let { connected ->
+                UptimeChip(connectedAt = connected.connectedAt)
+            }
+            Spacer(Modifier.weight(1f))
+            IconButton(
+                onClick = { PingRepository.refreshAll(profilesState.profiles) },
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.NetworkPing,
+                    contentDescription = stringResource(R.string.ping_refresh_cd),
+                    tint = Brand.SecondaryText,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            ProfileSortMenu(mode = sortMode, onModeChange = { sortMode = it })
+        }
+
+        // Active profile selector + expandable picker — one Card. Container
+        // stays neutral regardless of connection state; the active row in
+        // the list below highlights itself via [ServerRow.isActive] so the
+        // green tint reads as "this is the connected server", not "the whole
+        // picker is the connection".
         Card(
             shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = if (status is VpnStatus.Connected)
-                    Brand.Green.copy(alpha = 0.07f)
-                else Brand.Surface,
-            ),
+            colors = CardDefaults.cardColors(containerColor = Brand.Surface),
             modifier = Modifier
                 .fillMaxWidth()
                 .border(
                     1.dp,
-                    if (status is VpnStatus.Connected) Brand.Green.copy(alpha = 0.45f)
-                    else Color.White.copy(alpha = 0.09f),
+                    Color.White.copy(alpha = 0.09f),
                     RoundedCornerShape(20.dp),
                 ),
         ) {
@@ -116,14 +163,13 @@ fun HomeScreen(
                 ProfileDropdown(
                     profiles = profilesState.profiles,
                     activeId = profilesState.activeId,
+                    pings = pings,
+                    sortMode = sortMode,
                     onSelect = {
                         ProfileRepository.setActive(it.id)
                         dropdownOpen = false
                     },
-                    onSeeAll = {
-                        dropdownOpen = false
-                        onOpenProxies()
-                    },
+                    onLongPress = { editingProfileId = it.id },
                 )
             }
         }
@@ -132,11 +178,91 @@ fun HomeScreen(
             TrafficStatsRow()
         }
 
-        // Promo / add-server entry only when idle.
-        if (status is VpnStatus.Idle || status is VpnStatus.Error) {
-            AddProfileShortcut(onClick = onOpenAdd)
+        // Add-server shortcut stays visible in every state — the user
+        // commonly wants to add another profile mid-session without
+        // disconnecting first.
+        AddProfileShortcut(onClick = onOpenAdd)
+    }
+
+    editingProfileId?.let { id ->
+        val target = profilesState.profiles.firstOrNull { it.id == id }
+        if (target == null || target.isSection) {
+            editingProfileId = null
+            return@let
+        }
+        ProfileEditSheet(
+            profile = target,
+            onProbeLatency = { PingRepository.refresh(target) },
+            onRename = { ProfileRepository.rename(id, it) },
+            onToggleFavorite = { ProfileRepository.toggleFavorite(id) },
+            onDelete = { pendingDeleteProfile = target },
+            onDismiss = { editingProfileId = null },
+        )
+    }
+
+    pendingDeleteProfile?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pendingDeleteProfile = null },
+            title = { Text(stringResource(R.string.proxies_delete_title)) },
+            text = { Text(stringResource(R.string.proxies_delete_message, target.name), color = Brand.SecondaryText) },
+            confirmButton = {
+                TextButton(onClick = {
+                    ProfileRepository.remove(target.id)
+                    pendingDeleteProfile = null
+                }) { Text(stringResource(R.string.action_delete), color = Brand.Danger) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteProfile = null }) { Text(stringResource(R.string.action_cancel)) }
+            },
+        )
+    }
+}
+
+/**
+ * Compact uptime pill — clock icon + HH:MM:SS / MM:SS — that lives in the
+ * toolbar row when the tunnel is up. Ticks once per second via a
+ * [LaunchedEffect] keyed on [connectedAt] so the rest of HomeScreen
+ * doesn't recompose with the timer.
+ */
+@Composable
+private fun UptimeChip(connectedAt: Long) {
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(connectedAt) {
+        while (true) {
+            now = System.currentTimeMillis()
+            kotlinx.coroutines.delay(1000L)
         }
     }
+    val elapsedSec = ((now - connectedAt).coerceAtLeast(0L) / 1000L)
+
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White.copy(alpha = 0.04f))
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.Schedule,
+            contentDescription = null,
+            tint = Brand.SecondaryText,
+            modifier = Modifier.size(14.dp),
+        )
+        Text(
+            text = formatDuration(elapsedSec),
+            style = MaterialTheme.typography.labelMedium,
+            color = Brand.SecondaryText,
+        )
+    }
+}
+
+private fun formatDuration(totalSec: Long): String {
+    val h = totalSec / 3600
+    val m = (totalSec % 3600) / 60
+    val s = totalSec % 60
+    return if (h > 0) String.format("%d:%02d:%02d", h, m, s)
+    else String.format("%02d:%02d", m, s)
 }
 
 @Composable
@@ -296,13 +422,14 @@ private fun ActiveProfileRow(
 private fun ProfileDropdown(
     profiles: List<Profile>,
     activeId: String?,
+    pings: Map<String, PingRepository.Sample>,
+    sortMode: ProfileSortMode,
     onSelect: (Profile) -> Unit,
-    onSeeAll: () -> Unit,
+    onLongPress: (Profile) -> Unit,
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.30f))
             .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -314,37 +441,33 @@ private fun ProfileDropdown(
                 modifier = Modifier.padding(8.dp),
             )
         } else {
-            // Cap the inline list; tapping "See all" jumps to Proxies tab.
-            val visible = profiles.take(6)
+            // SECTION rows are list labels, never selectable. Favourites
+            // bubble to the top via sortProfiles regardless of [sortMode].
+            val real = profiles.filterNot { it.isSection }
+            val ordered = sortProfiles(real, sortMode, pings)
+
+            // Cap the dropdown's *vertical* size so it doesn't push the
+            // rest of Home off-screen, but render every profile (no count
+            // truncation) — the user wants to pick from the full list
+            // without leaving Home.
             LazyColumn(
-                modifier = Modifier.heightIn(max = 280.dp),
+                modifier = Modifier.heightIn(max = 420.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                items(visible, key = { it.id }) { p ->
+                items(ordered, key = { it.id }) { p ->
                     ServerRow(
                         name = p.name,
                         subtitle = profileSubtitle(p),
                         countryCode = profileCountry(p),
                         isAuto = profileIsAuto(p),
                         isActive = p.id == activeId,
-                        isFavorite = false,
+                        isFavorite = p.isFavorite,
                         onClick = { onSelect(p) },
-                        latencyMs = mockLatencyMs(p.id),
+                        onLongClick = { onLongPress(p) },
+                        latencyMs = pings[p.id]?.takeIf { it.reachable }?.latencyMs,
                     )
                 }
             }
-        }
-
-        if (profiles.size > 6) {
-            Text(
-                text = stringResource(R.string.home_view_all_profiles, profiles.size),
-                style = MaterialTheme.typography.labelMedium,
-                color = Brand.SecondaryText,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onSeeAll)
-                    .padding(8.dp),
-            )
         }
     }
 }
@@ -392,14 +515,8 @@ private fun AddProfileShortcut(onClick: () -> Unit) {
 
 // ───────────────────────── Profile field helpers ──────────────────────────
 
-/** Best-effort country code from a profile's parsed entry JSON. */
-internal fun profileCountry(p: Profile): String? {
-    val src = p.entryJson.ifBlank { return null }
-    return runCatching {
-        val o = JSONObject(src)
-        o.optString("country").takeIf { it.length == 2 }
-    }.getOrNull()
-}
+/** Best-effort country code — proxies to [Profile.country]. */
+internal fun profileCountry(p: Profile): String? = p.country()
 
 internal fun profileIsAuto(p: Profile): Boolean {
     val src = p.entryJson.ifBlank { return false }
@@ -408,22 +525,23 @@ internal fun profileIsAuto(p: Profile): Boolean {
     }.getOrDefault(false)
 }
 
-/**
- * Deterministic placeholder latency for the server dropdown. Replace with
- * real probe data once the pinger is wired up — single integer, ms.
- */
-internal fun mockLatencyMs(seed: String): Int {
-    val rng = java.util.Random(seed.hashCode().toLong())
-    return 30 + rng.nextInt(180)
-}
-
 internal fun profileSubtitle(p: Profile): String {
+    if (p.isSection) return ""
+    // Subscription profiles: hide raw host/IP — the provider's panel owns
+    // those (and they're usually meaningless to the user). Show only the
+    // protocol tag.
+    val src = p.entryJson
+    val protocolFromEntry = runCatching {
+        if (src.isNotBlank()) JSONObject(src).optString("type") else ""
+    }.getOrDefault("")
+    if (p.subscriptionId.isNotBlank()) {
+        return protocolFromEntry.ifBlank { protocolFromUri(p.uri).orEmpty() }
+    }
     if (p.uri.isNotBlank()) {
         // Trim long URIs into "vless://… host"
         val short = p.uri.substringBefore("?").take(64)
         return short
     }
-    val src = p.entryJson
     if (src.isBlank()) return ""
     return runCatching {
         val o = JSONObject(src)
@@ -435,4 +553,11 @@ internal fun profileSubtitle(p: Profile): String {
             "$ip:$port".takeIf { ip.isNotBlank() }
         ).joinToString("  ·  ")
     }.getOrDefault("")
+}
+
+/** Extract "vless" / "vmess" / "trojan" etc. from a `<proto>://...` URI. */
+private fun protocolFromUri(uri: String): String? {
+    val schemeEnd = uri.indexOf("://")
+    if (schemeEnd <= 0) return null
+    return uri.substring(0, schemeEnd).uppercase()
 }

@@ -81,6 +81,7 @@ import com.resultv.android.vpn.AppRoutingMode
 import com.resultv.android.vpn.AppRoutingRepository
 import com.resultv.android.vpn.RoutingMode
 import com.resultv.android.vpn.RoutingRulesRepository
+import com.resultv.android.vpn.SmartListRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -122,7 +123,13 @@ fun RulesScreen() {
                 title = stringResource(R.string.rules_mode_smart),
                 subtitle = stringResource(R.string.rules_mode_smart_subtitle),
                 selected = rules.mode == RoutingMode.Smart,
-                onClick = { RoutingRulesRepository.setMode(RoutingMode.Smart) },
+                onClick = {
+                    RoutingRulesRepository.setMode(RoutingMode.Smart)
+                    // Kick off the blocked-list download as soon as the
+                    // user opts in — first connect after toggling Smart
+                    // would otherwise have to block on the fetch.
+                    SmartListRepository.refreshAsync()
+                },
             )
         }
 

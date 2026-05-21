@@ -30,10 +30,16 @@ import java.util.concurrent.Executors
 private const val TAG = "ResultV/Service"
 private const val CHANNEL_ID = "resultv_vpn"
 private const val NOTIFICATION_ID = 1
+// Distinct ID + channel for the revoke-prompt: the foreground status
+// notification is torn down with stopForeground(REMOVE) before we post
+// this one, so they must not share IDs.
+private const val REVOKE_NOTIFICATION_ID = 2
+private const val REVOKE_CHANNEL_ID = "resultv_vpn_revoke"
 
 const val ACTION_START = "com.resultv.android.START"
 const val ACTION_STOP = "com.resultv.android.STOP"
 const val EXTRA_CONFIG_JSON = "configJson"
+const val EXTRA_RECONNECT_AFTER_REVOKE = "reconnectAfterRevoke"
 
 /**
  * VpnService host. The actual sing-box engine runs inside libbox via
@@ -55,10 +61,17 @@ class ResultVpnService : VpnService() {
     private var reloadWatcher: Job? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Always-on VPN starts the service directly via the
+        // `android.net.VpnService` intent filter — no MainActivity is run,
+        // so our repos won't have been touched yet. Ensure they're loaded
+        // before we try to resolve the active profile / DNS preset.
+        ensureReposReady()
+
         when (intent?.action) {
             ACTION_STOP -> {
                 Log.i(TAG, "received STOP")
                 reloadWatcher?.cancel(); reloadWatcher = null
+                TrafficWatcher.stop()
                 // Close the tun fd up front — this drops the system VPN
                 // lock icon immediately. libbox.closeService() takes a
                 // couple of seconds to drain connections, so push it to
@@ -71,9 +84,13 @@ class ResultVpnService : VpnService() {
                 return START_NOT_STICKY
             }
             else -> {
-                val config = intent?.getStringExtra(EXTRA_CONFIG_JSON)
+                // EXTRA_CONFIG_JSON is set on the UI-initiated path
+                // (MainActivity.connect). Always-on VPN supplies no extras
+                // and only fires the SERVICE_INTERFACE intent — fall back
+                // to rebuilding the config from the persisted active profile.
+                val config = intent?.getStringExtra(EXTRA_CONFIG_JSON) ?: buildConfigFromActiveProfile()
                 if (config.isNullOrEmpty()) {
-                    Log.e(TAG, "no config JSON in intent — stopping")
+                    Log.e(TAG, "no config available (no extra, no active profile) — stopping")
                     stopSelf()
                     return START_NOT_STICKY
                 }
@@ -82,9 +99,15 @@ class ResultVpnService : VpnService() {
                 worker.execute {
                     try {
                         BoxModule.start(this, config)
-                        VpnState.set(VpnStatus.Connected)
-                        renotify(buildNotification(VpnStatus.Connected))
+                        val connectedAt = System.currentTimeMillis()
+                        val connected = VpnStatus.Connected(connectedAt)
+                        VpnState.set(connected)
+                        renotify(buildNotification(connected))
                         startReloadWatcher()
+                        // Subscribe to libbox status stream so HomeScreen's
+                        // traffic cards show real uplink/downlink instead of
+                        // the placeholder zeros.
+                        TrafficWatcher.start()
                     } catch (t: Throwable) {
                         Log.e(TAG, "BoxModule.start failed", t)
                         VpnState.set(VpnStatus.Error(t.message ?: t.javaClass.simpleName))
@@ -98,18 +121,48 @@ class ResultVpnService : VpnService() {
         }
     }
 
+    /**
+     * Lazy init for the always-on VPN path. MainActivity normally initialises
+     * these on startup, but the OS can launch this service standalone via
+     * android.net.VpnService when the user enables "Always-on VPN" in
+     * system settings.
+     */
+    private fun ensureReposReady() {
+        val app = applicationContext
+        ProfileRepository.init(app)
+        SubscriptionRepository.init(app)
+        SettingsRepository.init(app)
+        RoutingRulesRepository.init(app)
+        AppRoutingRepository.init(app)
+        SmartListRepository.init(app)
+    }
+
+    /** Rebuild a sing-box config from whatever profile is currently active. */
+    private fun buildConfigFromActiveProfile(): String? {
+        val active = ProfileRepository.state.value.active ?: return null
+        return BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath)
+    }
+
     override fun onRevoke() {
+        // OS-initiated revoke: another VPN app took over, or the user
+        // toggled VPN off in system settings. We MUST stop the tunnel
+        // (the OS already pulled the fd out from under us), but instead
+        // of disappearing silently, post a Reconnect prompt so the user
+        // can re-establish — addresses the Phase-3 plan tail.
         Log.i(TAG, "VPN permission revoked")
         reloadWatcher?.cancel(); reloadWatcher = null
+        TrafficWatcher.stop()
         closeTun()
         VpnState.set(VpnStatus.Idle)
         stopForeground(STOP_FOREGROUND_REMOVE)
         worker.execute { BoxModule.stop() }
+        postReconnectPromptNotification()
         stopSelf()
     }
 
     override fun onDestroy() {
         reloadWatcher?.cancel(); reloadWatcher = null
+        TrafficWatcher.stop()
         scope.cancel()
         closeTun()
         VpnState.set(VpnStatus.Idle)
@@ -146,22 +199,9 @@ class ResultVpnService : VpnService() {
 
     private fun triggerReload() {
         val active = ProfileRepository.state.value.active ?: return
-        val excludedDomains = RoutingRulesRepository.state.value.domainExclusions.joinToString(",")
-        val dataDir = filesDir.absolutePath
-        val configJson = try {
-            when {
-                active.entryJson.isNotBlank() ->
-                    Mobile.buildSingBoxConfigFromEntry(
-                        active.entryJson, dataDir, "8.8.8.8,1.1.1.1", excludedDomains,
-                    )
-                active.uri.isNotBlank() ->
-                    Mobile.buildSingBoxConfig(
-                        active.uri, dataDir, "8.8.8.8,1.1.1.1", excludedDomains,
-                    )
-                else -> return
-            }
-        } catch (t: Throwable) {
-            Log.w(TAG, "rebuild config for reload failed", t)
+        val configJson = BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath)
+        if (configJson == null) {
+            Log.w(TAG, "rebuild config for reload failed or profile empty")
             return
         }
         worker.execute {
@@ -183,6 +223,41 @@ class ResultVpnService : VpnService() {
 
     private fun renotify(n: Notification) {
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, n)
+    }
+
+    private fun postReconnectPromptNotification() {
+        val nm = getSystemService(NotificationManager::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val ch = NotificationChannel(
+                REVOKE_CHANNEL_ID,
+                getString(R.string.vpn_revoke_channel_name),
+                NotificationManager.IMPORTANCE_DEFAULT,
+            )
+            nm.createNotificationChannel(ch)
+        }
+        val reopen = PendingIntent.getActivity(
+            this, 2,
+            Intent(this, MainActivity::class.java).apply {
+                action = Intent.ACTION_MAIN
+                addCategory(Intent.CATEGORY_LAUNCHER)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(EXTRA_RECONNECT_AFTER_REVOKE, true)
+            },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val notification = Notification.Builder(this, REVOKE_CHANNEL_ID)
+            .setContentTitle(getString(R.string.vpn_revoke_title))
+            .setContentText(getString(R.string.vpn_revoke_text))
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentIntent(reopen)
+            .setAutoCancel(true)
+            .addAction(
+                Notification.Action.Builder(
+                    null, getString(R.string.vpn_revoke_action), reopen,
+                ).build()
+            )
+            .build()
+        nm.notify(REVOKE_NOTIFICATION_ID, notification)
     }
 
     private fun buildNotification(status: VpnStatus): Notification {
@@ -207,7 +282,7 @@ class ResultVpnService : VpnService() {
         )
         val text = when (status) {
             VpnStatus.Connecting -> getString(R.string.vpn_status_connecting)
-            VpnStatus.Connected -> getString(R.string.vpn_status_connected)
+            is VpnStatus.Connected -> getString(R.string.vpn_status_connected)
             VpnStatus.Idle -> getString(R.string.vpn_status_idle)
             is VpnStatus.Error -> getString(R.string.vpn_status_error, status.message)
         }

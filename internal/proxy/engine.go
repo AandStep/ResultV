@@ -63,11 +63,38 @@ type EngineConfig struct {
 	LocalPort    int
 	DNSServers   []string
 	TunIPv4      string
+	TunIPv6      string
 	DataDir      string
 	// IsAndroid must be set to true when building a config for Android.
 	// We cannot rely on runtime.GOOS because gomobile bind compiles on the
 	// host OS (Windows/Linux/macOS), so runtime.GOOS is never "android".
-	IsAndroid    bool
+	IsAndroid bool
+	// IPv6 enables dual-stack: TUN gets an IPv6 address, DNS resolves AAAA,
+	// and IPv6 traffic is routed through the tunnel. Off by default —
+	// matches the historical Android behaviour where strategy was forced
+	// to ipv4_only and only the v4 TUN address was attached.
+	IPv6 bool
+	// BypassLAN routes RFC1918 / link-local / multicast traffic to the
+	// `direct` outbound instead of through the proxy. Lets users access
+	// their printer / NAS / router admin while the VPN is up.
+	BypassLAN bool
+	// LogLevel overrides sing-box's log.level. Empty → "info" in
+	// release-style builds, "debug" only when explicitly requested. The
+	// mobile wrapper used to hardcode debug; that was too chatty for ship.
+	LogLevel string
+	// SmartMode (Antizapret) routes only blocked / listed domains through
+	// the proxy; everything else goes direct. The blocked list comes from
+	// [SmartBlockedDomains], populated by the caller (typically the
+	// blocked_provider HTTP fetcher) — we no longer rely on sing-box's
+	// remote rule_set because the upstream geosite-category-blocked.srs
+	// release was renamed/removed in 2026.
+	SmartMode bool
+	// SmartBlockedDomains is the resolved list of domains that should
+	// route through the proxy when [SmartMode] is on. Each entry is a
+	// suffix-matched domain (e.g. "instagram.com" matches "x.instagram.com").
+	// Empty + SmartMode=true means the user enabled Smart but no list was
+	// fetched yet — fall back to passing everything direct.
+	SmartBlockedDomains []string
 }
 
 type Engine interface {
@@ -92,6 +119,15 @@ type SingBoxConfig struct {
 
 type SBExperimental struct {
 	CacheFile *SBCacheFile `json:"cache_file,omitempty"`
+	ClashAPI  *SBClashAPI  `json:"clash_api,omitempty"`
+}
+
+// SBClashAPI flips on sing-box's clash-style traffic manager. We don't
+// expose the HTTP controller (no `external_controller`); the in-process
+// libbox CommandClient reads the same TrafficManager via its status
+// subscription, which is all the Android UI needs.
+type SBClashAPI struct {
+	ExternalController string `json:"external_controller,omitempty"`
 }
 
 type SBCacheFile struct {
@@ -273,9 +309,23 @@ type SBOutboundTransport struct {
 }
 
 type SBRoute struct {
-	Rules      []SBRouteRule `json:"rules,omitempty"`
-	Final      string        `json:"final,omitempty"`
-	AutoDetect bool          `json:"auto_detect_interface,omitempty"`
+	Rules      []SBRouteRule    `json:"rules,omitempty"`
+	RuleSet    []SBRouteRuleSet `json:"rule_set,omitempty"`
+	Final      string           `json:"final,omitempty"`
+	AutoDetect bool             `json:"auto_detect_interface,omitempty"`
+}
+
+// SBRouteRuleSet describes a remote (or local) sing-box rule_set. Used by
+// Smart-mode routing to pull e.g. the Antizapret / Russia-blocked list and
+// match only those domains for proxy routing.
+type SBRouteRuleSet struct {
+	Type           string `json:"type"`
+	Tag            string `json:"tag"`
+	Format         string `json:"format,omitempty"`
+	URL            string `json:"url,omitempty"`
+	Path           string `json:"path,omitempty"`
+	DownloadDetour string `json:"download_detour,omitempty"`
+	UpdateInterval string `json:"update_interval,omitempty"`
 }
 
 type SBRouteRule struct {
@@ -287,6 +337,7 @@ type SBRouteRule struct {
 	IPCidr           []string `json:"ip_cidr,omitempty"`
 	ProcessName      []string `json:"process_name,omitempty"`
 	ProcessPathRegex []string `json:"process_path_regex,omitempty"`
+	RuleSet          []string `json:"rule_set,omitempty"`
 	Outbound         string   `json:"outbound,omitempty"`
 	Action           string   `json:"action,omitempty"`
 }
@@ -300,13 +351,24 @@ func effectiveDataDir(cfg EngineConfig) string {
 
 func buildExperimentalCache(dataDir string) *SBExperimental {
 	if dataDir == "" {
-		return nil
+		// Even without a writable cache, enable clash_api so the libbox
+		// status subscription has a TrafficManager to read.
+		return &SBExperimental{
+			ClashAPI: &SBClashAPI{},
+		}
 	}
 	return &SBExperimental{
 		CacheFile: &SBCacheFile{
 			Enabled: true,
 			Path:    filepath.Join(dataDir, "sing-box-cache.db"),
 		},
+		// clash_api with no external_controller spins up the in-process
+		// TrafficManager (uplink/downlink/connection counts) without
+		// opening any TCP port. The mobile UI consumes it via the libbox
+		// CommandClient status subscription; desktop will keep ignoring
+		// it because it tracks bytes through its own trafficTracker on
+		// the sing-box adapter callbacks.
+		ClashAPI: &SBClashAPI{},
 	}
 }
 
@@ -362,6 +424,17 @@ func BuildTunnelModeConfig(cfg EngineConfig) SingBoxConfig {
 		tunIPv4 = cfg.TunIPv4
 	}
 	tunAddresses := []string{tunIPv4}
+	// Dual-stack TUN when IPv6 is requested. Pick a fixed ULA prefix in
+	// fc00::/7 (RFC 4193) — small /126 is enough for the point-to-point
+	// link to gvisor, and stays out of any real on-link IPv6 the device
+	// might be using.
+	if cfg.IPv6 {
+		tunIPv6 := "fdfe:dcba:9876::1/126"
+		if cfg.TunIPv6 != "" {
+			tunIPv6 = cfg.TunIPv6
+		}
+		tunAddresses = append(tunAddresses, tunIPv6)
+	}
 	tunStack := "gvisor"
 	strictRoute := true
 
@@ -374,10 +447,6 @@ func BuildTunnelModeConfig(cfg EngineConfig) SingBoxConfig {
 
 	if pt == "HYSTERIA2" || pt == "TROJAN" || pt == "SS" || pt == "SHADOWSOCKS" {
 		strictRoute = false
-	}
-
-	if pt == "WIREGUARD" || pt == "AMNEZIAWG" {
-		tunAddresses = []string{tunIPv4}
 	}
 
 	var routeExclude []string
@@ -394,8 +463,16 @@ func BuildTunnelModeConfig(cfg EngineConfig) SingBoxConfig {
 	dd := effectiveDataDir(cfg)
 	outbounds := buildOutbounds(cfg.Proxy)
 
+	// Default sing-box log level. `error` keeps logcat quiet on ship;
+	// callers (mobile wrapper) can override via cfg.LogLevel for debug
+	// builds where they want the REALITY/XHTTP transport noise.
+	logLevel := strings.ToLower(strings.TrimSpace(cfg.LogLevel))
+	if logLevel == "" {
+		logLevel = "error"
+	}
+
 	config := SingBoxConfig{
-		Log:       &SBLog{Level: "error", Disabled: false},
+		Log:       &SBLog{Level: logLevel, Disabled: false},
 		DNS:       buildDNS(cfg),
 		Endpoints: buildEndpoints(cfg.Proxy),
 		Inbounds: []SBInbound{{
@@ -485,7 +562,15 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			Servers: servers,
 		}
 
-		dns.Strategy = "ipv4_only"
+		// IPv4-only by default — Android's per-app UID matching is happier
+		// with deterministic v4 resolutions, and the old behaviour locked
+		// us out of v6 anyway. The toggle is opt-in; when on, sing-box
+		// answers both A and AAAA and lets the kernel pick.
+		if cfg.IPv6 {
+			dns.Strategy = "prefer_ipv4"
+		} else {
+			dns.Strategy = "ipv4_only"
+		}
 
 		if detour != "" && cfg.Proxy.IP != "" && net.ParseIP(cfg.Proxy.IP) == nil {
 			dns.Rules = append(dns.Rules, SBDNSRule{
@@ -552,9 +637,50 @@ func splitDNSServer(raw string) (string, int) {
 	return s, 0
 }
 
+// splitSmartDomains turns a normalised blocked-list (entries from
+// blocked_provider.normalizeDomains: lowercase, no scheme, no wildcards)
+// into sing-box `domain` (exact) + `domain_suffix` (subdomain match)
+// buckets.
+//
+// Heuristic: treat every base domain as a `domain_suffix` so
+// "instagram.com" also catches "x.instagram.com" — that's what users
+// expect from an Antizapret-style filter. The cost of the broader match
+// is paid by sing-box's hash-trie, which scales to 10k+ entries cheaply.
+// Pure-IP entries (rare but present in some Russia lists) go into
+// `domain` so they're matched verbatim.
+func splitSmartDomains(domains []string) (exact []string, suffix []string) {
+	seen := make(map[string]struct{}, len(domains))
+	for _, raw := range domains {
+		d := strings.ToLower(strings.TrimSpace(raw))
+		d = strings.TrimPrefix(d, ".")
+		if d == "" {
+			continue
+		}
+		if _, dup := seen[d]; dup {
+			continue
+		}
+		seen[d] = struct{}{}
+		if net.ParseIP(d) != nil {
+			exact = append(exact, d)
+			continue
+		}
+		// Lead with a dot so sing-box's domain_suffix matches whole-label
+		// suffixes only (".instagram.com" matches "x.instagram.com" but
+		// not "fakeinstagram.com").
+		suffix = append(suffix, "."+d)
+	}
+	return exact, suffix
+}
+
 func buildRoute(cfg EngineConfig) *SBRoute {
+	final := "proxy"
+	// Smart mode flips the default: only listed domains hit the proxy,
+	// the rest goes direct. Default → direct, domain match → proxy.
+	if cfg.SmartMode {
+		final = "direct"
+	}
 	route := &SBRoute{
-		Final:      "proxy",
+		Final:      final,
 		AutoDetect: !cfg.IsAndroid && runtime.GOOS != "android",
 	}
 
@@ -581,6 +707,29 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		}
 	}
 
+	// Bypass-LAN: send RFC1918 / link-local / multicast / broadcast / ULA
+	// traffic straight to `direct` so the printer / NAS / router admin /
+	// mDNS still reachable while the VPN is up. Runs BEFORE sniff because
+	// it's a pure IP/CIDR rule — no Host/SNI knowledge required.
+	if cfg.BypassLAN {
+		lanCIDRs := []string{
+			"10.0.0.0/8",
+			"172.16.0.0/12",
+			"192.168.0.0/16",
+			"169.254.0.0/16", // link-local v4
+			"224.0.0.0/4",    // multicast v4
+			"255.255.255.255/32",
+			"fc00::/7",  // ULA
+			"fe80::/10", // link-local v6
+			"ff00::/8",  // multicast v6
+		}
+		rules = append(rules, SBRouteRule{
+			Action:   "route",
+			IPCidr:   lanCIDRs,
+			Outbound: "direct",
+		})
+	}
+
 	rules = append(rules, SBRouteRule{
 		Action: "sniff",
 	})
@@ -589,6 +738,27 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		Protocol: []string{"dns"},
 		Action:   "hijack-dns",
 	})
+
+	// Smart mode: domains in SmartBlockedDomains go through the proxy.
+	// MUST come after the sniff rule above so the domain matcher sees a
+	// populated host. Everything else falls through to Final=direct.
+	//
+	// We split entries with a leading dot (or a 2-label form that
+	// implicitly matches subdomains) into `domain_suffix` and keep exact
+	// FQDNs in `domain` — sing-box's matcher is hash-based and handles
+	// 10k+ entries cheaply, but the split keeps the rule honest and
+	// debuggable.
+	if cfg.SmartMode && len(cfg.SmartBlockedDomains) > 0 {
+		exactDomains, domainSuffixes := splitSmartDomains(cfg.SmartBlockedDomains)
+		if len(exactDomains)+len(domainSuffixes) > 0 {
+			rules = append(rules, SBRouteRule{
+				Action:       "route",
+				Domain:       exactDomains,
+				DomainSuffix: domainSuffixes,
+				Outbound:     "proxy",
+			})
+		}
+	}
 
 	isEndpointProtocol := strings.EqualFold(strings.TrimSpace(cfg.Proxy.Type), "wireguard") ||
 		strings.EqualFold(strings.TrimSpace(cfg.Proxy.Type), "amneziawg")

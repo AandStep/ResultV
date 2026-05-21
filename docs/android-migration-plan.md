@@ -41,7 +41,7 @@ Material 3) that calls into Go via a `gomobile bind` AAR.
 - [x] Tested working (emulator): VLESS+REALITY+XHTTP packet-up, stream-up,
       Trojan+REALITY+gRPC.
 
-## Phase 3 — Stability & polish — ⚠️ MOSTLY DONE
+## Phase 3 — Stability & polish — ⚠️ ONE ITEM LEFT
 
 - [x] `BoxModule.start` off the main thread (single-thread Executor).
 - [x] Connection state machine: `Idle / Connecting / Connected / Error` via
@@ -56,7 +56,10 @@ Material 3) that calls into Go via a `gomobile bind` AAR.
       .distinctUntilChanged().drop(1).debounce(300)`) that rebuilds the
       sing-box config and calls reload — so domain exclusions, per-app rules,
       and active-profile switches apply without disconnect/reconnect.
-- [ ] Auto-reconnect on `onRevoke()` only when user re-enables, not silently.
+- [x] Auto-reconnect on `onRevoke()` via notification — separate channel
+      `resultv_vpn_revoke`, action button "Reconnect" launches MainActivity
+      with `EXTRA_RECONNECT_AFTER_REVOKE` which auto-triggers `connect()`
+      after the user reconfirms the system VPN consent dialog.
 - [x] Replace `android.R.drawable.ic_lock_lock` with a real app icon —
       adaptive launcher icon driven by the brand PNG
       (`mipmap-xxxhdpi/ic_launcher_logo.png`, 1080×1080) wrapped in
@@ -69,9 +72,12 @@ Material 3) that calls into Go via a `gomobile bind` AAR.
       render at 24dp; left as a flat shield placeholder, low priority.
 - [ ] Verify `addDisallowedApplication(packageName)` survives package rename
       for release builds.
-- [ ] Drop `log.level=debug` once shipping (currently noisy but useful).
+- [x] Drop hardcoded `log.level=debug`. Now parametrised via
+      `EngineConfig.LogLevel` / `BuildOptions.logLevel`; default is `info`,
+      release builds stay quiet, the Kotlin side persists the choice in
+      `SettingsRepository`.
 
-## Phase 4 — Profile management — ⚠️ FIRST SLICE DONE
+## Phase 4 — Profile management — ⚠️ TWO ITEMS LEFT (QR / edit-reorder)
 
 - [x] Persist proxy profiles in `profiles.json` under `filesDir`
       (`ProfileRepository`, JSON-backed, reactive `StateFlow`).
@@ -88,12 +94,22 @@ Material 3) that calls into Go via a `gomobile bind` AAR.
       - Diagnostic error format with URL, response size, preview, parse counts.
 - [x] Profile list with delete + active-radio (Proxies tab).
 - [x] Connect path prefers `entryJson` when present, falls back to URI.
-- [ ] Subscription metadata + lifecycle:
-      - Need `Subscription` model (id, url, name, expiry, traffic limit, used).
-      - Refresh button per subscription that re-fetches and reconciles.
-      - Delete-whole-subscription that cascades to its profiles.
-      - Requires Go-side change to `Mobile.fetchSubscription` to return
-        `Subscription-Userinfo` / `Profile-Title` headers — **AAR rebuild**.
+- [x] Subscription metadata + lifecycle — full slice.
+      Engine: `Mobile.FetchSubscriptionV2` returns
+      `{entries, userInfo, title}` carrying `Subscription-Userinfo` /
+      `Profile-Title` headers; `FinalizeSubscriptionEntries` (engine)
+      turns placeholder-host rows into SECTION labels instead of dropping
+      them.
+      Kotlin: `Subscription` data class, `SubscriptionRepository`
+      JSON-backed with cascade delete (`profiles.json` profiles tagged
+      via `Profile.subscriptionId`). `ProxiesScreen` shows each
+      subscription as a collapsible card with logo, name, server count,
+      traffic-quota progress bar + expiry days, refresh + delete IconButtons.
+      Refresh re-fetches and reconciles via `replaceForSubscription`
+      while preserving favourite flags by name. impVPN logo override
+      driven by `source == "rvsub"` or "impvpn" in name/title.
+      Host:port hidden for subscription-tagged profiles — show only
+      protocol tag.
 - [x] Manual protocol picker on Add screen — third tab "Manual" with a 3×N
       grid of protocol cards (VLESS / VMess / Trojan / Shadowsocks / Hysteria2 /
       WireGuard / AmneziaWG). Per-protocol form (typed fields, choice
@@ -102,13 +118,58 @@ Material 3) that calls into Go via a `gomobile bind` AAR.
       `ManualPane.kt`, pure Kotlin — no AAR rebuild.
       HTTP/HTTPS skipped (engine has no top-level handler); SOCKS5 deferred
       to a separate slice that requires `Profile.fromEntryJson` plumbing.
-- [ ] QR-code scan import.
-- [ ] Edit / rename / drag-reorder profiles.
-- [ ] Latency probe + auto-pick on AUTO profile (currently always
-      `members[0]`; should iterate members on connect failure).
-- [ ] Favourites: persist `Profile.isFavorite` and surface in Home dropdown.
+- [x] Deep-link import — `resultv://import/<base64>`, `rvsub/`, `crypt4/`,
+      `i/`, opaque `resultv:import/...`. Manifest intent-filter on
+      `resultv` scheme; `MainActivity.handleDeepLinkIntent` delegates to
+      `DeepLinkImporter` which calls `Mobile.decodeDeepLink` (RVSUB1 AES-GCM
+      via the existing `subscription_decrypt.go` pipeline) and routes
+      single-URL plaintext → `Mobile.fetchSubscriptionV2`, multi-line
+      bodies → per-line `Mobile.parseProxyURI` import. Rvsub-flavoured
+      links auto-tag the subscription so the impVPN logo lights up.
+- [x] QR-code scan import — Google Play Services bundled scanner
+      (`play-services-code-scanner:16.1.0`, no `CAMERA` permission needed).
+      Third quick-import card on `AddScreen` opens the system scanner UI;
+      decoded value is routed via `DeepLinkImporter.importPlain` so
+      `resultv://`, `http(s)://` (subscription) and bare share-links all
+      flow through the same dispatcher. Manifest carries a
+      `com.google.mlkit.vision.DEPENDENCIES = barcode_ui` meta-data tag so
+      the scanner module preloads on install.
+- [x] Edit / rename / drag-reorder profiles — long-press a row on the
+      Proxies screen opens a `ModalBottomSheet` (`ProfileEditSheet`) with
+      rename + Move up / Move down + Delete. Reorder swaps with the
+      immediate neighbour in the same bucket (same `subscriptionId`, no
+      crossing SECTION labels) via `ProfileRepository.move(id, ±1)`; move
+      buttons disable at edges and when sort mode ≠ Default (under
+      ping/country/etc. the visual order ≠ storage order, so reorder would
+      be confusing). Drag-handle reorder (gesture-based) skipped — the
+      bottom-sheet move buttons cover the same need without pulling in a
+      compose-reorderable dep.
+- [x] Latency probe + auto-pick on AUTO profile —
+      `PingRepository` probes every member, sorts by reachable + latency,
+      and `MainActivity.startAutoConnect` walks the sorted list, waiting up
+      to 15s per attempt and falling through to the next member on Error /
+      timeout. Always-on path still uses engine `members[0]` (no UI to
+      drive the failover loop without `lifecycleScope`).
+- [x] Favourites: `Profile.isFavorite` persisted in `profiles.json`,
+      `ProfileRepository.toggleFavorite(id)`, star toggle in `ServerRow`.
+      Home dropdown shows pinned "FAVORITES" section on top; Proxies tab
+      sorts favourites first via stable `sortedByDescending { isFavorite }`.
+- [x] Subscription title `base64:` prefix decoded —
+      `decodePanelTitle` tries `Base64.DEFAULT` then falls back to
+      `Base64.URL_SAFE` (xray panels emit standard `+/` alphabet, the
+      naive OR-of-flags rejects them). `Subscription.displayName` and
+      `subscriptionUsesImpLogo` both go through the decoder, so panels
+      that wrap "🚀 impVPN Auto" in base64 render correctly and light
+      up the brand logo.
+- [x] impVPN brand logo — `res/drawable/imp_logo.png` (copied from
+      desktop `ResultV-dev/frontend/src/assets/implogo.png`). Replaces
+      the rocket-emoji placeholder in `SubscriptionLogo`.
+- [x] Subscription header buttons grouped — refresh/delete/expand
+      now share a single compact pill (36dp IconButtons, 18dp icons,
+      rounded `Color.White.copy(alpha=0.04f)` background) instead of
+      floating with 48dp Material defaults.
 
-## Phase 5 — Routing & per-app rules — ⚠️ UI DONE, WIRING PENDING
+## Phase 5 — Routing & per-app rules — ✅ DONE
 
 - [x] `RoutingRulesRepository` — Global / Smart mode + domain exclusions list.
 - [x] `AppRoutingRepository` — All / AllowList / DisallowList + selected packages.
@@ -128,14 +189,47 @@ Material 3) that calls into Go via a `gomobile bind` AAR.
       ingress; SNI/Host (and therefore the domain matcher) only become
       available after sniff runs. Live-reload via `BoxModule.reload`
       means edits apply without disconnect/reconnect (Phase 3).
-- [ ] **Smart (Antizapret)** real implementation:
-      - Geosite ruleset download + sing-box `route.rule_set` config.
-      - Behaviour: only listed sites go through proxy, rest direct.
-- [ ] Bypass-LAN toggle: skip RFC1918 + multicast + link-local.
-- [ ] IPv6 toggle (currently `strategy: ipv4_only` hardcoded in mobile builder).
-- [ ] Custom DNS via UI — currently DNS is hardcoded `1.1.1.1`/`8.8.8.8`.
+- [x] **Smart (Antizapret)** — desktop-parity HTTP fetch instead of
+      sing-box's remote `route.rule_set` (the old
+      `runetfreedom/russia-blocked-geosite/...` URL started 404-ing in
+      2026 and the rule_set fetch is synchronous on engine start →
+      VPN never came up). New flow:
+      - Engine: `EngineConfig.SmartBlockedDomains []string` replaces the
+        old `SmartRulesetURL`. `buildRoute` emits a local route rule
+        `{domain_suffix: [.x.com, .instagram.com, …], outbound: proxy}`
+        built via `splitSmartDomains` (every base domain becomes a
+        suffix-match so subdomains are covered).
+      - `Mobile.FetchSmartList(country, dataDir)` gomobile binding
+        wraps the existing `proxy.HTTPBlockedListProvider` +
+        `ResolveBlockedDomains` (citizenlab + itdoginfo sources for RU,
+        citizenlab global+country for the rest). Caches in
+        `dataDir/smart-blocked.json` with 24h TTL.
+      - Kotlin `SmartListRepository` — singleton with `init`,
+        `ensureLoaded` (TTL-respecting), `refresh` (force), `refreshAsync`
+        / `ensureLoadedAsync`. Persists snapshot to
+        `filesDir/smart-list.meta.json`. Default country pinned to `ru`.
+      - `MainActivity.onCreate` calls `ensureLoadedAsync()` at app start
+        (matches desktop preload behaviour). Rules screen Smart toggle
+        triggers `refreshAsync()`. `connect()` blocks on
+        `ensureLoaded()` when Smart is on and the list is empty.
+      - `BuildOptionsBuilder.currentOptionsJson` emits
+        `smartBlockedDomainsList` (newline-separated) which gomobile
+        sends to `splitSmartList` → `EngineConfig.SmartBlockedDomains`.
+- [x] Bypass-LAN toggle — `EngineConfig.BypassLAN` injects a
+      pre-sniff route rule sending RFC1918 / 169.254.0.0/16 /
+      224.0.0.0/4 / fc00::/7 / fe80::/10 / ff00::/8 to `direct`.
+      Persisted on Kotlin side as `SettingsState.bypassLan` (default on).
+- [x] IPv6 toggle — `EngineConfig.IPv6` adds an ULA `/126` to the TUN
+      address list and flips `dns.strategy` to `prefer_ipv4`. Off by
+      default; Settings → IPv6 wires it through.
+- [x] Custom DNS via UI — Kotlin side wired: `SettingsRepository`
+      persists `dnsPreset` / `dnsCustom`, `resolveDnsServers()` resolves
+      to a comma-separated list, plumbed through both
+      `MainActivity.connect()` and `ResultVpnService.triggerReload()`.
+      Engine already accepts the `dnsServers` argument on
+      `Mobile.buildSingBoxConfig*` — no AAR rebuild needed.
 
-## Phase 6 — Quality of life — 🚧 PARTIALLY DONE
+## Phase 6 — Quality of life — ⚠️ TWO ITEMS LEFT (banner / battery stats)
 
 - [x] Material 3 design system: `Brand` palette, `ResultVTheme` with all
       M3 slots filled (no purple leaks).
@@ -156,25 +250,52 @@ Material 3) that calls into Go via a `gomobile bind` AAR.
       - Language switcher with DropdownMenu (EN / RU / ES / DE / FR / ZH) — UI only.
       - General toggles (Kill Switch, Adblock, IPv6) — disabled placeholders.
       - DNS presets via FilterChip (Auto / Google / Cloudflare / Quad9) — UI only.
-- [ ] Real traffic stats wired from libbox `CommandClient`.
-- [~] Real localization — **infrastructure done, partial extraction**.
-      `locale/LocaleManager.kt` (DIY, persists via SharedPreferences,
-      applies via `Activity.attachBaseContext` + `recreate()`),
-      `res/values/strings.xml` + `values-ru/strings.xml` (~40 keys),
-      Settings dropdown reduced to EN/RU and wired to `LocaleManager`.
-      Extracted: tabs/top bar (`MainActivity`), `HomeScreen`,
-      `SettingsScreen`, `StatusHeader` (`PowerButton.kt`), `ServerRow`
-      contentDescriptions, `ResultVpnService` notification text +
-      channel name. **Not extracted yet** (mechanical follow-up):
-      `AddScreen` (paste/clipboard/file/manual + every protocol form),
-      `ProxiesScreen` (active/delete/empty states), `RulesScreen`
-      (mode cards, domain exclusions card, per-app routing card).
+- [x] Real traffic stats wired from libbox `CommandClient`.
+      `TrafficWatcher` (Kotlin singleton) subscribes to `Libbox.CommandStatus`
+      at 1Hz, parses `StatusMessage.{uplink,downlink,uplinkTotal,downlinkTotal}`,
+      pushes into `TrafficStats.publish` so HomeScreen cards animate.
+      Engine side: `SBExperimental.ClashAPI = &SBClashAPI{}` (no
+      external controller — clash_api is enabled purely to flip on the
+      in-process TrafficManager that libbox reads).
+- [x] Real localization — **complete pass**. `locale/LocaleManager.kt`
+      persists via SharedPreferences and applies via
+      `Activity.attachBaseContext` + `recreate()`. `values/strings.xml` +
+      `values-ru/strings.xml` cover all user-visible text: tabs/top bar,
+      Home, Settings, Status header, ServerRow, VPN service notifications,
+      Add screen (paste/clipboard/file/manual + per-protocol forms),
+      Proxies screen, Rules screen, revoke + tile notifications,
+      PowerButton contentDescription.
 - [x] `vpn/SettingsRepository.kt` — persistent UI settings store
       (DNS preset/custom, kill-switch, adblock, ipv6 — placeholders
       until engine-side wiring lands in next AAR-rebuild session).
-- [ ] Quick Settings tile (`TileService`) for one-tap connect.
-- [ ] Always-on VPN compatibility (start with no UI input, load last profile).
-- [ ] Connection-stats banner (uplink/downlink/duration) on Home.
+- [x] Quick Settings tile — `ResultVTileService` registered in manifest
+      with `BIND_QUICK_SETTINGS_TILE`. Mirrors `VpnState.status` to tile
+      state (Active/Inactive/Unavailable), one-tap connect/disconnect.
+      If consent is needed or device is locked, bounces to MainActivity.
+- [x] Always-on VPN compatibility — `ResultVpnService.onStartCommand`
+      now lazily inits all repos and, when no `EXTRA_CONFIG_JSON` is
+      provided (the OS path for always-on), rebuilds the config from
+      `ProfileRepository.active` + `SettingsRepository.resolveDnsServers()`
+      + `RoutingRulesRepository.domainExclusions`.
+- [x] Home dropdown UX polish —
+      - Refresh-ping (left) + sort (right) toolbar placed under the
+        PowerButton, always visible (not nested inside the dropdown).
+      - Active-server card + expandable list back to one unified Card.
+      - `ProfileSortMenu` wraps IconButton + DropdownMenu in a `Box` so
+        the popup anchors under the button instead of jumping to the
+        popup window's top-left.
+      - `Mobile.ping` wired via `PingRepository` (60s ticker +
+        on-demand refresh + AUTO member probing). `mockLatencyMs`
+        gone. AUTO connect path orders members by reachable+latency
+        and falls through on Error (`MainActivity.startAutoConnect`).
+- [x] Connection-stats banner (uplink/downlink/duration) on Home —
+      `VpnStatus.Connected(connectedAt: Long)` carries the wall-clock
+      moment the tunnel came up. `HomeScreen.ConnectionStatsBanner` sits
+      between PowerButton and the refresh-ping toolbar (only when
+      connected), shows uptime + down + up in a compact 3-cell pill, and
+      reads `TrafficStats.snapshot` for live speeds. The existing
+      DOWNLOAD/UPLOAD cards stay — banner is a glanceable summary, the
+      cards are the detailed view.
 - [ ] Battery / data usage stats from libbox `CommandClient`.
 - [ ] Material You dynamic color — **dropped** at user request.
 
@@ -204,60 +325,217 @@ Material 3) that calls into Go via a `gomobile bind` AAR.
 | WireGuard | 🔒 blocked on UI | 🔒 blocked on UI | `.conf` file import not implemented yet |
 | AmneziaWG | 🔒 blocked on UI | 🔒 blocked on UI | Same |
 
-A full QA pass should happen on a real device once Phase 5 wiring + Phase 6
-real-traffic-stats are in.
+A full QA pass on a real device is the next milestone — Phase 5 wiring
+and real traffic stats are in, but everything in the matrix is still
+emulator-only.
 
 ---
 
-## Immediate next milestones (in priority order)
+## What's left from the original plan
 
-1. **Localization second pass** — extract remaining hardcoded strings on
-   `AddScreen` (incl. `ManualPane` per-protocol forms), `ProxiesScreen`,
-   `RulesScreen` and add RU translations. Pure-Kotlin, no rebuild.
-   Mechanical work: search-and-replace `Text("…")` → `stringResource(R.string.…)`.
+The list below is what's *actually* unchecked above, grouped by partition so
+you can plan AAR rebuilds intelligently. Pure-Kotlin items are cheap; Go
+items must be batched together to amortise the gomobile rebuild cost.
 
-2. **Pure-Kotlin pending hangouts** (no AAR rebuild):
-   - DNS picker → `Mobile.buildSingBoxConfig*(dnsServers=…)`. Plumbing
-     point: `MainActivity.connect()` and `ResultVpnService.triggerReload()`
-     currently hardcode `"8.8.8.8,1.1.1.1"`. Replace with
-     `SettingsRepository.resolveDnsServers()`.
-   - Auto-reconnect on revoke consent: notification with "Reconnect"
-     action instead of silent stop in `ResultVpnService.onRevoke`.
-   - Quick Settings tile (`TileService`) + Always-on VPN compat
-     (`ResultVpnService.onStartCommand` with no `EXTRA_CONFIG_JSON`
-     should load active profile from `ProfileRepository`).
+### A. Pure-Kotlin (no AAR rebuild)
 
-3. **Subscription lifecycle** — model + UI + Go-side metadata.
-   Touches: `mobile/libbox.go`, new `Subscription.kt`, `ProxiesScreen.kt`
-   (collapsible subscription cards with refresh/delete), AAR rebuild.
+~~A1. Real ping wiring~~ — ✅ DONE. `PingRepository` (singleton,
+    `Mobile.ping` via gomobile binding) keyed by `profile.id`, with a
+    60s polling ticker started in `MainActivity.onCreate`. AUTO entries
+    expand into per-member targets; the repo publishes both the best
+    reachable sample per profile (`results`) and raw per-target samples
+    (`targetResults`) used by the AUTO connect path. 5s freshness cache
+    absorbs duplicate probes from sort recomposition + manual refresh.
 
-4. **Real traffic stats** — `libbox.CommandClient` subscription that pushes
-   bytes/second to `TrafficStats`. Go binding + Kotlin client thread.
+~~A2. Sort by ping + provider grouping on Home~~ — ✅ DONE. Shared
+    `ProfileSortMode` enum + `sortProfiles` helper + `ProfileSortMenu`
+    composable in `ui/components/ProfileSort.kt`. Modes: Default / Ping /
+    Country / Type / Name. Favourites pin first in every mode.
+    `ProxiesScreen` shows the menu beside the count header and applies
+    per-subscription too (SECTION rows still anchor the row blocks).
+    `HomeScreen` dropdown gets its own menu. Subscription grouping on
+    the Home dropdown is already implicit via favourites partition —
+    explicit per-provider headers there would just blow the 6-row cap.
 
-5. **Engine-side flips** (need AAR rebuild, batch together):
-   - IPv6 toggle (currently `strategy: ipv4_only` hardcoded in
-     `mobile/libbox.go`).
-   - Bypass-LAN toggle (RFC1918 + multicast + link-local skip).
-   - Smart (Antizapret) with geosite ruleset.
-   - `log.level=debug` → off in release builds.
+~~A3. AUTO latency probe~~ — ✅ DONE. See Phase 4 entry above:
+    `PingRepository.probeAndSort` returns members ordered by reachable
+    + latency; `MainActivity.startAutoConnect` walks them with a 15s
+    per-attempt deadline. `BuildOptionsBuilder.buildConfigFromEntry`
+    lets the failover loop swap the engine's `members[0]` default for
+    the chosen target without mutating the user-visible Profile.
+
+~~A4. QR-code scan import~~ — ✅ DONE. Implemented via Google Play
+    Services `play-services-code-scanner:16.1.0` (no `CAMERA`
+    permission, system-provided UI). QR-card on `AddScreen` calls
+    `GmsBarcodeScanning.getClient(...).startScan()`; decoded payload
+    is fed to `DeepLinkImporter.importPlain(ctx, raw)` which handles
+    `resultv://` deep-links, `http(s)://` subscription URLs, and
+    bare share-links through one dispatch path.
+
+~~A5. Edit / rename / drag-reorder profiles~~ — ✅ DONE. Long-press a
+    row on Proxies opens `ProfileEditSheet` (M3 `ModalBottomSheet`)
+    with rename + Move up / Move down + Delete. Reorder uses
+    `ProfileRepository.move(id, ±1)` swapping with the immediate
+    neighbour in the same bucket (`subscriptionId` match, no crossing
+    SECTION labels). Move buttons disable at edges and outside
+    Default sort. Drag-handle gesture skipped — Move buttons cover
+    the same need without a new dep.
+
+A6. **Verify `addDisallowedApplication(packageName)` survives package
+    rename for release builds** — currently we pass `service.packageName`
+    which is the *applicationId*, not the manifest package. With ProGuard
+    on the release build the manifest package may get rewritten;
+    sanity-test once the keystore lands (Phase 7).
+
+~~A7. Connection-stats banner on Home~~ — ✅ DONE.
+    `VpnStatus.Connected(connectedAt: Long)` is now a data class
+    carrying the wall-clock moment the tunnel came up.
+    `ConnectionStatsBanner` (3-cell pill: UPTIME · DOWN · UP) sits
+    between PowerButton and the refresh-ping toolbar when connected,
+    reading live speeds from `TrafficStats.snapshot` and ticking the
+    duration once per second via a `LaunchedEffect(connectedAt)`
+    loop.
+
+~~A8. impVPN logo as real drawable~~ — ✅ DONE.
+    `res/drawable/imp_logo.png` copied from `ResultV-dev/frontend/src/
+    assets/implogo.png`; `SubscriptionLogo` uses
+    `painterResource(R.drawable.imp_logo)` and the rocket-emoji
+    fallback is gone.
+
+### B. Go + AAR rebuild (batch these)
+
+B1. **NaiveProxy support** — engine batch already added a TLS extras
+    helper but Naive is missing entirely on mobile. Port from
+    `ResultV-dev/internal/proxy/uriparser.go`:
+    `parseNaiveURI`, `tryParseNaiveClientConfigMap`,
+    `naiveProxyEntryFromProxyURL`. Add the `case "NAIVEPROXY"` outbound
+    block from `ResultV-dev/internal/proxy/outbound.go:335`.
+    Add the `with_naive_outbound` tag to the gomobile build cmd
+    (cheatsheet below). Add "Naive" to `ManualPane.kt` protocol grid.
+
+B2. **Security / TLS extras** — port from `ResultV-dev/internal/proxy/outbound.go`:
+    - `resolvedFingerprint(extra)` with the system-derived default
+      (mobile stub returns `"chrome"` since there's no Edge WebView2).
+    - `applyTLSExtras` — `min_version` / `max_version` / `cipher_suites`
+      from `extra`.
+    - `normalizeRealityShortID` — lower-case hex normalisation.
+    - `resolvePacketEncoding` — `xudp` default for VLESS / VMess UDP-over-TCP.
+    - `fingerprintFromExtra` accepting Clash-style `client-fingerprint`.
+
+B3. **Old-protocol parser fixes** — port from `ResultV-dev`:
+    - Hysteria2 password chain: `password → auth → auth_str → userpass`.
+    - ALPN helpers: `xhttpPreferH2ALPN`, `defaultALPNForNetwork`.
+    - AmneziaWG: `getQueryParamCI` for `Jc/JC/jc` interchangeability.
+    - VLESS: `mergeVLESSURLEmbeddedExtra` for embedded URL params.
+
+B4. **Battery / data-usage stats** — extend `Mobile` binding to expose
+    cumulative byte totals + interval breakdown for OS-level battery
+    accounting (`NetworkStatsManager.queryDetailsForUid`). Surface on
+    Settings → About. Most of the data is already in `TrafficStats`
+    but needs persistence across service restarts.
+
+### C. Phase 7 — Release engineering
+
+C1. **Multi-ABI release build** — `app/build.gradle.kts` `splits.abi`
+    block for `arm64-v8a` + `armeabi-v7a`. Drop `x86_64` unless we
+    keep emulator-in-CI as a target.
+
+C2. **Release signing config** — `keystore.properties` (gitignored),
+    `signingConfigs.release`, `buildTypes.release.signingConfig`. Use
+    `play-app-signing` (Google holds the upload key) for the Play
+    Store path; export the same key to debug-on-device APK distribution.
+
+C3. **R8 minification + ProGuard rules audit** — flip
+    `isMinifyEnabled = true` on `release`. Walk the existing
+    `proguard-rules.pro` (`-keep libbox.**`, `-keep mobile.**`,
+    `-keep go.**`) and verify reflective access still works.
+
+C4. **AAR rebuild script** — `scripts/build-android-aar.ps1` +
+    `scripts/build-android-aar.sh`. Today the gomobile invocation lives
+    only in the cheatsheet below; a script makes CI hookable and stops
+    contributors guessing the tag list.
+
+C5. **CI — GitHub Actions** — build AAR + APK on push, attach to
+    releases. Cache `~/.gradle` + the `mobile/` go module dir;
+    `gomobile init` is required exactly once per runner.
+
+C6. **Distribution** — Play Store listing OR direct-download APK on
+    `result-proxy.ru` with an auto-update flow (poll the same updater
+    endpoint the desktop uses; `internal/updater` is desktop-only today
+    so we'd need a `mobile_updater.go`).
+
+---
+
+## Pull from the new PC version (`ResultV-dev`)
+
+These are improvements landed on the new ПК desktop branch after the
+mobile port forked. Items B1–B3 above already cover the engine-side
+audit; this section is the user-facing UI parity that depends on them.
+
+### Already landed in B1–B3 (engine-side)
+- NaiveProxy parser + outbound (B1)
+- TLS extras / REALITY normalisation / packet encoding (B2)
+- Hysteria2 / ALPN / AmneziaWG / VLESS parser fixes (B3)
+
+### Still to port on the Kotlin side
+
+P1. **Subscription header pretty-print** — desktop shows used / total /
+    expiry parsed from `Subscription-Userinfo` in a richer format
+    ("18.4 / 50 GB · 12 days left"). Mobile shows the same data but
+    plainer; lift the formatting helpers from
+    `frontend/src/views/ProxyListView.jsx:formatTrafficBytes`.
+
+P2. **Subscription editor** — allow editing the panel URL of an
+    imported subscription without re-importing (currently you can only
+    delete + re-add). Pure Kotlin — add an `update(url)` mutator on
+    `SubscriptionRepository` and a pencil-edit IconButton on the
+    subscription card.
+
+P3. **Domain exclusions UX polish** — the desktop autocompletes from a
+    saved-history list and warns when a pattern is shadowed by another.
+    Low priority but a nice quality-of-life win for power users.
+
+P4. **Selectable protocol filter on ProxiesScreen** — desktop has a
+    chip row (`VLESS / VMess / Trojan / SS / HYSTERIA2 / WG / AWG`)
+    that filters the list. Useful with large subscriptions.
+
+P5. **Multi-AUTO virtual entries** — when a subscription includes
+    several auto-groups, the desktop renders them all; mobile collapses
+    to a single AUTO today. Touch `buildAutoAwareEntries` in
+    `mobile/libbox.go` to preserve multiple groups.
 
 ---
 
 ## Known issues / tech debt
 
 - `findConnectionOwner` throws on every connection — spammy but harmless.
+  The wrapper's nil-deref guard is what's actually saving us.
 - `usePlatformAutoDetectInterfaceControl=true` is set but **never fires** in
   observed logs. Bypass works only because `addDisallowedApplication(ownPkg)`
   keeps our UID off the tunnel. Revisit if always-on VPN needs platform protect.
 - Gomobile uses sagernet's fork pinned at v0.1.12.
 - `internal/godebug.defaultGODEBUG=multipathtcp=0` not yet wired into ldflags.
-- DNS strategy hardcoded `ipv4_only`. IPv6 untested.
+  Harmless on user devices but produces a Go runtime warning in logcat.
 - TUN stack `gvisor` (sing-box default). `system` stack broke our env, kept gvisor.
 - DoT (TCP/853) traffic from system DNS hits in-tunnel server (172.19.0.2)
   and gets forwarded to proxy uselessly — wastes a few seconds at start. Cosmetic.
 - Connect-by-URI keeps the original URI; subscription-imported profiles
   use `entryJson`. Both paths converge through `buildSingBoxConfigFromEntry`.
-- Settings are UI-only stubs — toggles and DNS choices don't wire to engine yet.
+- Smart-mode list fetch goes through citizenlab + itdoginfo over plain
+  HTTPS, with country resolution leaking through geojs.io (the desktop
+  ResultV-dev switched to a project-owned API — that hop hasn't been
+  ported yet). On a captive-portal network the fetch can stall the
+  first connect for up to 10s before timing out → engine starts with
+  an empty domain list (effectively Global → direct). The 24h cache in
+  `dataDir/smart-blocked.json` saves subsequent launches.
+- Smart-mode country picker is missing. `SmartListRepository.country`
+  is hardcoded to `"ru"`; users outside RU get a Russia-flavoured
+  blocked list that won't match their needs. Trivial to expose in
+  Settings once we know how to UX the country list.
+- LSP errors visible on Windows host for `resultProxyDataDir` and
+  `tunnelProbeDomains` — both are `//go:build mobile` symbols in
+  `mobile_stubs.go`. gomobile compiles for `GOOS=android` where the
+  stubs apply, so AAR builds succeed; only the IDE analyser is confused.
 
 ## Build cheatsheet
 
@@ -270,6 +548,8 @@ gomobile bind \
   -o android/libs/libbox.aar \
   ./mobile github.com/sagernet/sing-box/experimental/libbox
 ```
+
+Add `with_naive_outbound` to the tag list once partition B1 lands.
 
 Then in Android Studio: Sync → Run on Pixel 9 Pro emulator (API 36).
 Pure-Kotlin changes don't need a rebuild — just Sync.

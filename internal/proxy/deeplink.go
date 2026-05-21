@@ -80,6 +80,8 @@ func DecodeDeepLink(rawURL string) (string, error) {
 		return plain, nil
 	case strings.HasPrefix(lowBody, "import/"):
 		body = body[len("import/"):]
+	case strings.HasPrefix(lowBody, "rvsub/"):
+		body = body[len("rvsub/"):]
 	case strings.HasPrefix(lowBody, "crypt4/"):
 		body = body[len("crypt4/"):]
 	case strings.HasPrefix(lowBody, "i/"):
@@ -122,6 +124,29 @@ func DecodeDeepLink(rawURL string) (string, error) {
 		return "", errors.New("resultv:// payload decrypted to empty content")
 	}
 	return plain, nil
+}
+
+// DeepLinkUsesRvsubPath reports whether rawURL uses the resultv://rvsub/<payload>
+// path (before decryption). Callers use this to tag subscription metadata for UI
+// (e.g. force the impVPN logo when the panel hands out rvsub-flavoured links).
+func DeepLinkUsesRvsubPath(rawURL string) bool {
+	rawURL = strings.TrimSpace(rawURL)
+	if !IsDeepLink(rawURL) {
+		return false
+	}
+	low := strings.ToLower(rawURL)
+	var body string
+	switch {
+	case strings.HasPrefix(low, DeepLinkScheme):
+		body = rawURL[len(DeepLinkScheme):]
+	case strings.HasPrefix(low, deepLinkSchemeOpaque):
+		body = rawURL[len(deepLinkSchemeOpaque):]
+	default:
+		return false
+	}
+	body = strings.TrimLeft(body, "/")
+	body = strings.TrimRight(body, "/\x00\r\n\t ")
+	return strings.HasPrefix(strings.ToLower(body), "rvsub/")
 }
 
 func sanitizeBase64(s string) string {

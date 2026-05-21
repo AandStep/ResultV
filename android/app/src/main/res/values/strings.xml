@@ -17,16 +17,22 @@
     <string name="action_save">Save</string>
     <string name="action_back">Back</string>
     <string name="action_remove">Remove</string>
+    <string name="action_connect">Connect</string>
+    <string name="action_disconnect">Disconnect</string>
 
     <!-- Home screen -->
     <string name="home_current_server">CURRENT SERVER</string>
     <string name="home_no_profile_selected">No profile selected</string>
     <string name="home_no_profiles_yet">No profiles yet — add one to get started.</string>
     <string name="home_view_all_profiles">View all %1$d profiles</string>
+    <string name="home_favorites">FAVORITES</string>
     <string name="home_add_server">Add server</string>
     <string name="home_add_server_subtitle">Paste link or subscription URL</string>
     <string name="home_stat_download">DOWNLOAD</string>
     <string name="home_stat_upload">UPLOAD</string>
+    <string name="home_banner_duration">UPTIME</string>
+    <string name="home_banner_download">DOWN</string>
+    <string name="home_banner_upload">UP</string>
     <string name="action_collapse">Collapse</string>
     <string name="action_expand">Expand</string>
     <string name="action_favorite">Favorite</string>
@@ -49,7 +55,9 @@
     <string name="settings_adblock">Ad blocking</string>
     <string name="settings_adblock_subtitle">Block ads via DNS rewrites (coming soon)</string>
     <string name="settings_ipv6">IPv6</string>
-    <string name="settings_ipv6_subtitle">Currently routed as IPv4-only</string>
+    <string name="settings_ipv6_subtitle">Route IPv6 traffic through the tunnel (dual-stack)</string>
+    <string name="settings_bypass_lan">Bypass LAN</string>
+    <string name="settings_bypass_lan_subtitle">Keep printers, NAS and router admin reachable while VPN is on</string>
     <string name="settings_dns_hint">Pick a preset or enter custom servers (comma-separated).</string>
     <string name="settings_dns_custom_placeholder">Custom: 1.1.1.1, 8.8.8.8</string>
     <string name="settings_about_subtitle">Mobile preview · Phase 5+</string>
@@ -63,12 +71,25 @@
     <string name="vpn_status_error">Error: %1$s</string>
     <string name="vpn_action_disconnect">Disconnect</string>
     <string name="vpn_channel_name">VPN status</string>
+    <string name="vpn_revoke_channel_name">VPN reconnect</string>
+    <string name="vpn_revoke_title">VPN disconnected</string>
+    <string name="vpn_revoke_text">Another app took over the VPN. Tap to reconnect.</string>
+    <string name="vpn_revoke_action">Reconnect</string>
+    <string name="tile_label_idle">VPN — tap to connect</string>
+    <string name="tile_label_connecting">VPN — connecting…</string>
+    <string name="tile_label_connected">VPN — connected, tap to disconnect</string>
 
     <!-- Add screen — quick imports + mode tabs -->
     <string name="add_quick_clipboard_title">From clipboard</string>
     <string name="add_quick_clipboard_subtitle">Paste links from buffer</string>
     <string name="add_quick_file_title">From file</string>
     <string name="add_quick_file_subtitle">Open .txt with URIs</string>
+    <string name="add_quick_qr_title">Scan QR</string>
+    <string name="add_quick_qr_subtitle">Camera + share link / sub URL</string>
+    <string name="add_msg_qr_empty">Scan cancelled or empty</string>
+    <string name="add_msg_qr_unsupported">QR scanner unavailable on this device</string>
+    <string name="add_msg_qr_imported">Imported from QR</string>
+    <string name="add_msg_qr_invalid">QR did not contain a valid proxy or subscription link</string>
     <string name="add_msg_file_empty">File is empty or unreadable</string>
     <string name="add_msg_imported_file">Imported %1$d profile(s)</string>
     <string name="add_msg_no_valid_uris_file">No valid URIs found in file</string>
@@ -154,6 +175,15 @@
     <string name="awg_j2" translatable="false">J2</string>
     <string name="awg_j3" translatable="false">J3</string>
 
+    <!-- Sort menu (Home dropdown + Proxies list) -->
+    <string name="ping_refresh_cd">Refresh ping</string>
+    <string name="sort_cd">Sort</string>
+    <string name="sort_default">Default</string>
+    <string name="sort_ping">Ping</string>
+    <string name="sort_country">Country</string>
+    <string name="sort_type">Type</string>
+    <string name="sort_name">Name</string>
+
     <!-- Proxies screen -->
     <string name="proxies_count">%1$d profiles</string>
     <string name="proxies_delete_cd">Delete profile</string>
@@ -161,6 +191,34 @@
     <string name="proxies_delete_message">"%1$s" will be removed.</string>
     <string name="proxies_empty_title">No profiles yet</string>
     <string name="proxies_empty_subtitle">Paste a share link or import a subscription URL to get started.</string>
+    <string name="proxies_standalone_header">My proxies · %1$d</string>
+    <string name="proxies_edit_title">Edit profile</string>
+    <string name="proxies_edit_name_label">Name</string>
+    <string name="proxies_action_probe_latency">Check latency</string>
+    <string name="proxies_action_rename">Rename</string>
+    <string name="proxies_action_favorite">Add to favourites</string>
+    <string name="proxies_action_unfavorite">Remove from favourites</string>
+
+    <!-- Subscriptions -->
+    <string name="sub_subtitle">%1$d server(s)</string>
+    <string name="sub_refresh_cd">Refresh subscription</string>
+    <string name="sub_delete_cd">Delete subscription</string>
+    <string name="sub_delete_title">Delete subscription?</string>
+    <string name="sub_delete_message">"%1$s" and its %2$d profile(s) will be removed.</string>
+    <string name="sub_traffic_used">%1$s / %2$s</string>
+    <string name="sub_traffic_used_unlimited">%1$s / ∞</string>
+    <string name="sub_expires_in_days">Expires in %1$d days</string>
+    <string name="sub_expired">Expired</string>
+    <string name="sub_days_left">%1$d days left</string>
+    <string name="sub_footer_servers">%1$d servers</string>
+
+    <!-- Deep-link import toasts -->
+    <string name="deeplink_err_decode">Could not decode the link</string>
+    <string name="deeplink_err_empty">Link is empty</string>
+    <string name="deeplink_err_fetch">Could not fetch subscription</string>
+    <string name="deeplink_err_no_uris">No valid proxies in the link</string>
+    <string name="deeplink_imported_subscription">Imported subscription · %1$d profile(s)</string>
+    <string name="deeplink_imported_profiles">Imported %1$d profile(s)</string>
 
     <!-- Rules screen -->
     <string name="rules_section_smart_title">Smart routing</string>
@@ -168,7 +226,7 @@
     <string name="rules_mode_global">Global</string>
     <string name="rules_mode_global_subtitle">All system traffic goes through the selected proxy.</string>
     <string name="rules_mode_smart">Smart (Antizapret)</string>
-    <string name="rules_mode_smart_subtitle">Optional mode: proxy is active only for blocked sites. Coming soon — currently behaves as Global.</string>
+    <string name="rules_mode_smart_subtitle">Only blocked sites go through the proxy. Domain list downloads on first connect (~1 MB).</string>
     <string name="rules_section_domains_title">Domain exclusions</string>
     <string name="rules_section_domains_subtitle">These hosts always connect directly, bypassing the proxy.</string>
     <string name="rules_domain_placeholder">e.g. yandex.ru</string>

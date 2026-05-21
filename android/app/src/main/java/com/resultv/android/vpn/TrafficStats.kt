@@ -17,15 +17,18 @@ data class TrafficSnapshot(
 const val TRAFFIC_HISTORY_SIZE = 60
 
 /**
- * Placeholder traffic-stats source. The desktop pulls these from sing-box's
- * `experimental.clash_api.statistic` plus a libbox `CommandClient`
- * subscription; on mobile that wiring is still TODO. UI consumes the flow as
- * if it were live so swapping the implementation later is invisible to
- * Compose code.
+ * Live traffic-stats source. [TrafficWatcher] subscribes to sing-box's
+ * libbox status stream and pushes uplink/downlink samples through
+ * [publish] once per second. UI consumes [snapshot] as a flow.
  */
 object TrafficStats {
     private val _snapshot = MutableStateFlow(TrafficSnapshot())
     val snapshot: StateFlow<TrafficSnapshot> = _snapshot.asStateFlow()
+
+    /** Replace the snapshot — called from TrafficWatcher on each tick. */
+    fun publish(s: TrafficSnapshot) {
+        _snapshot.value = s
+    }
 
     /** Reset counters when a new connection starts. */
     fun reset() {

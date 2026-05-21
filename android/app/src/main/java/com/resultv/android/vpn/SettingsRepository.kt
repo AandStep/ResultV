@@ -24,6 +24,10 @@ data class SettingsState(
     val killSwitch: Boolean = false,
     val adblock: Boolean = false,
     val ipv6: Boolean = false,
+    /** RFC1918 / link-local / multicast traffic bypasses the proxy. */
+    val bypassLan: Boolean = true,
+    /** sing-box log.level — "info" for ship, "debug" for protocol bring-up. */
+    val logLevel: String = "info",
 )
 
 object SettingsRepository {
@@ -33,6 +37,8 @@ object SettingsRepository {
     private const val K_KILL_SWITCH = "kill_switch"
     private const val K_ADBLOCK = "adblock"
     private const val K_IPV6 = "ipv6"
+    private const val K_BYPASS_LAN = "bypass_lan"
+    private const val K_LOG_LEVEL = "log_level"
 
     private lateinit var prefs: SharedPreferences
 
@@ -48,6 +54,8 @@ object SettingsRepository {
             killSwitch = prefs.getBoolean(K_KILL_SWITCH, false),
             adblock = prefs.getBoolean(K_ADBLOCK, false),
             ipv6 = prefs.getBoolean(K_IPV6, false),
+            bypassLan = prefs.getBoolean(K_BYPASS_LAN, true),
+            logLevel = prefs.getString(K_LOG_LEVEL, "info") ?: "info",
         )
     }
 
@@ -72,6 +80,16 @@ object SettingsRepository {
     fun setIpv6(enabled: Boolean) = mutate {
         prefs.edit().putBoolean(K_IPV6, enabled).apply()
         it.copy(ipv6 = enabled)
+    }
+
+    fun setBypassLan(enabled: Boolean) = mutate {
+        prefs.edit().putBoolean(K_BYPASS_LAN, enabled).apply()
+        it.copy(bypassLan = enabled)
+    }
+
+    fun setLogLevel(level: String) = mutate {
+        prefs.edit().putString(K_LOG_LEVEL, level).apply()
+        it.copy(logLevel = level)
     }
 
     /**

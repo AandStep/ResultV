@@ -89,5 +89,11 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
 
+    // Google's "Code Scanner" — bundled scanner UI for QR / barcode imports
+    // on AddScreen. Pulled via Play Services Module Install API, no CAMERA
+    // permission needed; first launch may prompt to install the module
+    // (silent on most devices, ~1s).
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

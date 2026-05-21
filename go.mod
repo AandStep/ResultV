@@ -3,12 +3,10 @@ module resultproxy-wails
 go 1.26.1
 
 require (
-	github.com/getlantern/systray v1.2.2
 	github.com/google/uuid v1.6.0
 	github.com/sagernet/gomobile v0.1.12
 	github.com/sagernet/sing v0.8.9
 	github.com/sagernet/sing-box v1.13.11
-	github.com/wailsapp/wails/v2 v2.12.0
 	golang.org/x/sys v0.43.0
 )
 
@@ -258,5 +256,3 @@ replace github.com/dolonet/mtg-multi => github.com/shtorm-7/mtg-multi v1.8.0-ext
 replace github.com/Diniboy1123/connect-ip-go => github.com/shtorm-7/connect-ip-go v1.0.0-extended-1.0.0
 
 replace github.com/GoAdminGroup/go-admin => github.com/shtorm-7/go-admin v1.2.26-extended-1.0.0
-
-replace github.com/getlantern/systray v1.2.2 => ./internal/getlantern_systray

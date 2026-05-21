@@ -147,7 +147,13 @@ fun SettingsScreen() {
                     subtitle = stringResource(R.string.settings_ipv6_subtitle),
                     checked = settings.ipv6,
                     onCheckedChange = { SettingsRepository.setIpv6(it) },
-                    enabled = false,
+                )
+                HorizontalDivider(color = Brand.SurfaceHigh)
+                ToggleRow(
+                    title = stringResource(R.string.settings_bypass_lan),
+                    subtitle = stringResource(R.string.settings_bypass_lan_subtitle),
+                    checked = settings.bypassLan,
+                    onCheckedChange = { SettingsRepository.setBypassLan(it) },
                 )
             }
         }

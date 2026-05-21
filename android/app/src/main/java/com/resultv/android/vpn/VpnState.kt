@@ -7,7 +7,8 @@ import kotlinx.coroutines.flow.asStateFlow
 sealed interface VpnStatus {
     data object Idle : VpnStatus
     data object Connecting : VpnStatus
-    data object Connected : VpnStatus
+    /** [connectedAt] is wall-clock millis at the moment the tunnel came up. */
+    data class Connected(val connectedAt: Long) : VpnStatus
     data class Error(val message: String) : VpnStatus
 }
 

@@ -20,13 +20,31 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.ResultV">
 
+        <!-- Preload Play Services' Code Scanner module so the first QR
+             scan on AddScreen doesn't pay a download stall. Silent on
+             devices that already have the module. -->
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="barcode_ui" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:theme="@style/Theme.ResultV.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Deep-link import: resultv://import/<base64>, resultv://rvsub/...,
+                 resultv:import/... (opaque). MainActivity decodes via
+                 Mobile.decodeDeepLink and hands off to the standard import path. -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="resultv" />
             </intent-filter>
         </activity>
 
@@ -43,6 +61,20 @@
                 android:value="VPN tunnel" />
             <intent-filter>
                 <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
+
+        <!-- Quick Settings tile: one-tap connect/disconnect from the
+             system pull-down. BIND_QUICK_SETTINGS_TILE is the only
+             permission the OS trusts for TileService. -->
+        <service
+            android:name=".vpn.ResultVTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_notification"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
         </service>
     </application>

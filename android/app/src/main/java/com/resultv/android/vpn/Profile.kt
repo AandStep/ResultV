@@ -24,12 +24,28 @@ data class Profile(
     val name: String,
     val uri: String = "",
     val entryJson: String = "",
+    val isFavorite: Boolean = false,
+    /** Non-empty when this profile came from a subscription import. */
+    val subscriptionId: String = "",
+    /** SECTION rows are labels (impVPN "выберите конфиг ниже"), not real outbounds. */
+    val isSection: Boolean = false,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
         .put("name", name)
         .put("uri", uri)
         .put("entryJson", entryJson)
+        .put("isFavorite", isFavorite)
+        .put("subscriptionId", subscriptionId)
+        .put("isSection", isSection)
+
+    /** Display country code parsed from entryJson, or null for URI-only / section rows. */
+    fun country(): String? {
+        if (isSection || entryJson.isBlank()) return null
+        return runCatching {
+            JSONObject(entryJson).optString("country").takeIf { it.length == 2 }
+        }.getOrNull()
+    }
 
     companion object {
         fun fromJson(o: JSONObject) = Profile(
@@ -37,18 +53,31 @@ data class Profile(
             name = o.getString("name"),
             uri = o.optString("uri"),
             entryJson = o.optString("entryJson"),
+            isFavorite = o.optBoolean("isFavorite", false),
+            subscriptionId = o.optString("subscriptionId"),
+            isSection = o.optBoolean("isSection", false),
         )
 
-        fun fromUri(name: String, uri: String) = Profile(
+        fun fromUri(name: String, uri: String, subscriptionId: String = "") = Profile(
             id = UUID.randomUUID().toString(),
             name = name.ifBlank { "Untitled" },
             uri = uri,
+            subscriptionId = subscriptionId,
         )
 
-        fun fromEntryJson(name: String, entryJson: String) = Profile(
+        fun fromEntryJson(name: String, entryJson: String, subscriptionId: String = "") = Profile(
             id = UUID.randomUUID().toString(),
             name = name.ifBlank { "Untitled" },
             entryJson = entryJson,
+            subscriptionId = subscriptionId,
+        )
+
+        /** SECTION row — a visual separator imported from a subscription. */
+        fun section(name: String, subscriptionId: String) = Profile(
+            id = UUID.randomUUID().toString(),
+            name = name.ifBlank { "—" },
+            subscriptionId = subscriptionId,
+            isSection = true,
         )
     }
 }
@@ -91,9 +120,81 @@ object ProfileRepository {
         s.copy(profiles = list, activeId = active)
     }
 
+    /**
+     * Drop every profile tagged with [subscriptionId]. Used by
+     * SubscriptionRepository.delete to cascade. SECTION rows go away too.
+     */
+    @Synchronized
+    fun removeBySubscriptionId(subscriptionId: String) = mutate { s ->
+        val list = s.profiles.filterNot { it.subscriptionId == subscriptionId }
+        val active = if (list.any { it.id == s.activeId }) s.activeId else list.firstOrNull()?.id
+        s.copy(profiles = list, activeId = active)
+    }
+
+    /** Replace all profiles for one subscription with a fresh set (used on refresh). */
+    @Synchronized
+    fun replaceForSubscription(subscriptionId: String, fresh: List<Profile>) = mutate { s ->
+        val kept = s.profiles.filterNot { it.subscriptionId == subscriptionId }
+        val list = kept + fresh
+        val active = if (list.any { it.id == s.activeId }) s.activeId else list.firstOrNull()?.id
+        s.copy(profiles = list, activeId = active)
+    }
+
     @Synchronized
     fun setActive(id: String) = mutate { s ->
-        if (s.profiles.none { it.id == id }) s else s.copy(activeId = id)
+        val target = s.profiles.firstOrNull { it.id == id } ?: return@mutate s
+        // SECTION rows are labels, never selectable. Guard here too so a
+        // stale UI tap can't poison activeId.
+        if (target.isSection) return@mutate s
+        s.copy(activeId = id)
+    }
+
+    @Synchronized
+    fun toggleFavorite(id: String) = mutate { s ->
+        val list = s.profiles.map {
+            if (it.id == id) it.copy(isFavorite = !it.isFavorite) else it
+        }
+        s.copy(profiles = list)
+    }
+
+    @Synchronized
+    fun rename(id: String, newName: String) = mutate { s ->
+        val trimmed = newName.trim().ifBlank { return@mutate s }
+        val list = s.profiles.map {
+            if (it.id == id) it.copy(name = trimmed) else it
+        }
+        s.copy(profiles = list)
+    }
+
+    /**
+     * Swap the profile with id [id] one step up (delta=-1) or down (delta=+1)
+     * inside its own "bucket": same [Profile.subscriptionId] and excluding
+     * SECTION rows (those are visual labels and stay where they are).
+     * Sub-imported groups therefore reorder within their group; standalone
+     * profiles reorder within the standalone bucket. No-op at the edges.
+     */
+    @Synchronized
+    fun move(id: String, delta: Int) = mutate { s ->
+        if (delta == 0) return@mutate s
+        val list = s.profiles.toMutableList()
+        val idx = list.indexOfFirst { it.id == id }
+        if (idx < 0) return@mutate s
+        val target = list[idx]
+        if (target.isSection) return@mutate s
+        // Walk in the direction of delta until we land on another profile
+        // in the same bucket (non-section, same subscriptionId). Sections
+        // between us and the next sibling are skipped, not crossed.
+        val swapIdx = idx + if (delta < 0) -1 else 1
+        if (swapIdx !in list.indices) return@mutate s
+        val neighbor = list[swapIdx]
+        // Reorder never crosses a section label or a different subscription
+        // bucket — those are visual boundaries.
+        if (neighbor.isSection || neighbor.subscriptionId != target.subscriptionId) {
+            return@mutate s
+        }
+        list[idx] = neighbor
+        list[swapIdx] = target
+        s.copy(profiles = list)
     }
 
     private fun mutate(block: (ProfilesState) -> ProfilesState) {

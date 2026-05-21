@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.FileOpen
 import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -68,8 +70,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.resultv.android.R
 import com.resultv.android.theme.Brand
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import com.resultv.android.vpn.DeepLinkImporter
 import com.resultv.android.vpn.Profile
 import com.resultv.android.vpn.ProfileRepository
+import com.resultv.android.vpn.Subscription
+import com.resultv.android.vpn.SubscriptionRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -97,6 +105,10 @@ fun AddScreen(
     val msgNoUrisFile = stringResource(R.string.add_msg_no_valid_uris_file)
     val msgClipboardEmpty = stringResource(R.string.add_msg_clipboard_empty)
     val msgNoUrisClipboard = stringResource(R.string.add_msg_no_valid_uris_clipboard)
+    val msgQrEmpty = stringResource(R.string.add_msg_qr_empty)
+    val msgQrUnsupported = stringResource(R.string.add_msg_qr_unsupported)
+    val msgQrImported = stringResource(R.string.add_msg_qr_imported)
+    val msgQrInvalid = stringResource(R.string.add_msg_qr_invalid)
 
     // SAF file picker — accepts any text/* and reads it as UTF-8.
     val filePicker = rememberLauncherForActivityResult(
@@ -128,7 +140,7 @@ fun AddScreen(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        // Quick-import shortcuts (clipboard + file).
+        // Quick-import shortcuts (clipboard / file / QR).
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             QuickAddCard(
                 icon = Icons.Outlined.ContentPaste,
@@ -151,6 +163,23 @@ fun AddScreen(
                 title = stringResource(R.string.add_quick_file_title),
                 subtitle = stringResource(R.string.add_quick_file_subtitle),
                 onClick = { filePicker.launch(arrayOf("*/*")) },
+                modifier = Modifier.weight(1f),
+            )
+            QuickAddCard(
+                icon = Icons.Outlined.QrCodeScanner,
+                title = stringResource(R.string.add_quick_qr_title),
+                subtitle = stringResource(R.string.add_quick_qr_subtitle),
+                onClick = {
+                    launchQrScan(
+                        ctx = ctx,
+                        defaultName = defaultName,
+                        onResult = { msg -> importMessage = msg },
+                        msgEmpty = msgQrEmpty,
+                        msgUnsupported = msgQrUnsupported,
+                        msgImported = msgQrImported,
+                        msgInvalid = msgQrInvalid,
+                    )
+                },
                 modifier = Modifier.weight(1f),
             )
         }
@@ -197,21 +226,23 @@ fun AddScreen(
 private fun QuickAddCard(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
-    subtitle: String,
+    @Suppress("UNUSED_PARAMETER") subtitle: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Square card — equal height for clipboard/file/QR. Subtitle dropped at
+    // user request; tooltip-style hints live in i18n only.
     ElevatedCard(
         onClick = onClick,
-        modifier = modifier,
+        modifier = modifier.aspectRatio(1f),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.elevatedCardColors(containerColor = Brand.Surface),
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .fillMaxSize()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Box(
@@ -224,11 +255,6 @@ private fun QuickAddCard(
                 Icon(icon, contentDescription = null, tint = Brand.GreenLight)
             }
             Text(title, style = MaterialTheme.typography.titleSmall)
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = Brand.MutedText,
-            )
         }
     }
 }
@@ -309,6 +335,15 @@ private data class FetchedEntry(
     val uri: String,
     val entryJson: String,
     val preview: String,
+    val type: String,
+    val isSection: Boolean,
+)
+
+/** What FetchSubscriptionV2 returns — entries + sub-level metadata. */
+private data class FetchedSubscription(
+    val entries: List<FetchedEntry>,
+    val title: String,
+    val userInfo: String,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -317,20 +352,27 @@ private fun SubscriptionPane(dataDir: String, onDone: () -> Unit) {
     var url by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var fetched by remember { mutableStateOf<List<FetchedEntry>>(emptyList()) }
+    var fetched by remember { mutableStateOf<FetchedSubscription?>(null) }
     val selected = remember { mutableStateOf(setOf<String>()) }
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
 
-    LaunchedEffect(fetched) { selected.value = fetched.map { it.key }.toSet() }
+    // Auto-tick everything real when a new fetch lands (SECTION rows are
+    // imported alongside the selection but not toggleable).
+    LaunchedEffect(fetched) {
+        selected.value = fetched?.entries.orEmpty()
+            .filter { !it.isSection }
+            .map { it.key }
+            .toSet()
+    }
 
     val triggerFetch: () -> Unit = {
         if (!loading && url.isNotBlank()) {
             keyboard?.hide(); focusManager.clearFocus()
             doFetch(scope, url, dataDir,
                 onLoad = { loading = it },
-                onError = { error = it; fetched = emptyList() },
+                onError = { error = it; fetched = null },
                 onResult = { fetched = it; error = null },
             )
         }
@@ -378,9 +420,11 @@ private fun SubscriptionPane(dataDir: String, onDone: () -> Unit) {
                 }
             }
 
-            if (fetched.isNotEmpty()) {
+            val sub = fetched
+            if (sub != null && sub.entries.isNotEmpty()) {
+                val realCount = sub.entries.count { !it.isSection }
                 Text(
-                    text = stringResource(R.string.add_sub_selected, selected.value.size, fetched.size),
+                    text = stringResource(R.string.add_sub_selected, selected.value.size, realCount),
                     style = MaterialTheme.typography.bodySmall,
                     color = Brand.SecondaryText,
                 )
@@ -388,7 +432,19 @@ private fun SubscriptionPane(dataDir: String, onDone: () -> Unit) {
                     modifier = Modifier.heightIn(max = 360.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
-                    items(fetched, key = { it.key }) { e ->
+                    items(sub.entries, key = { it.key }) { e ->
+                        if (e.isSection) {
+                            // Render SECTION rows as inline subtitles, not
+                            // checkboxes — they always import alongside the
+                            // selection.
+                            Text(
+                                text = e.name,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = Brand.SecondaryText,
+                                modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 4.dp),
+                            )
+                            return@items
+                        }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
@@ -423,11 +479,12 @@ private fun SubscriptionPane(dataDir: String, onDone: () -> Unit) {
                 FilledTonalButton(
                     enabled = selected.value.isNotEmpty(),
                     onClick = {
-                        fetched.filter { it.key in selected.value }.forEach { e ->
-                            val p = if (e.uri.isNotBlank()) Profile.fromUri(e.name, e.uri)
-                            else Profile.fromEntryJson(e.name, e.entryJson)
-                            ProfileRepository.add(p)
-                        }
+                        importSubscription(
+                            url = url.trim(),
+                            sub = sub,
+                            selectedKeys = selected.value,
+                            sourceTag = "",
+                        )
                         onDone()
                     },
                 ) {
@@ -472,28 +529,24 @@ private fun doFetch(
     dataDir: String,
     onLoad: (Boolean) -> Unit,
     onError: (String) -> Unit,
-    onResult: (List<FetchedEntry>) -> Unit,
+    onResult: (FetchedSubscription) -> Unit,
 ) {
     scope.launch {
         onLoad(true)
         try {
-            val json = withContext(Dispatchers.IO) { Mobile.fetchSubscription(url.trim(), dataDir) }
-            val arr = JSONArray(json)
-            val list = (0 until arr.length()).map { i ->
-                val o = arr.getJSONObject(i)
-                val uri = o.optString("uri")
-                val ip = o.optString("ip")
-                val port = o.optInt("port")
-                val type = o.optString("type")
-                val name = o.optString("name")
-                    .ifBlank { ip }
-                    .ifBlank { "Profile ${i + 1}" }
-                val preview = if (uri.isNotBlank()) uri
-                else listOf(type, "$ip:$port").filter { it.isNotBlank() }.joinToString("  ·  ")
-                val key = uri.ifBlank { "$type|$ip|$port|$i" }
-                FetchedEntry(key, name, uri, o.toString(), preview)
+            val responseJson = withContext(Dispatchers.IO) {
+                Mobile.fetchSubscriptionV2(url.trim(), dataDir)
             }
-            onResult(list)
+            val response = JSONObject(responseJson)
+            val arr = response.optJSONArray("entries") ?: JSONArray()
+            val list = (0 until arr.length()).map { i -> parseEntry(arr.getJSONObject(i), i) }
+            onResult(
+                FetchedSubscription(
+                    entries = list,
+                    title = response.optString("title"),
+                    userInfo = response.optString("userInfo"),
+                )
+            )
         } catch (t: Throwable) {
             onError(t.message ?: t.javaClass.simpleName)
         } finally {
@@ -502,7 +555,114 @@ private fun doFetch(
     }
 }
 
+private fun parseEntry(o: JSONObject, index: Int): FetchedEntry {
+    val uri = o.optString("uri")
+    val ip = o.optString("ip")
+    val port = o.optInt("port")
+    val type = o.optString("type")
+    val isSection = type.equals("SECTION", ignoreCase = true)
+    val name = o.optString("name")
+        .ifBlank { if (isSection) "—" else ip }
+        .ifBlank { "Profile ${index + 1}" }
+    val preview = when {
+        isSection -> ""
+        uri.isNotBlank() -> uri
+        else -> listOf(type, "$ip:$port").filter { it.isNotBlank() }.joinToString("  ·  ")
+    }
+    val key = when {
+        isSection -> "section|$index|${o.optString("name")}"
+        uri.isNotBlank() -> uri
+        else -> "$type|$ip|$port|$index"
+    }
+    return FetchedEntry(key, name, uri, o.toString(), preview, type, isSection)
+}
+
+/**
+ * Materialise the picked entries: persist one [Subscription] record and a
+ * batch of [Profile]s tagged with its id. SECTION rows from the response
+ * are imported alongside the selection — they keep the visual structure
+ * intact ("👇 выберите конфиг ниже") without being selectable.
+ */
+private fun importSubscription(
+    url: String,
+    sub: FetchedSubscription,
+    selectedKeys: Set<String>,
+    sourceTag: String,
+) {
+    val subscription = Subscription.new(
+        url = url,
+        name = sub.title.ifBlank { defaultSubscriptionName(url) },
+        title = sub.title,
+        userInfo = sub.userInfo,
+        source = sourceTag,
+    )
+    SubscriptionRepository.add(subscription)
+    // Preserve the response order so SECTION rows land between the right
+    // group of real entries.
+    val profiles = sub.entries.mapNotNull { e ->
+        when {
+            e.isSection -> Profile.section(name = e.name, subscriptionId = subscription.id)
+            e.key !in selectedKeys -> null
+            e.uri.isNotBlank() -> Profile.fromUri(e.name, e.uri, subscriptionId = subscription.id)
+            else -> Profile.fromEntryJson(e.name, e.entryJson, subscriptionId = subscription.id)
+        }
+    }
+    profiles.forEach { ProfileRepository.add(it) }
+}
+
+private fun defaultSubscriptionName(url: String): String {
+    return runCatching {
+        java.net.URI(url).host?.takeIf { it.isNotBlank() } ?: "Subscription"
+    }.getOrDefault("Subscription")
+}
+
 private fun nameFromUri(uri: String): String? = runCatching {
     val parsed = JSONObject(Mobile.parseProxyURI(uri))
     parsed.optString("name").ifBlank { parsed.optString("ip").ifBlank { null } }
 }.getOrNull()
+
+/**
+ * Open Google Play Services' bundled barcode scanner UI. Restricted to
+ * QR codes (the only format we ever encode). The decoded value is routed
+ * via [DeepLinkImporter.importPlain] so resultv://, http(s):// (subscription)
+ * and bare share-links all import through one path. Single-URI QRs that
+ * fail parsing fall back to an "invalid" message.
+ */
+private fun launchQrScan(
+    ctx: Context,
+    defaultName: String,
+    onResult: (String) -> Unit,
+    msgEmpty: String,
+    msgUnsupported: String,
+    msgImported: String,
+    msgInvalid: String,
+) {
+    val options = GmsBarcodeScannerOptions.Builder()
+        .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+        .build()
+    val scanner = GmsBarcodeScanning.getClient(ctx, options)
+    scanner.startScan()
+        .addOnSuccessListener { barcode ->
+            val raw = barcode.rawValue.orEmpty().trim()
+            if (raw.isEmpty()) {
+                onResult(msgEmpty)
+                return@addOnSuccessListener
+            }
+            val lower = raw.lowercase()
+            when {
+                lower.startsWith("resultv:") || lower.startsWith("http://") ||
+                    lower.startsWith("https://") -> {
+                    // DeepLinkImporter handles all three: rvsub deep-link,
+                    // subscription URL, and rejects garbage with its own toast.
+                    DeepLinkImporter.importPlain(ctx, raw)
+                    onResult(msgImported)
+                }
+                else -> {
+                    val added = importLines(raw, defaultName)
+                    onResult(if (added > 0) msgImported else msgInvalid)
+                }
+            }
+        }
+        .addOnCanceledListener { onResult(msgEmpty) }
+        .addOnFailureListener { onResult(msgUnsupported) }
+}
