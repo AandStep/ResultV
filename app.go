@@ -347,9 +347,12 @@ func (a *App) startup(ctx context.Context) {
 			}
 		}
 		st := a.proxy.GetStatus()
-		if st.IsConnected && st.CurrentProxy != nil && a.tray != nil {
+		if st.IsConnected && st.CurrentProxy != nil {
 			cp := st.CurrentProxy
-			a.tray.SetConnectedProxy(a.resolveProxyID(*cp), fmt.Sprintf("%s:%d", cp.IP, cp.Port))
+			if a.tray != nil {
+				a.tray.SetConnectedProxy(a.resolveProxyID(*cp), fmt.Sprintf("%s:%d", cp.IP, cp.Port))
+			}
+			a.setWindowTitleConnected(*cp)
 		}
 	}
 
@@ -557,6 +560,7 @@ func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
 		if a.tray != nil {
 			a.tray.SetConnectedProxy(a.resolveProxyID(proxyDTO), serverName)
 		}
+		a.setWindowTitleConnected(proxyDTO)
 		wailsRuntime.EventsEmit(a.ctx, "proxy:connected", proxyDTO)
 	}
 
@@ -643,6 +647,7 @@ func (a *App) Disconnect() error {
 		if a.tray != nil {
 			a.tray.SetDisconnected()
 		}
+		a.setWindowTitleDisconnected()
 		wailsRuntime.EventsEmit(a.ctx, "proxy:disconnected", nil)
 	}
 	return err
@@ -717,6 +722,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 			if a.tray != nil {
 				a.tray.SetConnectedProxy(a.resolveProxyID(*status.CurrentProxy), serverName)
 			}
+			a.setWindowTitleConnected(*status.CurrentProxy)
 			wailsRuntime.EventsEmit(a.ctx, "proxy:connected", *status.CurrentProxy)
 		} else if result.ErrorCode == "cancelled" {
 			// User explicitly cancelled the connect (Disconnect/CancelConnect).
@@ -729,6 +735,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 			if a.tray != nil {
 				a.tray.SetDisconnected()
 			}
+			a.setWindowTitleDisconnected()
 			wailsRuntime.EventsEmit(a.ctx, "proxy:disconnected", nil)
 		} else if !result.FallbackUsed {
 
@@ -754,11 +761,13 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 				if a.tray != nil {
 					a.tray.SetConnectedProxy(a.resolveProxyID(prevProxy), fmt.Sprintf("%s:%d", prevProxy.IP, prevProxy.Port))
 				}
+				a.setWindowTitleConnected(prevProxy)
 				wailsRuntime.EventsEmit(a.ctx, "proxy:connected", prevProxy)
 			} else {
 				if a.tray != nil {
 					a.tray.SetDisconnected()
 				}
+				a.setWindowTitleDisconnected()
 				wailsRuntime.EventsEmit(a.ctx, "proxy:disconnected", nil)
 			}
 		}
@@ -801,6 +810,7 @@ func (a *App) enableKillSwitchFirewall(proxyAddr string, dnsServers []string) er
 	if a.tray != nil {
 		a.tray.SetKillSwitchActive()
 	}
+	a.setWindowTitleKillSwitch()
 	a.log.Warning("[KILL SWITCH] Активирована полная блокировка интернета (firewall)")
 	return nil
 }
@@ -1074,6 +1084,7 @@ func (a *App) UpdateRules(rules config.RoutingRules) error {
 		if a.tray != nil {
 			a.tray.SetDisconnected()
 		}
+		a.setWindowTitleDisconnected()
 		wailsRuntime.EventsEmit(a.ctx, "proxy:disconnected", nil)
 		return fmt.Errorf("%s", result.Message)
 	}
@@ -1082,6 +1093,7 @@ func (a *App) UpdateRules(rules config.RoutingRules) error {
 	if a.tray != nil {
 		a.tray.SetConnectedProxy(a.resolveProxyID(cur), fmt.Sprintf("%s:%d", cur.IP, cur.Port))
 	}
+	a.setWindowTitleConnected(cur)
 	wailsRuntime.EventsEmit(a.ctx, "proxy:connected", cur)
 	return nil
 }
@@ -2354,8 +2366,10 @@ func (a *App) refreshTrayProxyList() {
 	status := a.GetStatus()
 	if status.IsConnected && status.CurrentProxy != nil {
 		a.tray.SetConnectedProxy(a.resolveProxyID(*status.CurrentProxy), fmt.Sprintf("%s:%d", status.CurrentProxy.IP, status.CurrentProxy.Port))
+		a.setWindowTitleConnected(*status.CurrentProxy)
 	} else {
 		a.tray.SetDisconnected()
+		a.setWindowTitleDisconnected()
 	}
 	a.tray.UpdateProxyList(cfg.Proxies, selectedID)
 }
@@ -2429,6 +2443,48 @@ func (a *App) resolveProxyID(proxyDTO proxy.ProxyConfig) string {
 		}
 	}
 	return ""
+}
+
+// resolveProxyDisplayName returns the human-readable proxy name (e.g.
+// "Австрия | TROJAN TCP | №2") used in the window/taskbar title.
+// ProxyConfig itself doesn't carry Name — it's stored in config.ProxyEntry,
+// so we look it up by ID or (IP, Port, Type). Falls back to "IP:Port".
+func (a *App) resolveProxyDisplayName(proxyDTO proxy.ProxyConfig) string {
+	if a.config != nil {
+		cfg := a.config.GetConfig()
+		for _, p := range cfg.Proxies {
+			match := (proxyDTO.ID != "" && p.ID == proxyDTO.ID) ||
+				(p.IP == proxyDTO.IP && p.Port == proxyDTO.Port && strings.EqualFold(p.Type, proxyDTO.Type))
+			if match && strings.TrimSpace(p.Name) != "" {
+				return strings.TrimSpace(p.Name)
+			}
+		}
+	}
+	return fmt.Sprintf("%s:%d", proxyDTO.IP, proxyDTO.Port)
+}
+
+// setWindowTitleConnected updates the OS window/taskbar title to reflect the
+// active proxy. Format: "ResultV — {server name}". Safe to call before ctx is
+// initialized.
+func (a *App) setWindowTitleConnected(proxyDTO proxy.ProxyConfig) {
+	if a.ctx == nil {
+		return
+	}
+	wailsRuntime.WindowSetTitle(a.ctx, "ResultV — "+a.resolveProxyDisplayName(proxyDTO))
+}
+
+func (a *App) setWindowTitleDisconnected() {
+	if a.ctx == nil {
+		return
+	}
+	wailsRuntime.WindowSetTitle(a.ctx, "ResultV")
+}
+
+func (a *App) setWindowTitleKillSwitch() {
+	if a.ctx == nil {
+		return
+	}
+	wailsRuntime.WindowSetTitle(a.ctx, "ResultV — Kill Switch")
 }
 
 func (a *App) startTrayPingLoop() {
