@@ -25,7 +25,17 @@ import {
   Download,
   Upload,
   Lock,
+  SlidersHorizontal,
+  Rss,
+  Globe,
 } from "lucide-react";
+
+const SETTINGS_GROUPS = [
+  { id: "advanced", Icon: SlidersHorizontal },
+  { id: "subscriptions", Icon: Rss },
+  { id: "security", Icon: Shield },
+  { id: "network", Icon: Globe },
+];
 import { SettingToggle } from "../components/ui/SettingToggle";
 import AppSelect from "../components/ui/AppSelect";
 import { encryptWithPassword, decryptWithPassword } from "../utils/crypto";
@@ -393,49 +403,62 @@ export const SettingsView = () => {
     [t],
   );
 
-  const SettingsMenuCard = ({ id, title, description }) => (
+  const SettingsGroupIcon = ({ Icon, size = "md" }) => {
+    const box = size === "lg" ? "w-12 h-12 rounded-2xl" : "w-10 h-10 rounded-xl";
+    const icon = size === "lg" ? "w-6 h-6" : "w-5 h-5";
+    return (
+      <div
+        className={`flex items-center justify-center ${box} bg-[#007E3A]/10 shrink-0`}
+      >
+        <Icon className={`${icon} text-[#00A819]`} />
+      </div>
+    );
+  };
+
+  const SettingsMenuCard = ({ id, title, Icon }) => (
     <button
       type="button"
       onClick={() => setActiveSection(id)}
-      className="w-full p-6 bg-zinc-900 hover:bg-zinc-800 rounded-3xl border border-zinc-800 hover:border-zinc-700 transition-colors text-left flex items-center justify-between gap-4"
+      className="w-full p-5 bg-zinc-900 hover:bg-zinc-800 rounded-3xl border border-zinc-800 hover:border-zinc-700 transition-colors text-left flex items-center justify-between gap-4"
     >
-      <div>
-        <h3 className="text-white font-bold text-lg mb-2">{title}</h3>
-        <p className="text-zinc-500 text-sm">{description}</p>
+      <div className="flex items-center gap-4 min-w-0">
+        <SettingsGroupIcon Icon={Icon} />
+        <h3 className="text-white font-bold text-lg">{title}</h3>
       </div>
       <ChevronRight className="w-5 h-5 text-zinc-500 shrink-0" />
     </button>
   );
 
-  const sectionHeader =
-    {
-      advanced: {
-        title: t("settings.groups.advanced.title"),
-        description: t("settings.groups.advanced.desc"),
-      },
-      subscriptions: {
-        title: t("settings.groups.subscriptions.title"),
-        description: t("settings.groups.subscriptions.desc"),
-      },
-      security: {
-        title: t("settings.groups.security.title"),
-        description: t("settings.groups.security.desc"),
-      },
-      network: {
-        title: t("settings.groups.network.title"),
-        description: t("settings.groups.network.desc"),
-      },
-    }[activeSection] || null;
+  const activeGroup = SETTINGS_GROUPS.find((g) => g.id === activeSection);
+  const sectionHeader = activeGroup
+    ? {
+        title: t(`settings.groups.${activeGroup.id}.title`),
+        description: t(`settings.groups.${activeGroup.id}.desc`),
+        Icon: activeGroup.Icon,
+      }
+    : null;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300 relative">
       <div>
-        <h2 className="text-3xl font-bold text-white">
-          {sectionHeader?.title || t("settings.title")}
-        </h2>
-        <p className="text-zinc-400 mt-2">
-          {sectionHeader?.description || t("settings.desc")}
-        </p>
+        {sectionHeader ? (
+          <div className="flex items-start gap-4">
+            <SettingsGroupIcon Icon={sectionHeader.Icon} size="lg" />
+            <div className="min-w-0">
+              <h2 className="text-3xl font-bold text-white">
+                {sectionHeader.title}
+              </h2>
+              <p className="text-zinc-400 mt-2">{sectionHeader.description}</p>
+            </div>
+          </div>
+        ) : (
+          <>
+            <h2 className="text-3xl font-bold text-white">
+              {t("settings.title")}
+            </h2>
+            <p className="text-zinc-400 mt-2">{t("settings.desc")}</p>
+          </>
+        )}
       </div>
 
       {notify && (
@@ -453,27 +476,15 @@ export const SettingsView = () => {
 
       {!activeSection && (
         <>
-          <div className="space-y-4">
-          <SettingsMenuCard
-            id="advanced"
-            title={t("settings.groups.advanced.title")}
-            description={t("settings.groups.advanced.desc")}
-          />
-          <SettingsMenuCard
-            id="subscriptions"
-            title={t("settings.groups.subscriptions.title")}
-            description={t("settings.groups.subscriptions.desc")}
-          />
-          <SettingsMenuCard
-            id="security"
-            title={t("settings.groups.security.title")}
-            description={t("settings.groups.security.desc")}
-          />
-          <SettingsMenuCard
-            id="network"
-            title={t("settings.groups.network.title")}
-            description={t("settings.groups.network.desc")}
-          />
+          <div className="space-y-3">
+            {SETTINGS_GROUPS.map(({ id, Icon }) => (
+              <SettingsMenuCard
+                key={id}
+                id={id}
+                Icon={Icon}
+                title={t(`settings.groups.${id}.title`)}
+              />
+            ))}
           </div>
 
           <div className="p-6 bg-zinc-900 rounded-3xl border border-zinc-800 mt-10">

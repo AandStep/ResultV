@@ -61,7 +61,10 @@ if [ -n "${APPLE_DEVELOPER_ID:-}" ]; then
   codesign --force --deep --options runtime --timestamp \
     --sign "$APPLE_DEVELOPER_ID" "$APP_PATH"
 else
-  echo "==> codesign skipped (APPLE_DEVELOPER_ID not set)"
+  # libcronet.dylib is copied after Wails self-sign; re-seal the bundle ad-hoc so
+  # Gatekeeper bypass (Open / xattr) still yields a runnable app.
+  echo "==> codesign ad-hoc (re-sign after libcronet.dylib)"
+  codesign --force --deep -s - "$APP_PATH"
 fi
 
 if [ -n "${APPLE_NOTARY_APPLE_ID:-}" ] && [ -n "${APPLE_NOTARY_TEAM_ID:-}" ] && [ -n "${APPLE_NOTARY_PASSWORD:-}" ]; then

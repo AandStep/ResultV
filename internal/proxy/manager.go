@@ -17,6 +17,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -186,8 +187,16 @@ func (m *Manager) Init(ctx context.Context) {
 	// the user back their original DNS. Best-effort — failure here mustn't
 	// block app startup.
 	if err := m.sysDNS.Restore(); err != nil {
-		m.log.Warning(fmt.Sprintf("[СИСТЕМА] Не удалось восстановить DNS из снапшота: %v", err))
+		m.logDNSRestoreWarning(err)
 	}
+}
+
+func (m *Manager) logDNSRestoreWarning(err error) {
+	if errors.Is(err, ErrDNSRequiresAdmin) {
+		m.log.Warning("[СИСТЕМА] Не удалось восстановить DNS: нужны права администратора. Запустите приложение от имени администратора или подтвердите запрос UAC при восстановлении.")
+		return
+	}
+	m.log.Warning(fmt.Sprintf("[СИСТЕМА] Не удалось восстановить DNS из снапшота: %v", err))
 }
 
 // effectiveAppWhitelist merges user-specified roots with currently-running
@@ -673,14 +682,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 	// WG/AWG endpoint protocols are skipped — wireguard manages DNS via
 	// peer config and would race with us. Health-probe domains intentionally
 	// keep going through the proxy regardless.
-	skipDNSOverride := isEndpointProtocol
-	if !skipDNSOverride && m.sysDNS != nil {
-		if err := m.sysDNS.Override(dnsOverrideServers(dnsServers)); err != nil {
-			m.log.Warning(fmt.Sprintf("[СИСТЕМА] DNS leak protection не применён: %v", err))
-		} else {
-			m.log.Success("[СИСТЕМА] Системный DNS перенаправлен на защищённые резолверы")
-		}
-	}
+	m.applySystemDNSOverride(isEndpointProtocol, dnsServers)
 
 	m.clearPendingLocked()
 	m.connected = true
@@ -724,6 +726,25 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 // to Cloudflare + Google so the user at least leaks to neutral resolvers
 // instead of their ISP. Returns IP literals only (the override layer
 // rejects anything that isn't a numeric address).
+func (m *Manager) applySystemDNSOverride(skip bool, dnsServers []string) {
+	if skip || m.sysDNS == nil {
+		return
+	}
+	if !isAdminCheck() {
+		m.log.Warning("[СИСТЕМА] Смена системного DNS (защита от утечек) требует прав администратора — запустите приложение от имени администратора")
+		return
+	}
+	if err := m.sysDNS.Override(dnsOverrideServers(dnsServers)); err != nil {
+		if errors.Is(err, ErrDNSRequiresAdmin) {
+			m.log.Warning("[СИСТЕМА] Смена системного DNS требует прав администратора")
+			return
+		}
+		m.log.Warning(fmt.Sprintf("[СИСТЕМА] DNS leak protection не применён: %v", err))
+		return
+	}
+	m.log.Success("[СИСТЕМА] Системный DNS перенаправлен на защищённые резолверы")
+}
+
 func dnsOverrideServers(custom []string) []string {
 	out := make([]string, 0, 2)
 	seen := make(map[string]struct{}, len(custom))
@@ -882,13 +903,7 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 
 	// See main Connect() for the full rationale. Tunnel + non-WG/AWG also
 	// needs adapter DNS unified to neutralize Smart Multi-Homed Resolution.
-	if !isEndpointProtocol && m.sysDNS != nil {
-		if err := m.sysDNS.Override(dnsOverrideServers(dnsServers)); err != nil {
-			m.log.Warning(fmt.Sprintf("[СИСТЕМА] DNS leak protection не применён: %v", err))
-		} else {
-			m.log.Success("[СИСТЕМА] Системный DNS перенаправлен на защищённые резолверы")
-		}
-	}
+	m.applySystemDNSOverride(isEndpointProtocol, dnsServers)
 
 	m.clearPendingLocked()
 	m.connected = true
@@ -1356,7 +1371,7 @@ func (m *Manager) Disconnect() error {
 
 	if m.sysDNS != nil {
 		if err := m.sysDNS.Restore(); err != nil {
-			m.log.Warning(fmt.Sprintf("[СИСТЕМА] Ошибка восстановления DNS: %v", err))
+			m.logDNSRestoreWarning(err)
 		}
 	}
 
@@ -1395,7 +1410,7 @@ func (m *Manager) disconnectLocked() error {
 
 	if m.sysDNS != nil {
 		if err := m.sysDNS.Restore(); err != nil {
-			m.log.Warning(fmt.Sprintf("[СИСТЕМА] Ошибка восстановления DNS: %v", err))
+			m.logDNSRestoreWarning(err)
 		}
 	}
 

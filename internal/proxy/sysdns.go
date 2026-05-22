@@ -15,6 +15,12 @@
 
 package proxy
 
+import "errors"
+
+// ErrDNSRequiresAdmin is returned when Windows adapter DNS cannot be changed
+// without elevation (Set-DnsClientServerAddress requires administrator).
+var ErrDNSRequiresAdmin = errors.New("system dns: administrator privileges required")
+
 // SystemDNS overrides the OS resolver list for the duration of a VPN session.
 //
 // Why: in Proxy mode sing-box doesn't intercept DNS at the OS level. Apps

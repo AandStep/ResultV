@@ -69,5 +69,10 @@ export const useLogs = () => {
         };
     }, []);
 
-    return { logs, backendLogs, addLog };
+    const clearLogs = useCallback(() => {
+        setLogs([]);
+        setBackendLogs([]);
+    }, []);
+
+    return { logs, backendLogs, addLog, clearLogs };
 };

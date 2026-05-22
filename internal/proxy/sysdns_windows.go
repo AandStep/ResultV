@@ -26,9 +26,14 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"resultproxy-wails/internal/system"
 )
 
 const dnsSnapshotFile = "dns-snapshot.json"
+
+// dnsAdminCheck is overridden in tests.
+var dnsAdminCheck = system.IsAdmin
 
 type adapterDNS struct {
 	InterfaceIndex  int      `json:"InterfaceIndex"`
@@ -53,6 +58,9 @@ func newSystemDNS() SystemDNS {
 func (w *windowsSystemDNS) Override(servers []string) error {
 	if len(servers) == 0 {
 		return errors.New("system dns override: empty server list")
+	}
+	if !dnsAdminCheck() {
+		return ErrDNSRequiresAdmin
 	}
 
 	adapters, err := listAdapterDNS()
@@ -122,6 +130,14 @@ func (w *windowsSystemDNS) Restore() error {
 
 	// Remove the snapshot only on success; otherwise the next start gets
 	// another shot at restoring.
+	if firstErr != nil && isPermissionDeniedError(firstErr) && !dnsAdminCheck() {
+		if err := w.restoreElevated(snap.Adapters); err == nil {
+			_ = os.Remove(w.snapshotPath)
+			return nil
+		}
+		return fmt.Errorf("%w: %v", ErrDNSRequiresAdmin, firstErr)
+	}
+
 	if firstErr == nil {
 		_ = os.Remove(w.snapshotPath)
 	}
@@ -186,6 +202,20 @@ func filterPhysicalAdapterDNS(adapters []adapterDNS) []adapterDNS {
 
 // isAdapterGoneError detects PowerShell/CIM failures when the interface
 // index from an older snapshot no longer exists (typical after TUN teardown).
+func isPermissionDeniedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrDNSRequiresAdmin) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "permissiondenied") ||
+		strings.Contains(msg, "access is denied") ||
+		strings.Contains(msg, "access denied") ||
+		strings.Contains(msg, "отказано в доступе") // localized PowerShell on RU Windows
+}
+
 func isAdapterGoneError(err error) bool {
 	if err == nil {
 		return false
@@ -290,4 +320,75 @@ func powerShellRun(script string) ([]byte, error) {
 	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	return cmd.CombinedOutput()
+}
+
+// restoreElevated runs adapter DNS restore in an elevated PowerShell process
+// (UAC). Used after a crash when a snapshot exists but the app restarted
+// without admin rights.
+func (w *windowsSystemDNS) restoreElevated(adapters []adapterDNS) error {
+	script := buildRestorePSScript(adapters)
+	if script == "" {
+		_ = os.Remove(w.snapshotPath)
+		return nil
+	}
+	return powerShellRunElevated(script)
+}
+
+func buildRestorePSScript(adapters []adapterDNS) string {
+	var b strings.Builder
+	for _, a := range adapters {
+		if skipAdapterDNS(a.InterfaceAlias) {
+			continue
+		}
+		if len(a.ServerAddresses) == 0 {
+			fmt.Fprintf(&b, "Set-DnsClientServerAddress -InterfaceIndex %d -ResetServerAddresses\n", a.InterfaceIndex)
+			continue
+		}
+		quoted := make([]string, 0, len(a.ServerAddresses))
+		for _, s := range a.ServerAddresses {
+			s = strings.TrimSpace(s)
+			if !isSafeDNSToken(s) {
+				continue
+			}
+			quoted = append(quoted, `"`+s+`"`)
+		}
+		if len(quoted) == 0 {
+			continue
+		}
+		fmt.Fprintf(&b, "Set-DnsClientServerAddress -InterfaceIndex %d -ServerAddresses @(%s)\n",
+			a.InterfaceIndex, strings.Join(quoted, ","))
+	}
+	return b.String()
+}
+
+func powerShellRunElevated(script string) error {
+	dir := filepath.Join(resultProxyDataDir(), "elevated")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, "dns-restore-*.ps1")
+	if err != nil {
+		return err
+	}
+	path := tmp.Name()
+	if _, err := tmp.WriteString(script); err != nil {
+		tmp.Close()
+		_ = os.Remove(path)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(path)
+		return err
+	}
+	defer os.Remove(path)
+
+	esc := strings.ReplaceAll(path, "'", "''")
+	launcher := fmt.Sprintf(
+		`Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File','%s'`,
+		esc,
+	)
+	if out, err := powerShellRun(launcher); err != nil {
+		return fmt.Errorf("elevated powershell: %w (out=%s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
