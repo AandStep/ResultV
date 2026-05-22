@@ -296,24 +296,36 @@ type subscriptionResult struct {
 	Title    string
 }
 
-// buildAutoAwareEntries reproduces app.go's auto-bundling: if a subscription
-// is one big auto group (or contains an auto subset), the duplicates are
-// collapsed into a single AUTO virtual entry with the members embedded by
-// value. The non-auto remainder is appended unchanged.
+// buildAutoAwareEntries reproduces app.go's auto-bundling and extends it
+// with multi-group support: subscriptions that ship several "<region>
+// Auto" clusters (one per country) emit one AUTO virtual entry per
+// cluster instead of being silently flattened.
+//
+// Resolution order:
+//  1. SplitAutoEntriesMulti — partitions auto entries by flag emoji and
+//     creates one AutoGroup per partition with ≥2 members that share a
+//     recoverable group name.
+//  2. ExtractAutoGroupName on the whole list — fallback for the
+//     no-individual case where every entry shares a single name (e.g.
+//     "🇨🇦 impVPN Auto" repeated N times with no other entries).
+//
+// AUTO entries land first in the output (preserving the order in which
+// each group first appeared), individuals afterwards.
 func buildAutoAwareEntries(entries []config.ProxyEntry) []config.ProxyEntry {
 	if len(entries) <= 1 {
 		return entries
 	}
 
-	autoMembers, autoName, individuals, ok := proxy.SplitAutoEntries(entries)
-	if ok && len(autoMembers) > 1 {
-		auto := config.ProxyEntry{
-			Name:  autoName,
-			Type:  "AUTO",
-			Extra: marshalAutoMembers(autoMembers),
+	groups, individuals := proxy.SplitAutoEntriesMulti(entries)
+	if len(groups) > 0 {
+		out := make([]config.ProxyEntry, 0, len(groups)+len(individuals))
+		for _, g := range groups {
+			out = append(out, config.ProxyEntry{
+				Name:  g.Name,
+				Type:  "AUTO",
+				Extra: marshalAutoMembers(g.Members),
+			})
 		}
-		out := make([]config.ProxyEntry, 0, 1+len(individuals))
-		out = append(out, auto)
 		out = append(out, individuals...)
 		return out
 	}

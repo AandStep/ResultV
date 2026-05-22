@@ -142,6 +142,7 @@
     <string name="manual_field_alterid">AlterID</string>
     <string name="manual_field_tls">TLS</string>
     <string name="manual_field_password">Password</string>
+    <string name="manual_field_username">Username</string>
     <string name="manual_field_method">Method</string>
     <string name="manual_field_allow_insecure">Allow insecure</string>
     <string name="manual_field_obfuscation">Obfuscation</string>

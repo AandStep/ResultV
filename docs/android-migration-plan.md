@@ -404,29 +404,35 @@ A6. **Verify `addDisallowedApplication(packageName)` survives package
 
 ### B. Go + AAR rebuild (batch these)
 
-B1. **NaiveProxy support** — engine batch already added a TLS extras
-    helper but Naive is missing entirely on mobile. Port from
-    `ResultV-dev/internal/proxy/uriparser.go`:
+⚠️ B1. **NaiveProxy support — parser only.** Go side is fully in:
     `parseNaiveURI`, `tryParseNaiveClientConfigMap`,
-    `naiveProxyEntryFromProxyURL`. Add the `case "NAIVEPROXY"` outbound
-    block from `ResultV-dev/internal/proxy/outbound.go:335`.
-    Add the `with_naive_outbound` tag to the gomobile build cmd
-    (cheatsheet below). Add "Naive" to `ManualPane.kt` protocol grid.
+    `naiveProxyEntryFromProxyURL`, the `case "naive"` arm in
+    `parseJSONOutbound`, the `case "NAIVEPROXY"` outbound builder, and
+    validation. `ManualPane` gains a Naive card (Name / Host / Port /
+    Username / Password / SNI → `naive+https://user:pass@host:port`).
+    The AAR is **not** rebuilt with `with_naive_outbound` yet —
+    sagernet's precompiled `libcronet.a` doesn't link under NDK 27.x
+    ld.lld (see Known issues). Naive URIs parse and persist, but
+    sing-box will reject them at engine-start until the tag flips on.
 
-B2. **Security / TLS extras** — port from `ResultV-dev/internal/proxy/outbound.go`:
-    - `resolvedFingerprint(extra)` with the system-derived default
-      (mobile stub returns `"chrome"` since there's no Edge WebView2).
-    - `applyTLSExtras` — `min_version` / `max_version` / `cipher_suites`
-      from `extra`.
-    - `normalizeRealityShortID` — lower-case hex normalisation.
-    - `resolvePacketEncoding` — `xudp` default for VLESS / VMess UDP-over-TCP.
-    - `fingerprintFromExtra` accepting Clash-style `client-fingerprint`.
+~~B2. Security / TLS extras~~ — ✅ DONE. `resolvedFingerprint` lands
+    with a mobile-friendly default — there's no Edge WebView2 on
+    Android so the empty case falls through to `"chrome"` (safest
+    mainstream fingerprint that still passes Reality's masquerade).
+    Three call sites in `applyTLSAndTransport` (reality / tls /
+    `extra.tls=true`) switched from `fingerprintFromExtra` to
+    `resolvedFingerprint`. `applyTLSExtras`,
+    `normalizeRealityShortID`, `resolvePacketEncoding`,
+    `fingerprintFromExtra` were already in sync (file diff against
+    ResultV-dev was clean).
 
-B3. **Old-protocol parser fixes** — port from `ResultV-dev`:
-    - Hysteria2 password chain: `password → auth → auth_str → userpass`.
-    - ALPN helpers: `xhttpPreferH2ALPN`, `defaultALPNForNetwork`.
-    - AmneziaWG: `getQueryParamCI` for `Jc/JC/jc` interchangeability.
-    - VLESS: `mergeVLESSURLEmbeddedExtra` for embedded URL params.
+~~B3. Old-protocol parser fixes~~ — ✅ DONE. File diff against
+    ResultV-dev showed Hysteria2 password chain
+    (`password → auth → auth_str → userpass`), ALPN helpers
+    (`xhttpPreferH2ALPN`, `defaultALPNForNetwork`), AmneziaWG
+    `getQueryParamCI`, and VLESS `mergeVLESSURLEmbeddedExtra` already
+    present from prior ports. The only real delta in this slice was
+    the `parseJSONOutbound` `case "naive"` (folded into B1 above).
 
 B4. **Battery / data-usage stats** — extend `Mobile` binding to expose
     cumulative byte totals + interval breakdown for OS-level battery
@@ -516,11 +522,17 @@ audit; this section is the user-facing UI parity that depends on them.
     matches. Chip row hides itself when fewer than two protocols are
     in the list.
 
-P5. **Multi-AUTO virtual entries** — when a subscription includes
-    several auto-groups, the desktop renders them all; mobile collapses
-    to a single AUTO today. Touch `buildAutoAwareEntries` in
-    `mobile/libbox.go` to preserve multiple groups. Belongs in the
-    next AAR rebuild (Section B); not pure-Kotlin.
+~~P5. Multi-AUTO virtual entries~~ — ✅ DONE. New
+    `proxy.SplitAutoEntriesMulti` in `internal/proxy/uriparser.go`
+    partitions auto-named entries by their leading flag emoji,
+    then runs `ExtractAutoGroupName` per partition; each partition
+    of ≥2 entries with a recoverable shared name becomes one
+    AutoGroup. `buildAutoAwareEntries` in `mobile/libbox.go` walks
+    the returned groups and emits one virtual AUTO per cluster.
+    The "no individuals + single shared name" fallback path stays
+    intact for the simple single-group case. Tests in
+    `internal/proxy/lcp_test.go` cover single-flag, two-flag, mixed,
+    and degenerate (1-entry-per-flag) shapes.
 
 ---
 
@@ -532,6 +544,18 @@ P5. **Multi-AUTO virtual entries** — when a subscription includes
   observed logs. Bypass works only because `addDisallowedApplication(ownPkg)`
   keeps our UID off the tunnel. Revisit if always-on VPN needs platform protect.
 - Gomobile uses sagernet's fork pinned at v0.1.12.
+- **NaiveProxy outbound is parser-only on mobile right now.** Toggling
+  `with_naive_outbound` on the gomobile bind cmd pulls in
+  `github.com/sagernet/cronet-go`, whose precompiled `libcronet.a`
+  ships R_AARCH64_AUTH_ABS64 relocations (315) that NDK 27.x's
+  ld.lld rejects with `unknown relocation`. The parser, ManualPane
+  card, validation, and outbound builder code are committed, but
+  the AAR is currently built without the tag — sing-box will refuse
+  to instantiate `"type":"naive"` outbounds at runtime until either
+  (a) an older NDK (25 or 26) is wired into Android Studio's SDK
+  Manager and gomobile is pointed at it, or (b) sagernet ships a
+  cronet-go binary rebuilt with the new ABI. Flip the tag back on
+  in the cheatsheet once that's resolved.
 - `internal/godebug.defaultGODEBUG=multipathtcp=0` not yet wired into ldflags.
   Harmless on user devices but produces a Go runtime warning in logcat.
 - TUN stack `gvisor` (sing-box default). `system` stack broke our env, kept gvisor.
@@ -567,7 +591,9 @@ gomobile bind \
   ./mobile github.com/sagernet/sing-box/experimental/libbox
 ```
 
-Add `with_naive_outbound` to the tag list once partition B1 lands.
+`with_naive_outbound` is **not** in the active tag list — NDK 27.x
+ld.lld can't link sagernet's precompiled `libcronet.a` (see Known
+issues). Add the tag back to the cmd once the toolchain is sorted.
 
 Then in Android Studio: Sync → Run on Pixel 9 Pro emulator (API 36).
 Pure-Kotlin changes don't need a rebuild — just Sync.

@@ -595,4 +595,24 @@ private val Protocols: List<ProtocolSpec> = listOf(
                 query(pairs) + frag(v["name"].orEmpty())
         },
     ),
+
+    ProtocolSpec(
+        id = "naive",
+        title = "Naive",
+        scheme = "naive+https://",
+        fields = listOf(
+            NameField,
+            HostField,
+            PortField,
+            Field("username", R.string.manual_field_username, required = true),
+            Field("password", R.string.manual_field_password, kind = FieldKind.Password, required = true),
+            Field("sni", R.string.manual_field_sni),
+        ),
+        build = { v ->
+            "naive+https://${enc(v["username"]!!)}:${enc(v["password"]!!)}@${v["host"]}:${v["port"]}" +
+                query(listOf(
+                    "sni" to v["sni"].orEmpty(),
+                )) + frag(v["name"].orEmpty())
+        },
+    ),
 )

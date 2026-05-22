@@ -88,6 +88,24 @@ func fingerprintFromExtra(extra map[string]interface{}) string {
 	)
 }
 
+// resolvedFingerprint returns the uTLS fingerprint that should actually be
+// used for an outbound. Precedence: explicit user value (fp / client-fingerprint
+// / ...) → platform-derived default. On mobile there's no Edge WebView2 to
+// match against, so the default is "chrome" — the safest mainstream
+// fingerprint that still passes Reality's masquerade check. Pass
+// "none" / "off" / "disable" / "-" in the URI to keep TLS without uTLS.
+func resolvedFingerprint(extra map[string]interface{}) string {
+	raw := strings.TrimSpace(strings.ToLower(fingerprintFromExtra(extra)))
+	switch raw {
+	case "none", "off", "disable", "disabled", "-":
+		return ""
+	case "":
+		return "chrome"
+	default:
+		return raw
+	}
+}
+
 // applyTLSExtras applies optional TLS knobs (min_version, max_version,
 // cipher_suites) onto an already-built SBOutboundTLS.
 func applyTLSExtras(tls *SBOutboundTLS, extra map[string]interface{}) {
@@ -313,6 +331,27 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 		}
 		return out
 
+	case "NAIVEPROXY", "NAIVE", "naive":
+		// sing-box naive outbound (with_naive_outbound) uses Cronet for TLS; TLS
+		// in JSON is only enabled + server_name (see sing-box naive NewOutbound).
+		sni := firstNonEmpty(
+			getStringField(extra, "sni", ""),
+			getStringField(extra, "server_name", ""),
+			proxy.IP,
+		)
+		return SBOutbound{
+			Type:       "naive",
+			Tag:        "proxy",
+			Server:     proxy.IP,
+			ServerPort: proxy.Port,
+			Username:   proxy.Username,
+			Password:   proxy.Password,
+			TLS: &SBOutboundTLS{
+				Enabled:    true,
+				ServerName: sni,
+			},
+		}
+
 	default:
 		return SBOutbound{
 			Type:       "http",
@@ -373,8 +412,11 @@ func applyTLSAndTransport(out *SBOutbound, extra map[string]interface{}, default
 	switch security {
 	case "reality":
 		sni := getStringField(extra, "sni", defaultSNI)
-		fp := fingerprintFromExtra(extra)
+		fp := resolvedFingerprint(extra)
 		if fp == "" {
+			// Reality requires a uTLS fingerprint to function — the handshake
+			// is itself the masquerade. Fall back to "chrome" if the system
+			// default came back empty (explicit "none" override).
 			fp = "chrome"
 		}
 		if pbk == "" {
@@ -402,7 +444,7 @@ func applyTLSAndTransport(out *SBOutbound, extra map[string]interface{}, default
 	case "tls":
 		sni := getStringField(extra, "sni", defaultSNI)
 		insecure := getBoolField(extra, "insecure")
-		fp := fingerprintFromExtra(extra)
+		fp := resolvedFingerprint(extra)
 		tls := &SBOutboundTLS{
 			Enabled:    true,
 			ServerName: sni,
@@ -428,7 +470,7 @@ func applyTLSAndTransport(out *SBOutbound, extra map[string]interface{}, default
 				ServerName: sni,
 				Insecure:   insecure,
 			}
-			if fp := fingerprintFromExtra(extra); fp != "" {
+			if fp := resolvedFingerprint(extra); fp != "" {
 				out.TLS.UTLS = &SBUTLS{Enabled: true, Fingerprint: fp}
 			}
 			if alpnStr := getStringField(extra, "alpn", ""); alpnStr != "" {

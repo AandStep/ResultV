@@ -110,6 +110,16 @@ func validateProtocolRequiredFields(proxyCfg ProxyConfig) error {
 		if strings.TrimSpace(getStringField(extra, "password", strings.TrimSpace(proxyCfg.Password))) == "" {
 			return fmt.Errorf("hysteria2 requires password")
 		}
+	case "NAIVEPROXY", "NAIVE":
+		if strings.TrimSpace(proxyCfg.IP) == "" || proxyCfg.Port <= 0 {
+			return fmt.Errorf("naiveproxy requires host and port")
+		}
+		if strings.TrimSpace(proxyCfg.Username) == "" || strings.TrimSpace(proxyCfg.Password) == "" {
+			return fmt.Errorf("naiveproxy requires username and password")
+		}
+		if getBoolField(extra, "insecure") {
+			return fmt.Errorf("naiveproxy: sing-box naive outbound does not support insecure TLS; use a publicly trusted certificate or remove insecure")
+		}
 	}
 	if proxyCfg.Extra != nil && len(proxyCfg.Extra) > 0 {
 		var js map[string]interface{}

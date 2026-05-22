@@ -134,6 +134,7 @@
     <string name="manual_field_alterid">AlterID</string>
     <string name="manual_field_tls">TLS</string>
     <string name="manual_field_password">Пароль</string>
+    <string name="manual_field_username">Имя пользователя</string>
     <string name="manual_field_method">Шифр</string>
     <string name="manual_field_allow_insecure">Разрешить insecure</string>
     <string name="manual_field_obfuscation">Обфускация</string>

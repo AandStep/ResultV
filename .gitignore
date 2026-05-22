@@ -40,6 +40,12 @@ build/windows/installer/tmp/*
 /tmp.exe
 *~
 
+# gomobile intermediate output
+/build/386/
+/build/amd64/
+/build/arm/
+/build/arm64/
+
 # Local test artifacts
 /ResultV_test.exe
 /test.html
