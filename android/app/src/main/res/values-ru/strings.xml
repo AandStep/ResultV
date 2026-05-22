@@ -173,15 +173,18 @@
     <!-- Subscriptions -->
     <string name="sub_subtitle">%1$d сервер(ов)</string>
     <string name="sub_traffic_used_unlimited">%1$s / ∞</string>
-    <string name="sub_days_left">Осталось %1$d дней</string>
-    <string name="sub_footer_servers">%1$d серверов</string>
     <string name="sub_refresh_cd">Обновить подписку</string>
     <string name="sub_delete_cd">Удалить подписку</string>
     <string name="sub_delete_title">Удалить подписку?</string>
     <string name="sub_delete_message">«%1$s» и %2$d привязанных профилей будут удалены.</string>
+    <string name="sub_edit_cd">Изменить URL подписки</string>
+    <string name="sub_edit_title">Изменить URL подписки</string>
+    <string name="sub_edit_label">URL панели</string>
+    <string name="sub_edit_save">Сохранить и обновить</string>
     <string name="sub_traffic_used">%1$s / %2$s</string>
     <string name="sub_expires_in_days">Истекает через %1$d дн.</string>
     <string name="sub_expired">Срок истёк</string>
+    <string name="sub_expires_on">до %1$s</string>
 
     <!-- Deep-link import -->
     <string name="deeplink_err_decode">Не удалось расшифровать ссылку</string>
@@ -202,6 +205,9 @@
     <string name="rules_section_domains_subtitle">Эти хосты всегда идут напрямую, в обход прокси.</string>
     <string name="rules_domain_placeholder">например, yandex.ru</string>
     <string name="rules_quick_add">Быстрое добавление</string>
+    <string name="rules_recent_title">Недавно использованные</string>
+    <string name="rules_shadow_covered">Уже покрыт «%1$s»</string>
+    <string name="rules_shadow_overrides">Перекроет существующие: %1$s</string>
     <string name="rules_section_perapp_title">Маршрутизация по приложениям</string>
     <string name="rules_section_perapp_subtitle">Выберите, какие приложения идут через VPN.</string>
     <string name="rules_app_mode_all">Все</string>

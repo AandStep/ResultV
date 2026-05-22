@@ -24,6 +24,7 @@ import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.ListAlt
@@ -38,6 +39,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -54,6 +56,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -68,6 +71,7 @@ import com.resultv.android.theme.Brand
 import com.resultv.android.ui.components.ProfileEditSheet
 import com.resultv.android.ui.components.ProfileSortMenu
 import com.resultv.android.ui.components.ProfileSortMode
+import com.resultv.android.ui.components.ProtocolFilterChips
 import com.resultv.android.ui.components.ServerRow
 import com.resultv.android.ui.components.sortProfiles
 import com.resultv.android.vpn.PingRepository
@@ -97,6 +101,8 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
     var refreshingSubId by remember { mutableStateOf<String?>(null) }
     var sortMode by remember { mutableStateOf(ProfileSortMode.Default) }
     var editingProfileId by remember { mutableStateOf<String?>(null) }
+    var editingSubId by remember { mutableStateOf<String?>(null) }
+    var protocolFilter by remember { mutableStateOf(emptySet<String>()) }
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val dataDir = remember(ctx) { ctx.filesDir.absolutePath }
@@ -127,11 +133,33 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
             ProfileSortMenu(mode = sortMode, onModeChange = { sortMode = it })
         }
 
+        // Protocol filter chips. Hidden when the underlying data only
+        // contains a single protocol — ProtocolFilterChips itself bails
+        // out below the 2-entry threshold.
+        val availableProtocols = remember(state.profiles) {
+            state.profiles.asSequence()
+                .filterNot { it.isSection }
+                .map { profileProtocol(it) }
+                .filter { it.isNotEmpty() }
+                .toSet()
+        }
+        ProtocolFilterChips(
+            selected = protocolFilter,
+            available = availableProtocols,
+            onToggle = { code ->
+                protocolFilter = if (code in protocolFilter)
+                    protocolFilter - code else protocolFilter + code
+            },
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+
         // Group profiles by subscription. Unaffiliated ("My proxies") go
         // in their own bucket; SECTION rows stay with their subscription
         // and keep their original order so impVPN's "👇 выберите конфиг
         // ниже" labels land between the right blocks.
-        val standalone = state.profiles.filter { it.subscriptionId.isBlank() && !it.isSection }
+        val standaloneRaw = state.profiles.filter { it.subscriptionId.isBlank() && !it.isSection }
+        val standalone = if (protocolFilter.isEmpty()) standaloneRaw
+            else standaloneRaw.filter { profileProtocol(it) in protocolFilter }
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -153,10 +181,17 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
             }
 
             subscriptions.subs.forEach { sub ->
+                val raw = state.profiles.filter { it.subscriptionId == sub.id }
+                // When a protocol filter is on, drop sections (they're labels
+                // for surrounding rows) and any row whose protocol isn't picked.
+                val subProfiles = if (protocolFilter.isEmpty()) raw
+                    else raw.filterNot { it.isSection }
+                        .filter { profileProtocol(it) in protocolFilter }
+                if (protocolFilter.isNotEmpty() && subProfiles.isEmpty()) return@forEach
                 item("sub-${sub.id}") {
                     SubscriptionGroup(
                         subscription = sub,
-                        profiles = state.profiles.filter { it.subscriptionId == sub.id },
+                        profiles = subProfiles,
                         activeId = state.activeId,
                         pings = pings,
                         sortMode = sortMode,
@@ -171,6 +206,7 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
                                 refreshingSubId = null
                             }
                         },
+                        onEdit = { editingSubId = sub.id },
                         onDelete = { pendingDeleteSub = sub },
                     )
                 }
@@ -208,6 +244,28 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
             onToggleFavorite = { ProfileRepository.toggleFavorite(id) },
             onDelete = { pendingDeleteProfile = target },
             onDismiss = { editingProfileId = null },
+        )
+    }
+
+    editingSubId?.let { id ->
+        val target = subscriptions.subs.firstOrNull { it.id == id }
+        if (target == null) {
+            editingSubId = null
+            return@let
+        }
+        SubscriptionUrlEditDialog(
+            initialUrl = target.url,
+            onDismiss = { editingSubId = null },
+            onSave = { newUrl ->
+                editingSubId = null
+                SubscriptionRepository.update(id) { it.copy(url = newUrl) }
+                if (refreshingSubId != null) return@SubscriptionUrlEditDialog
+                refreshingSubId = id
+                scope.launch {
+                    SubscriptionRepository.byId(id)?.let { refreshSubscription(it, dataDir) }
+                    refreshingSubId = null
+                }
+            },
         )
     }
 
@@ -288,6 +346,7 @@ private fun SubscriptionGroup(
     onPickProfile: (Profile) -> Unit,
     onLongPressProfile: (Profile) -> Unit,
     onRefresh: () -> Unit,
+    onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
     var collapsed by remember(subscription.id) { mutableStateOf(false) }
@@ -312,6 +371,7 @@ private fun SubscriptionGroup(
                 refreshing = refreshing,
                 onToggleCollapsed = { collapsed = !collapsed },
                 onRefresh = onRefresh,
+                onEdit = onEdit,
                 onDelete = onDelete,
             )
 
@@ -379,6 +439,7 @@ private fun SubscriptionHeader(
     refreshing: Boolean,
     onToggleCollapsed: () -> Unit,
     onRefresh: () -> Unit,
+    onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
     val usage = remember(subscription.userInfo) { SubscriptionUsage.parse(subscription.userInfo) }
@@ -429,6 +490,17 @@ private fun SubscriptionHeader(
                         modifier = Modifier.size(16.dp),
                     )
                 }
+            }
+            CircleActionChip(
+                onClick = onEdit,
+                contentDescription = stringResource(R.string.sub_edit_cd),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Edit,
+                    contentDescription = null,
+                    tint = Brand.SecondaryText,
+                    modifier = Modifier.size(16.dp),
+                )
             }
             CircleActionChip(
                 onClick = onDelete,
@@ -552,21 +624,27 @@ private fun SubscriptionLogo(usesImpLogo: Boolean) {
  */
 @Composable
 private fun UsageInlineStrip(usage: SubscriptionUsage) {
-    val daysLeftText = if (usage.hasExpiry) {
-        val daysLeft = TimeUnit.MILLISECONDS.toDays(
-            usage.expireUnix * 1000L - System.currentTimeMillis()
-        )
-        when {
-            usage.expired -> stringResource(R.string.sub_expired)
-            else -> stringResource(R.string.sub_days_left, daysLeft.coerceAtLeast(0))
+    val daysLeft = if (usage.hasExpiry) {
+        TimeUnit.MILLISECONDS.toDays(usage.expireUnix * 1000L - System.currentTimeMillis())
+            .coerceAtLeast(0L)
+    } else 0L
+    val daysLeftInt = daysLeft.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    val daysLeftText = when {
+        !usage.hasExpiry -> ""
+        usage.expired -> stringResource(R.string.sub_expired)
+        else -> pluralStringResource(R.plurals.sub_days_left, daysLeftInt, daysLeftInt)
+    }
+    val expireOnText = if (usage.hasExpiry && !usage.expired) {
+        val formatted = remember(usage.expireUnix) {
+            SimpleDateFormat("dd.MM.yy HH:mm", Locale.getDefault())
+                .format(Date(usage.expireUnix * 1000L))
         }
+        stringResource(R.string.sub_expires_on, formatted)
     } else ""
     val daysColour = when {
         !usage.hasExpiry -> Brand.MutedText
         usage.expired -> Brand.Danger
-        TimeUnit.MILLISECONDS.toDays(
-            usage.expireUnix * 1000L - System.currentTimeMillis()
-        ) <= 7 -> Brand.Warning
+        daysLeft <= 7 -> Brand.Warning
         else -> Brand.SecondaryText
     }
     val ratio = if (usage.hasQuota && usage.total > 0)
@@ -579,12 +657,22 @@ private fun UsageInlineStrip(usage: SubscriptionUsage) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (usage.hasExpiry) {
-            Text(
-                text = daysLeftText,
-                style = MaterialTheme.typography.labelSmall,
-                color = daysColour,
-                maxLines = 1,
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                Text(
+                    text = daysLeftText,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = daysColour,
+                    maxLines = 1,
+                )
+                if (expireOnText.isNotEmpty()) {
+                    Text(
+                        text = expireOnText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Brand.MutedText,
+                        maxLines = 1,
+                    )
+                }
+            }
             ThinVerticalDivider()
         }
         when {
@@ -598,11 +686,7 @@ private fun UsageInlineStrip(usage: SubscriptionUsage) {
                     trackColor = Color.White.copy(alpha = 0.08f),
                 )
                 Text(
-                    text = stringResource(
-                        R.string.sub_traffic_used,
-                        formatBytesShort(usage.used),
-                        formatBytesShort(usage.total),
-                    ),
+                    text = formatBytesPair(usage.used, usage.total),
                     style = MaterialTheme.typography.labelSmall,
                     color = Brand.SecondaryText,
                     maxLines = 1,
@@ -673,7 +757,7 @@ private fun SubscriptionFooter(lastFetchedAt: Long, profileCount: Int) {
             Spacer(Modifier.width(8.dp))
         }
         Text(
-            text = stringResource(R.string.sub_footer_servers, profileCount),
+            text = pluralStringResource(R.plurals.sub_footer_servers, profileCount, profileCount),
             style = MaterialTheme.typography.labelSmall,
             color = Brand.MutedText,
         )
@@ -800,12 +884,78 @@ private suspend fun refreshSubscription(sub: Subscription, dataDir: String) {
     }
 }
 
-private fun formatBytesShort(bytes: Long): String {
-    if (bytes <= 0) return "0 B"
-    val units = arrayOf("B", "KB", "MB", "GB", "TB")
+private val BYTE_UNITS = arrayOf("B", "KB", "MB", "GB", "TB")
+
+private fun scaleBytes(bytes: Long): Pair<Double, Int> {
+    if (bytes <= 0) return 0.0 to 0
     var v = bytes.toDouble()
     var i = 0
-    while (v >= 1024 && i < units.size - 1) { v /= 1024.0; i++ }
-    return if (v >= 100) String.format("%.0f %s", v, units[i])
-    else String.format("%.1f %s", v, units[i])
+    while (v >= 1024 && i < BYTE_UNITS.size - 1) {
+        v /= 1024.0
+        i++
+    }
+    return v to i
+}
+
+private fun formatScaled(v: Double): String =
+    if (v >= 100) String.format(Locale.US, "%.0f", v)
+    else String.format(Locale.US, "%.1f", v)
+
+private fun formatBytesShort(bytes: Long): String {
+    val (v, i) = scaleBytes(bytes)
+    return "${formatScaled(v)} ${BYTE_UNITS[i]}"
+}
+
+@Composable
+private fun SubscriptionUrlEditDialog(
+    initialUrl: String,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit,
+) {
+    var url by remember(initialUrl) { mutableStateOf(initialUrl) }
+    val trimmed = url.trim()
+    val changed = trimmed != initialUrl.trim()
+    val valid = trimmed.startsWith("http://", ignoreCase = true) ||
+        trimmed.startsWith("https://", ignoreCase = true)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.sub_edit_title)) },
+        text = {
+            OutlinedTextField(
+                value = url,
+                onValueChange = { url = it },
+                label = { Text(stringResource(R.string.sub_edit_label)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                enabled = valid && changed,
+                onClick = { onSave(trimmed) },
+            ) {
+                Text(stringResource(R.string.sub_edit_save))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        },
+    )
+}
+
+/**
+ * Pair-formatter mirroring desktop's `formatTrafficBytes` usage in
+ * `ProxyListView.jsx`: when the two values share a unit suffix, emit
+ * "18.4 / 50 GB" (single suffix). Otherwise fall back to "1.2 MB / 50 GB".
+ */
+private fun formatBytesPair(used: Long, total: Long): String {
+    val (uV, uI) = scaleBytes(used)
+    val (tV, tI) = scaleBytes(total)
+    return if (uI == tI) {
+        "${formatScaled(uV)} / ${formatScaled(tV)} ${BYTE_UNITS[uI]}"
+    } else {
+        "${formatBytesShort(used)} / ${formatBytesShort(total)}"
+    }
 }

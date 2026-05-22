@@ -561,3 +561,25 @@ private fun protocolFromUri(uri: String): String? {
     if (schemeEnd <= 0) return null
     return uri.substring(0, schemeEnd).uppercase()
 }
+
+/**
+ * Canonical protocol code for a [Profile] — used by the protocol-filter
+ * chips on Proxies. Returns `""` for sections, AUTO virtual entries (they
+ * mix multiple inner protocols), or anything we can't classify. Aliases
+ * are normalised so `SS`/`SHADOWSOCKS`, `WG`/`WIREGUARD`,
+ * `AWG`/`AMNEZIAWG` collapse to a single bucket.
+ */
+internal fun profileProtocol(p: Profile): String {
+    if (p.isSection) return ""
+    val raw = runCatching {
+        if (p.entryJson.isNotBlank()) JSONObject(p.entryJson).optString("type") else ""
+    }.getOrDefault("").ifBlank { protocolFromUri(p.uri).orEmpty() }
+    val up = raw.uppercase()
+    if (up == "AUTO") return ""
+    return when (up) {
+        "SS", "SHADOWSOCKS" -> "SHADOWSOCKS"
+        "WG", "WIREGUARD" -> "WIREGUARD"
+        "AWG", "AMNEZIAWG", "AMNEZIA-WG" -> "AMNEZIAWG"
+        else -> up
+    }
+}

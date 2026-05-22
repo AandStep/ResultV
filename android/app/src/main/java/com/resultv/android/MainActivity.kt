@@ -106,6 +106,7 @@ class MainActivity : ComponentActivity() {
         // the gesture nav stays tappable.
         enableEdgeToEdge()
         ProfileRepository.init(applicationContext)
+        com.resultv.android.vpn.SubscriptionRepository.init(applicationContext)
         AppRoutingRepository.init(applicationContext)
         com.resultv.android.vpn.RoutingRulesRepository.init(applicationContext)
         com.resultv.android.vpn.SettingsRepository.init(applicationContext)

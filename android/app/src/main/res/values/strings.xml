@@ -205,12 +205,15 @@
     <string name="sub_delete_cd">Delete subscription</string>
     <string name="sub_delete_title">Delete subscription?</string>
     <string name="sub_delete_message">"%1$s" and its %2$d profile(s) will be removed.</string>
+    <string name="sub_edit_cd">Edit subscription URL</string>
+    <string name="sub_edit_title">Edit subscription URL</string>
+    <string name="sub_edit_label">Panel URL</string>
+    <string name="sub_edit_save">Save and refresh</string>
     <string name="sub_traffic_used">%1$s / %2$s</string>
     <string name="sub_traffic_used_unlimited">%1$s / ∞</string>
     <string name="sub_expires_in_days">Expires in %1$d days</string>
     <string name="sub_expired">Expired</string>
-    <string name="sub_days_left">%1$d days left</string>
-    <string name="sub_footer_servers">%1$d servers</string>
+    <string name="sub_expires_on">until %1$s</string>
 
     <!-- Deep-link import toasts -->
     <string name="deeplink_err_decode">Could not decode the link</string>
@@ -231,6 +234,9 @@
     <string name="rules_section_domains_subtitle">These hosts always connect directly, bypassing the proxy.</string>
     <string name="rules_domain_placeholder">e.g. yandex.ru</string>
     <string name="rules_quick_add">Quick add</string>
+    <string name="rules_recent_title">Recently used</string>
+    <string name="rules_shadow_covered">Already covered by \"%1$s\"</string>
+    <string name="rules_shadow_overrides">Will shadow existing entries: %1$s</string>
     <string name="rules_section_perapp_title">Per-app routing</string>
     <string name="rules_section_perapp_subtitle">Pick which installed apps go through the VPN.</string>
     <string name="rules_app_mode_all">All</string>

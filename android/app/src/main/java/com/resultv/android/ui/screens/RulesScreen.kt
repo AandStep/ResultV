@@ -82,6 +82,7 @@ import com.resultv.android.vpn.AppRoutingRepository
 import com.resultv.android.vpn.RoutingMode
 import com.resultv.android.vpn.RoutingRulesRepository
 import com.resultv.android.vpn.SmartListRepository
+import com.resultv.android.vpn.domainPatternShadows
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -146,6 +147,20 @@ fun RulesScreen() {
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
+                    val trimmedInput = domainInput.trim()
+                    val coveredBy = remember(trimmedInput, rules.domainExclusions) {
+                        if (trimmedInput.isEmpty()) null
+                        else rules.domainExclusions.firstOrNull {
+                            domainPatternShadows(it, trimmedInput)
+                        }
+                    }
+                    val willShadow = remember(trimmedInput, rules.domainExclusions) {
+                        if (trimmedInput.isEmpty()) emptyList()
+                        else rules.domainExclusions.filter {
+                            domainPatternShadows(trimmedInput, it)
+                        }
+                    }
+
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -179,6 +194,23 @@ fun RulesScreen() {
                         }
                     }
 
+                    if (coveredBy != null) {
+                        Text(
+                            stringResource(R.string.rules_shadow_covered, coveredBy),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Brand.Warning,
+                        )
+                    } else if (willShadow.isNotEmpty()) {
+                        Text(
+                            stringResource(
+                                R.string.rules_shadow_overrides,
+                                willShadow.joinToString(", "),
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Brand.Warning,
+                        )
+                    }
+
                     if (rules.domainExclusions.isNotEmpty()) {
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -189,6 +221,39 @@ fun RulesScreen() {
                                     label = domain,
                                     onRemove = { RoutingRulesRepository.removeDomain(domain) },
                                 )
+                            }
+                        }
+                    }
+
+                    // "Recently used" suggestions — persisted history of every
+                    // domain the user has added at least once, filtered to
+                    // those not currently in the active list. Helps re-adding
+                    // a previously removed pattern without retyping.
+                    val recentSuggestions = remember(rules.domainHistory, rules.domainExclusions) {
+                        rules.domainHistory.asSequence()
+                            .filter { it !in rules.domainExclusions }
+                            .filter { it !in QuickDomains }
+                            .take(6)
+                            .toList()
+                    }
+                    if (recentSuggestions.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(
+                                stringResource(R.string.rules_recent_title),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Brand.MutedText,
+                            )
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                recentSuggestions.forEach { d ->
+                                    QuickAddChip(
+                                        label = d,
+                                        already = false,
+                                        onAdd = { RoutingRulesRepository.addDomain(d) },
+                                    )
+                                }
                             }
                         }
                     }

@@ -29,7 +29,44 @@ data class RoutingRulesState(
     val domainExclusions: List<String> = listOf(
         "localhost", "127.0.0.1", "*.ru", "*.рф",
     ),
+    /**
+     * MRU list of domains the user has typed at least once — drives the
+     * Rules screen's "Recently used" suggestion chips so the next paste of
+     * a familiar pattern is a single tap. Bounded to [DOMAIN_HISTORY_MAX]
+     * entries; oldest fall off when the cap is hit.
+     */
+    val domainHistory: List<String> = emptyList(),
 )
+
+private const val DOMAIN_HISTORY_MAX = 24
+
+/**
+ * True when [pattern] is a strict superset of [candidate] — i.e. anything
+ * matched by `candidate` is also matched by `pattern`, but the two are not
+ * identical. Used by the Rules screen to warn about redundant /
+ * shadow-bound exclusions.
+ *
+ * Recognised forms:
+ * - Literal hostnames (`yandex.ru`) — only equal hostnames shadow.
+ * - Suffix patterns (`*.ru`) — shadow every hostname ending with the same
+ *   suffix (and the bare suffix `ru` itself).
+ *
+ * The check is case-insensitive and trims whitespace.
+ */
+fun domainPatternShadows(pattern: String, candidate: String): Boolean {
+    val p = pattern.trim().lowercase()
+    val c = candidate.trim().lowercase()
+    if (p.isEmpty() || c.isEmpty() || p == c) return false
+    if (p.startsWith("*.")) {
+        val dotSuffix = p.removePrefix("*")        // ".ru"
+        val bare = dotSuffix.removePrefix(".")      // "ru"
+        // Candidate is shadowed if it's a sub-host of `p` (e.g. yandex.ru,
+        // foo.bar.ru) or the bare apex itself ("ru" under "*.ru" reads as
+        // "the .ru zone").
+        return c.endsWith(dotSuffix) || c == bare
+    }
+    return false
+}
 
 object RoutingRulesRepository {
     private val _state = MutableStateFlow(RoutingRulesState())
@@ -51,13 +88,28 @@ object RoutingRulesRepository {
     @Synchronized
     fun addDomain(domain: String) = mutate {
         val trimmed = domain.trim()
-        if (trimmed.isEmpty() || trimmed in it.domainExclusions) it
-        else it.copy(domainExclusions = it.domainExclusions + trimmed)
+        if (trimmed.isEmpty()) return@mutate it
+        val nextHistory = (listOf(trimmed) + it.domainHistory.filterNot { d -> d == trimmed })
+            .take(DOMAIN_HISTORY_MAX)
+        if (trimmed in it.domainExclusions) it.copy(domainHistory = nextHistory)
+        else it.copy(
+            domainExclusions = it.domainExclusions + trimmed,
+            domainHistory = nextHistory,
+        )
     }
 
     @Synchronized
     fun removeDomain(domain: String) = mutate {
         it.copy(domainExclusions = it.domainExclusions.filterNot { d -> d == domain })
+    }
+
+    /**
+     * Drop one entry from the recently-used history list (e.g. user
+     * dismissed a suggestion they don't want re-suggested).
+     */
+    @Synchronized
+    fun forgetDomainHistory(domain: String) = mutate {
+        it.copy(domainHistory = it.domainHistory.filterNot { d -> d == domain })
     }
 
     private fun mutate(block: (RoutingRulesState) -> RoutingRulesState) {
@@ -75,7 +127,9 @@ object RoutingRulesRepository {
                 ?: RoutingMode.Global
             val arr = root.optJSONArray("domainExclusions") ?: JSONArray()
             val domains = (0 until arr.length()).map { arr.getString(it) }
-            RoutingRulesState(mode = mode, domainExclusions = domains)
+            val historyArr = root.optJSONArray("domainHistory") ?: JSONArray()
+            val history = (0 until historyArr.length()).map { historyArr.getString(it) }
+            RoutingRulesState(mode = mode, domainExclusions = domains, domainHistory = history)
         } catch (t: Throwable) {
             Log.w(TAG, "failed to read $f, starting empty", t)
             RoutingRulesState()
@@ -86,9 +140,12 @@ object RoutingRulesRepository {
         try {
             val arr = JSONArray()
             s.domainExclusions.forEach { arr.put(it) }
+            val historyArr = JSONArray()
+            s.domainHistory.forEach { historyArr.put(it) }
             val root = JSONObject()
                 .put("mode", s.mode.name)
                 .put("domainExclusions", arr)
+                .put("domainHistory", historyArr)
             f.writeText(root.toString())
         } catch (t: Throwable) {
             Log.e(TAG, "failed to persist routing rules", t)

@@ -479,30 +479,48 @@ audit; this section is the user-facing UI parity that depends on them.
 
 ### Still to port on the Kotlin side
 
-P1. **Subscription header pretty-print** — desktop shows used / total /
-    expiry parsed from `Subscription-Userinfo` in a richer format
-    ("18.4 / 50 GB · 12 days left"). Mobile shows the same data but
-    plainer; lift the formatting helpers from
-    `frontend/src/views/ProxyListView.jsx:formatTrafficBytes`.
+~~P1. Subscription header pretty-print~~ — ✅ DONE. Paired-unit format
+    (`18.4 / 50 GB` collapses to a single suffix when both values share
+    one) via `formatBytesPair`; days-left switched to Android plurals
+    (`values{,-ru}/plurals.xml` — proper one/few/many/other RU forms);
+    absolute expire date (`до DD.MM.YY HH:MM` / `until …`) added as a
+    second line under days-left.
 
-P2. **Subscription editor** — allow editing the panel URL of an
-    imported subscription without re-importing (currently you can only
-    delete + re-add). Pure Kotlin — add an `update(url)` mutator on
-    `SubscriptionRepository` and a pencil-edit IconButton on the
-    subscription card.
+~~P2. Subscription editor~~ — ✅ DONE. Pencil-edit `CircleActionChip`
+    next to refresh/delete in `SubscriptionHeader`. Tap opens
+    `SubscriptionUrlEditDialog` (AlertDialog + OutlinedTextField,
+    requires `http(s)://` and a changed value to enable Save).
+    Save calls `SubscriptionRepository.update(id) { it.copy(url=…) }`
+    then re-runs `refreshSubscription` so the panel swap takes effect
+    immediately.
 
-P3. **Domain exclusions UX polish** — the desktop autocompletes from a
-    saved-history list and warns when a pattern is shadowed by another.
-    Low priority but a nice quality-of-life win for power users.
+~~P3. Domain exclusions UX polish~~ — ✅ DONE. (a) Inline shadow
+    warning under the input — when the typed pattern is already
+    covered by an existing entry (`*.ru` covers `yandex.ru`) the
+    redundancy is flagged in `Brand.Warning`; the symmetric "this
+    pattern will shadow X, Y" warning fires when the user is about to
+    add a broader pattern. (b) Persisted `RoutingRulesState.domainHistory`
+    MRU list (24 entries) drives a "Recently used" chip row below the
+    active exclusions, so re-adding a removed pattern is one tap.
+    Shadow logic lives in `domainPatternShadows(pattern, candidate)` on
+    `RoutingRules.kt` so the rule is testable and reusable.
 
-P4. **Selectable protocol filter on ProxiesScreen** — desktop has a
-    chip row (`VLESS / VMess / Trojan / SS / HYSTERIA2 / WG / AWG`)
-    that filters the list. Useful with large subscriptions.
+~~P4. Selectable protocol filter on ProxiesScreen~~ — ✅ DONE. New
+    `ProtocolFilterChips` composable (multi-select FilterChip row)
+    placed under the ping/sort toolbar on Proxies. `profileProtocol(p)`
+    on `HomeScreen.kt` canonicalises `entryJson.type` / URI scheme so
+    `SS` ↔ `SHADOWSOCKS`, `WG` ↔ `WIREGUARD`, `AWG` ↔ `AMNEZIAWG`
+    collapse to one bucket each; AUTO entries are excluded (they mix
+    inner protocols). Empty selection = "no filter"; active filter
+    drops SECTION labels and hides subscription cards with no
+    matches. Chip row hides itself when fewer than two protocols are
+    in the list.
 
 P5. **Multi-AUTO virtual entries** — when a subscription includes
     several auto-groups, the desktop renders them all; mobile collapses
     to a single AUTO today. Touch `buildAutoAwareEntries` in
-    `mobile/libbox.go` to preserve multiple groups.
+    `mobile/libbox.go` to preserve multiple groups. Belongs in the
+    next AAR rebuild (Section B); not pure-Kotlin.
 
 ---
 
