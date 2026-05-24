@@ -945,19 +945,19 @@ func PingProxy(ip string, port int) (latencyMs int64, reachable bool, reason str
 
 func PingHysteria2QUIC(ip string, port int) (latencyMs int64, reachable bool, reason, checkType string) {
 
-	latency, ok, r := PingProxyUDP(ip, port)
+	latency, ok, r := quicHandshakeProbe(ip, port)
 	if ok {
-		return latency, true, "", "udp"
+		return latency, true, "", "quic_handshake"
 	}
 
-	tcpLat, tcpOK, tcpR := PingProxy(ip, port)
+	tcpLat, tcpOK, tcpR := pingTCPProbe(ip, port)
 	if tcpOK {
 		return tcpLat, true, "", "tcp_fallback"
 	}
 	if r == "" {
 		r = tcpR
 	}
-	return 0, false, r, "udp"
+	return 0, false, r, "quic_handshake"
 }
 
 func PingProxyUDP(ip string, port int) (latencyMs int64, reachable bool, reason string) {

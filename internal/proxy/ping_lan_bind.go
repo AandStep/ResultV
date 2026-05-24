@@ -172,9 +172,9 @@ func PingProxyUDPLANBind(host string, port int) (latencyMs int64, reachable bool
 }
 
 func PingHysteria2QUICLANBind(host string, port int) (latencyMs int64, reachable bool, reason, checkType string) {
-	latency, ok, r := PingProxyUDPLANBind(host, port)
+	latency, ok, r := quicHandshakeLANProbe(host, port)
 	if ok {
-		return latency, true, "", "udp_lan_bind"
+		return latency, true, "", "quic_handshake_lan_bind"
 	}
 
 	tcpLatency, tcpOK, tcpReason := PingProxyLANBind(host, port)
@@ -184,5 +184,5 @@ func PingHysteria2QUICLANBind(host string, port int) (latencyMs int64, reachable
 	if r == "" {
 		r = tcpReason
 	}
-	return 0, false, r, "udp_lan_bind"
+	return 0, false, r, "quic_handshake_lan_bind"
 }
