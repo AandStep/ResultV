@@ -5,8 +5,8 @@
     "en": "Extended application settings, fixed DNS leaks, UI improvements, ping and sorting by ping, bug fixes"
   },
   "releaseNotes": {
-    "ru": "Настройки приложения расширены и разделены на удобные группы. Исправлена утечка DNS, проверка через whoer.net показывала российские DNS, теперь утечка устранена. Улучшена UI составляющая, добавлен ручной пинг серверов и сортировка по пингу, обновлен вид подписок, теперь есть заголовки-подсказки. Была вырезана функция блокировки рекламы, требует доработок, ожидайте в следующих обновлениях. Исправлен баг с нерабочими deep links для приложения установленного в кастомный путь",
-    "en": "Application settings are extended and divided into convenient groups. DNS leak fixed, check through whoer.net showed Russian DNS, now the leak is eliminated. UI improved, manual ping of servers and sorting by ping added, subscription views updated, now there are header-hints. The function of blocking ads was removed, requires development, wait for the next updates. Fixed bug with non-working deep links for the application installed in a custom path"
+    "ru": "Настройки приложения расширены и разделены на удобные группы. Исправлена утечка DNS, проверка через whoer.net показывала российские DNS, теперь утечка устранена. Улучшена UI составляющая, добавлен ручной пинг серверов и сортировка по пингу, обновлен вид подписок, теперь есть заголовки-подсказки. Была вырезана функция блокировки рекламы, требует доработок, ожидайте в следующих обновлениях. Исправлен баг с нерабочими deep links для приложения установленного в кастомный путь. QUIC пинг hysteria2",
+    "en": "Application settings are extended and divided into convenient groups. DNS leak fixed, check through whoer.net showed Russian DNS, now the leak is eliminated. UI improved, manual ping of servers and sorting by ping added, subscription views updated, now there are header-hints. The function of blocking ads was removed, requires development, wait for the next updates. Fixed bug with non-working deep links for the application installed in a custom path. QUIC ping hysteria2"
   },
   "downloadUrl": "https://result-proxy.ru/",
   "platforms": {
