@@ -118,6 +118,14 @@ type Manager struct {
 	// on probe recovery.
 	proxyDead    bool
 	healthCancel context.CancelFunc
+	// healthGen invalidates in-flight watchdog goroutines whose probe is
+	// still in progress when a reconnect spawns a fresh watchdog. Cancelling
+	// the old context isn't enough on its own — pingTCPProbe / pingHysteria2Probe
+	// can block for up to 5s on a dead network, and during that window the
+	// old goroutine still holds stale `proxy`/`mode` arguments. Each
+	// watchdog snapshots its gen at start and bails out if m.healthGen has
+	// moved on by the time it reacquires m.mu.
+	healthGen uint64
 
 	// Optional OS firewall hooks: engaged only when the watchdog first marks the
 	// upstream dead while kill switch is armed — not on routine Connect.
@@ -1628,12 +1636,16 @@ func (m *Manager) Ping(ip string, port int, proxyType string) PingResultDTO {
 // can keep its local listener alive long after the upstream is gone, so
 // m.connected by itself is a bad signal.
 //
-// Caller must hold m.mu. Any in-flight watchdog is cancelled first.
+// Caller must hold m.mu. Any in-flight watchdog is cancelled first; if its
+// probe is still blocking, the bumped generation will make it exit on the
+// next lock acquisition without touching any shared state with the new one.
 func (m *Manager) startHealthWatchdogLocked(proxy ProxyConfig, mode ProxyMode) {
 	if m.healthCancel != nil {
 		m.healthCancel()
 		m.healthCancel = nil
 	}
+	m.healthGen++
+	gen := m.healthGen
 	m.proxyDead = false
 
 	parentCtx := m.ctx
@@ -1643,7 +1655,7 @@ func (m *Manager) startHealthWatchdogLocked(proxy ProxyConfig, mode ProxyMode) {
 	healthCtx, cancel := context.WithCancel(parentCtx)
 	m.healthCancel = cancel
 
-	go m.runHealthWatchdog(healthCtx, proxy, mode)
+	go m.runHealthWatchdog(healthCtx, gen, proxy, mode)
 }
 
 // stopHealthWatchdogLocked stops the watchdog goroutine and clears the dead
@@ -1653,10 +1665,11 @@ func (m *Manager) stopHealthWatchdogLocked() {
 		m.healthCancel()
 		m.healthCancel = nil
 	}
+	m.healthGen++
 	m.proxyDead = false
 }
 
-func (m *Manager) runHealthWatchdog(ctx context.Context, proxy ProxyConfig, mode ProxyMode) {
+func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy ProxyConfig, mode ProxyMode) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
@@ -1670,9 +1683,10 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, proxy ProxyConfig, mode
 		case <-ticker.C:
 		}
 
-		// Snapshot under lock and bail early if disconnected.
+		// Snapshot under lock and bail early if disconnected OR if this
+		// generation has been superseded by a newer watchdog.
 		m.mu.Lock()
-		if !m.connected {
+		if !m.connected || m.healthGen != gen {
 			m.mu.Unlock()
 			return
 		}
@@ -1683,8 +1697,10 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, proxy ProxyConfig, mode
 		alive := m.probeProxyAlive(proxy, mode)
 
 		m.mu.Lock()
-		// Re-check after the probe: Disconnect may have run while we waited.
-		if !m.connected {
+		// Re-check after the probe: Disconnect or a reconnect may have run
+		// while we waited. The gen check is what blocks an old watchdog
+		// from acting on stale probe results after a server switch.
+		if !m.connected || m.healthGen != gen {
 			m.mu.Unlock()
 			return
 		}

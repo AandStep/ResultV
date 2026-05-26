@@ -406,7 +406,6 @@ func (a *App) startup(ctx context.Context) {
 	})
 	a.tray.Start()
 	a.refreshTrayProxyList()
-	a.startTrayPingLoop()
 
 	if system.DetectGPOConflict() {
 		a.log.Warning("[СИСТЕМА] Обнаружен конфликт с групповой политикой (GPO). Настройки прокси могут быть переопределены.")
@@ -1605,12 +1604,20 @@ func inlineSmallImageFromURL(client *http.Client, imageURL string, referer strin
 	}
 	// Sandbox the connection through our SSRF-aware dialer. The default
 	// client passed in shares the cookie jar but we override the transport.
-	safeClient := *client
-	safeClient.Transport = &http.Transport{
+	// DisableKeepAlives + CloseIdleConnections on return guarantees this
+	// per-call Transport doesn't park idle sockets in a pool that nothing
+	// will ever drain — icon fetches are one-shot and the Transport itself
+	// is discarded after this function returns, so any kept-alive socket
+	// would just dangle in the OS FD table until GC eventually finalised it.
+	transport := &http.Transport{
 		DialContext:           safeImageDialer().DialContext,
 		TLSHandshakeTimeout:   5 * time.Second,
 		ResponseHeaderTimeout: 6 * time.Second,
+		DisableKeepAlives:     true,
 	}
+	defer transport.CloseIdleConnections()
+	safeClient := *client
+	safeClient.Transport = transport
 	resp, err := safeClient.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		if resp != nil {
@@ -1826,7 +1833,7 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 			return nil, 0, 0, 0, 0, "", "", false, fmt.Errorf("creating subscription request: %w", err)
 		}
 		req.Header.Set("User-Agent", userAgent)
-		// Happ / Remnawave HWID device identification headers.
+		// Remnawave HWID device identification headers.
 		req.Header.Set("x-device-os", metadata.Platform)
 		req.Header.Set("x-ver-os", metadata.OSVersion)
 		req.Header.Set("x-device-model", metadata.Model)
@@ -1881,49 +1888,7 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 		return entries, up, down, tot, exp, iconURL, profileTitle, isJSON, nil
 	}
 
-	primaryUA := metadata.UserAgent
-	entries, up, down, tot, exp, iconURL, profileTitle, isJSON, primaryErr := doFetch(primaryUA)
-
-	tryHapp := false
-	var err error
-	if primaryErr != nil {
-		tryHapp = true
-	} else {
-		hasHysteria := false
-		for _, e := range entries {
-			t := strings.ToUpper(e.Type)
-			if strings.Contains(t, "HYSTERIA") || strings.Contains(t, "HY2") {
-				hasHysteria = true
-				break
-			}
-		}
-		// Try Happ when primary lacks Hysteria2 and is not JSON (provider
-		// may offer a richer config to Happ UA).
-		if !hasHysteria && !isJSON {
-			tryHapp = true
-		}
-	}
-
-	if tryHapp {
-		fbEntries, fbUp, fbDown, fbTot, fbExp, fbIcon, fbTitle, _, fbErr := doFetch("Happ/1.0")
-		if fbErr == nil && len(fbEntries) > 0 {
-			if primaryErr != nil || len(fbEntries) > len(entries) {
-				a.log.Info("Retrying with Happ User-Agent...")
-				a.log.Success(fmt.Sprintf("Happ fallback: %d entries", len(fbEntries)))
-				entries = fbEntries
-				up, down, tot, exp = fbUp, fbDown, fbTot, fbExp
-				if fbIcon != "" {
-					iconURL = fbIcon
-				}
-				if fbTitle != "" {
-					profileTitle = fbTitle
-				}
-			}
-		} else if primaryErr != nil {
-			err = primaryErr
-		}
-	}
-
+	entries, up, down, tot, exp, iconURL, profileTitle, _, err := doFetch(metadata.UserAgent)
 	if err != nil {
 		return nil, 0, 0, 0, 0, "", "", err
 	}
@@ -2485,37 +2450,6 @@ func (a *App) setWindowTitleKillSwitch() {
 		return
 	}
 	wailsRuntime.WindowSetTitle(a.ctx, "ResultV — Kill Switch")
-}
-
-func (a *App) startTrayPingLoop() {
-	if a.ctx == nil || a.tray == nil || a.config == nil || a.proxy == nil {
-		return
-	}
-	go func() {
-		ticker := time.NewTicker(20 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-a.ctx.Done():
-				return
-			case <-ticker.C:
-				cfg := a.config.GetConfig()
-				if len(cfg.Proxies) == 0 {
-					continue
-				}
-				pings := make(map[string]int64, len(cfg.Proxies))
-				for _, p := range cfg.Proxies {
-					res := a.proxy.Ping(p.IP, p.Port, p.Type)
-					if res.Reachable {
-						pings[p.ID] = res.LatencyMs
-					} else {
-						pings[p.ID] = -1
-					}
-				}
-				a.tray.UpdateProxyPings(pings)
-			}
-		}
-	}()
 }
 
 func (a *App) initSmartBlockedDomains(userDataPath, rootDir string) {

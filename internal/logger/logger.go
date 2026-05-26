@@ -55,9 +55,19 @@ type LogPage struct {
 type EventEmitter func(eventName string, data any)
 
 
+// Logger holds the last `capacity` entries in a fixed-size circular buffer.
+// Writes are O(1) with zero allocations beyond the LogEntry itself — the
+// previous implementation prepended each entry into a fresh slice, which
+// allocated a new backing array on every call and pushed thousands of
+// short-lived objects to the GC per minute under load.
+//
+// head is the index of the most recent entry; count grows up to capacity
+// and then stays pinned. Readers walk newest-first starting from head.
 type Logger struct {
 	mu       sync.RWMutex
-	entries  []LogEntry
+	buf      []LogEntry
+	head     int
+	count    int
 	capacity int
 	emit     EventEmitter
 }
@@ -65,7 +75,7 @@ type Logger struct {
 
 func New() *Logger {
 	return &Logger{
-		entries:  make([]LogEntry, 0, defaultCapacity),
+		buf:      make([]LogEntry, defaultCapacity),
 		capacity: defaultCapacity,
 	}
 }
@@ -76,9 +86,24 @@ func NewWithCapacity(capacity int) *Logger {
 		capacity = defaultCapacity
 	}
 	return &Logger{
-		entries:  make([]LogEntry, 0, capacity),
+		buf:      make([]LogEntry, capacity),
 		capacity: capacity,
 	}
+}
+
+// snapshotNewestFirstLocked returns a fresh slice with entries ordered from
+// newest to oldest. Caller must hold at least the read lock.
+func (l *Logger) snapshotNewestFirstLocked() []LogEntry {
+	out := make([]LogEntry, l.count)
+	idx := l.head
+	for i := 0; i < l.count; i++ {
+		out[i] = l.buf[idx]
+		idx--
+		if idx < 0 {
+			idx = l.capacity - 1
+		}
+	}
+	return out
 }
 
 
@@ -124,7 +149,7 @@ func (l *Logger) GetLogs(page, pageSize int) LogPage {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
-	total := len(l.entries)
+	total := l.count
 	if page < 1 {
 		page = 1
 	}
@@ -132,10 +157,7 @@ func (l *Logger) GetLogs(page, pageSize int) LogPage {
 		pageSize = 50
 	}
 
-	totalPages := (total + pageSize - 1) / pageSize
-	if totalPages < 1 {
-		totalPages = 1
-	}
+	totalPages := max((total+pageSize-1)/pageSize, 1)
 
 	start := (page - 1) * pageSize
 	if start >= total {
@@ -148,14 +170,21 @@ func (l *Logger) GetLogs(page, pageSize int) LogPage {
 		}
 	}
 
-	end := start + pageSize
-	if end > total {
-		end = total
-	}
+	end := min(start+pageSize, total)
 
-	
+	// Walk the ring newest-first, skipping the first `start` entries.
 	items := make([]LogEntry, end-start)
-	copy(items, l.entries[start:end])
+	idx := l.head - start
+	for idx < 0 {
+		idx += l.capacity
+	}
+	for i := range items {
+		items[i] = l.buf[idx]
+		idx--
+		if idx < 0 {
+			idx = l.capacity - 1
+		}
+	}
 
 	return LogPage{
 		Items:      items,
@@ -170,24 +199,26 @@ func (l *Logger) GetLogs(page, pageSize int) LogPage {
 func (l *Logger) GetAll() []LogEntry {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-
-	result := make([]LogEntry, len(l.entries))
-	copy(result, l.entries)
-	return result
+	return l.snapshotNewestFirstLocked()
 }
 
 
 func (l *Logger) Clear() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.entries = l.entries[:0]
+	l.head = 0
+	l.count = 0
+	// Zero entries so retained strings can be GC'd. Cheap: defaultCapacity is 500.
+	for i := range l.buf {
+		l.buf[i] = LogEntry{}
+	}
 }
 
 
 func (l *Logger) Count() int {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	return len(l.entries)
+	return l.count
 }
 
 func (l *Logger) add(msg, logType, source, icon, domain string) {
@@ -203,19 +234,21 @@ func (l *Logger) add(msg, logType, source, icon, domain string) {
 	}
 
 	l.mu.Lock()
-	
-	l.entries = append([]LogEntry{entry}, l.entries...)
-	if len(l.entries) > l.capacity {
-		l.entries = l.entries[:l.capacity]
+	if l.count == 0 {
+		l.head = 0
+	} else {
+		l.head = (l.head + 1) % l.capacity
+	}
+	l.buf[l.head] = entry
+	if l.count < l.capacity {
+		l.count++
 	}
 	emit := l.emit
 	l.mu.Unlock()
 
-	
 	if emit != nil {
 		emit("log", entry)
 	}
 
-	
 	fmt.Printf("[%s] %s\n", entry.Time, msg)
 }

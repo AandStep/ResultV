@@ -63,9 +63,8 @@ type Tray struct {
 	mServers    *systray.MenuItem
 	mQuit       *systray.MenuItem
 
-	
+
 	proxyLookup        map[string]config.ProxyEntry
-	proxyPings         map[string]int64
 	serverItems        map[string]*systray.MenuItem
 	dynamicItems       []*systray.MenuItem
 	selectedProxyID    string
@@ -94,7 +93,6 @@ func NewTray(icon []byte, cb TrayCallbacks) *Tray {
 		callbacks:       cb,
 		exited:          make(chan struct{}),
 		proxyLookup:     make(map[string]config.ProxyEntry),
-		proxyPings:      make(map[string]int64),
 		serverItems:     make(map[string]*systray.MenuItem),
 		perCountryLimit: 20,
 		countryIcons:    make(map[string][]byte),
@@ -369,18 +367,6 @@ func (t *Tray) UpdateProxyList(proxies []config.ProxyEntry, selectedProxyID stri
 }
 
 
-func (t *Tray) UpdateProxyPings(pings map[string]int64) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	for id, ping := range pings {
-		t.proxyPings[id] = ping
-	}
-	
-	
-	
-	
-}
-
 func (t *Tray) rebuildServersMenuLocked(proxies []config.ProxyEntry) {
 	for _, item := range t.dynamicItems {
 		item.Hide()
@@ -431,9 +417,6 @@ func (t *Tray) rebuildServersMenuLocked(proxies []config.ProxyEntry) {
 			t.dynamicItems = append(t.dynamicItems, cItem)
 
 			for _, server := range country.Servers {
-				if ping, ok := t.proxyPings[server.ID]; ok {
-					server.PingMs = ping
-				}
 				title := formatServerTitle(server, server.ID == t.connectedProxyID)
 				srvItem := cItem.AddSubMenuItem(
 					title,
@@ -484,9 +467,6 @@ func (t *Tray) refreshServerTitlesLocked() {
 			IP:      entry.IP,
 			Port:    entry.Port,
 			PingMs:  -1,
-		}
-		if ping, ok := t.proxyPings[proxyID]; ok {
-			server.PingMs = ping
 		}
 		if server.Name == "" {
 			server.Name = fmt.Sprintf("%s:%d", server.IP, server.Port)

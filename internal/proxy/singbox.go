@@ -339,6 +339,17 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 // shutdownInstanceLocked cancels the running sing-box instance and removes the
 // on-disk config. Caller must hold e.mu. Does not flip e.running — that is the
 // caller's job, since Stop and reload have different semantics.
+//
+// Close is invoked synchronously. We previously spawned a goroutine with a
+// 5s timeout so the caller could "move on" if Close hung — but the timeout
+// only returned control to the caller; the abandoned goroutine still held a
+// reference to the box instance (TUN handles, routing modules, DNS workers),
+// so every Disconnect/Connect/hot-reload after a slow Close leaked another
+// full sing-box instance. Across a long session that drove the GC and FD
+// table into the ground. Blocking here is the correct trade-off: after the
+// boxCtx cancel above, sing-box tears down within ~1s in the common case;
+// if it ever takes longer (slow TUN teardown on macOS), the user briefly
+// sees the disconnect button spin, which is better than a phantom tunnel.
 func (e *SingBoxEngine) shutdownInstanceLocked() {
 	if e.cancel != nil {
 		e.cancel()
@@ -347,15 +358,12 @@ func (e *SingBoxEngine) shutdownInstanceLocked() {
 	if e.instance != nil {
 		inst := e.instance
 		e.instance = nil
-		closeDone := make(chan struct{}, 1)
-		go func() {
-			_ = inst.Close()
-			closeDone <- struct{}{}
-		}()
-		select {
-		case <-closeDone:
-		case <-time.After(5 * time.Second):
-			e.log.Warning("[SING-BOX] Close() timeout — принудительное завершение")
+		started := time.Now()
+		if err := inst.Close(); err != nil {
+			e.log.Warning(fmt.Sprintf("[SING-BOX] Close error: %v", err))
+		}
+		if elapsed := time.Since(started); elapsed > 3*time.Second {
+			e.log.Warning(fmt.Sprintf("[SING-BOX] Close занял %s", elapsed.Round(100*time.Millisecond)))
 		}
 	}
 	if e.configPath != "" {

@@ -14,13 +14,15 @@ package processtree
 
 import "time"
 
-// scanInterval controls how often the OS process table is rescanned. 500ms
-// is fast enough that newly-spawned children join the tunnel exclusions
-// within ~half a second of launch, slow enough that CPU cost is negligible
-// (~0.5ms per scan with a few hundred processes).
+// scanInterval controls how often the OS process table is rescanned. 2s is
+// the sweet spot: newly-spawned children join the tunnel exclusions within
+// ~2 seconds of launch (imperceptible for typical app launches), while
+// keeping the scan rate low enough that platform-specific scanners (notably
+// macOS, which goes through CGO/launchctl) don't drive measurable background
+// CPU during long-running sessions with per-app whitelist enabled.
 //
 // Exposed as a var so tests can override it.
-var scanInterval = 500 * time.Millisecond
+var scanInterval = 2 * time.Second
 
 type ticker interface {
 	C() <-chan time.Time
