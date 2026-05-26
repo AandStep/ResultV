@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-3.2.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-3.2.1-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/desktop-Wails-27272f.svg" alt="Wails">
   <img src="https://img.shields.io/badge/backend-Go-00ADD8.svg" alt="Go">
   <img src="https://img.shields.io/badge/frontend-React_18-61dafb.svg" alt="React">
@@ -29,11 +29,15 @@
   <b>Русский</b> | <a href="./README.en.md">English</a>
 </p>
 
+<p align="center">
+  <b>Сайт и загрузки:</b> <a href="https://result-proxy.ru/">result-proxy.ru</a> • <b>Telegram-канал:</b> <a href="https://t.me/resultvpn">@resultvpn</a>
+</p>
+
 ---
 
 ## О проекте
 
-ResultV **3.2.0** — нативное настольное приложение на **[Wails v2](https://wails.io/)**. Интерфейс: **React 18**, **Vite**, **Tailwind CSS**; трафик обрабатывает бэкенд на **Go** и движок **[sing-box](https://github.com/SagerNet/sing-box)** (теги сборки заданы в `wails.json`). Локализация через **i18next** (русский и английский).
+ResultV **3.2.1** — нативное настольное приложение на **[Wails v2](https://wails.io/)**. Интерфейс: **React 18**, **Vite**, **Tailwind CSS**; трафик обрабатывает бэкенд на **Go** и движок **[sing-box](https://github.com/SagerNet/sing-box)** (теги сборки заданы в `wails.json`). Локализация через **i18next** (русский и английский).
 
 **Готовые сборки:** в GitHub Actions публикуются артефакты **Windows amd64** (portable `.exe` и установщик NSIS), **macOS** (`.dmg`) и **Linux** (`.AppImage`, `.deb`, `.rpm`) при push тега `v`*.
 
@@ -220,7 +224,3 @@ wails build -nsis
 ## Лицензия
 
 Проект распространяется под **GNU General Public License v3.0** — см. `[LICENSE](./LICENSE)`.
-
----
-
-**Сайт и загрузки:** [https://result-proxy.ru/](https://result-proxy.ru/)

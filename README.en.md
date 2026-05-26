@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-3.2.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-3.2.1-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/desktop-Wails-27272f.svg" alt="Wails">
   <img src="https://img.shields.io/badge/backend-Go-00ADD8.svg" alt="Go">
   <img src="https://img.shields.io/badge/frontend-React_18-61dafb.svg" alt="React">
@@ -29,11 +29,15 @@
   <a href="./README.md">Русский</a> | <b>English</b>
 </p>
 
+<p align="center">
+  <b>Website and downloads:</b> <a href="https://result-proxy.ru/">result-proxy.ru</a> • <b>Telegram channel:</b> <a href="https://t.me/resultvpn">@resultvpn</a>
+</p>
+
 ---
 
 ## Overview
 
-ResultV **3.2.0** is a native desktop application built with **[Wails v2](https://wails.io/)**. The UI is **React 18** with **Vite** and **Tailwind CSS**; traffic is handled by a **Go** backend and **[sing-box](https://github.com/SagerNet/sing-box)** (with project-specific build tags in `wails.json`). The interface is localized with **i18next** (English and Russian).
+ResultV **3.2.1** is a native desktop application built with **[Wails v2](https://wails.io/)**. The UI is **React 18** with **Vite** and **Tailwind CSS**; traffic is handled by a **Go** backend and **[sing-box](https://github.com/SagerNet/sing-box)** (with project-specific build tags in `wails.json`). The interface is localized with **i18next** (English and Russian).
 
 **Prebuilt releases:** GitHub Actions publishes **Windows amd64** artifacts (portable `.exe` and NSIS installer), **macOS** (`.dmg`) and **Linux** (`.AppImage`, `.deb`, `.rpm`) when a `v*` tag is pushed.
 
@@ -207,7 +211,3 @@ The [`.github/workflows/release.yml`](./.github/workflows/release.yml) workflow 
 ## License
 
 This project is licensed under the **GNU General Public License v3.0** — see [`LICENSE`](./LICENSE).
-
----
-
-**Website and downloads:** [https://result-proxy.ru/](https://result-proxy.ru/)
