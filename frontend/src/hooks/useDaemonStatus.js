@@ -163,8 +163,18 @@ export const useDaemonStatus = (
                 setFailedProxy(null);
             }
 
-            if (establishing) {
-                setIsConnecting(false);
+            // Keep the spinner up while the backend is in the establishing
+            // phase: engine has booted but runPostStartProbe is still verifying
+            // end-to-end traffic (1-3s for WG/Hysteria/VLESS handshakes). The
+            // earlier code flipped this off here, which combined with the
+            // sessionActive→isConnected mapping below made the UI lie green
+            // a couple of seconds before the backend's "Подключено" log.
+            //
+            // Skip when a user-initiated control op is in flight — in that
+            // case useDaemonControl owns the spinner and we'd otherwise stomp
+            // its setIsConnecting(false) right after a disconnect.
+            if (establishing && !isSwitchingRef.current) {
+                setIsConnecting(true);
             }
 
             const killSwitchTriggered =
@@ -233,7 +243,14 @@ export const useDaemonStatus = (
 
             const allowStatus = !isSwitchingRef.current || establishing;
             if (allowStatus) {
-                setIsConnected(sessionActive);
+                // STRICT: only the backend's "fully connected" flag drives the
+                // green/Connected indicator. Treating "establishing" as
+                // "connected" caused the UI to claim success 1-3s before the
+                // backend's post-start probe finished — which for WG/AWG (where
+                // probe time is longest and traffic can still collapse after
+                // handshake) meant the user saw "Connected" right before the
+                // tunnel died. Spinner stays via setIsConnecting(true) above.
+                setIsConnected(connected);
                 resolveActiveProxy(data);
             }
 

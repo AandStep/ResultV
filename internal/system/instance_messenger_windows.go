@@ -87,11 +87,14 @@ var (
 	procDestroyWindow      = dllUser32.NewProc("DestroyWindow")
 	procPostThreadMessageW = dllUser32.NewProc("PostThreadMessageW")
 	procFindWindowW        = dllUser32.NewProc("FindWindowW")
-	procSendMessageW       = dllUser32.NewProc("SendMessageW")
-	procShowWindow         = dllUser32.NewProc("ShowWindow")
-	procUnregisterClassW   = dllUser32.NewProc("UnregisterClassW")
-	procGetModuleHandleW   = dllKernel32.NewProc("GetModuleHandleW")
+	procSendMessageW                = dllUser32.NewProc("SendMessageW")
+	procShowWindow                  = dllUser32.NewProc("ShowWindow")
+	procUnregisterClassW            = dllUser32.NewProc("UnregisterClassW")
+	procChangeWindowMessageFilterEx = dllUser32.NewProc("ChangeWindowMessageFilterEx")
+	procGetModuleHandleW            = dllKernel32.NewProc("GetModuleHandleW")
 )
+
+const MSGFLT_ALLOW = 1
 
 func InitSingletonMessenger(onActivate func(payload string)) (cleanup func()) {
 	mxName, err := windows.UTF16PtrFromString(mutexName)
@@ -163,6 +166,9 @@ func InitSingletonMessenger(onActivate func(payload string)) (cleanup func()) {
 			0,
 		)
 		if hwnd != 0 {
+			if err := procChangeWindowMessageFilterEx.Find(); err == nil {
+				procChangeWindowMessageFilterEx.Call(hwnd, uintptr(wmCopydata), uintptr(MSGFLT_ALLOW), 0)
+			}
 			procShowWindow.Call(hwnd, uintptr(swHide))
 		}
 

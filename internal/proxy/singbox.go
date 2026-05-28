@@ -47,6 +47,15 @@ func ClassifyEngineStartError(mode ProxyMode, err error) (tunnelFailed bool, rea
 	}
 	msg := err.Error()
 	lower := strings.ToLower(msg)
+	// "set ipv6 address: Element not found" comes from sing-tun on hosts where
+	// the IPv6 stack is disabled. It superficially matches "configure tun
+	// interface" but isn't a privileges problem — surface it as its own code
+	// so the UI doesn't send the user on a futile run-as-admin loop and so
+	// callers (BuildTunnelModeConfig) can retry with IPv4-only.
+	if mode == ProxyModeTunnel &&
+		strings.Contains(lower, "set ipv6 address") {
+		return true, extractErrorReason(msg), "tun_ipv6_unavailable"
+	}
 	if mode == ProxyModeTunnel &&
 		(strings.Contains(lower, "configure tun interface") ||
 			strings.Contains(lower, "inbound/tun") ||
@@ -353,16 +362,15 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 // on-disk config. Caller must hold e.mu. Does not flip e.running — that is the
 // caller's job, since Stop and reload have different semantics.
 //
-// Close is invoked synchronously. We previously spawned a goroutine with a
-// 5s timeout so the caller could "move on" if Close hung — but the timeout
-// only returned control to the caller; the abandoned goroutine still held a
-// reference to the box instance (TUN handles, routing modules, DNS workers),
-// so every Disconnect/Connect/hot-reload after a slow Close leaked another
-// full sing-box instance. Across a long session that drove the GC and FD
-// table into the ground. Blocking here is the correct trade-off: after the
-// boxCtx cancel above, sing-box tears down within ~1s in the common case;
-// if it ever takes longer (slow TUN teardown on macOS), the user briefly
-// sees the disconnect button spin, which is better than a phantom tunnel.
+// Close runs in a goroutine with a hard 5s ceiling. Synchronous Close (which
+// we briefly used to avoid a goroutine leak under TUN/DNS handles) deadlocked
+// the disconnect path for WireGuard / AmneziaWG sessions: the upstream
+// wireguard endpoint's Close blocks on UDP socket teardown for many seconds,
+// and while it ran we held e.mu — so the next manager.Disconnect() call (which
+// also goes through engine.Stop → e.mu) never returned, freezing the UI until
+// the process was killed. Leaking the goroutine is the lesser evil: a single
+// stale sing-box instance is GC-collected eventually; a frozen disconnect
+// button is not.
 func (e *SingBoxEngine) shutdownInstanceLocked() {
 	if e.cancel != nil {
 		e.cancel()
@@ -371,12 +379,19 @@ func (e *SingBoxEngine) shutdownInstanceLocked() {
 	if e.instance != nil {
 		inst := e.instance
 		e.instance = nil
+		closeDone := make(chan struct{}, 1)
 		started := time.Now()
-		if err := inst.Close(); err != nil {
-			e.log.Warning(fmt.Sprintf("[SING-BOX] Close error: %v", err))
-		}
-		if elapsed := time.Since(started); elapsed > 3*time.Second {
-			e.log.Warning(fmt.Sprintf("[SING-BOX] Close занял %s", elapsed.Round(100*time.Millisecond)))
+		go func() {
+			_ = inst.Close()
+			closeDone <- struct{}{}
+		}()
+		select {
+		case <-closeDone:
+			if elapsed := time.Since(started); elapsed > 3*time.Second {
+				e.log.Warning(fmt.Sprintf("[SING-BOX] Close занял %s", elapsed.Round(100*time.Millisecond)))
+			}
+		case <-time.After(5 * time.Second):
+			e.log.Warning("[SING-BOX] Close() timeout — продолжаем без ожидания (goroutine завершится позже)")
 		}
 	}
 	if e.configPath != "" {

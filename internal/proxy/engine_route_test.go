@@ -145,35 +145,54 @@ func TestBuildRoute_TunnelMode_ProbeDomainsRoutedThroughProxyBeforeSelfDirect(t 
 	}
 }
 
-func TestBuildRoute_TunnelMode_WireGuardDoesNotIncludeSelfDirectRule(t *testing.T) {
-	cfg := EngineConfig{
-		Mode:  ProxyModeTunnel,
-		Proxy: ProxyConfig{Type: "wireguard"},
-	}
-	route := buildRoute(cfg)
-	if route == nil {
-		t.Fatal("expected non-nil route")
-	}
-	for _, r := range route.Rules {
-		if r.Outbound == "direct" && len(r.ProcessPathRegex) > 0 {
-			t.Fatalf("unexpected process self direct rule for wireguard endpoint, rules=%+v", route.Rules)
-		}
-	}
+// WG/AWG share the "proxy" tag with regular outbounds (see buildEndpoints),
+// so the same probe-domain → proxy and self-direct rules must apply for them
+// too: the post-start HTTP probe runs from our own process, and without these
+// rules it would either escape through direct (false success) or race with
+// strict_route's WFP filters (false failure) — the latter is what broke
+// AmneziaWG connect in 3.2.1.
+func TestBuildRoute_TunnelMode_WireGuardIncludesProbeAndSelfDirectRules(t *testing.T) {
+	assertProbeAndSelfDirectRulesPresent(t, "wireguard")
 }
 
-func TestBuildRoute_TunnelMode_AmneziaWGDoesNotIncludeSelfDirectRule(t *testing.T) {
+func TestBuildRoute_TunnelMode_AmneziaWGIncludesProbeAndSelfDirectRules(t *testing.T) {
+	assertProbeAndSelfDirectRulesPresent(t, "amneziawg")
+}
+
+func assertProbeAndSelfDirectRulesPresent(t *testing.T, proxyType string) {
+	t.Helper()
 	cfg := EngineConfig{
 		Mode:  ProxyModeTunnel,
-		Proxy: ProxyConfig{Type: "amneziawg"},
+		Proxy: ProxyConfig{Type: proxyType},
 	}
 	route := buildRoute(cfg)
 	if route == nil {
 		t.Fatal("expected non-nil route")
 	}
-	for _, r := range route.Rules {
-		if r.Outbound == "direct" && len(r.ProcessPathRegex) > 0 {
-			t.Fatalf("unexpected process self direct rule for amnezia endpoint, rules=%+v", route.Rules)
+
+	probeIdx := -1
+	selfDirectIdx := -1
+	for i, r := range route.Rules {
+		if r.Outbound == "proxy" && len(r.Domain) > 0 {
+			for _, d := range r.Domain {
+				if d == "connectivitycheck.gstatic.com" {
+					probeIdx = i
+					break
+				}
+			}
 		}
+		if r.Outbound == "direct" && len(r.ProcessPathRegex) > 0 {
+			selfDirectIdx = i
+		}
+	}
+	if probeIdx < 0 {
+		t.Fatalf("%s: expected probe-domain → proxy rule, rules=%+v", proxyType, route.Rules)
+	}
+	if selfDirectIdx < 0 {
+		t.Fatalf("%s: expected self-direct rule, rules=%+v", proxyType, route.Rules)
+	}
+	if probeIdx > selfDirectIdx {
+		t.Fatalf("%s: probe-domain rule (idx=%d) must precede self-direct rule (idx=%d)", proxyType, probeIdx, selfDirectIdx)
 	}
 }
 
