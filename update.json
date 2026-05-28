@@ -1,5 +1,5 @@
 {
-  "version": "3.2.1",
+  "version": "3.2.2",
   "releaseTitle": {
     "ru": "Hotfixes 3.2.2",
     "en": "Hotfixes 3.2.2"
@@ -11,29 +11,29 @@
   "downloadUrl": "https://result-proxy.ru/",
   "platforms": {
     "windows-amd64-portable": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.1/ResultV.exe",
-      "sha256": "b17655923dc8720901349f4427c390f7a42f7cd79c67b4955c85cde387b03879",
-      "size": 53485056
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.2/ResultV.exe",
+      "sha256": "e22373fbe065d758904c8649c5e34ca1df368d8d14ef425950271b0c1c039fd3",
+      "size": 53486080
     },
     "windows-amd64-installer": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.1/ResultV-amd64-installer.exe",
-      "sha256": "cf97e3749e9e470ff57f6341bed8c6244bf7386246969610ffac3fe1b2eb8d64",
-      "size": 26190450
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.2/ResultV-amd64-installer.exe",
+      "sha256": "f05661c193d7858f275e64450170c29242d16254bccf52169a85979f72828fc6",
+      "size": 26189811
     },
     "darwin-universal": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.1/ResultV.dmg",
-      "sha256": "5134d3816886fc8a754b294fc898e0508de691017439f365f7e944b525eb63df",
-      "size": 59353071
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.2/ResultV.dmg",
+      "sha256": "e4025879f23679eeb855e3623c168f27abdaba385cedd6f33c8b66fa508281c7",
+      "size": 59426739
     },
     "linux-amd64-appimage": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.1/ResultV--x86_64.AppImage",
-      "sha256": "5050d50aa901bfcf628ebdd5c9c0ec57b173ede8cb13c0d2be063c8e175bc411",
-      "size": 92916216
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.2/ResultV-3.2.1-x86_64.AppImage",
+      "sha256": "547f6b896064c5e8ff4d3a6b8c42a19d744e5a436ae3d56cfad65c9c70a32cc7",
+      "size": 92912120
     },
     "linux-amd64-deb": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.1/resultv_0.0.0~rc0_amd64.deb",
-      "sha256": "f789f66a3dfe3f3b5993b98ed77fae793d91ea611ec0f2cdd7a3370da0be598f",
-      "size": 25185054
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.2/resultv_3.2.1_amd64.deb",
+      "sha256": "0f0735f49919a15b531ba8944e121412221f69a1952fb7891ee2fc33423e7855",
+      "size": 25185184
     }
   }
 }
