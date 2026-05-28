@@ -227,7 +227,7 @@
     "subscription_user_agent": {
       "title": "User agent",
       "desc": "Clear the field to use the default ResultV/<version>/Windows/<OS version> value.",
-      "placeholder": "ResultV/3.2.1/Windows/11_10.0.26200"
+      "placeholder": "ResultV/3.2.2/Windows/11_10.0.26200"
     },
     "dns": {
       "title": "DNS Servers",
