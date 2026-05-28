@@ -253,7 +253,7 @@ jobs:
           MANIFEST_URL_OVERRIDE: ${{ contains(github.ref_name, '-') && 'https://raw.githubusercontent.com/AandStep/ResultV/dev/update.json' || '' }}
         run: |
           chmod +x build-linux.sh
-          ./build-linux.sh
+          VERSION="${GITHUB_REF_NAME#v}" ./build-linux.sh
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
@@ -349,8 +349,19 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Compute sha256 and update update.json platforms
+      - name: Compute sha256 and commit updated update.json
         run: |
+          # Choose target branch based on whether this is a pre-release tag.
+          if [[ "${{ github.ref_name }}" == *"-"* ]]; then
+            TARGET_BRANCH="dev"
+          else
+            TARGET_BRANCH="main"
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin "$TARGET_BRANCH"
+          git checkout "$TARGET_BRANCH"
+
           cat > update_manifest.cjs <<'NODE_EOF'
           const fs   = require('fs');
           const path = require('path');
@@ -402,21 +413,6 @@ jobs:
           NODE_EOF
           node update_manifest.cjs
 
-      # For stable releases (no hyphen): commit update.json to main so all users
-      # receive the update notification. For pre-releases (e.g. v3.2.0-dev.1):
-      # commit to dev branch only — production users are unaffected.
-      - name: Commit updated update.json
-        run: |
-          # Choose target branch based on whether this is a pre-release tag.
-          if [[ "${{ github.ref_name }}" == *"-"* ]]; then
-            TARGET_BRANCH="dev"
-          else
-            TARGET_BRANCH="main"
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git fetch origin "$TARGET_BRANCH"
-          git checkout "$TARGET_BRANCH"
           git add update.json
           git diff --cached --quiet || \
             git commit -m "chore: update update.json platforms for ${{ github.ref_name }} [skip ci]"
