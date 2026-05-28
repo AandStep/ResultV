@@ -434,6 +434,49 @@ func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	return sbCfg, nil
 }
 
+// systemHasIPv6 reports whether the host has IPv6 wired up at the OS level.
+// We treat "any non-loopback, non-tunnel interface has at least one IPv6
+// unicast address" as the signal. This catches both adapter-level disabled
+// IPv6 and OS-wide DisabledComponents on Windows: with neither in play, every
+// box has at least a link-local fe80:: on the LAN adapter, which is enough
+// for sing-tun's CreateUnicastIpAddressEntry call to succeed against the TUN.
+//
+// Conservative-fail: on enumeration error we assume IPv6 is present, so we
+// don't silently strip IPv6 from the tunnel on hosts where the check is
+// merely flaky (CGO timeout, etc.).
+func systemHasIPv6() bool {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return true
+	}
+	for _, ifi := range ifaces {
+		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if looksLikeTunnelInterface(ifi.Name) {
+			continue
+		}
+		addrs, err := ifi.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			var ip net.IP
+			switch v := a.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.To4() != nil {
+				continue
+			}
+			return true
+		}
+	}
+	return false
+}
+
 func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	tunIPv4 := "172.19.0.1/30"
 	if cfg.TunIPv4 != "" {
@@ -443,11 +486,25 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	// an IPv6 address here, strict_route's WFP filters would silently
 	// blackhole IPv6 — leaving the user without IPv6 connectivity while
 	// connected.
+	//
+	// But: on Windows boxes where the IPv6 stack is disabled at the adapter
+	// level (or globally via DisabledComponents), sing-tun's attempt to set
+	// the IPv6 address on the TUN interface fails with
+	// "configure tun interface: set ipv6 address: Element not found",
+	// which ClassifyEngineStartError currently maps to "tun_privileges" and
+	// the UI surfaces as "нужны права администратора" — sending users on a
+	// fruitless quest to elevate. Only attach the IPv6 address when the
+	// host actually exposes IPv6 on at least one non-loopback interface,
+	// or when the user explicitly set TunIPv6 (override = "I know what I'm
+	// doing").
 	tunIPv6 := "fdfe:dcba:9876::1/126"
 	if cfg.TunIPv6 != "" {
 		tunIPv6 = cfg.TunIPv6
 	}
-	tunAddresses := []string{tunIPv4, tunIPv6}
+	tunAddresses := []string{tunIPv4}
+	if cfg.TunIPv6 != "" || systemHasIPv6() {
+		tunAddresses = append(tunAddresses, tunIPv6)
+	}
 	tunStack := effectiveTunStack(cfg.TunStack)
 	// strict_route adds WFP filters on Windows that drop outbound packets
 	// bypassing the TUN. This is the only reliable way to stop Smart
@@ -476,21 +533,32 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	if err != nil {
 		return SingBoxConfig{}, err
 	}
+	// UDPTimeout / EndpointIndependentNat are TUN-inbound NAT knobs aimed at
+	// cleaning up dead UDP flows under DPI-driven QUIC retry storms. They
+	// must NOT be applied when the active protocol is a WireGuard endpoint:
+	// for WG/AWG the TUN inbound feeds packets straight into the endpoint,
+	// which maintains its own session state, and forcing the inbound to
+	// expire NAT slots after 30s tore down live tunnel traffic (handshake
+	// passes, browser works for ~30s, then every UDP flow inside the tunnel
+	// collapses). Keep inbound defaults (5min, symmetric) for endpoint protos.
+	tun := SBInbound{
+		Type:                "tun",
+		Tag:                 "tun-in",
+		Address:             tunAddresses,
+		Stack:               tunStack,
+		AutoRoute:           true,
+		StrictRoute:         strictRoute,
+		RouteExcludeAddress: routeExclude,
+	}
+	if pt != "WIREGUARD" && pt != "AMNEZIAWG" {
+		tun.UDPTimeout = "30s"
+		tun.EndpointIndependentNat = true
+	}
 	sbCfg := SingBoxConfig{
-		Log:       &SBLog{Level: "error", Disabled: false},
-		DNS:       buildDNS(cfg),
-		Endpoints: endpoints,
-		Inbounds: []SBInbound{{
-			Type:                   "tun",
-			Tag:                    "tun-in",
-			Address:                tunAddresses,
-			Stack:                  tunStack,
-			AutoRoute:              true,
-			StrictRoute:            strictRoute,
-			RouteExcludeAddress:    routeExclude,
-			UDPTimeout:             "30s",
-			EndpointIndependentNat: true,
-		}},
+		Log:          &SBLog{Level: "error", Disabled: false},
+		DNS:          buildDNS(cfg),
+		Endpoints:    endpoints,
+		Inbounds:     []SBInbound{tun},
 		Outbounds:    appendOutbounds(outbounds, cfg),
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
@@ -538,14 +606,18 @@ func buildOutbounds(proxy ProxyConfig) []SBOutbound {
 
 func buildDNS(cfg EngineConfig) *SBDNS {
 	if cfg.Mode == ProxyModeTunnel {
-
-		pt := strings.ToUpper(strings.TrimSpace(cfg.Proxy.Type))
-		isEndpoint := pt == "WIREGUARD" || pt == "AMNEZIAWG"
-
+		// All DNS servers route through the proxy/endpoint outbound (tag
+		// "proxy" — same tag for SS/VLESS outbounds and for the WG/AWG
+		// endpoint, see buildEndpoints). Earlier code set detour="" for
+		// WG/AWG endpoints, relying on the peer's own DNS, but sing-box
+		// then sent UDP/53 to 8.8.8.8 via the direct outbound. With
+		// DNSLeakProtection (= strict_route) on, sing-tun's WFP filters
+		// dropped those direct packets — DNS for the post-start HTTP probe
+		// never resolved, the probe timed out, and Connect hung at
+		// "Подключение..." until the daemon RPC ctx expired (~70s) and
+		// reported "cancelled". Pinning detour to "proxy" sends DNS through
+		// the tunnel for all protocols, eliminating the WFP race.
 		detour := "proxy"
-		if isEndpoint {
-			detour = ""
-		}
 
 		servers := []SBDNSServer{}
 		if len(cfg.DNSServers) > 0 {
@@ -554,12 +626,8 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 				if server == "" {
 					continue
 				}
-				srvType := "udp"
-				if detour != "" {
-					srvType = "tcp"
-				}
 				servers = append(servers, SBDNSServer{
-					Type:       srvType,
+					Type:       "tcp",
 					Tag:        fmt.Sprintf("custom-%d", i+1),
 					Server:     server,
 					ServerPort: port,
@@ -568,21 +636,12 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			}
 			servers = append(servers, SBDNSServer{Type: "local", Tag: "local"})
 		} else {
-			if detour != "" {
-				servers = []SBDNSServer{
-					{Type: "tcp", Tag: "google-tcp", Server: "8.8.8.8", Detour: detour},
-					{Type: "tcp", Tag: "cloudflare-tcp", Server: "1.1.1.1", Detour: detour},
-					{Type: "tls", Tag: "google-tls", Server: "8.8.8.8", Detour: detour},
-					{Type: "tls", Tag: "cloudflare-tls", Server: "1.1.1.1", Detour: detour},
-					{Type: "local", Tag: "local"},
-				}
-			} else {
-				servers = []SBDNSServer{
-					{Type: "udp", Tag: "udp", Server: "8.8.8.8", Detour: detour},
-					{Type: "tls", Tag: "google", Server: "8.8.8.8", Detour: detour},
-					{Type: "tls", Tag: "cloudflare", Server: "1.1.1.1", Detour: detour},
-					{Type: "local", Tag: "local"},
-				}
+			servers = []SBDNSServer{
+				{Type: "tcp", Tag: "google-tcp", Server: "8.8.8.8", Detour: detour},
+				{Type: "tcp", Tag: "cloudflare-tcp", Server: "1.1.1.1", Detour: detour},
+				{Type: "tls", Tag: "google-tls", Server: "8.8.8.8", Detour: detour},
+				{Type: "tls", Tag: "cloudflare-tls", Server: "1.1.1.1", Detour: detour},
+				{Type: "local", Tag: "local"},
 			}
 		}
 
@@ -592,7 +651,10 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 
 		dns.Strategy = "ipv4_only"
 
-		if detour != "" && cfg.Proxy.IP != "" && net.ParseIP(cfg.Proxy.IP) == nil {
+		// If the user gave a hostname for the proxy/endpoint server (not a
+		// literal IP), resolve it via the local OS resolver — the proxy
+		// detour can't be used to resolve its own server's hostname.
+		if cfg.Proxy.IP != "" && net.ParseIP(cfg.Proxy.IP) == nil {
 			dns.Rules = append(dns.Rules, SBDNSRule{
 				Domain: []string{cfg.Proxy.IP},
 				Server: "local",
@@ -739,13 +801,13 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 
 	rules = appendAdBlockRouteRules(cfg, rules)
 
-	isEndpointProtocol := strings.EqualFold(strings.TrimSpace(cfg.Proxy.Type), "wireguard") ||
-		strings.EqualFold(strings.TrimSpace(cfg.Proxy.Type), "amneziawg")
-	if cfg.Mode == ProxyModeTunnel && !isEndpointProtocol {
-		// Probe domains must go through the proxy outbound, even when issued
-		// from the app's own process. Without this, the self-direct rule below
-		// would route the post-start HTTP probe out via direct, masking a broken
-		// SS/VLESS/VMESS tunnel as healthy.
+	if cfg.Mode == ProxyModeTunnel {
+		// Probe domains must go through the proxy/endpoint outbound, even when
+		// issued from the app's own process. Without this, the self-direct rule
+		// below would route the post-start HTTP probe out via direct, masking a
+		// broken tunnel as healthy. The endpoint tag for WG/AWG is also "proxy"
+		// (see buildEndpoints), so the same rule routes probes through the
+		// WireGuard/AmneziaWG endpoint as well.
 		if len(tunnelProbeDomains) > 0 {
 			rules = append(rules, SBRouteRule{
 				Action:   "route",
@@ -753,6 +815,13 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 				Outbound: "proxy",
 			})
 		}
+		// Self-direct: keep our own process's non-probe traffic (updater,
+		// telemetry, internal HTTP) out of the tunnel. Without this, sing-box's
+		// auto_route pulls every socket of the host process into the TUN, and
+		// for WG/AWG the post-start HTTP probe to gstatic/msftconnecttest/
+		// cloudflare races against Windows' multi-homed DNS — the lookups can
+		// escape via the LAN adapter and get dropped by strict_route's WFP
+		// rules, so the probe times out even though the tunnel is healthy.
 		if exe, err := os.Executable(); err == nil {
 			if base := filepath.Base(exe); base != "" && base != "." {
 				rx := `(?i)(^|[\\/])` + regexp.QuoteMeta(base) + `$`
