@@ -1,5 +1,5 @@
 {
-  "version": "",
+  "version": "3.2.1",
   "releaseTitle": {
     "ru": "Расширение настроек приложения, фикс DNS утечек, UI улучшения, пинг и сортировка по пингу, фиксы багов",
     "en": "Extended application settings, fixed DNS leaks, UI improvements, ping and sorting by ping, bug fixes"
@@ -9,5 +9,31 @@
     "en": "We have a new Telegram channel: t.me/resultvpn. Application settings are extended and divided into convenient groups. DNS leak fixed, check through whoer.net showed Russian DNS, now the leak is eliminated. UI improved, manual ping of servers and sorting by ping added, subscription views updated, now there are header-hints. The function of blocking ads was removed, requires development, wait for the next updates. Fixed bug with non-working deep links for the application installed in a custom path. QUIC ping hysteria2. On the macOS version there are some difficulties: the system may say that the application is damaged, in fact this is due to the absence of a developer certificate, so run the command 'xattr -dr com.apple.quarantine /Applications/ResultV.app', to remove the application from the so-called quarantine. New windows tray"
   },
   "downloadUrl": "https://result-proxy.ru/",
-  "platforms": {}
+  "platforms": {
+    "windows-amd64-portable": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.1/ResultV.exe",
+      "sha256": "b17655923dc8720901349f4427c390f7a42f7cd79c67b4955c85cde387b03879",
+      "size": 53485056
+    },
+    "windows-amd64-installer": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.1/ResultV-amd64-installer.exe",
+      "sha256": "cf97e3749e9e470ff57f6341bed8c6244bf7386246969610ffac3fe1b2eb8d64",
+      "size": 26190450
+    },
+    "darwin-universal": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.1/ResultV.dmg",
+      "sha256": "5134d3816886fc8a754b294fc898e0508de691017439f365f7e944b525eb63df",
+      "size": 59353071
+    },
+    "linux-amd64-appimage": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.1/ResultV--x86_64.AppImage",
+      "sha256": "5050d50aa901bfcf628ebdd5c9c0ec57b173ede8cb13c0d2be063c8e175bc411",
+      "size": 92916216
+    },
+    "linux-amd64-deb": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.1/resultv_0.0.0~rc0_amd64.deb",
+      "sha256": "f789f66a3dfe3f3b5993b98ed77fae793d91ea611ec0f2cdd7a3370da0be598f",
+      "size": 25185054
+    }
+  }
 }
