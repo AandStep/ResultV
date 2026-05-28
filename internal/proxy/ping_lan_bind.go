@@ -20,10 +20,61 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
-var pickLANBindIPv4 = preferLANBindIPv4
+var pickLANBindIPv4 = cachedPreferLANBindIPv4
+
+// lanBindCache memoizes the result of preferLANBindIPv4 for a short window.
+// preferLANBindIPv4 calls net.Interfaces() + Interface.Addrs() which on Windows
+// fan out to GetAdaptersAddresses via cgo — each call is a syscall + alloc.
+// In a session with a subscription of dozens of servers the frontend pings
+// every proxy every 60s (sequentially) and the health watchdog probes the
+// active server every 5s. Without caching, every probe re-enumerates every
+// adapter. With a 30s TTL the list is refreshed often enough to react to
+// network changes (Wi-Fi roam, VPN connect) but the storm of duplicate
+// enumerations during ping bursts collapses to a single syscall.
+const lanBindCacheTTL = 30 * time.Second
+
+var (
+	lanBindMu       sync.Mutex
+	lanBindCachedIP net.IP
+	lanBindCachedAt time.Time
+	lanBindCachedEr error
+)
+
+func cachedPreferLANBindIPv4() (net.IP, error) {
+	lanBindMu.Lock()
+	if !lanBindCachedAt.IsZero() && time.Since(lanBindCachedAt) < lanBindCacheTTL {
+		ip, err := lanBindCachedIP, lanBindCachedEr
+		lanBindMu.Unlock()
+		if ip == nil && err == nil {
+			err = errors.New("no suitable LAN IPv4 for bind")
+		}
+		return ip, err
+	}
+	lanBindMu.Unlock()
+
+	ip, err := preferLANBindIPv4()
+
+	lanBindMu.Lock()
+	lanBindCachedIP = ip
+	lanBindCachedEr = err
+	lanBindCachedAt = time.Now()
+	lanBindMu.Unlock()
+	return ip, err
+}
+
+// invalidateLANBindCache drops the cached LAN-bind IP. Call when the network
+// topology might have changed (e.g., post-disconnect, before reconnect).
+func invalidateLANBindCache() {
+	lanBindMu.Lock()
+	lanBindCachedAt = time.Time{}
+	lanBindCachedIP = nil
+	lanBindCachedEr = nil
+	lanBindMu.Unlock()
+}
 
 
 func isEngineTunIPv4(ip net.IP) bool {

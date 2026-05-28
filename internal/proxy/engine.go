@@ -193,6 +193,20 @@ type SBInbound struct {
 	AutoRoute           bool     `json:"auto_route,omitempty"`
 	StrictRoute         bool     `json:"strict_route,omitempty"`
 	RouteExcludeAddress []string `json:"route_exclude_address,omitempty"`
+	// UDPTimeout caps the lifetime of NAT slots for UDP flows on the TUN
+	// inbound. Default in sing-box is 5 minutes — under heavy DPI environments
+	// (RU/CN/IR) where browsers continuously attempt QUIC handshakes that get
+	// dropped at UDP/443 by ISP-level filtering, the 5-minute window means
+	// every failed handshake holds a NAT slot for the full duration. Pprof
+	// captures under such conditions consistently showed lingering
+	// udpnat2.natConn waiters that never resolved.
+	UDPTimeout string `json:"udp_timeout,omitempty"`
+	// EndpointIndependentNat lets multiple destinations share NAT slots for
+	// the same (source IP, source port) pair instead of allocating a slot
+	// per destination. Under browser QUIC connection storms hitting many
+	// CDN IPs from a single ephemeral source port, this reduces total slot
+	// count proportionally.
+	EndpointIndependentNat bool `json:"endpoint_independent_nat,omitempty"`
 }
 
 type SBOutbound struct {
@@ -467,13 +481,15 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 		DNS:       buildDNS(cfg),
 		Endpoints: endpoints,
 		Inbounds: []SBInbound{{
-			Type:                "tun",
-			Tag:                 "tun-in",
-			Address:             tunAddresses,
-			Stack:               tunStack,
-			AutoRoute:           true,
-			StrictRoute:         strictRoute,
-			RouteExcludeAddress: routeExclude,
+			Type:                   "tun",
+			Tag:                    "tun-in",
+			Address:                tunAddresses,
+			Stack:                  tunStack,
+			AutoRoute:              true,
+			StrictRoute:            strictRoute,
+			RouteExcludeAddress:    routeExclude,
+			UDPTimeout:             "30s",
+			EndpointIndependentNat: true,
 		}},
 		Outbounds:    appendOutbounds(outbounds, cfg),
 		Route:        buildRoute(cfg),

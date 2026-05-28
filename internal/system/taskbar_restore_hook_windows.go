@@ -170,6 +170,23 @@ func StartTaskbarRestoreHook(ctx context.Context, cfg TaskbarRestoreConfig) (cle
 		t := time.NewTicker(120 * time.Millisecond)
 		defer t.Stop()
 		sub := syscall.NewCallback(subclassProc)
+		// CRITICAL: cap retries. Previously this loop ran forever at 8 Hz when
+		// the main window was never found — issuing EnumWindows + per-window
+		// CGO callbacks (GetParent + GetWindowThreadProcessId + GetClassNameW
+		// + UTF16ToString) constantly for the entire session. pprof showed
+		// 104k enumWindowsProc allocations over 28 min, generating sustained
+		// CGO scheduler pressure that competed with sing-tun's packet pump on
+		// locked OS threads — and manifested to the user as gradual browser
+		// lag in tunnel mode that vanished the moment the app closed.
+		//
+		// Wails usually creates the main window within ~1–2 seconds of
+		// startup. 50 attempts × 120 ms = 6 seconds is generous; if the
+		// window isn't found by then, something is wrong with the class
+		// name match (Wails internals may have changed) and continuing to
+		// spin is pure damage. The taskbar-restore feature degrades silently
+		// — the tray icon still works.
+		const maxAttempts = 50
+		attempts := 0
 		for {
 			select {
 			case <-scanCtx.Done():
@@ -177,10 +194,18 @@ func StartTaskbarRestoreHook(ctx context.Context, cfg TaskbarRestoreConfig) (cle
 			case <-t.C:
 				h := findTopLevelMainHWND(cfg.ClassName)
 				if h == 0 {
+					attempts++
+					if attempts >= maxAttempts {
+						return
+					}
 					continue
 				}
 				ok, _, _ := procSetSubclass.Call(uintptr(h), sub, uintptr(taskbarSubclassID), 0)
 				if ok == 0 {
+					attempts++
+					if attempts >= maxAttempts {
+						return
+					}
 					continue
 				}
 				mu.Lock()

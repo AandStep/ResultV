@@ -144,6 +144,79 @@ func TestXHTTPPassthroughXmuxScNoGRPC(t *testing.T) {
 	}
 }
 
+// TestXHTTPInjectsConservativeXmuxDefaults verifies that when a subscription
+// does not specify xmux fields, we inject defaults that bound connection
+// lifetime/reuse to prevent v2rayxhttp HTTP/2 stream buffer accumulation
+// over long sessions (the pprof-confirmed cause of multi-hour browser lag).
+func TestXHTTPInjectsConservativeXmuxDefaults(t *testing.T) {
+	extra := map[string]interface{}{
+		"uuid":     "af815621-b245-4149-89da-dd184cfc4b3d",
+		"network":  "xhttp",
+		"security": "tls",
+		"path":     "/x",
+		"host":     "cdn",
+	}
+	raw, err := json.Marshal(extra)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := buildProxyOutbound(ProxyConfig{IP: "example.com", Port: 443, Type: "VLESS", Extra: raw})
+	tr := out.Transport
+	if tr == nil || tr.Type != "xhttp" {
+		t.Fatalf("transport: %+v", tr)
+	}
+	if tr.Xmux == nil {
+		t.Fatal("expected xmux defaults to be injected when extra has no xmux")
+	}
+	var xmux map[string]interface{}
+	if err := json.Unmarshal(tr.Xmux, &xmux); err != nil {
+		t.Fatal(err)
+	}
+	if xmux["max_concurrency"] == nil {
+		t.Errorf("expected default max_concurrency, got %v", xmux)
+	}
+	if xmux["c_max_reuse_times"] == nil {
+		t.Errorf("expected default c_max_reuse_times, got %v", xmux)
+	}
+	if xmux["h_max_reusable_secs"] == nil {
+		t.Errorf("expected default h_max_reusable_secs, got %v", xmux)
+	}
+}
+
+// TestXHTTPUserXmuxOverridesDefaults verifies that user-supplied xmux values
+// take precedence over our conservative defaults — we never silently
+// override what the subscription explicitly configured.
+func TestXHTTPUserXmuxOverridesDefaults(t *testing.T) {
+	extra := map[string]interface{}{
+		"uuid":    "af815621-b245-4149-89da-dd184cfc4b3d",
+		"network": "xhttp",
+		"path":    "/x",
+		"xmux": map[string]interface{}{
+			"maxConcurrency":   float64(64),
+			"hMaxReusableSecs": float64(900),
+		},
+	}
+	raw, _ := json.Marshal(extra)
+	out := buildProxyOutbound(ProxyConfig{IP: "example.com", Port: 443, Type: "VLESS", Extra: raw})
+	tr := out.Transport
+	if tr == nil || tr.Xmux == nil {
+		t.Fatal("xmux missing")
+	}
+	var xmux map[string]interface{}
+	if err := json.Unmarshal(tr.Xmux, &xmux); err != nil {
+		t.Fatal(err)
+	}
+	if xmux["max_concurrency"] != float64(64) {
+		t.Errorf("user max_concurrency lost: got %v", xmux["max_concurrency"])
+	}
+	if xmux["h_max_reusable_secs"] != float64(900) {
+		t.Errorf("user h_max_reusable_secs lost: got %v", xmux["h_max_reusable_secs"])
+	}
+	if xmux["c_max_reuse_times"] == nil {
+		t.Errorf("expected unspecified key c_max_reuse_times to retain default, got nil")
+	}
+}
+
 func TestParseJSONOutboundXhttpSettingsVLESS(t *testing.T) {
 	body := `[{"outbounds":[{"tag":"xhttp-node","protocol":"vless","settings":{"vnext":[{"address":"cdn.example.com","port":443,"users":[{"id":"af815621-b245-4149-89da-dd184cfc4b3d","encryption":"none","flow":""}]}]},"streamSettings":{"network":"xhttp","security":"tls","tlsSettings":{"serverName":"cdn.example.com","fingerprint":"chrome"},"xhttpSettings":{"path":"/api/v2","host":"cdn.example.com","mode":"stream-one","method":"POST","extra":{"xPaddingBytes":"200-800"}}}}],"remarks":"XHTTP Node"}]`
 	entries, err := ParseSubscriptionBody(body)

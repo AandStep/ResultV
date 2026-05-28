@@ -33,6 +33,7 @@ import (
 var assets embed.FS
 
 func main() {
+	startPprofIfEnabled()
 	if runtime.GOOS == "windows" {
 		system.SetProcessAppUserModelID()
 	}

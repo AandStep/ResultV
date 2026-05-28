@@ -25,5 +25,5 @@ export default defineConfig({
   plugins: [react()],
   define: {
     __APP_VERSION__: JSON.stringify(packageJson.version || "3.1.0"),
-  }
+  },
 })

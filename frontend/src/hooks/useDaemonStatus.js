@@ -56,6 +56,14 @@ export const useDaemonStatus = (
             const currentIP = String(data.currentProxy.ip || "").trim().toLowerCase();
             const currentType = String(data.currentProxy.type || "").trim().toLowerCase();
             const currentPort = Number(data.currentProxy.port || 0);
+            // Prefer an ID match over the IP+Port+Type fallback. When a
+            // subscription returns the same backend twice (once as an auto
+            // member, once as a standalone individual), two entries share
+            // IP+Port+Type but have distinct IDs — the user's CLICK is
+            // identified by ID, so the ID lane is the only correct match.
+            // .find() iterates in array order; if currentID is set and any
+            // entry matches it, that entry wins before the IP fallback even
+            // considers a same-backend duplicate sitting earlier in the array.
             const localMatchedProxy = proxies.find((p) => {
                 if (p.type?.toUpperCase() === "SECTION") {
                     return false;
@@ -63,6 +71,12 @@ export const useDaemonStatus = (
                 const proxyID = String(p.id || "").trim();
                 if (currentID && proxyID && proxyID === currentID) {
                     return true;
+                }
+                if (currentID) {
+                    // We have a currentID — only an ID match is authoritative.
+                    // Refuse IP+Port+Type fallback for this entry; it would
+                    // pick a same-backend twin and silently show the wrong row.
+                    return false;
                 }
                 const proxyIP = String(p.ip || "").trim().toLowerCase();
                 const proxyType = String(p.type || "").trim().toLowerCase();
@@ -76,7 +90,22 @@ export const useDaemonStatus = (
 
             let resolvedProxy = localMatchedProxy || data.currentProxy;
 
-            if (activeProxy && activeProxy.type?.toUpperCase() !== "AUTO") {
+            // Stickiness: keep activeProxy stable across status ticks so the
+            // UI doesn't flicker between same-IP twins. BUT skip the sticky
+            // override when we have a definitive ID match — the user's click
+            // explicitly targeted that ID, so showing the previous activeProxy
+            // (which had matching IP+Port+Type but a different ID) would be
+            // the exact "click X, display Y" bug we just fixed in the tray.
+            const haveDefinitiveIDMatch =
+                currentID &&
+                localMatchedProxy &&
+                String(localMatchedProxy.id || "").trim() === currentID;
+
+            if (
+                activeProxy &&
+                activeProxy.type?.toUpperCase() !== "AUTO" &&
+                !haveDefinitiveIDMatch
+            ) {
                 const activeIP = String(activeProxy.ip || "").trim().toLowerCase();
                 const activePort = Number(activeProxy.port || 0);
                 const activeType = String(activeProxy.type || "").trim().toLowerCase();

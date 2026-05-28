@@ -380,6 +380,17 @@ func (a *App) startup(ctx context.Context) {
 				a.log.Error(fmt.Sprintf("Ошибка подключения из трея: %v", err))
 			}
 		},
+		OnConnect: func() {
+			cfg := a.config.GetConfig()
+			last := cfg.Settings.LastSelectedProxyID
+			if last == "" {
+				a.log.Warning("Из трея запрошено подключение, но сервер не выбран")
+				return
+			}
+			if err := a.connectFromTray(last); err != nil {
+				a.log.Error(fmt.Sprintf("Ошибка подключения из трея: %v", err))
+			}
+		},
 		OnDisconnect: func() {
 			if err := a.Disconnect(); err != nil {
 				a.log.Error(fmt.Sprintf("Ошибка отключения из трея: %v", err))
@@ -683,6 +694,18 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 	if a.proxy == nil {
 		return proxy.ConnectResultDTO{Success: false, Message: "proxy manager not initialized"}, nil
 	}
+
+	// Notify popup + main frontend of the final state once the function
+	// returns. ApplyMode has multiple terminal branches (success, cancelled,
+	// rollback-success, rollback-failed); doing this in defer guarantees
+	// neither surface gets stuck on stale mode/state regardless of which
+	// branch we exited through. The config emit uses the latest snapshot
+	// from disk, which reflects any rollback that happened above.
+	defer func() {
+		if a.ctx != nil {
+			wailsRuntime.EventsEmit(a.ctx, "config:updated", a.config.GetConfig())
+		}
+	}()
 
 	cfg := a.config.GetConfig()
 	previousMode := cfg.Settings.Mode
@@ -2336,7 +2359,156 @@ func (a *App) refreshTrayProxyList() {
 		a.tray.SetDisconnected()
 		a.setWindowTitleDisconnected()
 	}
-	a.tray.UpdateProxyList(cfg.Proxies, selectedID)
+	a.tray.UpdateProxyList(a.filterTrayProxiesDiag(cfg.Proxies), selectedID)
+}
+
+// filterTrayProxiesDiag wraps filterTrayProxies with structured logging that
+// surfaces the two failure modes responsible for "click X, connect to Y":
+//
+//  1. Duplicate IDs in cfg.Proxies — connectFromTray's linear lookup picks
+//     the FIRST match, so the visually different second entry routes to the
+//     first one's IP.
+//  2. AUTO.Extra.members listing IDs that don't exist in cfg.Proxies
+//     ("orphan members") — filter does not hide them because there's
+//     nothing to hide, but they're also unreachable from resolveAutoProxy.
+//
+// Both anomalies are silent corruption that the user can only detect by
+// observing wrong-server behaviour; logging them here puts a breadcrumb in
+// the log so support can immediately tell what's wrong with a saved config.
+func (a *App) filterTrayProxiesDiag(proxies []config.ProxyEntry) []config.ProxyEntry {
+	if len(proxies) == 0 {
+		return proxies
+	}
+	// ID duplicate detection.
+	idCounts := make(map[string]int, len(proxies))
+	for _, p := range proxies {
+		if p.ID == "" {
+			continue
+		}
+		idCounts[p.ID]++
+	}
+	for id, n := range idCounts {
+		if n > 1 && a.log != nil {
+			var names []string
+			for _, p := range proxies {
+				if p.ID == id {
+					name := strings.TrimSpace(p.Name)
+					if name == "" {
+						name = fmt.Sprintf("%s:%d", p.IP, p.Port)
+					}
+					names = append(names, name)
+				}
+			}
+			a.log.Warning(fmt.Sprintf("[TRAY] коллизия ID=%s между %d прокси: %s — выбор из трея может попасть не на тот сервер. Удалите дубликаты.",
+				id, n, strings.Join(names, " / ")))
+		}
+	}
+	// Orphan AUTO members detection.
+	existingIDs := make(map[string]struct{}, len(proxies))
+	for _, p := range proxies {
+		if p.ID != "" {
+			existingIDs[p.ID] = struct{}{}
+		}
+	}
+	for _, p := range proxies {
+		if !strings.EqualFold(p.Type, "AUTO") || len(p.Extra) == 0 {
+			continue
+		}
+		var parsed struct {
+			Members []string `json:"members"`
+		}
+		if p.Extra[0] == '"' {
+			var s string
+			if err := json.Unmarshal(p.Extra, &s); err == nil {
+				_ = json.Unmarshal([]byte(s), &parsed)
+			}
+		} else {
+			_ = json.Unmarshal(p.Extra, &parsed)
+		}
+		orphans := 0
+		for _, mid := range parsed.Members {
+			if mid == "" {
+				continue
+			}
+			if _, ok := existingIDs[mid]; !ok {
+				orphans++
+			}
+		}
+		if orphans > 0 && a.log != nil {
+			autoLabel := strings.TrimSpace(p.Name)
+			if autoLabel == "" {
+				autoLabel = p.ID
+			}
+			a.log.Warning(fmt.Sprintf("[TRAY] AUTO «%s» ссылается на %d несуществующих узлов из %d — обновите подписку, иначе клик по AUTO попадёт не туда",
+				autoLabel, orphans, len(parsed.Members)))
+		}
+	}
+	return filterTrayProxies(proxies)
+}
+
+// filterTrayProxies returns the proxy entries shown in the tray Servers
+// submenu.
+//
+// Decision (user-driven, 2026-05-28 follow-up #2): the tray shows ONLY the
+// "individual" servers carrying their original subscription name — never
+// AUTO heads, never AUTO members. Specifically it hides:
+//
+//   - AUTO group heads (Type == "AUTO") — auto-routing silently picks a
+//     different-country member, so showing the head in the tray caused
+//     "click Austria, connect to Germany".
+//   - AUTO members — entries the subscription packed into the auto-group
+//     and that the import path renamed to generic "<flag> TYPE #N" labels.
+//     They duplicate the same backends as the human-readable individuals
+//     (subscriptions like impVPN/Remnawave commonly emit both), so showing
+//     them just clutters the tray with anonymous rows.
+//   - SECTION entries — subscription group labels with no IP/Port, never
+//     connectable.
+//
+// AUTO heads (and the routing they perform across renamed members) remain
+// available from the main React UI. The tray is the "I know exactly which
+// server I want, by name" surface; the main window is the "let the app
+// pick" surface.
+func filterTrayProxies(proxies []config.ProxyEntry) []config.ProxyEntry {
+	if len(proxies) == 0 {
+		return proxies
+	}
+	memberIDs := make(map[string]struct{})
+	for _, p := range proxies {
+		if !strings.EqualFold(p.Type, "AUTO") || len(p.Extra) == 0 {
+			continue
+		}
+		var parsed struct {
+			Members []string `json:"members"`
+		}
+		if p.Extra[0] == '"' {
+			var s string
+			if err := json.Unmarshal(p.Extra, &s); err == nil {
+				_ = json.Unmarshal([]byte(s), &parsed)
+			}
+		} else {
+			_ = json.Unmarshal(p.Extra, &parsed)
+		}
+		for _, id := range parsed.Members {
+			if id != "" {
+				memberIDs[id] = struct{}{}
+			}
+		}
+	}
+	out := make([]config.ProxyEntry, 0, len(proxies))
+	for _, p := range proxies {
+		t := strings.ToUpper(strings.TrimSpace(p.Type))
+		if t == "SECTION" {
+			continue
+		}
+		if t == "AUTO" {
+			continue
+		}
+		if _, isMember := memberIDs[p.ID]; isMember {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 func (a *App) setLastSelectedProxy(proxyID string) error {
@@ -2355,34 +2527,163 @@ func (a *App) setLastSelectedProxy(proxyID string) error {
 	return nil
 }
 
+// resolveAutoProxy turns an AUTO-group head into its best-pinging member.
+// For non-AUTO entries it returns the input unchanged.
+//
+// The merged result keeps the AUTO head's ID/Name (so UI labels stay stable
+// across pings) but takes IP/Port/Type/credentials AND SubscriptionURL from
+// the chosen member. The SubscriptionURL copy is critical: without it the
+// engine logs leak the member's raw host:port instead of the subscription
+// label (manager.Connect branches on SubscriptionURL != "").
+func (a *App) resolveAutoProxy(p *config.ProxyEntry) *config.ProxyEntry {
+	if !strings.EqualFold(p.Type, "AUTO") || len(p.Extra) == 0 {
+		return p
+	}
+	var parsed struct {
+		Members []string `json:"members"`
+	}
+	if len(p.Extra) > 0 && p.Extra[0] == '"' {
+		var s string
+		if err := json.Unmarshal(p.Extra, &s); err == nil {
+			_ = json.Unmarshal([]byte(s), &parsed)
+		}
+	} else {
+		_ = json.Unmarshal(p.Extra, &parsed)
+	}
+
+	cfg := a.config.GetConfig()
+	var best *config.ProxyEntry
+	var bestPing int64 = 9999999
+	pinged := 0
+	reachable := 0
+
+	for _, memberID := range parsed.Members {
+		if memberID == "" {
+			continue
+		}
+		for i := range cfg.Proxies {
+			if cfg.Proxies[i].ID == memberID {
+				member := &cfg.Proxies[i]
+				pinged++
+				pingRes := a.PingProxy(member.IP, member.Port, member.Type)
+				if pingRes.Reachable {
+					reachable++
+					if pingRes.LatencyMs < bestPing {
+						bestPing = pingRes.LatencyMs
+						best = member
+					}
+				}
+				break
+			}
+		}
+	}
+
+	autoLabel := strings.TrimSpace(p.Name)
+	if autoLabel == "" {
+		autoLabel = "AUTO"
+	}
+	if best != nil {
+		// Surface the AUTO routing decision so the user can see WHY the
+		// connection went to a particular IP/country — without this the
+		// engine logs show only the member IP and the user can't tell
+		// whether they clicked the right thing in the tray.
+		bestLabel := strings.TrimSpace(best.Name)
+		if bestLabel == "" {
+			bestLabel = fmt.Sprintf("%s:%d", best.IP, best.Port)
+		}
+		if a.log != nil {
+			a.log.Info(fmt.Sprintf("[PROXY] AUTO «%s»: выбран узел «%s» (пинг %dms, проверено %d из %d, доступно %d)",
+				autoLabel, bestLabel, bestPing, pinged, len(parsed.Members), reachable))
+		}
+		merged := *best
+		merged.ID = p.ID
+		merged.Name = p.Name
+		// Preserve the AUTO head's subscription metadata so logs/labels
+		// downstream show the subscription instead of the raw member host.
+		// best.SubscriptionURL is usually equal to p.SubscriptionURL, but
+		// fall back to the AUTO head's value when a member entry was added
+		// outside the subscription import path.
+		if strings.TrimSpace(merged.SubscriptionURL) == "" {
+			merged.SubscriptionURL = p.SubscriptionURL
+		}
+		if strings.TrimSpace(merged.Provider) == "" {
+			merged.Provider = p.Provider
+		}
+		return &merged
+	}
+	if a.log != nil {
+		a.log.Warning(fmt.Sprintf("[PROXY] AUTO «%s»: ни один из %d узлов не доступен — попытка по последней записи",
+			autoLabel, len(parsed.Members)))
+	}
+	return p
+}
+
 func (a *App) connectFromTray(proxyID string) error {
 	if proxyID == "" || a.config == nil {
 		return fmt.Errorf("proxy id is empty")
 	}
 	cfg := a.config.GetConfig()
+	// Detect ID duplicates in cfg.Proxies — they cause the wrong entry to
+	// match here and silently route the user to a different server. Manual
+	// proxies use Date.now()+index (frontend) while subscription members use
+	// time.Now().UnixMilli()+index (backend); both can collide if produced in
+	// the same millisecond window. When we hit a duplicate we still pick the
+	// first match (legacy behaviour) but warn loudly so the user can clean
+	// the config instead of chasing a phantom server selection bug.
 	var selected *config.ProxyEntry
+	matchCount := 0
 	for i := range cfg.Proxies {
 		if cfg.Proxies[i].ID == proxyID {
-			selected = &cfg.Proxies[i]
-			break
+			matchCount++
+			if selected == nil {
+				selected = &cfg.Proxies[i]
+			}
 		}
 	}
 	if selected == nil {
+		if a.log != nil {
+			a.log.Error(fmt.Sprintf("[TRAY] клик по серверу id=%s — записи нет в конфигурации (%d прокси загружено)", proxyID, len(cfg.Proxies)))
+		}
 		return fmt.Errorf("proxy %s not found", proxyID)
 	}
+	if matchCount > 1 && a.log != nil {
+		a.log.Warning(fmt.Sprintf("[TRAY] коллизия ID: %d записей делят id=%s — будет использована первая (%s %s:%d). Удалите дубликаты в списке прокси.",
+			matchCount, proxyID, selected.Name, selected.IP, selected.Port))
+	}
+
+	clickedLabel := strings.TrimSpace(selected.Name)
+	if clickedLabel == "" {
+		if selected.IP != "" {
+			clickedLabel = fmt.Sprintf("%s:%d", selected.IP, selected.Port)
+		} else {
+			clickedLabel = proxyID
+		}
+	}
+	if a.log != nil {
+		a.log.Info(fmt.Sprintf("[TRAY] клик по «%s» (id=%s, type=%s)", clickedLabel, proxyID, selected.Type))
+	}
+
+	selected = a.resolveAutoProxy(selected)
+
 	cfg.Settings.LastSelectedProxyID = proxyID
 	if err := a.config.SaveConfig(cfg); err != nil {
 		return err
 	}
 
+	// SubscriptionURL/Provider MUST be propagated: manager.Connect branches
+	// log output on SubscriptionURL != "" — without this the user sees the
+	// raw member IP in logs whenever they connect via the tray (which is
+	// exactly the leak the user complained about for AUTO routing).
 	result, err := a.Connect(proxy.ProxyConfig{
-		IP:       selected.IP,
-		Port:     selected.Port,
-		Type:     selected.Type,
-		Username: selected.Username,
-		Password: selected.Password,
-		URI:      selected.URI,
-		Extra:    selected.Extra,
+		ID:              selected.ID,
+		IP:              selected.IP,
+		Port:            selected.Port,
+		Type:            selected.Type,
+		Username:        selected.Username,
+		Password:        selected.Password,
+		URI:             selected.URI,
+		Extra:           selected.Extra,
+		SubscriptionURL: selected.SubscriptionURL,
 	}, cfg.RoutingRules, cfg.Settings.KillSwitch, cfg.Settings.AdBlock)
 	if err != nil {
 		return err
@@ -2394,6 +2695,12 @@ func (a *App) connectFromTray(proxyID string) error {
 	return nil
 }
 
+// resolveProxyID returns the canonical ID for a ProxyConfig. Callers must
+// populate proxyDTO.ID — the (IP, Port, Type) fallback exists only to
+// tolerate legacy code paths that built a ProxyConfig manually. The fallback
+// is unsafe when two subscriptions share the same address (typical for
+// Hysteria2 backbones), so a hit there is logged as a warning to surface
+// missing ID propagation early.
 func (a *App) resolveProxyID(proxyDTO proxy.ProxyConfig) string {
 	if proxyDTO.ID != "" {
 		return proxyDTO.ID
@@ -2404,6 +2711,9 @@ func (a *App) resolveProxyID(proxyDTO proxy.ProxyConfig) string {
 	cfg := a.config.GetConfig()
 	for _, p := range cfg.Proxies {
 		if p.IP == proxyDTO.IP && p.Port == proxyDTO.Port && strings.EqualFold(p.Type, proxyDTO.Type) {
+			if a.log != nil {
+				a.log.Warning(fmt.Sprintf("[PROXY] resolveProxyID: fallback по (IP,Port,Type) для %s:%d/%s → %s (ID не передан, возможен выбор не того сервера)", proxyDTO.IP, proxyDTO.Port, proxyDTO.Type, p.ID))
+			}
 			return p.ID
 		}
 	}

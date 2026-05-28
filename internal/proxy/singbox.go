@@ -105,21 +105,25 @@ func (w *singBoxLogWriter) WriteMessage(level sblog.Level, message string) {
 		return
 	}
 
-	clean := ansiEscapeRE.ReplaceAllString(message, "")
-	lower := strings.ToLower(clean)
-
-	
-	if strings.Contains(lower, "dns: exchange failed") ||
-		strings.Contains(lower, "process dns packet") {
+	// Fast filter on the raw message first — strings.Contains is cheap and
+	// dropped messages dominate during connection storms, so we avoid the
+	// regex + ToLower allocation entirely for them.
+	lowerRaw := strings.ToLower(message)
+	if strings.Contains(lowerRaw, "dns: exchange failed") ||
+		strings.Contains(lowerRaw, "process dns packet") {
+		return
+	}
+	if strings.Contains(lowerRaw, "outbound/direct") &&
+		(strings.Contains(lowerRaw, "i/o timeout") ||
+			strings.Contains(lowerRaw, "connectex") ||
+			strings.Contains(lowerRaw, "actively refused")) {
 		return
 	}
 
-	
-	
-	
-	if strings.Contains(lower, "outbound/direct") && 
-		(strings.Contains(lower, "i/o timeout") || strings.Contains(lower, "connectex") || strings.Contains(lower, "actively refused")) {
-		return
+	// Only strip ANSI escapes when actually present.
+	clean := message
+	if strings.IndexByte(message, '\x1b') >= 0 {
+		clean = ansiEscapeRE.ReplaceAllString(message, "")
 	}
 
 	msg := "[SING-BOX] " + clean
@@ -139,11 +143,20 @@ type trafficTracker struct {
 	server   string
 	protocol string
 	mode     ProxyMode
-	logged   sync.Map 
+	logged   sync.Map
 	count    atomic.Int32
-	capped   atomic.Bool
+	rotateMu sync.Mutex
 	isSub    bool
 }
+
+// loggedRotateThreshold is how many unique host→outbound pairs we remember
+// before clearing the dedup map. Without rotation the map grew unbounded
+// over multi-hour sessions (every new domain a browser hits added an entry),
+// adding measurable latency to sing-box's connection hot path. With rotation
+// we keep at most ~threshold entries in flight; the cost is that a host
+// already seen but rotated out will produce a fresh "connected" log line —
+// acceptable trade-off, and arguably useful for diagnosing long sessions.
+const loggedRotateThreshold = 1000
 
 type trackedConn struct {
 	net.Conn
@@ -491,6 +504,25 @@ func (t *trafficTracker) RoutedPacketConnection(
 	return bufio.NewInt64CounterPacketConn(conn, []*atomic.Int64{t.download}, nil, []*atomic.Int64{t.upload}, nil)
 }
 
+// rotateLogged drops every entry in the dedup map and resets the counter.
+// Called from the hot path once the unique-host count crosses the threshold.
+// Safe under concurrent callers: the mutex serializes rotations and the
+// re-check inside prevents a stampede where many goroutines simultaneously
+// observe count > threshold.
+func (t *trafficTracker) rotateLogged() {
+	t.rotateMu.Lock()
+	defer t.rotateMu.Unlock()
+	if t.count.Load() <= loggedRotateThreshold {
+		return
+	}
+	t.logged.Range(func(k, _ any) bool {
+		t.logged.Delete(k)
+		return true
+	})
+	t.count.Store(0)
+	t.log.Info(fmt.Sprintf("[CONN] Буфер детализации очищен (превышен порог %d уникальных хостов)", loggedRotateThreshold))
+}
+
 func (t *trafficTracker) logConnection(metadata adapter.InboundContext, outbound adapter.Outbound) (string, string, bool) {
 	dest := metadata.Destination.String()
 	if dest == "" {
@@ -511,11 +543,8 @@ func (t *trafficTracker) logConnection(metadata adapter.InboundContext, outbound
 	if _, loaded := t.logged.LoadOrStore(key, struct{}{}); loaded {
 		return host, dest, false
 	}
-	if t.count.Add(1) > 1000 {
-		if !t.capped.Swap(true) {
-			t.log.Warning("[CONN] Достигнут лимит детализации (1000 доменов). Показываются только ошибки и ключевые события.")
-		}
-		return host, dest, false
+	if t.count.Add(1) > loggedRotateThreshold {
+		t.rotateLogged()
 	}
 
 	if outTag == "direct" || outTag == "block" {

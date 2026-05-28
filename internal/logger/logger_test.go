@@ -18,6 +18,7 @@ package logger
 import (
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestLogAndCount(t *testing.T) {
@@ -115,6 +116,7 @@ func TestEventEmitter(t *testing.T) {
 
 	var received []LogEntry
 	var mu sync.Mutex
+	done := make(chan struct{}, 1)
 
 	l.SetEmitter(func(eventName string, data any) {
 		if eventName != "log" {
@@ -123,9 +125,20 @@ func TestEventEmitter(t *testing.T) {
 		mu.Lock()
 		received = append(received, data.(LogEntry))
 		mu.Unlock()
+		select {
+		case done <- struct{}{}:
+		default:
+		}
 	})
 
 	l.Info("event test")
+
+	// Emission is async — wait for the dedicated emitter goroutine.
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for async emitter")
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -135,6 +148,48 @@ func TestEventEmitter(t *testing.T) {
 	if received[0].Msg != "event test" {
 		t.Errorf("emitted msg: got %q, want 'event test'", received[0].Msg)
 	}
+}
+
+// TestEventEmitterNonBlockingUnderBackpressure verifies that the producer
+// (Logger.add via Info/Error/etc.) NEVER blocks when the emit queue is full,
+// even if the emitter goroutine is wedged. Critical: connection-close paths
+// in sing-box hit this code; if it blocks, packet flow stalls and the
+// user's browser lags. This is the exact bug we fixed.
+func TestEventEmitterNonBlockingUnderBackpressure(t *testing.T) {
+	l := New()
+
+	// Block the emitter immediately by making the user-supplied emit
+	// function sleep forever. After the first event drains from emitCh,
+	// the emitter goroutine is stuck inside this function — all subsequent
+	// events must queue up in emitCh, and once it's full they must be
+	// dropped, NOT block the producer.
+	wedge := make(chan struct{})
+	l.SetEmitter(func(_ string, _ any) {
+		<-wedge
+	})
+
+	// Fire well more than emitQueueSize entries. If add() blocks, this
+	// test will hang and the test framework will time it out.
+	produced := emitQueueSize * 3
+	doneProducing := make(chan struct{})
+	go func() {
+		for i := 0; i < produced; i++ {
+			l.Info("stress")
+		}
+		close(doneProducing)
+	}()
+
+	select {
+	case <-doneProducing:
+	case <-time.After(2 * time.Second):
+		t.Fatal("producer blocked under backpressure — async emit fix regressed")
+	}
+
+	if l.DroppedCount() == 0 {
+		t.Error("expected drops under backpressure, got 0")
+	}
+
+	close(wedge)
 }
 
 func TestClear(t *testing.T) {

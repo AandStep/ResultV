@@ -656,15 +656,31 @@ func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 	}
 }
 
+// xmuxConservativeDefaults caps connection lifetime and reuse for the v2rayxhttp
+// transport in sing-box. Without these, the transport keeps every physical
+// HTTP/2 sub-connection alive for the entire session and never recycles streams,
+// so per-stream write buffers (http2.clientStream.writeRequestBody) accumulate
+// under sustained short-lived-connection load (typical browser pattern: many
+// tabs hitting many domains over hours). Pprof on a real session showed
+// ~22 MB stuck in those buffers after two hours of browsing, with ~90 live
+// v2rayxhttp goroutines and visible browser-side latency that disappeared
+// instantly when the app was closed.
+//
+// The values below are conservative — they force a TLS handshake roughly
+// every 5 minutes or every 100 requests on a given sub-conn, whichever
+// comes first. The handshake cost is invisible against typical browser
+// load. max_concurrency=32 caps the number of multiplexed streams per
+// sub-connection (XTLS docs recommend 16-32 for stability).
+//
+// User-supplied xmux fields ALWAYS override these defaults. The defaults
+// only fill in keys the user did not specify.
+var xmuxConservativeDefaults = map[string]interface{}{
+	"max_concurrency":     32,
+	"c_max_reuse_times":   100,
+	"h_max_reusable_secs": 300,
+}
+
 func xmuxJSONFromExtra(extra map[string]interface{}) json.RawMessage {
-	v, ok := extra["xmux"]
-	if !ok || v == nil {
-		return nil
-	}
-	m, ok := v.(map[string]interface{})
-	if !ok {
-		return nil
-	}
 	rename := map[string]string{
 		"maxConcurrency":   "max_concurrency",
 		"maxConnections":   "max_connections",
@@ -673,14 +689,24 @@ func xmuxJSONFromExtra(extra map[string]interface{}) json.RawMessage {
 		"hMaxReusableSecs": "h_max_reusable_secs",
 		"hKeepAlivePeriod": "h_keep_alive_period",
 	}
-	out := make(map[string]interface{}, len(m))
-	for k, val := range m {
-		if nk, ok := rename[k]; ok {
-			out[nk] = val
-		} else {
-			out[k] = val
+
+	out := make(map[string]interface{}, len(xmuxConservativeDefaults)+8)
+	for k, val := range xmuxConservativeDefaults {
+		out[k] = val
+	}
+
+	if v, ok := extra["xmux"]; ok && v != nil {
+		if m, ok := v.(map[string]interface{}); ok {
+			for k, val := range m {
+				if nk, ok := rename[k]; ok {
+					out[nk] = val
+				} else {
+					out[k] = val
+				}
+			}
 		}
 	}
+
 	raw, err := json.Marshal(out)
 	if err != nil || len(raw) == 0 || string(raw) == "null" {
 		return nil

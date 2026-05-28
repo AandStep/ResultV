@@ -165,7 +165,7 @@ export const useDaemonControl = (
                         try { await wailsAPI.disconnect(); } catch {}
                     }
                     res = await wailsAPI.connect(
-                        { ...candidate, port: parseInt(candidate.port, 10) || 0 },
+                        { ...candidate, port: parseInt(candidate.port, 10) || 0, id: targetProxy.id, name: targetProxy.name },
                         routingRules,
                         settings.killswitch || false,
                         settings.adblock || false
@@ -295,7 +295,7 @@ export const useDaemonControl = (
                         try { await wailsAPI.disconnect(); } catch {}
                     }
                     res = await wailsAPI.connect(
-                        { ...candidate, port: parseInt(candidate.port, 10) || 0 },
+                        { ...candidate, port: parseInt(candidate.port, 10) || 0, id: proxy.id, name: proxy.name },
                         routingRules,
                         settings.killswitch || false,
                         settings.adblock || false

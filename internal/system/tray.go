@@ -16,108 +16,113 @@
 package system
 
 import (
-	"bytes"
-	"encoding/binary"
 	"fmt"
-	"image"
-	"image/color"
-	"image/png"
-	"io"
 	"log"
-	"net/http"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/getlantern/systray"
+	"github.com/energye/systray"
 	"resultproxy-wails/internal/config"
 )
 
-
+// TrayCallbacks bundles the hooks the tray fires back into the app layer.
+// Each callback may be nil — the tray no-ops in that case.
 type TrayCallbacks struct {
-	OnShowWindow      func()
-	OnDisconnect      func()
-	OnQuit            func()
-	OnSelectProxy     func(proxyID string)
+	// OnShowWindow fires on a left-click of the tray icon.
+	OnShowWindow func()
+
+	// OnConnect fires when the user clicks "Connect" in the main menu —
+	// the app should connect to the currently-selected proxy.
+	OnConnect func()
+	// OnDisconnect tears down the active connection.
+	OnDisconnect func()
+	// OnConnectSelected fires when the user clicks a specific server in the
+	// "Servers" submenu. The proxyID is captured by the menu-item closure
+	// so this is always the authoritative ID — no fuzzy IP+Port resolution.
 	OnConnectSelected func(proxyID string)
-	// OnUnexpectedExit is called when the systray dies without Stop() being
-	// invoked — typically a Windows message-loop error or session event.
-	// The app should exit if the window is also hidden (zombie state).
+	// OnSelectProxy marks a proxy as the user's choice without connecting.
+	// Currently invoked alongside OnConnectSelected so the chosen server is
+	// remembered as "last selected" for future plain-Connect clicks.
+	OnSelectProxy func(proxyID string)
+	// OnQuit terminates the application.
+	OnQuit func()
+	// OnUnexpectedExit fires when the systray goroutine dies without Stop()
+	// being called.
 	OnUnexpectedExit func()
 }
 
+type connectionState int
 
+const (
+	connectionStateDisconnected connectionState = iota
+	connectionStateConnected
+	connectionStateKillSwitch
+)
 
-
+// Tray owns the notification-area icon and the native HMENU (right-click
+// menu). A left-click is dispatched to OnShowWindow; right-click is handled
+// by energye/systray's default behaviour, which calls TrackPopupMenu on the
+// HMENU built in onReady.
 type Tray struct {
-	mu             sync.Mutex
-	icon           []byte
-	callbacks      TrayCallbacks
-	running        bool
-	exited         chan struct{}
-	stopRequested  bool
+	mu            sync.Mutex
+	icon          []byte
+	callbacks     TrayCallbacks
+	running       bool
+	exited        chan struct{}
+	stopRequested bool
 
-	
-	mStatus     *systray.MenuItem
-	mShow       *systray.MenuItem
-	mDisconnect *systray.MenuItem
-	mServers    *systray.MenuItem
-	mQuit       *systray.MenuItem
+	// Static menu items, created once in onReady.
+	miConnect    *systray.MenuItem
+	miDisconnect *systray.MenuItem
+	miServers    *systray.MenuItem // submenu head
+	miShowWindow *systray.MenuItem
+	miQuit       *systray.MenuItem
 
+	// Server submenu items, keyed by proxy ID. energye/systray cannot
+	// physically remove menu items, only Hide() them; on a list refresh we
+	// reuse existing items (SetTitle, Check/Uncheck) and Hide() the ones
+	// that disappeared. New IDs get freshly added.
+	serverItems map[string]*systray.MenuItem
 
-	proxyLookup        map[string]config.ProxyEntry
-	serverItems        map[string]*systray.MenuItem
-	dynamicItems       []*systray.MenuItem
-	selectedProxyID    string
-	connectedProxyID   string
-	perCountryLimit    int
-	emptyItem          *systray.MenuItem
-	countryIcons       map[string][]byte
-	fallbackIcon       []byte
-	httpClient         *http.Client
-	lastMenuSignature  string
-	lastSelectedID     string
-	serverTitleCache   map[string]string
-	statusTitleCache   string
-	statusTooltipCache string
-	clickDispatcher   *trayClickDispatcher
-	pendingProxies    []config.ProxyEntry 
-	pendingSelectedID string
+	selectedProxyID  string
+	connectedProxyID string
+	currentState     connectionState
+	fallbackName     string
+	proxyLookup      map[string]config.ProxyEntry
+
+	// pending* hold UpdateProxyList input that arrived before onReady fired.
+	// onReady applies them after the menu skeleton is built.
+	pendingApply       bool
+	pendingProxies     []config.ProxyEntry
+	pendingSelectedID  string
+	pendingStateInit   bool
+	pendingState       connectionState
+	pendingConnectedID string
+	pendingFallback    string
 }
 
-
-
+// NewTray returns a tray bound to the given .ico bytes (used as the
+// notification-area icon) and the callback bundle.
 func NewTray(icon []byte, cb TrayCallbacks) *Tray {
-	fallbackIcon := buildFallbackIcon()
 	return &Tray{
-		icon:            icon,
-		callbacks:       cb,
-		exited:          make(chan struct{}),
-		proxyLookup:     make(map[string]config.ProxyEntry),
-		serverItems:     make(map[string]*systray.MenuItem),
-		perCountryLimit: 20,
-		countryIcons:    make(map[string][]byte),
-		fallbackIcon:    fallbackIcon,
-		httpClient: &http.Client{
-			Timeout: 3 * time.Second,
-			Transport: &http.Transport{
-				Proxy:               nil, 
-				MaxIdleConns:        8,
-				MaxIdleConnsPerHost: 4,
-				IdleConnTimeout:     30 * time.Second,
-			},
-		},
-		serverTitleCache: make(map[string]string),
-		clickDispatcher:  newTrayClickDispatcher(),
+		icon:        icon,
+		callbacks:   cb,
+		exited:      make(chan struct{}),
+		serverItems: make(map[string]*systray.MenuItem),
+		proxyLookup: make(map[string]config.ProxyEntry),
 	}
 }
 
-
-
+// Start launches the native systray loop on its own goroutine. The loop
+// owns one OS thread (systray pins to it in init()), so we cannot call
+// Start twice for the same process.
 func (t *Tray) Start() {
 	go systray.Run(t.onReady, t.onExit)
 }
 
-
+// Stop requests systray teardown and waits up to two seconds for the
+// goroutine to drain.
 func (t *Tray) Stop() {
 	t.mu.Lock()
 	running := t.running
@@ -134,18 +139,14 @@ func (t *Tray) Stop() {
 }
 
 func (t *Tray) onReady() {
-	t.mu.Lock()
-	t.running = true
-	t.mu.Unlock()
-
-	
 	if len(t.icon) > 0 {
 		systray.SetIcon(t.icon)
 	}
-	systray.SetTitle("ResultV")
-	systray.SetTooltip("ResultV — Отключено")
 
-	systray.SetWindowsTrayLeftClick(func() {
+	// Left-click → restore main window. Right-click intentionally not
+	// bound: energye/systray's default handler shows the HMENU built
+	// below via TrackPopupMenu when SetOnRClick is unset.
+	systray.SetOnClick(func(_ systray.IMenu) {
 		t.safeCall(func() {
 			if t.callbacks.OnShowWindow != nil {
 				t.callbacks.OnShowWindow()
@@ -153,83 +154,36 @@ func (t *Tray) onReady() {
 		})
 	})
 
-	
-	t.mStatus = systray.AddMenuItem("⚪ Отключено", "Статус подключения")
-	t.mStatus.Disable() 
+	t.buildMenu()
 
-	systray.AddSeparator()
+	// Force the HMENU into Win11 dark theme — no-op on non-Windows.
+	enableTrayDarkMode()
 
-	t.mShow = systray.AddMenuItem("Показать окно", "Открыть окно ResultV")
-	t.mDisconnect = systray.AddMenuItem("Отключить", "Отключить прокси")
-	t.mDisconnect.Disable() 
-
-	systray.AddSeparator()
-	t.mServers = systray.AddMenuItem("Серверы", "Список серверов для быстрого подключения")
-	t.emptyItem = t.mServers.AddSubMenuItem("(список пуст)", "")
-	t.emptyItem.Disable()
-
-	t.mQuit = systray.AddMenuItem("Выход", "Закрыть ResultV")
-
-	
-	go t.eventLoop()
-	t.clickDispatcher.start(t.handleServerClick)
-
-	
 	t.mu.Lock()
-	pendingProxies := t.pendingProxies
-	pendingSelectedID := t.pendingSelectedID
+	t.running = true
+	pendingApply := t.pendingApply
+	proxies := t.pendingProxies
+	selectedID := t.pendingSelectedID
+	pendingStateInit := t.pendingStateInit
+	state := t.pendingState
+	connectedID := t.pendingConnectedID
+	fallback := t.pendingFallback
+	t.pendingApply = false
 	t.pendingProxies = nil
-	t.pendingSelectedID = ""
+	t.pendingStateInit = false
 	t.mu.Unlock()
 
-	if len(pendingProxies) > 0 {
-		
-		
-		t.prefetchCountryIcons(pendingProxies)
-
-		t.mu.Lock()
-		t.proxyLookup = make(map[string]config.ProxyEntry, len(pendingProxies))
-		for _, p := range pendingProxies {
-			t.proxyLookup[p.ID] = p
-		}
-		if pendingSelectedID != "" {
-			t.selectedProxyID = pendingSelectedID
-		}
-		t.lastMenuSignature = buildProxyListSignature(pendingProxies)
-		t.lastSelectedID = t.selectedProxyID
-		t.rebuildServersMenuLocked(pendingProxies)
-		t.mu.Unlock()
+	if pendingApply {
+		t.applyProxyList(proxies, selectedID)
 	}
-}
-
-func (t *Tray) eventLoop() {
-	for {
-		select {
-		case <-t.mShow.ClickedCh:
-			t.safeCall(func() {
-				if t.callbacks.OnShowWindow != nil {
-					t.callbacks.OnShowWindow()
-				}
-			})
-		case <-t.mDisconnect.ClickedCh:
-			t.safeCall(func() {
-				if t.callbacks.OnDisconnect != nil {
-					t.callbacks.OnDisconnect()
-				}
-			})
-		case <-t.mQuit.ClickedCh:
-			t.safeCall(func() {
-				if t.callbacks.OnQuit != nil {
-					t.callbacks.OnQuit()
-				}
-			})
-			return
-		}
+	if pendingStateInit {
+		t.applyConnectionState(state, connectedID, fallback)
 	}
+
+	t.refreshTooltipAndItems()
 }
 
 func (t *Tray) onExit() {
-	t.clickDispatcher.stop()
 	t.mu.Lock()
 	t.running = false
 	wasExpected := t.stopRequested
@@ -241,243 +195,320 @@ func (t *Tray) onExit() {
 	}
 }
 
+// buildMenu constructs the static menu skeleton. Server submenu items are
+// added lazily by applyProxyList — at startup the Servers head exists but
+// is empty.
+//
+// Every Click callback dispatches its work to a fresh goroutine. The
+// energye/systray Windows backend invokes click handlers synchronously on
+// its OS-locked message-pump thread (see systray_windows.go WM_COMMAND
+// handler), so anything that takes more than a few milliseconds must run
+// off-thread or the tray becomes unresponsive AND, for callbacks that end
+// up calling proxy.Connect (mode switch, server pick), the long sync call
+// blocks the very thread that needs to process Win32 messages the engine
+// generates — causing observed silent rollbacks (engine times out, mode
+// reverts).
+func (t *Tray) buildMenu() {
+	t.miConnect = systray.AddMenuItem("Подключить", "Подключиться к выбранному серверу")
+	t.miConnect.Click(func() {
+		go t.safeCall(func() {
+			if t.callbacks.OnConnect != nil {
+				t.callbacks.OnConnect()
+			}
+		})
+	})
 
+	t.miDisconnect = systray.AddMenuItem("Отключить", "Разорвать текущее соединение")
+	t.miDisconnect.Click(func() {
+		go t.safeCall(func() {
+			if t.callbacks.OnDisconnect != nil {
+				t.callbacks.OnDisconnect()
+			}
+		})
+	})
+
+	systray.AddSeparator()
+
+	t.miServers = systray.AddMenuItem("Серверы", "Выбрать сервер для подключения")
+
+	systray.AddSeparator()
+
+	t.miShowWindow = systray.AddMenuItem("Открыть окно", "Показать главное окно ResultV")
+	t.miShowWindow.Click(func() {
+		go t.safeCall(func() {
+			if t.callbacks.OnShowWindow != nil {
+				t.callbacks.OnShowWindow()
+			}
+		})
+	})
+
+	systray.AddSeparator()
+
+	t.miQuit = systray.AddMenuItem("Выход", "Завершить ResultV")
+	t.miQuit.Click(func() {
+		go t.safeCall(func() {
+			if t.callbacks.OnQuit != nil {
+				t.callbacks.OnQuit()
+			}
+		})
+	})
+}
+
+// SetConnected updates the tooltip with a server label only — used by code
+// paths that don't have the full proxy ID handy.
 func (t *Tray) SetConnected(serverName string) {
 	t.SetConnectedProxy("", serverName)
 }
 
-
+// SetConnectedProxy marks the tray as connected to the given proxy and
+// refreshes the tooltip + menu enabled states.
 func (t *Tray) SetConnectedProxy(proxyID, serverName string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if !t.running || t.mStatus == nil {
-		return
-	}
-
-	title := "🟢 " + serverName
-	tooltip := "ResultV — " + serverName
-	if t.statusTitleCache != title {
-		t.mStatus.SetTitle(title)
-		t.statusTitleCache = title
-	}
-	if t.statusTooltipCache != tooltip {
-		systray.SetTooltip(tooltip)
-		t.statusTooltipCache = tooltip
-	}
-	t.connectedProxyID = proxyID
-	if proxyID != "" {
-		t.selectedProxyID = proxyID
-	}
-	t.mDisconnect.Enable()
+	t.applyConnectionState(connectionStateConnected, proxyID, serverName)
 }
-
 
 func (t *Tray) SetDisconnected() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if !t.running || t.mStatus == nil {
-		return
-	}
-
-	title := "⚪ Отключено"
-	tooltip := "ResultV — Отключено"
-	if t.statusTitleCache != title {
-		t.mStatus.SetTitle(title)
-		t.statusTitleCache = title
-	}
-	if t.statusTooltipCache != tooltip {
-		systray.SetTooltip(tooltip)
-		t.statusTooltipCache = tooltip
-	}
-	t.connectedProxyID = ""
-	t.mDisconnect.Disable()
+	t.applyConnectionState(connectionStateDisconnected, "", "")
 }
-
 
 func (t *Tray) SetKillSwitchActive() {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if !t.running || t.mStatus == nil {
-		return
+	t.currentState = connectionStateKillSwitch
+	running := t.running
+	if !running {
+		t.pendingStateInit = true
+		t.pendingState = connectionStateKillSwitch
+		t.pendingConnectedID = t.connectedProxyID
+		t.pendingFallback = t.fallbackName
 	}
-
-	title := "🔴 Kill Switch — интернет заблокирован"
-	tooltip := "ResultV — Kill Switch активен"
-	if t.statusTitleCache != title {
-		t.mStatus.SetTitle(title)
-		t.statusTitleCache = title
-	}
-	if t.statusTooltipCache != tooltip {
-		systray.SetTooltip(tooltip)
-		t.statusTooltipCache = tooltip
+	t.mu.Unlock()
+	if running {
+		t.refreshTooltipAndItems()
 	}
 }
 
+func (t *Tray) applyConnectionState(state connectionState, proxyID, fallbackName string) {
+	t.mu.Lock()
+	t.currentState = state
+	if state == connectionStateConnected {
+		t.connectedProxyID = proxyID
+		if proxyID != "" {
+			t.selectedProxyID = proxyID
+		}
+		t.fallbackName = fallbackName
+	} else {
+		t.connectedProxyID = ""
+		t.fallbackName = ""
+	}
+	running := t.running
+	if !running {
+		t.pendingStateInit = true
+		t.pendingState = state
+		t.pendingConnectedID = t.connectedProxyID
+		t.pendingFallback = t.fallbackName
+	}
+	t.mu.Unlock()
+	if running {
+		t.refreshTooltipAndItems()
+		t.refreshSelectedCheckmark()
+	}
+}
 
+// UpdateProxyList rebuilds the Servers submenu. The caller is expected to
+// pre-filter the list (no AUTO heads, no SECTION entries) — the tray does
+// not implement AUTO routing.
 func (t *Tray) UpdateProxyList(proxies []config.ProxyEntry, selectedProxyID string) {
 	t.mu.Lock()
+	running := t.running
+	if !running {
+		t.pendingApply = true
+		// Defensive copy: caller's slice may be mutated after this call.
+		t.pendingProxies = append([]config.ProxyEntry(nil), proxies...)
+		t.pendingSelectedID = selectedProxyID
+		t.mu.Unlock()
+		return
+	}
+	t.mu.Unlock()
+	t.applyProxyList(proxies, selectedProxyID)
+}
 
+func (t *Tray) applyProxyList(proxies []config.ProxyEntry, selectedProxyID string) {
+	t.mu.Lock()
+	if selectedProxyID != "" {
+		t.selectedProxyID = selectedProxyID
+	}
+	// Rebuild the lookup map for tooltips.
 	t.proxyLookup = make(map[string]config.ProxyEntry, len(proxies))
 	for _, p := range proxies {
 		t.proxyLookup[p.ID] = p
 	}
-	if selectedProxyID != "" {
-		t.selectedProxyID = selectedProxyID
-	}
 
-	signature := buildProxyListSignature(proxies)
-	selection := t.selectedProxyID
-
-	if !t.running || t.mServers == nil {
-		
-		t.pendingProxies = make([]config.ProxyEntry, len(proxies))
-		copy(t.pendingProxies, proxies)
-		t.pendingSelectedID = t.selectedProxyID
-		t.mu.Unlock()
-		return
-	}
-
-	
-	if signature == t.lastMenuSignature {
-		if selection != t.lastSelectedID {
-			t.lastSelectedID = selection
-			t.refreshServerTitlesLocked()
-		}
-		t.mu.Unlock()
-		return
-	}
-
-	t.lastMenuSignature = signature
-	t.lastSelectedID = selection
-
-	
+	seen := make(map[string]struct{}, len(proxies))
+	miServers := t.miServers
 	t.mu.Unlock()
-	t.prefetchCountryIcons(proxies)
-	t.mu.Lock()
 
-	if !t.running || t.mServers == nil {
-		t.mu.Unlock()
-		return
-	}
-	t.rebuildServersMenuLocked(proxies)
-	t.mu.Unlock()
-}
-
-
-func (t *Tray) rebuildServersMenuLocked(proxies []config.ProxyEntry) {
-	for _, item := range t.dynamicItems {
-		item.Hide()
-	}
-	t.dynamicItems = t.dynamicItems[:0]
-	t.serverItems = make(map[string]*systray.MenuItem)
-	t.serverTitleCache = make(map[string]string) 
-	if t.emptyItem != nil {
-		t.emptyItem.Hide()
-	}
-
-	groups := BuildTrayMenuGroups(proxies, t.perCountryLimit)
-	if len(groups) == 0 {
-		t.clickDispatcher.update(nil)
-		if t.emptyItem != nil {
-			t.emptyItem.Show()
-		}
+	if miServers == nil {
 		return
 	}
 
-	
-	
-	
-	
-	
-	multiProvider := len(groups) > 1
-
-	for i, provider := range groups {
-		if multiProvider {
-			
-			if i > 0 {
-				
-				sep := t.mServers.AddSubMenuItem("", "")
-				sep.Disable()
-				t.dynamicItems = append(t.dynamicItems, sep)
-			}
-			header := t.mServers.AddSubMenuItem("── "+provider.Provider+" ──", "")
-			header.Disable()
-			t.dynamicItems = append(t.dynamicItems, header)
+	for _, p := range proxies {
+		if p.ID == "" {
+			continue
 		}
+		seen[p.ID] = struct{}{}
+		label := serverMenuLabel(p)
+		tooltip := serverMenuTooltip(p)
 
-		for _, country := range provider.Countries {
-			cTitle := formatCountryTitle(country.Country)
-			cItem := t.mServers.AddSubMenuItem(cTitle, "")
-			if icon := t.getCountryIconLocked(country.Country); len(icon) > 0 {
-				cItem.SetIcon(icon)
-			}
-			t.dynamicItems = append(t.dynamicItems, cItem)
-
-			for _, server := range country.Servers {
-				title := formatServerTitle(server, server.ID == t.connectedProxyID)
-				srvItem := cItem.AddSubMenuItem(
-					title,
-					fmt.Sprintf("%s:%d", server.IP, server.Port),
-				)
-				if icon := t.getCountryIconLocked(server.Country); len(icon) > 0 {
-					srvItem.SetIcon(icon)
-				}
-				t.dynamicItems = append(t.dynamicItems, srvItem)
-				t.serverItems[server.ID] = srvItem
-				t.serverTitleCache[server.ID] = title
-			}
-			if country.HiddenCount > 0 {
-				more := cItem.AddSubMenuItem(fmt.Sprintf("... еще %d серверов (полный список в окне)", country.HiddenCount), "")
-				more.Disable()
-				t.dynamicItems = append(t.dynamicItems, more)
-			}
-		}
-	}
-	t.clickDispatcher.update(buildServerClickBindings(t.serverItems))
-}
-
-func (t *Tray) handleServerClick(proxyID string) {
-	t.safeCall(func() {
 		t.mu.Lock()
-		t.selectedProxyID = proxyID
-		t.refreshServerTitlesLocked()
+		item, exists := t.serverItems[p.ID]
 		t.mu.Unlock()
-		if t.callbacks.OnSelectProxy != nil {
-			t.callbacks.OnSelectProxy(proxyID)
+
+		if exists {
+			item.SetTitle(label)
+			item.SetTooltip(tooltip)
+			item.Show()
+		} else {
+			id := p.ID // capture for closure
+			item = miServers.AddSubMenuItemCheckbox(label, tooltip, false)
+			item.Click(func() {
+				// connectFromTray persists LastSelectedProxyID itself, so a
+				// separate OnSelectProxy is redundant. Dispatched to a fresh
+				// goroutine for the same reason as the main-menu handlers
+				// (see buildMenu comment).
+				go t.safeCall(func() {
+					if t.callbacks.OnConnectSelected != nil {
+						t.callbacks.OnConnectSelected(id)
+					}
+				})
+			})
+			t.mu.Lock()
+			t.serverItems[p.ID] = item
+			t.mu.Unlock()
 		}
-		if t.callbacks.OnConnectSelected != nil {
-			t.callbacks.OnConnectSelected(proxyID)
+	}
+
+	// Hide items for proxies no longer in the list. energye/systray has no
+	// remove API, so we accept the residue in the underlying HMENU.
+	t.mu.Lock()
+	for id, item := range t.serverItems {
+		if _, ok := seen[id]; !ok {
+			item.Hide()
 		}
-	})
+	}
+	t.mu.Unlock()
+
+	t.refreshSelectedCheckmark()
+	t.refreshTooltipAndItems()
 }
 
-func (t *Tray) refreshServerTitlesLocked() {
-	for proxyID, item := range t.serverItems {
-		entry, ok := t.proxyLookup[proxyID]
-		if !ok {
-			continue
+// refreshSelectedCheckmark updates the radio-like checkmark in the Servers
+// submenu so only the currently-selected (or, when connected, the connected)
+// proxy is checked.
+func (t *Tray) refreshSelectedCheckmark() {
+	t.mu.Lock()
+	target := t.connectedProxyID
+	if target == "" {
+		target = t.selectedProxyID
+	}
+	items := make(map[string]*systray.MenuItem, len(t.serverItems))
+	for k, v := range t.serverItems {
+		items[k] = v
+	}
+	t.mu.Unlock()
+
+	for id, item := range items {
+		if id == target {
+			item.Check()
+		} else {
+			item.Uncheck()
 		}
-		server := TrayServer{
-			ID:      entry.ID,
-			Name:    entry.Name,
-			Country: entry.Country,
-			IP:      entry.IP,
-			Port:    entry.Port,
-			PingMs:  -1,
+	}
+}
+
+// refreshTooltipAndItems updates the icon tooltip and the enabled state of
+// Connect/Disconnect according to the current connection state.
+func (t *Tray) refreshTooltipAndItems() {
+	t.mu.Lock()
+	state := t.currentState
+	tooltip := t.tooltipForStateLocked()
+	miConnect := t.miConnect
+	miDisconnect := t.miDisconnect
+	hasSelection := t.selectedProxyID != ""
+	running := t.running
+	t.mu.Unlock()
+
+	if !running {
+		return
+	}
+	systray.SetTooltip(tooltip)
+
+	if miConnect != nil {
+		if hasSelection && state != connectionStateConnected {
+			miConnect.Enable()
+		} else {
+			miConnect.Disable()
 		}
-		if server.Name == "" {
-			server.Name = fmt.Sprintf("%s:%d", server.IP, server.Port)
+	}
+	if miDisconnect != nil {
+		if state == connectionStateConnected || state == connectionStateKillSwitch {
+			miDisconnect.Enable()
+		} else {
+			miDisconnect.Disable()
 		}
-		title := formatServerTitle(server, proxyID == t.connectedProxyID)
-		prev := t.serverTitleCache[proxyID]
-		if prev == title {
-			continue
+	}
+}
+
+func (t *Tray) tooltipForStateLocked() string {
+	switch t.currentState {
+	case connectionStateKillSwitch:
+		return "ResultV — Kill Switch активен"
+	case connectionStateConnected:
+		return "ResultV — " + t.connectedLabelLocked()
+	default:
+		return "ResultV — Отключено"
+	}
+}
+
+func (t *Tray) connectedLabelLocked() string {
+	if entry, ok := t.proxyLookup[t.connectedProxyID]; ok {
+		name := strings.TrimSpace(entry.Name)
+		if name != "" {
+			return name
 		}
-		item.SetTitle(title)
-		t.serverTitleCache[proxyID] = title
+		return fmt.Sprintf("%s:%d", entry.IP, entry.Port)
+	}
+	if t.fallbackName != "" {
+		return t.fallbackName
+	}
+	return "сервер"
+}
+
+// SelectedProxyID returns the proxy currently marked as the user's choice.
+func (t *Tray) SelectedProxyID() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.selectedProxyID
+}
+
+// ConnectedProxyID returns the proxy the engine is currently connected to,
+// or "" when disconnected.
+func (t *Tray) ConnectedProxyID() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.connectedProxyID
+}
+
+// ConnectionStateLabel returns one of "disconnected", "connected",
+// "killswitch".
+func (t *Tray) ConnectionStateLabel() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	switch t.currentState {
+	case connectionStateKillSwitch:
+		return "killswitch"
+	case connectionStateConnected:
+		return "connected"
+	default:
+		return "disconnected"
 	}
 }
 
@@ -490,252 +521,64 @@ func (t *Tray) safeCall(fn func()) {
 	fn()
 }
 
-func (t *Tray) getCountryIconLocked(country string) []byte {
-	isoCode := countryISOCode(country)
-	if isoCode == "" {
-		return t.fallbackIcon
+// serverMenuLabel renders the menu line for one proxy.
+//
+// Regular servers:   "🇦🇹  Austria"
+// AUTO group heads:  "[AUTO] Austria  ⚡"  (NO country flag prefix, even if
+//   the AUTO head somehow has one — auto-routing picks the best-pinging
+//   member which may sit in a different country, so showing a flag would
+//   mislead the user into thinking they're locking onto that country).
+//
+// The "[AUTO]" prefix is intentionally ASCII so it renders identically on
+// every Windows locale/font combination — Segoe UI Emoji has spotty support
+// for some regional-indicator pairs and we don't want the marker to ever
+// degrade to invisible.
+func serverMenuLabel(p config.ProxyEntry) string {
+	name := strings.TrimSpace(p.Name)
+	if name == "" {
+		name = fmt.Sprintf("%s:%d", p.IP, p.Port)
 	}
-	if cached, ok := t.countryIcons[isoCode]; ok {
-		return cached
+	if strings.EqualFold(strings.TrimSpace(p.Type), "AUTO") {
+		return "[AUTO] " + name + "  ⚡"
 	}
-	return t.fallbackIcon
+	if flag := flagEmoji(p.Country); flag != "" {
+		return flag + "  " + name
+	}
+	return name
 }
 
-func (t *Tray) downloadCountryIcon(isoCode string) []byte {
-	urls := []string{
-		fmt.Sprintf("https://flagcdn.com/w20/%s.png", isoCode),
-		fmt.Sprintf("https://flagpedia.net/data/flags/w20/%s.png", isoCode),
+// serverMenuTooltip explains in plain Russian what clicking the entry will
+// do. For AUTO entries the tooltip names the routing behaviour explicitly
+// so the user is not surprised when a click resolves to a different country
+// than the AUTO group's display name.
+func serverMenuTooltip(p config.ProxyEntry) string {
+	if strings.EqualFold(strings.TrimSpace(p.Type), "AUTO") {
+		return "Авто-выбор: подключится к лучшему по пингу узлу подписки"
 	}
-	for attempt := 1; attempt <= 1; attempt++ {
-		for _, url := range urls {
-			resp, err := t.httpClient.Get(url)
-			if err != nil {
-				continue
-			}
-			body, readErr := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-			_ = resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				continue
-			}
-			if readErr != nil || len(body) == 0 {
-				continue
-			}
-			icon, convErr := pngToICO(body, 16)
-			if convErr != nil {
-				continue
-			}
-			return icon
-		}
+	parts := make([]string, 0, 3)
+	if t := strings.TrimSpace(p.Type); t != "" {
+		parts = append(parts, strings.ToUpper(t))
 	}
-	return nil
+	if p.IP != "" && p.Port > 0 {
+		parts = append(parts, fmt.Sprintf("%s:%d", p.IP, p.Port))
+	}
+	return strings.Join(parts, " · ")
 }
 
-func (t *Tray) prefetchCountryIcons(proxies []config.ProxyEntry) {
-	unique := make(map[string]struct{})
-	for _, p := range proxies {
-		if iso := countryISOCode(p.Country); iso != "" {
-			unique[iso] = struct{}{}
+// flagEmoji returns the regional-indicator emoji pair for a 2-letter ISO
+// country code. Returns "" for any input that isn't exactly two ASCII
+// letters.
+func flagEmoji(country string) string {
+	c := strings.ToUpper(strings.TrimSpace(country))
+	if len(c) != 2 {
+		return ""
+	}
+	for i := 0; i < 2; i++ {
+		if c[i] < 'A' || c[i] > 'Z' {
+			return ""
 		}
 	}
-	if len(unique) == 0 {
-		return
-	}
-
-	missing := make([]string, 0, len(unique))
-	t.mu.Lock()
-	for iso := range unique {
-		if _, ok := t.countryIcons[iso]; !ok {
-			missing = append(missing, iso)
-		}
-	}
-	t.mu.Unlock()
-	if len(missing) == 0 {
-		return
-	}
-
-
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, 4) 
-	for _, iso := range missing {
-		iso := iso
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			icon := t.downloadCountryIcon(iso)
-			if len(icon) == 0 {
-				return
-			}
-			t.mu.Lock()
-			t.countryIcons[iso] = icon
-			t.mu.Unlock()
-		}()
-	}
-	wg.Wait()
-}
-
-func buildProxyListSignature(proxies []config.ProxyEntry) string {
-	if len(proxies) == 0 {
-		return "empty"
-	}
-	var b bytes.Buffer
-	for _, p := range proxies {
-		b.WriteString(p.ID)
-		b.WriteByte('|')
-		b.WriteString(p.Country)
-		b.WriteByte('|')
-		b.WriteString(p.Name)
-		b.WriteByte(';')
-	}
-	return b.String()
-}
-
-func buildFallbackIcon() []byte {
-	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
-	bg := color.NRGBA{R: 52, G: 58, B: 64, A: 255}
-	fg := color.NRGBA{R: 173, G: 181, B: 189, A: 255}
-	for y := 0; y < 16; y++ {
-		for x := 0; x < 16; x++ {
-			img.Set(x, y, bg)
-		}
-	}
-	for y := 5; y <= 10; y++ {
-		for x := 5; x <= 10; x++ {
-			img.Set(x, y, fg)
-		}
-	}
-	var pngBuf bytes.Buffer
-	if err := png.Encode(&pngBuf, img); err != nil {
-		return nil
-	}
-	icon, err := pngToICO(pngBuf.Bytes(), 16)
-	if err != nil {
-		return nil
-	}
-	return icon
-}
-
-func pngToICO(pngData []byte, size int) ([]byte, error) {
-	src, _, err := image.Decode(bytes.NewReader(pngData))
-	if err != nil {
-		return nil, err
-	}
-	if size <= 0 || size > 256 {
-		return nil, fmt.Errorf("invalid target size: %d", size)
-	}
-
-	dstPixels := make([]byte, size*size*4)
-	srcBounds := src.Bounds()
-	srcW := srcBounds.Dx()
-	srcH := srcBounds.Dy()
-	if srcW <= 0 || srcH <= 0 {
-		return nil, fmt.Errorf("invalid source image bounds")
-	}
-
-	for y := 0; y < size; y++ {
-		sy := srcBounds.Min.Y + (y*srcH)/size
-		for x := 0; x < size; x++ {
-			sx := srcBounds.Min.X + (x*srcW)/size
-			c := color.NRGBAModel.Convert(src.At(sx, sy)).(color.NRGBA)
-			
-			row := size - 1 - y
-			i := (row*size + x) * 4
-			dstPixels[i+0] = c.B
-			dstPixels[i+1] = c.G
-			dstPixels[i+2] = c.R
-			dstPixels[i+3] = c.A
-		}
-	}
-
-	maskRowSize := ((size + 31) / 32) * 4
-	maskBytes := make([]byte, maskRowSize*size)
-	for y := 0; y < size; y++ {
-		for x := 0; x < size; x++ {
-			i := (y*size + x) * 4
-			alpha := dstPixels[i+3]
-			if alpha == 0 {
-				byteIndex := y*maskRowSize + x/8
-				bit := uint(7 - (x % 8))
-				maskBytes[byteIndex] |= 1 << bit
-			}
-		}
-	}
-
-	var dib bytes.Buffer
-	if err := binary.Write(&dib, binary.LittleEndian, uint32(40)); err != nil { 
-		return nil, err
-	}
-	if err := binary.Write(&dib, binary.LittleEndian, int32(size)); err != nil {
-		return nil, err
-	}
-	if err := binary.Write(&dib, binary.LittleEndian, int32(size*2)); err != nil { 
-		return nil, err
-	}
-	if err := binary.Write(&dib, binary.LittleEndian, uint16(1)); err != nil { 
-		return nil, err
-	}
-	if err := binary.Write(&dib, binary.LittleEndian, uint16(32)); err != nil { 
-		return nil, err
-	}
-	if err := binary.Write(&dib, binary.LittleEndian, uint32(0)); err != nil { 
-		return nil, err
-	}
-	if err := binary.Write(&dib, binary.LittleEndian, uint32(len(dstPixels)+len(maskBytes))); err != nil {
-		return nil, err
-	}
-	for i := 0; i < 4; i++ { 
-		if err := binary.Write(&dib, binary.LittleEndian, int32(0)); err != nil {
-			return nil, err
-		}
-	}
-	if _, err := dib.Write(dstPixels); err != nil {
-		return nil, err
-	}
-	if _, err := dib.Write(maskBytes); err != nil {
-		return nil, err
-	}
-
-	var icon bytes.Buffer
-	if err := binary.Write(&icon, binary.LittleEndian, uint16(0)); err != nil {
-		return nil, err
-	}
-	if err := binary.Write(&icon, binary.LittleEndian, uint16(1)); err != nil {
-		return nil, err
-	}
-	if err := binary.Write(&icon, binary.LittleEndian, uint16(1)); err != nil {
-		return nil, err
-	}
-	w := byte(size)
-	if size == 256 {
-		w = 0
-	}
-	if err := icon.WriteByte(w); err != nil {
-		return nil, err
-	}
-	if err := icon.WriteByte(w); err != nil {
-		return nil, err
-	}
-	if err := icon.WriteByte(0); err != nil {
-		return nil, err
-	}
-	if err := icon.WriteByte(0); err != nil {
-		return nil, err
-	}
-	if err := binary.Write(&icon, binary.LittleEndian, uint16(1)); err != nil {
-		return nil, err
-	}
-	if err := binary.Write(&icon, binary.LittleEndian, uint16(32)); err != nil {
-		return nil, err
-	}
-	if err := binary.Write(&icon, binary.LittleEndian, uint32(dib.Len())); err != nil {
-		return nil, err
-	}
-	if err := binary.Write(&icon, binary.LittleEndian, uint32(6+16)); err != nil {
-		return nil, err
-	}
-	if _, err := icon.Write(dib.Bytes()); err != nil {
-		return nil, err
-	}
-	return icon.Bytes(), nil
+	// 'A' (0x41) → regional indicator 'A' (0x1F1E6). Offset = 0x1F1A5.
+	const offset = rune(0x1F1E6 - 'A')
+	return string([]rune{rune(c[0]) + offset, rune(c[1]) + offset})
 }
