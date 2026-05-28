@@ -1,5 +1,5 @@
 {
-  "version": "3.2.1",
+  "version": "3.2.2",
   "releaseTitle": {
     "ru": "Hotfixes 3.2.2",
     "en": "Hotfixes 3.2.2"
@@ -12,28 +12,28 @@
   "platforms": {
     "windows-amd64-portable": {
       "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.2/ResultV.exe",
-      "sha256": "e22373fbe065d758904c8649c5e34ca1df368d8d14ef425950271b0c1c039fd3",
+      "sha256": "d9162ff2b6be189ae5f41de7ad97569123cd00a8e5d11e46b56c54c9d62f409b",
       "size": 53486080
     },
     "windows-amd64-installer": {
       "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.2/ResultV-amd64-installer.exe",
-      "sha256": "f05661c193d7858f275e64450170c29242d16254bccf52169a85979f72828fc6",
+      "sha256": "bc7732c40cfb5e5917dd5d86f9a066bda15391ce646fe34de1ce38287a90ea8b",
       "size": 26189811
     },
     "darwin-universal": {
       "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.2/ResultV.dmg",
-      "sha256": "e4025879f23679eeb855e3623c168f27abdaba385cedd6f33c8b66fa508281c7",
-      "size": 59426739
+      "sha256": "63cf21627634feee80e1cc8c92ddb7f5cb563b6b7933745cbd7a31d8de7d5092",
+      "size": 59354170
     },
     "linux-amd64-appimage": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.2/ResultV-3.2.1-x86_64.AppImage",
-      "sha256": "547f6b896064c5e8ff4d3a6b8c42a19d744e5a436ae3d56cfad65c9c70a32cc7",
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.2/ResultV-3.2.2-x86_64.AppImage",
+      "sha256": "895a92ce118ed1ffb8732a2371d5bbd4f2a3448776a7608860ec7c22b80e17af",
       "size": 92912120
     },
     "linux-amd64-deb": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.2/resultv_3.2.1_amd64.deb",
-      "sha256": "0f0735f49919a15b531ba8944e121412221f69a1952fb7891ee2fc33423e7855",
-      "size": 25185184
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.2/resultv_3.2.2_amd64.deb",
+      "sha256": "3ecaea5144e1a077ea93e810d2e7728c6423014ae82aec051fb0739ea803ec55",
+      "size": 25185196
     }
   }
 }
