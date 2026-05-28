@@ -19,7 +19,6 @@ package updater
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 )
 
@@ -29,7 +28,7 @@ func currentPlatformKey() string {
 }
 
 // installUpdate mounts the DMG, copies the app bundle, then relaunches from
-// /Applications. Calls os.Exit on success.
+// /Applications. Returns so the caller can gracefully quit via Wails.
 func installUpdate(dmgPath string) error {
 	const mountPoint = "/tmp/resultv-update"
 
@@ -55,6 +54,5 @@ func installUpdate(dmgPath string) error {
 		return fmt.Errorf("launch new version: %w", err)
 	}
 
-	os.Exit(0)
-	return nil // unreachable
+	return nil
 }

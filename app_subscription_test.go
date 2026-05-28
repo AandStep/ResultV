@@ -1,11 +1,14 @@
 package main
 
 import (
+	"errors"
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"resultproxy-wails/internal/config"
 )
 
 // HTTPS subscription must include the HWID header — that's the device-limit
@@ -145,6 +148,68 @@ func TestFetchSubscriptionInsecureSuppressesHWID(t *testing.T) {
 	}
 }
 
+func TestFetchSubscriptionSendsConfiguredUserAgentAndDeviceHeaders(t *testing.T) {
+	app := NewApp()
+	mgr := config.NewManager(config.NewCryptoServiceWithID("subscription-metadata-test"))
+	if err := mgr.Init(t.TempDir()); err != nil {
+		t.Fatalf("config init: %v", err)
+	}
+	cfg := config.DefaultConfig()
+	cfg.Settings.SubscriptionUserAgent = "ResultV/Test-UA"
+	if err := mgr.SaveConfig(cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	app.config = mgr
+
+	var seenUA, seenDeviceOS, seenVerOS, seenModel string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" && seenUA == "" {
+			seenUA = strings.TrimSpace(r.Header.Get("User-Agent"))
+			seenDeviceOS = strings.TrimSpace(r.Header.Get("x-device-os"))
+			seenVerOS = strings.TrimSpace(r.Header.Get("x-ver-os"))
+			seenModel = strings.TrimSpace(r.Header.Get("x-device-model"))
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte("vless://af815621-b245-4149-89da-dd184cfc4b3d@example.com:443?type=tcp&security=none#Node"))
+	}))
+	defer ts.Close()
+
+	if _, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL, true); err != nil {
+		t.Fatalf("fetch subscription: %v", err)
+	}
+	if seenUA != "ResultV/Test-UA" {
+		t.Fatalf("User-Agent: want configured value, got %q", seenUA)
+	}
+	if seenDeviceOS == "" {
+		t.Fatal("x-device-os header must be sent")
+	}
+	if seenVerOS == "" {
+		t.Fatal("x-ver-os header must be sent")
+	}
+	if seenModel == "" {
+		t.Fatal("x-device-model header must be sent")
+	}
+}
+
+func TestSubscriptionRequestMetadataRespectsSendHWIDSetting(t *testing.T) {
+	app := NewApp()
+	mgr := config.NewManager(config.NewCryptoServiceWithID("subscription-hwid-setting-test"))
+	if err := mgr.Init(t.TempDir()); err != nil {
+		t.Fatalf("config init: %v", err)
+	}
+	cfg := config.DefaultConfig()
+	off := false
+	cfg.Settings.SubscriptionSendHWID = &off
+	if err := mgr.SaveConfig(cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	app.config = mgr
+
+	if app.subscriptionRequestMetadata().SendHWID {
+		t.Fatal("subscriptionSendHWID=false must suppress HWID metadata")
+	}
+}
+
 func TestFetchSubscriptionFromURLEmptyBodyReturnsHWIDDiagnostic(t *testing.T) {
 	oldProvider := stableHWIDProvider
 	stableHWIDProvider = func(_ string) (string, error) {
@@ -205,6 +270,34 @@ func TestFetchSubscriptionFromURLProfileTitleOverridesProvider(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Provider != title {
 		t.Fatalf("provider: want %q got %q", title, entries[0].Provider)
+	}
+}
+
+func TestParseSubscriptionTextAcceptsResultvDeepLink(t *testing.T) {
+	app := NewApp()
+	entries, err := app.ParseSubscriptionText("resultv://plain/vless://af815621-b245-4149-89da-dd184cfc4b3d@example.com:443?type=tcp&security=none#Node")
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0].Type != "VLESS" {
+		t.Fatalf("expected VLESS entry, got %q", entries[0].Type)
+	}
+}
+
+func TestParseSubscriptionTextResultvPlainSubscriptionURLUsesFetchPath(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte("vless://af815621-b245-4149-89da-dd184cfc4b3d@example.com:443?type=tcp&security=none#Node"))
+	}))
+	defer ts.Close()
+
+	app := NewApp()
+	_, err := app.ParseSubscriptionText("resultv://plain/" + ts.URL)
+	if !errors.Is(err, ErrInsecureSubscription) {
+		t.Fatalf("expected insecure subscription error from fetch path, got: %v", err)
 	}
 }
 

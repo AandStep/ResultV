@@ -33,6 +33,7 @@ import (
 var assets embed.FS
 
 func main() {
+	startPprofIfEnabled()
 	if runtime.GOOS == "windows" {
 		system.SetProcessAppUserModelID()
 	}
@@ -55,11 +56,14 @@ func main() {
 	defer cleanupMessenger()
 
 	opts := &options.App{
-		Title:     " ",
+		Title:     "ResultV",
 		Width:     1080,
 		Height:    720,
 		MinWidth:  800,
 		MinHeight: 600,
+		// Frameless on Windows only: enables our React-rendered title bar.
+		// macOS keeps native chrome (traffic lights) — frontend hides custom bar.
+		Frameless: runtime.GOOS == "windows",
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
@@ -70,7 +74,6 @@ func main() {
 		Windows: &windows.Options{
 			WebviewIsTransparent:              false,
 			WindowIsTranslucent:               false,
-			DisableWindowIcon:                 true,
 			DisableFramelessWindowDecorations: false,
 			WebviewUserDataPath:               system.WebviewUserDataPath(),
 			WindowClassName:                   system.WailsWindowClassResultV,
@@ -80,7 +83,7 @@ func main() {
 				DarkModeTitleBarInactive: windows.RGB(24, 24, 27),
 				DarkModeBorder:           windows.RGB(24, 24, 27),
 				DarkModeBorderInactive:   windows.RGB(24, 24, 27),
-				
+
 				DarkModeTitleText:         windows.RGB(24, 24, 27),
 				DarkModeTitleTextInactive: windows.RGB(24, 24, 27),
 			},

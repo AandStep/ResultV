@@ -19,6 +19,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -1695,17 +1696,43 @@ func AllSameBaseName(entries []config.ProxyEntry) bool {
 	return ok
 }
 
-// FilterInvalidSubscriptionEntries removes sentinel/routing-only entries
-// with no real host (IP == "0.0.0.0").
-func FilterInvalidSubscriptionEntries(entries []config.ProxyEntry) []config.ProxyEntry {
-	out := make([]config.ProxyEntry, 0, len(entries))
-	for _, e := range entries {
-		if e.IP == "0.0.0.0" {
+// isSubscriptionPlaceholderHost reports addresses used by providers as
+// non-routable placeholders for section headers (not real upstreams).
+func isSubscriptionPlaceholderHost(ip string) bool {
+	ip = strings.TrimSpace(ip)
+	if ip == "" {
+		return false
+	}
+	ip = strings.TrimPrefix(strings.TrimSuffix(ip, "]"), "[")
+	parsed := net.ParseIP(ip)
+	return parsed != nil && parsed.IsUnspecified()
+}
+
+// FinalizeSubscriptionEntries turns placeholder-host rows into SECTION labels
+// so they stay in list order but are never used as real outbounds. Other
+// entries are returned unchanged.
+func FinalizeSubscriptionEntries(entries []config.ProxyEntry) []config.ProxyEntry {
+	out := make([]config.ProxyEntry, len(entries))
+	for i, e := range entries {
+		if strings.EqualFold(strings.TrimSpace(e.Type), "SECTION") ||
+			isSubscriptionPlaceholderHost(e.IP) {
+			out[i] = normalizeSectionEntry(e)
 			continue
 		}
-		out = append(out, e)
+		out[i] = e
 	}
 	return out
+}
+
+func normalizeSectionEntry(e config.ProxyEntry) config.ProxyEntry {
+	e.Type = "SECTION"
+	e.IP = ""
+	e.Port = 0
+	e.Username = ""
+	e.Password = ""
+	e.Extra = nil
+	e.URI = ""
+	return e
 }
 
 // SplitAutoEntries separates entries whose base name (after stripping a

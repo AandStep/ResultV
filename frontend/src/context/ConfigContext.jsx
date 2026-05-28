@@ -29,6 +29,7 @@ export const ConfigProvider = ({ children }) => {
     const [activeTab, setActiveTab] = useState("home");
     const [editingProxy, setEditingProxy] = useState(null);
     const [pendingDeepLink, setPendingDeepLink] = useState("");
+    const [pendingDeepLinkSource, setPendingDeepLinkSource] = useState("");
 
     useEffect(() => {
         const applyConfig = (cfg) => {
@@ -50,6 +51,9 @@ export const ConfigProvider = ({ children }) => {
             const text = String(payload?.payload || "").trim();
             if (!text) return;
             setPendingDeepLink(text);
+            setPendingDeepLinkSource(
+                typeof payload?.source === "string" ? payload.source : "",
+            );
         });
         EventsOn("deeplink:error", (msg) => {
             const text = typeof msg === "string" ? msg : JSON.stringify(msg);
@@ -74,6 +78,8 @@ export const ConfigProvider = ({ children }) => {
         setEditingProxy,
         pendingDeepLink,
         setPendingDeepLink,
+        pendingDeepLinkSource,
+        setPendingDeepLinkSource,
     };
 
     return (

@@ -15,7 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import {
   Power,
   Plus,
@@ -23,8 +23,10 @@ import {
   Pencil,
   ChevronDown,
   Activity,
+  ListTree,
   Zap,
   Star,
+  ArrowUpDown,
 } from "lucide-react";
 import { FlagIcon } from "../components/ui/FlagIcon";
 import { SpeedChart } from "../components/ui/SpeedChart";
@@ -37,10 +39,29 @@ import {
   isVpnType,
   formatProxyDisplayName,
 } from "../utils/proxyParser";
+import { parseExtra, sortProxiesByOption } from "../utils/pingSort";
+
+function isConnectableDisplayProxy(p) {
+  if (!p) return false;
+  if (p.type?.toUpperCase() === "SECTION") return false;
+  const hasName = String(p.name || "").trim() !== "";
+  const hasAddr = String(p.ip || "").trim() !== "" && Number(p.port) > 0;
+  if (p.type?.toUpperCase() === "AUTO") return hasName;
+  return hasName || hasAddr;
+}
 
 export const HomeView = () => {
   const { t } = useTranslation();
-  const { proxies, setEditingProxy, setActiveTab, settings, updateSetting, toggleFavorite, showAlertDialog, isApplyingMode } = useConfigContext();
+  const {
+    proxies,
+    setEditingProxy,
+    setActiveTab,
+    settings,
+    updateSetting,
+    toggleFavorite,
+    showAlertDialog,
+    isApplyingMode,
+  } = useConfigContext();
   const {
     isConnected,
     isConnecting,
@@ -55,20 +76,68 @@ export const HomeView = () => {
     stats,
     speedHistory,
     pings,
+    refreshPings,
+    isPinging,
+    isManualPinging,
+    isPingPending,
     selectAndConnect,
   } = useConnectionContext();
 
   const isError = !!failedProxy;
   const [isProxyListOpen, setIsProxyListOpen] = useState(false);
+  const [homeSortBy, setHomeSortBy] = useState("default");
+  const [isHomeSortOpen, setIsHomeSortOpen] = useState(false);
+  const homeSortRef = useRef(null);
   const hasProxies = proxies.length > 0;
-  const displayProxy =
-    failedProxy ||
-    activeProxy ||
-    proxies.find((p) => String(p.id) === String(settings?.lastSelectedProxyId)) ||
-    proxies[0];
 
   useEffect(() => {
-    const isEndpointProtocol = displayProxy && ["WIREGUARD", "AMNEZIAWG"].includes(String(displayProxy.type).toUpperCase());
+    function handleClickOutside(event) {
+      if (homeSortRef.current && !homeSortRef.current.contains(event.target)) {
+        setIsHomeSortOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    if (!isProxyListOpen) setIsHomeSortOpen(false);
+  }, [isProxyListOpen]);
+
+  const displayProxy = useMemo(() => {
+    const chain = [
+      failedProxy,
+      activeProxy,
+      proxies.find(
+        (p) => String(p.id) === String(settings?.lastSelectedProxyId),
+      ),
+      proxies[0],
+    ];
+    for (const p of chain) {
+      if (isConnectableDisplayProxy(p)) return p;
+    }
+    return proxies.find((p) => isConnectableDisplayProxy(p)) || undefined;
+  }, [failedProxy, activeProxy, proxies, settings?.lastSelectedProxyId]);
+
+  const displayProxyTitle = useMemo(() => {
+    if (!displayProxy) return "";
+    const formatted = formatProxyDisplayName(
+      displayProxy.name,
+      displayProxy.country,
+    );
+    if (formatted && String(formatted).trim()) return formatted;
+    if (String(displayProxy.name || "").trim()) return displayProxy.name;
+    if (String(displayProxy.ip || "").trim() && Number(displayProxy.port) > 0) {
+      return `${displayProxy.ip}:${displayProxy.port}`;
+    }
+    return "";
+  }, [displayProxy]);
+  useEffect(() => {
+    const isEndpointProtocol =
+      displayProxy &&
+      ["WIREGUARD", "AMNEZIAWG"].includes(
+        String(displayProxy.type).toUpperCase(),
+      );
     if (isEndpointProtocol && settings?.mode !== "tunnel") {
       updateSetting("mode", "tunnel");
     }
@@ -91,9 +160,11 @@ export const HomeView = () => {
       if (p.type?.toUpperCase() === "AUTO") {
         let extra = {};
         if (typeof p.extra === "string") {
-            try { extra = JSON.parse(p.extra); } catch {}
+          try {
+            extra = JSON.parse(p.extra);
+          } catch {}
         } else if (p.extra) {
-            extra = p.extra;
+          extra = p.extra;
         }
         (extra?.members || []).forEach((id) => ids.add(String(id)));
       }
@@ -102,7 +173,7 @@ export const HomeView = () => {
   }, [proxies]);
 
   const filteredProxies = useMemo(() => {
-      return proxies.filter(p => !autoMemberIds.has(String(p.id)));
+    return proxies.filter((p) => !autoMemberIds.has(String(p.id)));
   }, [proxies, autoMemberIds]);
 
   const favoriteIds = useMemo(
@@ -120,36 +191,52 @@ export const HomeView = () => {
     [filteredProxies, favoriteIds],
   );
 
-  const groupedByProvider = useMemo(() => {
-    const groups = {};
-    nonFavoriteProxies.forEach((proxy) => {
-      const providerKey = proxy.provider || t("proxyList.myProxies") || "Мои прокси";
-      if (!groups[providerKey]) groups[providerKey] = {};
-      const countryCode = proxy.type?.toUpperCase() === "AUTO" ? "Auto" : (proxy.country || "Unknown");
-      if (!groups[providerKey][countryCode]) groups[providerKey][countryCode] = [];
-      groups[providerKey][countryCode].push(proxy);
-    });
-
+  const providerFlatGroups = useMemo(() => {
+    const order = [];
+    const map = new Map();
+    for (const proxy of nonFavoriteProxies) {
+      const key = proxy.provider || t("proxyList.myProxies") || "Мои прокси";
+      if (!map.has(key)) {
+        map.set(key, []);
+        order.push(key);
+      }
+      map.get(key).push(proxy);
+    }
     const myKey = t("proxyList.myProxies") || "Мои прокси";
-    return Object.entries(groups)
-      .sort(([a], [b]) => {
-        if (a === myKey) return 1;
-        if (b === myKey) return -1;
-        return a.localeCompare(b);
-      })
-      .map(([provider, countries]) => ({
-        provider,
-        countries: Object.entries(countries).sort(([a], [b]) => {
-          if (a === "Auto") return -1;
-          if (b === "Auto") return 1;
-          return a.localeCompare(b);
-        }),
-      }));
+    const sortedKeys = [...order].sort((a, b) => {
+      if (a === myKey) return 1;
+      if (b === myKey) return -1;
+      return a.localeCompare(b);
+    });
+    return sortedKeys.map((provider) => ({
+      provider,
+      proxies: map.get(provider) || [],
+    }));
   }, [nonFavoriteProxies, t]);
 
   const hasProviders = proxies.some((p) => p.provider);
-  
-  const statsFillRemainingHeight = isConnected && !(hasProxies && isProxyListOpen);
+
+  const sortedFavoriteProxies = useMemo(
+    () => sortProxiesByOption(favoriteProxies, homeSortBy, pings),
+    [favoriteProxies, homeSortBy, pings],
+  );
+
+  const sortedProviderFlatGroups = useMemo(
+    () =>
+      providerFlatGroups.map((g) => ({
+        ...g,
+        proxies: sortProxiesByOption(g.proxies, homeSortBy, pings),
+      })),
+    [providerFlatGroups, homeSortBy, pings],
+  );
+
+  const sortedNonFavoriteProxies = useMemo(
+    () => sortProxiesByOption(nonFavoriteProxies, homeSortBy, pings),
+    [nonFavoriteProxies, homeSortBy, pings],
+  );
+
+  const statsFillRemainingHeight =
+    isConnected && !(hasProxies && isProxyListOpen);
 
   return (
     <div className="flex min-h-full w-full flex-col items-center gap-5 animate-in fade-in zoom-in-95 duration-300">
@@ -161,7 +248,9 @@ export const HomeView = () => {
               : isConnecting
                 ? "text-amber-400"
                 : isConnected
-                  ? (isProxyDead ? "text-rose-500" : "text-[#007E3A]")
+                  ? isProxyDead
+                    ? "text-rose-500"
+                    : "text-[#007E3A]"
                   : isError
                     ? "text-rose-500"
                     : "text-zinc-400"
@@ -197,7 +286,9 @@ export const HomeView = () => {
           className={`absolute inset-0 rounded-full blur-2xl transition-all duration-700 ${isConnected ? (isProxyDead ? "bg-rose-500/40 animate-pulse" : "bg-[#007E3A]/40") : isError ? "bg-rose-500/20 animate-pulse" : hasProxies ? "bg-zinc-800/10 group-hover:bg-zinc-800/20" : ""}`}
         ></div>
         <button
-          disabled={isDisconnecting || (!hasProxies && !isConnected && !isConnecting)}
+          disabled={
+            isDisconnecting || (!hasProxies && !isConnected && !isConnecting)
+          }
           onClick={
             isDisconnecting
               ? undefined
@@ -240,11 +331,16 @@ export const HomeView = () => {
         <button
           disabled={isApplyingMode}
           onClick={() => {
-            const isEndpointProtocol = displayProxy && ["WIREGUARD", "AMNEZIAWG"].includes(String(displayProxy.type).toUpperCase());
+            const isEndpointProtocol =
+              displayProxy &&
+              ["WIREGUARD", "AMNEZIAWG"].includes(
+                String(displayProxy.type).toUpperCase(),
+              );
             if (isEndpointProtocol) {
               showAlertDialog({
                 title: t("common.notice") || "Внимание",
-                message: "Протоколы WireGuard и AmneziaWG не поддерживают Proxy-режим. Доступен только Туннель.",
+                message:
+                  "Протоколы WireGuard и AmneziaWG не поддерживают Proxy-режим. Доступен только Туннель.",
                 variant: "warning",
               });
             } else {
@@ -254,7 +350,10 @@ export const HomeView = () => {
           className={`px-6 py-2 rounded-full text-sm font-bold transition-all border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${
             isApplyingMode ? "opacity-60 cursor-wait " : ""
           }${
-            displayProxy && ["WIREGUARD", "AMNEZIAWG"].includes(String(displayProxy.type).toUpperCase())
+            displayProxy &&
+            ["WIREGUARD", "AMNEZIAWG"].includes(
+              String(displayProxy.type).toUpperCase(),
+            )
               ? "text-zinc-600 cursor-not-allowed"
               : settings.mode === "proxy"
                 ? "bg-[#007E3A] text-white"
@@ -304,7 +403,7 @@ export const HomeView = () => {
         </div>
       ) : (
         <div
-          className={`w-full bg-zinc-900 rounded-3xl border flex flex-col transition-all outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${isProxyListOpen ? "overflow-visible" : "overflow-hidden"} ${(isProxyDead && isConnected) || isError ? "border-rose-500/30" : isProxyListOpen ? "border-zinc-700" : "border-zinc-800 hover:border-[#007E3A] hover:bg-zinc-800/50"}`}
+          className={`w-full bg-zinc-900 rounded-3xl border flex flex-col transition-all outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${isProxyListOpen || isHomeSortOpen ? "overflow-visible" : "overflow-hidden"} ${(isProxyDead && isConnected) || isError ? "border-rose-500/30" : isProxyListOpen ? "border-zinc-700" : "border-zinc-800 hover:border-[#007E3A] hover:bg-zinc-800/50"}`}
         >
           <div
             onClick={() => setIsProxyListOpen(!isProxyListOpen)}
@@ -317,6 +416,8 @@ export const HomeView = () => {
                 {displayProxy ? (
                   displayProxy.type?.toUpperCase() === "AUTO" ? (
                     <Zap className="w-[1.65rem] h-[1.65rem] text-[#00A819]" />
+                  ) : displayProxy.type?.toUpperCase() === "SECTION" ? (
+                    <ListTree className="w-[1.65rem] h-[1.65rem] text-violet-300/90" />
                   ) : (
                     <FlagIcon
                       code={displayProxy.country}
@@ -332,13 +433,15 @@ export const HomeView = () => {
                   {t("home.currentServer")}
                 </p>
                 <p className="text-base font-bold text-white truncate leading-tight">
-                  {displayProxy
-                    ? formatProxyDisplayName(displayProxy.name, displayProxy.country)
-                    : t("home.emptyServer")}
+                  {displayProxyTitle || t("home.emptyServer")}
                 </p>
                 {displayProxy && !displayProxy.subscriptionUrl && (
                   <p className="text-xs text-zinc-500 font-mono mt-1 truncate leading-tight">
-                    {displayProxy.ip}:{displayProxy.port} ({isVpnType(displayProxy.type) ? getProtocolLabel(displayProxy) : displayProxy.type})
+                    {displayProxy.ip}:{displayProxy.port} (
+                    {isVpnType(displayProxy.type)
+                      ? getProtocolLabel(displayProxy)
+                      : displayProxy.type}
+                    )
                   </p>
                 )}
               </div>
@@ -355,6 +458,66 @@ export const HomeView = () => {
                 >
                   <Pencil className="w-[1.05rem] h-[1.05rem]" />
                 </button>
+              )}
+              {isProxyListOpen && (
+                <>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      refreshPings();
+                    }}
+                    disabled={isPinging}
+                    title={t("home.pingTooltip")}
+                    aria-label={t("home.pingTooltip")}
+                    className={`p-2 rounded-xl bg-transparent transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none disabled:opacity-50 ${(isProxyDead && isConnected) || isError ? "text-rose-500/50 hover:text-rose-500 hover:bg-rose-500/10" : "text-zinc-600 hover:text-[#007E3A]"}`}
+                  >
+                    <Activity
+                      className={`w-[1.05rem] h-[1.05rem] ${isManualPinging ? "animate-pulse" : ""}`}
+                    />
+                  </button>
+                  <div className="relative" ref={homeSortRef}>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsHomeSortOpen((o) => !o);
+                      }}
+                      title={t("home.sortMenuTooltip")}
+                      aria-label={t("home.sortMenuTooltip")}
+                      aria-expanded={isHomeSortOpen}
+                      className={`p-2 rounded-xl bg-transparent transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${(isProxyDead && isConnected) || isError ? "text-rose-500/50 hover:text-rose-500 hover:bg-rose-500/10" : "text-zinc-600 hover:text-[#007E3A]"}`}
+                    >
+                      <ArrowUpDown className="w-[1.05rem] h-[1.05rem]" />
+                    </button>
+                    {isHomeSortOpen && (
+                      <div className="absolute right-0 top-full z-20 mt-1 min-w-[10.5rem] overflow-hidden rounded-xl border border-zinc-700/50 bg-zinc-900 shadow-xl animate-in slide-in-from-top-2 duration-200">
+                        {[
+                          "default",
+                          "newest",
+                          "oldest",
+                          "country",
+                          "type",
+                          ...(hasProviders ? ["provider"] : []),
+                          "ping",
+                        ].map((option) => (
+                          <button
+                            key={option}
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setHomeSortBy(option);
+                              setIsHomeSortOpen(false);
+                            }}
+                            className={`w-full border-transparent px-3 py-2.5 text-left text-sm outline-none transition-colors focus:outline-none focus:ring-0 focus-visible:outline-none ${homeSortBy === option ? "bg-[#00A819]/10 text-[#00A819]" : "text-zinc-300 hover:bg-zinc-800 hover:text-white"}`}
+                          >
+                            {t(`proxyList.sort.${option}`)}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
               )}
               <div
                 className={`p-2 rounded-xl transition-colors text-zinc-500 group-hover:text-zinc-300`}
@@ -376,69 +539,32 @@ export const HomeView = () => {
                       {t("home.favorites")}
                     </span>
                   </div>
-                  {favoriteProxies.map((proxy) => renderDropdownItem(proxy))}
+                  {sortedFavoriteProxies.map((proxy) =>
+                    renderDropdownItem(proxy),
+                  )}
                 </div>
               )}
               {hasProviders ? (
-                groupedByProvider.map(({ provider, countries }) => (
-                  <div key={provider} className="space-y-1 mb-2 last:mb-0">
-                    <div className="px-3 py-1">
-                      <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">
-                        {provider}
-                      </span>
-                    </div>
-                    {countries.map(([country, countryProxies]) => (
-                      <div key={`${provider}-${country}`} className="space-y-1">
-                        <div className="flex items-center px-3 py-0.5 space-x-2">
-                          {country === "Auto" ? (
-                            <Zap className="w-4 h-4 text-[#00A819]" />
-                          ) : (
-                            <FlagIcon
-                              code={country}
-                              className="w-4 h-auto rounded-[2px] opacity-70"
-                            />
-                          )}
-                          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
-                            {country}
-                          </span>
-                        </div>
-                        {countryProxies.map((proxy) => renderDropdownItem(proxy))}
-                      </div>
-                    ))}
-                  </div>
-                ))
-              ) : (
-                Object.entries(
-                  nonFavoriteProxies.reduce((acc, proxy) => {
-                    const countryCode = proxy.type?.toUpperCase() === "AUTO" ? "Auto" : (proxy.country || "Unknown");
-                    if (!acc[countryCode]) acc[countryCode] = [];
-                    acc[countryCode].push(proxy);
-                    return acc;
-                  }, {}),
-                )
-                  .sort(([countryA], [countryB]) => {
-                    if (countryA === "Auto") return -1;
-                    if (countryB === "Auto") return 1;
-                    return countryA.localeCompare(countryB);
-                  })
-                  .map(([country, countryProxies]) => (
-                    <div key={country} className="space-y-1 mb-2 last:mb-0">
-                      <div className="flex items-center px-3 py-1 space-x-2">
-                        {country === "Auto" ? (
-                          <Zap className="w-5 h-5 text-[#00A819]" />
-                        ) : (
-                          <FlagIcon
-                            code={country}
-                            className="w-5 h-auto rounded-[2px] opacity-70"
-                          />
-                        )}
-                        <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">
-                          {country}
+                sortedProviderFlatGroups.map(
+                  ({ provider, proxies: providerProxies }) => (
+                    <div key={provider} className="space-y-1 mb-2 last:mb-0">
+                      <div className="px-3 py-1">
+                        <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">
+                          {provider}
                         </span>
                       </div>
-                      {countryProxies.map((proxy) => renderDropdownItem(proxy))}
+                      {providerProxies.map((proxy) =>
+                        renderDropdownItem(proxy),
+                      )}
                     </div>
-                  ))
+                  ),
+                )
+              ) : (
+                <div className="space-y-1 mb-2">
+                  {sortedNonFavoriteProxies.map((proxy) =>
+                    renderDropdownItem(proxy),
+                  )}
+                </div>
               )}
               <button
                 onClick={(e) => {
@@ -584,6 +710,31 @@ export const HomeView = () => {
   function renderDropdownItem(proxy) {
     const isActive = activeProxy?.id === proxy.id;
     const isFav = favoriteIds.has(String(proxy.id));
+    const isSectionRow = proxy.type?.toUpperCase() === "SECTION";
+    const isAutoRow = proxy.type?.toUpperCase() === "AUTO";
+    const autoBestPing = isAutoRow
+      ? (() => {
+          const extra = parseExtra(proxy.extra);
+          const memberIds = (extra?.members || []).map(String);
+          const arr = memberIds
+            .map((id) => pings[id])
+            .filter((p) => p && /^\d+/.test(String(p)));
+          return arr.length
+            ? arr.sort((a, b) => parseInt(a, 10) - parseInt(b, 10))[0]
+            : null;
+        })()
+      : null;
+    const pingPending = isPingPending(proxy);
+    const pingLabel = pingPending
+      ? t("proxyList.pinging")
+      : isAutoRow
+        ? (autoBestPing ?? t("proxyList.pinging"))
+        : pings[proxy.id] || t("proxyList.pinging");
+    const pingIsError =
+      !pingPending &&
+      !isAutoRow &&
+      !isSectionRow &&
+      ["Timeout", "Error", "Unavailable", "Refused"].includes(pings[proxy.id]);
     return (
       <div
         key={proxy.id}
@@ -595,9 +746,13 @@ export const HomeView = () => {
         className={`flex items-center justify-between p-3 rounded-[12px] cursor-pointer transition-colors outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${isActive ? "bg-[#007E3A]/10 border border-[#007E3A]/20" : "bg-zinc-900/50 border border-transparent hover:border-[#00A819]/50 hover:bg-zinc-800/80"}`}
       >
         <div className="flex items-center space-x-4 min-w-0">
-          <div className="shrink-0 flex items-center justify-center w-10 h-10 bg-zinc-800/50 rounded-lg border border-zinc-700/50">
+          <div
+            className={`shrink-0 flex items-center justify-center w-10 h-10 rounded-lg border ${isSectionRow ? "bg-violet-950/40 border-violet-800/50" : "bg-zinc-800/50 border-zinc-700/50"}`}
+          >
             {proxy.type?.toUpperCase() === "AUTO" ? (
               <Zap className="w-5 h-5 text-[#00A819]" />
+            ) : isSectionRow ? (
+              <ListTree className="w-5 h-5 text-violet-300/90" />
             ) : (
               <FlagIcon
                 code={proxy.country}
@@ -611,41 +766,60 @@ export const HomeView = () => {
             >
               {formatProxyDisplayName(proxy.name, proxy.country)}
             </h4>
-            <p className="text-xs text-zinc-500 font-mono mt-0.5 truncate">
-              {proxy.subscriptionUrl ? (
-                <span className="text-[#007E3A]">
-                  {isVpnType(proxy.type) ? getProtocolLabel(proxy) : proxy.type}
-                </span>
-              ) : (
-                <>
-                  {proxy.ip}:{proxy.port}
-                  {isVpnType(proxy.type) && (
-                    <span className="ml-1 text-[#007E3A]">
-                      {" "}({getProtocolLabel(proxy)})
-                    </span>
-                  )}
-                </>
-              )}
-            </p>
+            {isSectionRow ? (
+              <p className="text-xs text-zinc-400 mt-0.5 leading-snug">
+                {t("proxyList.sectionSubtitle")}
+              </p>
+            ) : (
+              <p className="text-xs text-zinc-500 font-mono mt-0.5 truncate">
+                {proxy.subscriptionUrl ? (
+                  <span className="text-[#007E3A]">
+                    {isVpnType(proxy.type)
+                      ? getProtocolLabel(proxy)
+                      : proxy.type}
+                  </span>
+                ) : (
+                  <>
+                    {proxy.ip}:{proxy.port}
+                    {isVpnType(proxy.type) && (
+                      <span className="ml-1 text-[#007E3A]">
+                        {" "}
+                        ({getProtocolLabel(proxy)})
+                      </span>
+                    )}
+                  </>
+                )}
+              </p>
+            )}
           </div>
         </div>
         <div className="flex items-center space-x-3 shrink-0 ml-3">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              toggleFavorite(proxy.id);
-            }}
-            title={isFav ? t("home.unfavorite") : t("home.favorite")}
-            aria-label={isFav ? t("home.unfavorite") : t("home.favorite")}
-            className={`p-1 rounded-md transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${isFav ? "text-amber-400 hover:text-amber-300" : "text-zinc-600 hover:text-amber-400"}`}
-          >
-            <Star className={`w-4 h-4 ${isFav ? "fill-amber-400" : ""}`} />
-          </button>
+          {!isSectionRow && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleFavorite(proxy.id);
+              }}
+              title={isFav ? t("home.unfavorite") : t("home.favorite")}
+              aria-label={isFav ? t("home.unfavorite") : t("home.favorite")}
+              className={`p-1 rounded-md transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${isFav ? "text-amber-400 hover:text-amber-300" : "text-zinc-600 hover:text-amber-400"}`}
+            >
+              <Star className={`w-4 h-4 ${isFav ? "fill-amber-400" : ""}`} />
+            </button>
+          )}
           <div
-            className={`text-xs flex items-center ${pings[proxy.id] === "Timeout" || pings[proxy.id] === "Error" || pings[proxy.id] === "Unavailable" ? "text-rose-500" : "text-zinc-500"}`}
+            className={`text-xs flex items-center ${pingIsError ? "text-rose-500" : "text-zinc-500"}`}
           >
-            <Activity className="w-3 h-3 mr-1" />{" "}
-            {pings[proxy.id] || "..."}
+            {isSectionRow ? (
+              <ListTree
+                className="w-3 h-3 shrink-0 text-violet-400/80"
+                aria-hidden
+              />
+            ) : (
+              <>
+                <Activity className="w-3 h-3 mr-1" /> {pingLabel}
+              </>
+            )}
           </div>
           {isActive ? (
             <div className="w-2 h-2 rounded-full bg-[#00A819] shadow-[0_0_8px_rgba(0,168,25,0.8)]"></div>

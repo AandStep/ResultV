@@ -55,6 +55,7 @@ build/linux/libcronet.so
 tools/encrypt-sub/
 build-release.bat
 build-release.sh
+docs/review
 
 # build
 build/bin/

@@ -15,7 +15,10 @@ Unicode true
 !define MULTIUSER_EXECUTIONLEVEL Highest
 !define MULTIUSER_MUI
 !define MULTIUSER_INSTALLMODE_COMMANDLINE
-!define MULTIUSER_INSTALLMODE_DEFAULT_CURRENTUSER
+; Default to "All users" — writes the resultv:// handler to HKLM at install
+; time, which is the only path that works reliably for browser deep links
+; before the user has opened the app for the first time. Per-user is still
+; selectable on the install-mode page (or via /CurrentUser on the cmdline).
 !define MULTIUSER_USE_PROGRAMFILES64
 !define MULTIUSER_INSTALLMODEPAGE_SHOWUSERNAME
 !define MULTIUSER_INSTALLMODE_INSTDIR "${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}"
@@ -46,8 +49,16 @@ ManifestDPIAware true
 !define MUI_UNICON "..\icon.ico"
 !define MUI_FINISHPAGE_NOAUTOCLOSE
 !define MUI_ABORTWARNING
-!define MUI_FINISHPAGE_RUN "$INSTDIR\${PRODUCT_EXECUTABLE}"
+; Empty MUI_FINISHPAGE_RUN + MUI_FINISHPAGE_RUN_FUNCTION makes MUI render the
+; "Run X" checkbox but delegate the launch to our function instead of doing
+; a direct Exec. We need that delegation so the app does NOT inherit the
+; installer's admin token — otherwise the runtime resultv:// protocol
+; registration (system.RegisterResultVProtocol) writes to admin's HKCU, not
+; the launching user's, and browser deep links break for "Current user"
+; installs and for any first launch right after install.
+!define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_TEXT "Run ${INFO_PRODUCTNAME} after closing the installer"
+!define MUI_FINISHPAGE_RUN_FUNCTION "LaunchResultVAsUser"
 
 !define MUI_LANGDLL_ALLLANGUAGES
 
@@ -79,6 +90,16 @@ FunctionEnd
 
 Function un.onInit
   !insertmacro MULTIUSER_UNINIT
+FunctionEnd
+
+; Launch the app via explorer.exe so the new process runs under the *launching*
+; user's token rather than inheriting the elevated installer's admin token.
+; This is required for the runtime resultv:// fallback in
+; system.RegisterResultVProtocol() to write to the real user's HKCU. Direct
+; Exec from an elevated installer hands the app an admin token and the HKCU
+; write lands in admin's hive, where the user's browser can't see it.
+Function LaunchResultVAsUser
+  Exec '"$WINDIR\explorer.exe" "$INSTDIR\${PRODUCT_EXECUTABLE}"'
 FunctionEnd
 
 Function CheckWebView2Present
@@ -192,6 +213,7 @@ Section
 
   !insertmacro wails.associateFiles
   !insertmacro wails.associateCustomProtocols
+  !insertmacro rp.registerResultVProtocol
 
   !insertmacro rp.writeUninstaller
   SetRegView 64
@@ -239,6 +261,7 @@ ks_cleanup_done:
 
   !insertmacro wails.unassociateFiles
   !insertmacro wails.unassociateCustomProtocols
+  !insertmacro rp.unregisterResultVProtocol
 
   !insertmacro rp.deleteUninstaller
 SectionEnd

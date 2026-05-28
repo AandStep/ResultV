@@ -21,10 +21,10 @@ import { useLogs } from "../hooks/useLogs";
 const LogContext = createContext();
 
 export const LogProvider = ({ children }) => {
-    const { logs, backendLogs, addLog } = useLogs();
+    const { logs, backendLogs, addLog, clearLogs } = useLogs();
 
     return (
-        <LogContext.Provider value={{ logs, backendLogs, addLog }}>
+        <LogContext.Provider value={{ logs, backendLogs, addLog, clearLogs }}>
             {children}
         </LogContext.Provider>
     );

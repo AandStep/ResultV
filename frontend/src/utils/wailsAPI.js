@@ -41,6 +41,10 @@ import {
   SetAutostart,
   ToggleKillSwitch,
   ToggleAdBlock,
+  GetAdBlockStatus,
+  UpdateAdBlockFilters,
+  InstallAdBlockCA,
+  IsAdBlockCAInstalled,
   UpdateRules,
   SyncProxies,
   FetchSubscription,
@@ -48,6 +52,7 @@ import {
   RefreshSubscription,
   AddSubscription,
   DeleteSubscription,
+  DecodeDeepLink,
   StartUpdate,
   CancelUpdate,
 } from '../../wailsjs/go/main/App';
@@ -305,6 +310,42 @@ export const wailsAPI = {
     }
   },
 
+  getAdBlockStatus: async () => {
+    try {
+      return await GetAdBlockStatus();
+    } catch (e) {
+      console.error("wailsAPI.getAdBlockStatus error:", e);
+      return null;
+    }
+  },
+
+  updateAdBlockFilters: async () => {
+    try {
+      await UpdateAdBlockFilters();
+    } catch (e) {
+      console.error("wailsAPI.updateAdBlockFilters error:", e);
+      throw e;
+    }
+  },
+
+  installAdBlockCA: async () => {
+    try {
+      await InstallAdBlockCA();
+    } catch (e) {
+      console.error("wailsAPI.installAdBlockCA error:", e);
+      throw e;
+    }
+  },
+
+  isAdBlockCAInstalled: async () => {
+    try {
+      return await IsAdBlockCAInstalled();
+    } catch (e) {
+      console.error("wailsAPI.isAdBlockCAInstalled error:", e);
+      return false;
+    }
+  },
+
   updateRules: async (url) => {
     try {
       return await UpdateRules(url);
@@ -339,6 +380,15 @@ export const wailsAPI = {
     }
   },
 
+  decodeDeepLink: async (url) => {
+    try {
+      return await DecodeDeepLink(url);
+    } catch (e) {
+      console.error("wailsAPI.decodeDeepLink error:", e);
+      throw e;
+    }
+  },
+
   refreshSubscription: async (subID) => {
     try {
       return await RefreshSubscription(subID);
@@ -351,9 +401,9 @@ export const wailsAPI = {
   // Add a subscription. See fetchSubscription for the http:// consent flow.
   // The accepted-plaintext flag is persisted on the Subscription record so
   // refreshSubscription doesn't need to re-prompt.
-  addSubscription: async (name, url, allowInsecure = false) => {
+  addSubscription: async (name, url, allowInsecure = false, subscriptionSource = "") => {
     try {
-      return await AddSubscription(name, url, allowInsecure);
+      return await AddSubscription(name, url, allowInsecure, subscriptionSource || "");
     } catch (e) {
       console.error("wailsAPI.addSubscription error:", e);
       throw e;

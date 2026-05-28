@@ -41,3 +41,18 @@ func TestDecodeDeepLinkStripsTrailingJunk(t *testing.T) {
 		t.Fatalf("trim left %q in payload, expected to end with AAyaj04TQ7", body)
 	}
 }
+
+func TestDeepLinkUsesRvsubPath(t *testing.T) {
+	if !DeepLinkUsesRvsubPath("resultv://rvsub/abc") {
+		t.Fatal("expected true for resultv://rvsub/")
+	}
+	if !DeepLinkUsesRvsubPath("resultv:rvsub/abc") {
+		t.Fatal("expected true for opaque resultv:rvsub/")
+	}
+	if DeepLinkUsesRvsubPath("resultv://import/abc") {
+		t.Fatal("expected false for import/")
+	}
+	if DeepLinkUsesRvsubPath("https://example.com/rvsub/x") {
+		t.Fatal("expected false for https")
+	}
+}

@@ -19,10 +19,7 @@ import React, { useState } from "react";
 import { BrowserOpenURL } from "../../wailsjs/runtime/runtime";
 import { ExternalLink, Check, Copy } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import p6logo from "../assets/p6logo.png";
-import pmlogo from "../assets/pmlogo.png";
 import implogo from "../assets/implogo.png";
-import psellerlogo from "../assets/pseller.png";
 
 const VPN_PARTNERS = [
   {
@@ -32,27 +29,6 @@ const VPN_PARTNERS = [
     promoCode: "result",
     logo: implogo,
     isBot: true,
-  },
-];
-
-const PROXY_PARTNERS = [
-  {
-    id: "proxy_seller",
-    link: "https://proxy-seller.com/?partner=4TZ2AXZ85WHSQT",
-    promoCode: "YZDPUK_1131267",
-    logo: psellerlogo,
-  },
-  {
-    id: "proxy6",
-    link: "https://proxy6.net/?r=833290",
-    promoCode: "resultproxy",
-    logo: p6logo,
-  },
-  {
-    id: "proxy_market",
-    link: "https://ru.dashboard.proxy.market/?ref=resultproxy",
-    promoCode: "resultproxy",
-    logo: pmlogo,
   },
 ];
 
@@ -173,18 +149,6 @@ export const BuyProxyView = () => {
           </p>
         </div>
         <div className="grid gap-4">{VPN_PARTNERS.map(renderPartner)}</div>
-      </div>
-
-      <div className="space-y-4">
-        <div className="space-y-1">
-          <h2 className="text-3xl font-bold text-white">
-            {t("buy.proxy_section_title")}
-          </h2>
-          <p className="text-zinc-400 text-sm leading-relaxed">
-            {t("buy.proxy_section_desc")}
-          </p>
-        </div>
-        <div className="grid gap-4">{PROXY_PARTNERS.map(renderPartner)}</div>
       </div>
     </div>
   );

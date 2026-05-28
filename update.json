@@ -1,39 +1,13 @@
 {
-  "version": "3.2.0",
+  "version": "",
   "releaseTitle": {
-    "ru": "Бета для NaiveProxy, улучшение безопасности, обновление внутри приложения, фикс KillSwitch",
-    "en": "Beta for NaiveProxy, security improvements, in-app update, KillSwitch fix"
+    "ru": "Расширение настроек приложения, фикс DNS утечек, UI улучшения, пинг и сортировка по пингу, фиксы багов",
+    "en": "Extended application settings, fixed DNS leaks, UI improvements, ping and sorting by ping, bug fixes"
   },
   "releaseNotes": {
-    "ru": "Добавлена поддержка NaiveProxy, но пока слабо протестирована, если у вас возникнут проблемы присылайте пожалуйста логи в issue. Исправлен туннель режим для macOS. Обновлены белые списки, теперь слушают дочерние процессы. Улучшена общая безопасноть приложения. Теперь после этой версии обновления будут происходить внутри приложения без необходимости заходить на гитхаб самому. Исправлен KillSwitch.",
-    "en": "Added support for NaiveProxy, but it is still poorly tested, If you encounter any problems, please send the logs to the issue. The tunnel mode for macOS has been fixed. The white lists have been updated, now they listen to child processes. The overall security of the application has been improved. Now after this version updates will take place inside the application without the need to go to GitHub yourself. KillSwitch fix."
+    "ru": "У нас появился ТГ-канал: t.me/resultvpn. Настройки приложения расширены и разделены на удобные группы. Исправлена утечка DNS, проверка через whoer.net показывала российские DNS, теперь утечка устранена. Улучшена UI составляющая, добавлен ручной пинг серверов и сортировка по пингу, обновлен вид подписок, теперь есть заголовки-подсказки. Была вырезана функция блокировки рекламы, требует доработок, ожидайте в следующих обновлениях. Исправлен баг с нерабочими deep links для приложения установленного в кастомный путь. QUIC пинг hysteria2. На версии для macOS сейчас есть определенные трудности: система может говорить, что приложение повреждено, на самом деле это из-за отсутствия сертификата разработчика, поэтому выполните команду 'xattr -dr com.apple.quarantine /Applications/ResultV.app', чтобы вывести приложение из якобы карантина. Новый трей для windows",
+    "en": "We have a new Telegram channel: t.me/resultvpn. Application settings are extended and divided into convenient groups. DNS leak fixed, check through whoer.net showed Russian DNS, now the leak is eliminated. UI improved, manual ping of servers and sorting by ping added, subscription views updated, now there are header-hints. The function of blocking ads was removed, requires development, wait for the next updates. Fixed bug with non-working deep links for the application installed in a custom path. QUIC ping hysteria2. On the macOS version there are some difficulties: the system may say that the application is damaged, in fact this is due to the absence of a developer certificate, so run the command 'xattr -dr com.apple.quarantine /Applications/ResultV.app', to remove the application from the so-called quarantine. New windows tray"
   },
   "downloadUrl": "https://result-proxy.ru/",
-  "platforms": {
-    "windows-amd64-portable": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.0/ResultV.exe",
-      "sha256": "2857df57b273796b0207de9cb620455c96f9b88bb0939d2f1d265da54ede12e8",
-      "size": 46016000
-    },
-    "windows-amd64-installer": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.0/ResultV-amd64-installer.exe",
-      "sha256": "2d4fe299a12038e055f85cd5da60fc3f1e1f0a8fcf229b014ef7804a5b455dba",
-      "size": 24198429
-    },
-    "darwin-universal": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.0/ResultV.dmg",
-      "sha256": "831b83ad8884e9bbdea6f0855ba9a36ddd3c9e50f74afea7281e6381c17e1ec6",
-      "size": 55018700
-    },
-    "linux-amd64-appimage": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.0/ResultV-3.2.0-x86_64.AppImage",
-      "sha256": "b47af55a3e0662342e642a6baf390bd297f984c1654ba318f151e7d7eeb38b4e",
-      "size": 91376120
-    },
-    "linux-amd64-deb": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.0/resultv_3.2.0_amd64.deb",
-      "sha256": "f6190f97e3596389acf58ab7e3018e5301273ccdaa252ba1e0d857a4594f8f9a",
-      "size": 23144146
-    }
-  }
+  "platforms": {}
 }

@@ -16,6 +16,7 @@
 package proxy
 
 import (
+	"errors"
 	"net"
 	"testing"
 )
@@ -38,5 +39,31 @@ func TestLooksLikeTunnelInterface(t *testing.T) {
 	}
 	if looksLikeTunnelInterface("Ethernet") {
 		t.Fatal("ethernet")
+	}
+}
+
+func TestPingProxyLANBind_ReturnsLanBindUnavailableWhenNoInterface(t *testing.T) {
+	oldPick := pickLANBindIPv4
+	defer func() { pickLANBindIPv4 = oldPick }()
+	pickLANBindIPv4 = func() (net.IP, error) {
+		return nil, errors.New("no iface")
+	}
+
+	latency, reachable, reason := PingProxyLANBind("1.2.3.4", 443)
+	if reachable || latency != 0 || reason != "lan_bind_unavailable" {
+		t.Fatalf("unexpected result: latency=%d reachable=%v reason=%q", latency, reachable, reason)
+	}
+}
+
+func TestPingProxyUDPLANBind_ReturnsLanBindUnavailableWhenNoInterface(t *testing.T) {
+	oldPick := pickLANBindIPv4
+	defer func() { pickLANBindIPv4 = oldPick }()
+	pickLANBindIPv4 = func() (net.IP, error) {
+		return nil, errors.New("no iface")
+	}
+
+	latency, reachable, reason := PingProxyUDPLANBind("1.2.3.4", 443)
+	if reachable || latency != 0 || reason != "lan_bind_unavailable" {
+		t.Fatalf("unexpected result: latency=%d reachable=%v reason=%q", latency, reachable, reason)
 	}
 }

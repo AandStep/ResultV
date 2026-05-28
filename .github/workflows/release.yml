@@ -284,6 +284,11 @@ jobs:
           const fs = require('fs');
           const update = JSON.parse(fs.readFileSync('update.json', 'utf8'));
 
+          // Version comes from the git tag, not update.json — the file is kept
+          // with version: "" between releases so clients on main don't see a
+          // version bump before CI has published the artifacts.
+          const version = (process.env.GITHUB_REF_NAME || '').replace(/^v/, '');
+
           const pickLang = (v, lang) => {
             if (v == null) return '';
             if (typeof v === 'string') return v;
@@ -307,17 +312,17 @@ jobs:
 
           const sections = [];
           if (ruNotes) {
-            sections.push(`Что нового в версии ${update.version}?\n\n${ruNotes}\n\n🌐 Официальный сайт: ${host}`);
+            sections.push(`Что нового в версии ${version}?\n\n${ruNotes}\n\n🌐 Официальный сайт: ${host}`);
           }
           if (enNotes && enNotes !== ruNotes) {
-            sections.push(`What's new in version ${update.version}?\n\n${enNotes}\n\n🌐 Official website: ${host}`);
+            sections.push(`What's new in version ${version}?\n\n${enNotes}\n\n🌐 Official website: ${host}`);
           }
           const releaseBody = sections.join('\n\n---\n\n');
           fs.writeFileSync('RELEASE_BODY.txt', releaseBody);
 
           const releaseName = enTitle && enTitle !== ruTitle
-            ? `ResultV v${update.version} - ${ruTitle} / ${enTitle}`
-            : `ResultV v${update.version} - ${ruTitle}`;
+            ? `ResultV v${version} - ${ruTitle} / ${enTitle}`
+            : `ResultV v${version} - ${ruTitle}`;
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `release_name=${releaseName}\n`);
           NODE_EOF
           node prepare_release.cjs

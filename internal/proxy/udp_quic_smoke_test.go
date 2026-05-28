@@ -87,6 +87,42 @@ func TestHysteria2QUICShapeSmoke(t *testing.T) {
 	}
 }
 
+// TestTunInboundUDPTimeoutShapeSmoke verifies that the tunnel-mode TUN
+// inbound emits udp_timeout + endpoint_independent_nat, AND that sing-box's
+// strict option decoder accepts those keys. Without this test a typo or a
+// future version drop in our sing-box fork would silently break VPN startup
+// for every user (strict decoder rejects unknown fields).
+func TestTunInboundUDPTimeoutShapeSmoke(t *testing.T) {
+	extra := map[string]interface{}{
+		"uuid":     "af815621-b245-4149-89da-dd184cfc4b3d",
+		"network":  "tcp",
+		"security": "tls",
+		"sni":      "example.com",
+		"flow":     "xtls-rprx-vision",
+	}
+	raw, _ := json.Marshal(extra)
+	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
+		Proxy:    ProxyConfig{IP: "1.2.3.4", Port: 443, Type: "VLESS", Extra: raw},
+		Mode:     ProxyModeTunnel,
+		TunStack: "system",
+	})
+	j, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(j)
+	for _, want := range []string{`"udp_timeout":"30s"`, `"endpoint_independent_nat":true`, `"type":"tun"`} {
+		if !strings.Contains(js, want) {
+			t.Fatalf("missing %q in tunnel-mode config: %s", want, js)
+		}
+	}
+	ctx := include.Context(context.Background())
+	var opt option.Options
+	if err := singjson.UnmarshalContext(ctx, j, &opt); err != nil {
+		t.Fatalf("strict decode of tunnel-mode config rejected new TUN fields: %v", err)
+	}
+}
+
 // TestVMessUDPShapeSmoke verifies that VMess outbound also gets xudp by
 // default and that global_padding / authenticated_length round-trip.
 func TestVMessUDPShapeSmoke(t *testing.T) {

@@ -15,54 +15,162 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { flushSync } from "react-dom";
 import wailsAPI from "../utils/wailsAPI";
+import { parseExtra } from "../utils/pingSort";
 
+/** @param {unknown} data */
+function pingResultToLabel(data) {
+    if (data && data.reachable) {
+        if (typeof data.latencyMs === "number" && data.latencyMs > 0) {
+            return `${data.latencyMs}ms`;
+        }
+        return "Online";
+    }
+    const reason = data?.reason || "";
+    if (reason === "timeout") return "Timeout";
+    if (reason === "connection_refused") return "Refused";
+    if (reason === "network_unreachable" || reason === "no_route_to_host") {
+        return "Unreachable";
+    }
+    if (reason === "connection_closed") return "Closed";
+    if (reason === "error" || reason === "probe_error") return "Error";
+    return "Unavailable";
+}
+
+/**
+ * @param {unknown[]} proxies
+ * @param {boolean} isConfigLoaded
+ * @returns {{
+ *   pings: Record<string, string>,
+ *   refreshPings: (ids?: Iterable<string>|string[]) => Promise<void>,
+ *   isPinging: boolean,
+ *   isManualPinging: boolean,
+ *   pendingPingIds: ReadonlySet<string>,
+ *   isPingPending: (proxy: unknown) => boolean,
+ * }}
+ */
 export const useDaemonPing = (proxies, isConfigLoaded) => {
     const [pings, setPings] = useState({});
+    const [isPinging, setIsPinging] = useState(false);
+    const [isManualPinging, setIsManualPinging] = useState(false);
+    const [pendingPingIds, setPendingPingIds] = useState(() => new Set());
+
+    const proxiesRef = useRef(proxies);
+    proxiesRef.current = proxies;
+
+    const inFlightRef = useRef(false);
+
+    const runPing = useCallback(async (optionalIds, options = {}) => {
+        const userInitiated = options.userInitiated === true;
+        const list = proxiesRef.current;
+        if (!isConfigLoaded || list.length === 0) return;
+
+        if (inFlightRef.current) {
+            return;
+        }
+        inFlightRef.current = true;
+
+        const idSet =
+            optionalIds != null
+                ? new Set([...optionalIds].map((id) => String(id)))
+                : null;
+
+        const targets = [];
+        for (const p of list) {
+            if (idSet && !idSet.has(String(p.id))) continue;
+            if (p.type?.toUpperCase() === "AUTO") continue;
+            if (p.type?.toUpperCase() === "SECTION") continue;
+            targets.push(p);
+        }
+
+        if (targets.length === 0) {
+            inFlightRef.current = false;
+            return;
+        }
+
+        setIsPinging(true);
+        if (userInitiated) {
+            setIsManualPinging(true);
+        }
+
+        flushSync(() => {
+            setPendingPingIds(new Set(targets.map((p) => String(p.id))));
+        });
+
+        try {
+            for (const p of targets) {
+                const sid = String(p.id);
+
+                let value = "Error";
+                try {
+                    const data = await wailsAPI.ping(
+                        p.ip,
+                        parseInt(p.port, 10) || 0,
+                        p.type || "",
+                    );
+                    value = pingResultToLabel(data);
+                } catch {
+                    value = "Error";
+                }
+
+                setPings((prev) => ({ ...prev, [p.id]: value }));
+
+                setPendingPingIds((prev) => {
+                    const n = new Set(prev);
+                    n.delete(sid);
+                    return n;
+                });
+            }
+        } finally {
+            inFlightRef.current = false;
+            setIsPinging(false);
+            if (userInitiated) {
+                setIsManualPinging(false);
+            }
+            setPendingPingIds(new Set());
+        }
+    }, [isConfigLoaded]);
 
     useEffect(() => {
         if (!isConfigLoaded || proxies.length === 0) return;
 
-        const fetchPings = async () => {
-            const newPings = {};
-            for (const p of proxies) {
-                if (p.type?.toUpperCase() === "AUTO") continue;
-                try {
-                    const data = await wailsAPI.ping(p.ip, parseInt(p.port, 10) || 0, p.type || "");
-                    if (data && data.reachable) {
-                        if (typeof data.latencyMs === "number" && data.latencyMs > 0) {
-                            newPings[p.id] = `${data.latencyMs}ms`;
-                        } else {
-                            newPings[p.id] = "Online";
-                        }
-                    } else {
-                        const reason = data?.reason || "";
-                        if (reason === "timeout") {
-                            newPings[p.id] = "Timeout";
-                        } else if (reason === "connection_refused") {
-                            newPings[p.id] = "Refused";
-                        } else if (reason === "network_unreachable" || reason === "no_route_to_host") {
-                            newPings[p.id] = "Unreachable";
-                        } else if (reason === "connection_closed") {
-                            newPings[p.id] = "Closed";
-                        } else if (reason === "error" || reason === "probe_error") {
-                            newPings[p.id] = "Error";
-                        } else {
-                            newPings[p.id] = "Unavailable";
-                        }
-                    }
-                } catch {
-                    newPings[p.id] = "Error";
-                }
-            }
-            setPings(newPings);
-        };
-
-        fetchPings();
-        const interval = setInterval(fetchPings, 15000);
+        runPing(undefined, { userInitiated: false });
+        const interval = setInterval(() => {
+            runPing(undefined, { userInitiated: false });
+        }, 60000);
         return () => clearInterval(interval);
-    }, [proxies, isConfigLoaded]);
+    }, [proxies, isConfigLoaded, runPing]);
 
-    return pings;
+    const refreshPings = useCallback(
+        async (ids) => {
+            await runPing(ids, { userInitiated: true });
+        },
+        [runPing],
+    );
+
+    const isPingPending = useCallback(
+        (proxy) => {
+            if (!proxy || pendingPingIds.size === 0) return false;
+            const t = proxy.type?.toUpperCase();
+            if (t === "SECTION") return false;
+            if (t === "AUTO") {
+                const extra = parseExtra(proxy.extra);
+                const memberIds = (extra?.members || []).map(String);
+                return memberIds.some((id) => pendingPingIds.has(id));
+            }
+            return pendingPingIds.has(String(proxy.id));
+        },
+        [pendingPingIds],
+    );
+
+    return {
+        pings,
+        refreshPings,
+        isPinging,
+        isManualPinging,
+        pendingPingIds,
+        isPingPending,
+    };
 };

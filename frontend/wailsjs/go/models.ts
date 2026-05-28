@@ -10,6 +10,7 @@ export namespace config {
 	    trafficTotal?: number;
 	    expireUnix?: number;
 	    iconUrl?: string;
+	    source?: string;
 	    allowInsecure?: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -27,6 +28,7 @@ export namespace config {
 	        this.trafficTotal = source["trafficTotal"];
 	        this.expireUnix = source["expireUnix"];
 	        this.iconUrl = source["iconUrl"];
+	        this.source = source["source"];
 	        this.allowInsecure = source["allowInsecure"];
 	    }
 	}
@@ -42,7 +44,13 @@ export namespace config {
 	    listenLan?: boolean;
 	    dnsServers?: string[];
 	    tunIpv4?: string;
+	    tunStack?: string;
 	    favorites?: string[];
+	    subscriptionAutoUpdate?: boolean;
+	    subscriptionUpdateIntervalHours?: number;
+	    subscriptionSendHWID?: boolean;
+	    subscriptionUserAgent?: string;
+	    dnsLeakProtection?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppSettings(source);
@@ -61,7 +69,13 @@ export namespace config {
 	        this.listenLan = source["listenLan"];
 	        this.dnsServers = source["dnsServers"];
 	        this.tunIpv4 = source["tunIpv4"];
+	        this.tunStack = source["tunStack"];
 	        this.favorites = source["favorites"];
+	        this.subscriptionAutoUpdate = source["subscriptionAutoUpdate"];
+	        this.subscriptionUpdateIntervalHours = source["subscriptionUpdateIntervalHours"];
+	        this.subscriptionSendHWID = source["subscriptionSendHWID"];
+	        this.subscriptionUserAgent = source["subscriptionUserAgent"];
+	        this.dnsLeakProtection = source["dnsLeakProtection"];
 	    }
 	}
 	export class ProxyEntry {
@@ -223,6 +237,53 @@ export namespace logger {
 
 }
 
+export namespace main {
+	
+	export class AdBlockStatusDTO {
+	    enabled: boolean;
+	    filterCount: number;
+	    ruleSetsReady: number;
+	    ruleSetsTotal: number;
+	    lastUpdatedUnix: number;
+	    lastError?: string;
+	    caInstalled: boolean;
+	    networkBlocked: number;
+	    cosmeticBlocked: number;
+	    updateInProgress: boolean;
+	    updatePhase?: string;
+	    updateCurrent: number;
+	    updateTotal: number;
+	    updateItem?: string;
+	    networkBlockActive: boolean;
+	    needsReconnect: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new AdBlockStatusDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.filterCount = source["filterCount"];
+	        this.ruleSetsReady = source["ruleSetsReady"];
+	        this.ruleSetsTotal = source["ruleSetsTotal"];
+	        this.lastUpdatedUnix = source["lastUpdatedUnix"];
+	        this.lastError = source["lastError"];
+	        this.caInstalled = source["caInstalled"];
+	        this.networkBlocked = source["networkBlocked"];
+	        this.cosmeticBlocked = source["cosmeticBlocked"];
+	        this.updateInProgress = source["updateInProgress"];
+	        this.updatePhase = source["updatePhase"];
+	        this.updateCurrent = source["updateCurrent"];
+	        this.updateTotal = source["updateTotal"];
+	        this.updateItem = source["updateItem"];
+	        this.networkBlockActive = source["networkBlockActive"];
+	        this.needsReconnect = source["needsReconnect"];
+	    }
+	}
+
+}
+
 export namespace proxy {
 	
 	export class ConnectResultDTO {
@@ -297,7 +358,9 @@ export namespace proxy {
 	}
 	export class StatusDTO {
 	    isConnected: boolean;
+	    isEstablishing: boolean;
 	    isProxyDead: boolean;
+	    killSwitchEmergency: boolean;
 	    currentProxy?: ProxyConfig;
 	    mode: string;
 	    uptime: number;
@@ -314,7 +377,9 @@ export namespace proxy {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.isConnected = source["isConnected"];
+	        this.isEstablishing = source["isEstablishing"];
 	        this.isProxyDead = source["isProxyDead"];
+	        this.killSwitchEmergency = source["killSwitchEmergency"];
 	        this.currentProxy = this.convertValues(source["currentProxy"], ProxyConfig);
 	        this.mode = source["mode"];
 	        this.uptime = source["uptime"];

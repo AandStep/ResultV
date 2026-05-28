@@ -638,6 +638,22 @@ export const mergeSubscriptionRefreshCountries = (
     const keyOf = (p) =>
         `${p.ip}|${parseInt(p.port, 10) || 0}|${String(p.type || "").toUpperCase()}`;
 
+    const sectionOrdinal = (arr, idx) => {
+        let n = 0;
+        for (let j = 0; j < idx; j++) {
+            if (String(arr[j]?.type || "").toUpperCase() === "SECTION") n++;
+        }
+        return n;
+    };
+
+    const rowKey = (arr, p, idx) => {
+        const t = String(p.type || "").toUpperCase();
+        if (t === "SECTION") {
+            return `section|${sectionOrdinal(arr, idx)}|${String(p.name || "").trim()}`;
+        }
+        return keyOf(p);
+    };
+
     // Use namespace-separated keys to prevent collision between auto members and
     // individual servers that share the same ip:port:type. Members use key|member,
     // individuals use key. Both types get proper ID continuity across refreshes.
@@ -659,8 +675,8 @@ export const mergeSubscriptionRefreshCountries = (
         }
     });
     const oldBy = new Map();
-    oldSub.forEach((p) => {
-        const key = oldMemberIds.has(String(p.id)) ? memberKey(p) : keyOf(p);
+    oldSub.forEach((p, idx) => {
+        const key = oldMemberIds.has(String(p.id)) ? memberKey(p) : rowKey(oldSub, p, idx);
         oldBy.set(key, p);
     });
 
@@ -673,8 +689,8 @@ export const mergeSubscriptionRefreshCountries = (
     });
 
     // First pass: build merged array with country/id continuity
-    const merged = updatedProxies.map((p) => {
-        const key = freshMemberIds.has(String(p.id)) ? memberKey(p) : keyOf(p);
+    const merged = updatedProxies.map((p, idx) => {
+        const key = freshMemberIds.has(String(p.id)) ? memberKey(p) : rowKey(updatedProxies, p, idx);
         const old = oldBy.get(key);
         const port = parseInt(p.port, 10) || 0;
         const base = {
@@ -738,7 +754,11 @@ export const subscriptionLabelFromURL = (urlStr) => {
     }
 };
 
-export const isVpnType = (type) => VPN_TYPES.includes(type?.toUpperCase());
+export const isVpnType = (type) => {
+    const t = type?.toUpperCase();
+    if (t === "SECTION") return false;
+    return VPN_TYPES.includes(t);
+};
 
 export const isSubscriptionURL = (text) => {
     const trimmed = text.trim();
@@ -746,7 +766,11 @@ export const isSubscriptionURL = (text) => {
 };
 
 export const isEncryptedSubscription = (text) => {
-    return text.trim().startsWith("RVSUB1:");
+    const trimmed = text.trim();
+    return (
+        trimmed.startsWith("RVSUB1:") ||
+        /^resultv:(\/\/)?/i.test(trimmed)
+    );
 };
 
 export const VPN_NETWORK_OPTIONS = ["tcp", "ws", "grpc", "h2", "http", "xhttp"];

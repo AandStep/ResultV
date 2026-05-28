@@ -34,7 +34,12 @@ const ProtocolSelectionModal = ({ isOpen, onClose, onConfirm, count, proxies = [
     });
 
     const visibleProxies = proxies.filter(p => !autoMemberIds.has(p.id));
-    const plain = visibleProxies.filter((p) => !VPN_TYPES.includes(p.type) && p.type !== "AUTO");
+    const plain = visibleProxies.filter(
+        (p) =>
+            !VPN_TYPES.includes(p.type) &&
+            p.type !== "AUTO" &&
+            p.type !== "SECTION",
+    );
     const vpn = visibleProxies.filter((p) => VPN_TYPES.includes(p.type) || p.type === "AUTO");
     
     const summary = {};

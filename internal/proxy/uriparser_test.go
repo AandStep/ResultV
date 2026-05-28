@@ -21,6 +21,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"resultproxy-wails/internal/config"
 )
 
 func TestVLESSURIEmbeddedExtraAndOutboundXHTTP(t *testing.T) {
@@ -139,6 +141,79 @@ func TestXHTTPPassthroughXmuxScNoGRPC(t *testing.T) {
 	}
 	if tr.ScMaxEachPostBytes == nil {
 		t.Fatal("sc_max_each_post_bytes")
+	}
+}
+
+// TestXHTTPInjectsConservativeXmuxDefaults verifies that when a subscription
+// does not specify xmux fields, we inject defaults that bound connection
+// lifetime/reuse to prevent v2rayxhttp HTTP/2 stream buffer accumulation
+// over long sessions (the pprof-confirmed cause of multi-hour browser lag).
+func TestXHTTPInjectsConservativeXmuxDefaults(t *testing.T) {
+	extra := map[string]interface{}{
+		"uuid":     "af815621-b245-4149-89da-dd184cfc4b3d",
+		"network":  "xhttp",
+		"security": "tls",
+		"path":     "/x",
+		"host":     "cdn",
+	}
+	raw, err := json.Marshal(extra)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := buildProxyOutbound(ProxyConfig{IP: "example.com", Port: 443, Type: "VLESS", Extra: raw})
+	tr := out.Transport
+	if tr == nil || tr.Type != "xhttp" {
+		t.Fatalf("transport: %+v", tr)
+	}
+	if tr.Xmux == nil {
+		t.Fatal("expected xmux defaults to be injected when extra has no xmux")
+	}
+	var xmux map[string]interface{}
+	if err := json.Unmarshal(tr.Xmux, &xmux); err != nil {
+		t.Fatal(err)
+	}
+	if xmux["max_concurrency"] == nil {
+		t.Errorf("expected default max_concurrency, got %v", xmux)
+	}
+	if xmux["c_max_reuse_times"] == nil {
+		t.Errorf("expected default c_max_reuse_times, got %v", xmux)
+	}
+	if xmux["h_max_reusable_secs"] == nil {
+		t.Errorf("expected default h_max_reusable_secs, got %v", xmux)
+	}
+}
+
+// TestXHTTPUserXmuxOverridesDefaults verifies that user-supplied xmux values
+// take precedence over our conservative defaults — we never silently
+// override what the subscription explicitly configured.
+func TestXHTTPUserXmuxOverridesDefaults(t *testing.T) {
+	extra := map[string]interface{}{
+		"uuid":    "af815621-b245-4149-89da-dd184cfc4b3d",
+		"network": "xhttp",
+		"path":    "/x",
+		"xmux": map[string]interface{}{
+			"maxConcurrency":   float64(64),
+			"hMaxReusableSecs": float64(900),
+		},
+	}
+	raw, _ := json.Marshal(extra)
+	out := buildProxyOutbound(ProxyConfig{IP: "example.com", Port: 443, Type: "VLESS", Extra: raw})
+	tr := out.Transport
+	if tr == nil || tr.Xmux == nil {
+		t.Fatal("xmux missing")
+	}
+	var xmux map[string]interface{}
+	if err := json.Unmarshal(tr.Xmux, &xmux); err != nil {
+		t.Fatal(err)
+	}
+	if xmux["max_concurrency"] != float64(64) {
+		t.Errorf("user max_concurrency lost: got %v", xmux["max_concurrency"])
+	}
+	if xmux["h_max_reusable_secs"] != float64(900) {
+		t.Errorf("user h_max_reusable_secs lost: got %v", xmux["h_max_reusable_secs"])
+	}
+	if xmux["c_max_reuse_times"] == nil {
+		t.Errorf("expected unspecified key c_max_reuse_times to retain default, got nil")
 	}
 }
 
@@ -716,6 +791,36 @@ func TestParseSubscriptionBodyUnsupported(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unsupported subscription format") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestFinalizeSubscriptionEntries_placeholderHost(t *testing.T) {
+	in := []config.ProxyEntry{
+		{ID: "1", Name: "Когда не глушат", Type: "HYSTERIA2", IP: "0.0.0.0", Port: 443, Password: "x", Extra: json.RawMessage(`{"password":"x"}`)},
+		{ID: "2", Name: "Austria", Type: "HYSTERIA2", IP: "1.2.3.4", Port: 443, Password: "y"},
+	}
+	out := FinalizeSubscriptionEntries(in)
+	if len(out) != 2 {
+		t.Fatalf("len=%d", len(out))
+	}
+	if out[0].Type != "SECTION" || out[0].IP != "" || out[0].Port != 0 || out[0].Password != "" || len(out[0].Extra) != 0 {
+		t.Fatalf("first entry: %+v", out[0])
+	}
+	if out[0].Name != "Когда не глушат" || out[0].ID != "1" {
+		t.Fatalf("first metadata: %+v", out[0])
+	}
+	if out[1].Type != "HYSTERIA2" || out[1].IP != "1.2.3.4" {
+		t.Fatalf("second entry: %+v", out[1])
+	}
+}
+
+func TestFinalizeSubscriptionEntries_ipv6Unspecified(t *testing.T) {
+	in := []config.ProxyEntry{
+		{ID: "a", Name: "H", Type: "VLESS", IP: "::", Port: 443},
+	}
+	out := FinalizeSubscriptionEntries(in)
+	if out[0].Type != "SECTION" || out[0].IP != "" {
+		t.Fatalf("got %+v", out[0])
 	}
 }
 

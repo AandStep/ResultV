@@ -18,6 +18,7 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
 import {
   Activity,
+  ListTree,
   Pencil,
   Trash2,
   Search,
@@ -39,6 +40,8 @@ import {
   mergeSubscriptionRefreshCountries,
 } from "../utils/proxyParser";
 import wailsAPI from "../utils/wailsAPI";
+import { parseExtra, getPingSortMetric } from "../utils/pingSort";
+import impLogo from "../assets/implogo.png";
 
 function formatTrafficBytes(n) {
   if (n == null || Number.isNaN(n)) return "0";
@@ -52,7 +55,13 @@ function formatTrafficBytes(n) {
   return `${kb.toFixed(0)} KB`;
 }
 
-function SubscriptionHeaderIcon({ url, subscriptionUrl }) {
+function subscriptionUsesImpLogo(name, source) {
+  if (source === "rvsub") return true;
+  return typeof name === "string" && name.toLowerCase().includes("impvpn");
+}
+
+function SubscriptionHeaderIcon({ url, subscriptionUrl, name, source }) {
+  const useImpLogo = subscriptionUsesImpLogo(name, source);
   const [failed, setFailed] = useState(false);
   const [candidateIndex, setCandidateIndex] = useState(0);
 
@@ -78,7 +87,19 @@ function SubscriptionHeaderIcon({ url, subscriptionUrl }) {
   useEffect(() => {
     setFailed(false);
     setCandidateIndex(0);
-  }, [url, subscriptionUrl]);
+  }, [url, subscriptionUrl, useImpLogo]);
+
+  if (useImpLogo) {
+    return (
+      <div className="w-10 h-10 rounded-xl shrink-0 border border-zinc-700/50 bg-zinc-800 flex items-center justify-center">
+        <img
+          src={impLogo}
+          alt=""
+          className="w-7 h-7 rounded-lg object-contain"
+        />
+      </div>
+    );
+  }
 
   const src = candidates[candidateIndex] || "";
   if (!src) return null;
@@ -138,6 +159,10 @@ export const ProxyListView = () => {
     isConnecting,
     failedProxy,
     pings,
+    refreshPings,
+    isPinging,
+    isManualPinging,
+    isPingPending,
   } = useConnectionContext();
 
   useEffect(() => {
@@ -149,15 +174,6 @@ export const ProxyListView = () => {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
-
-  const parseExtra = (raw) => {
-    if (Array.isArray(raw) && typeof raw[0] === "number") {
-      // Wails encodes json.RawMessage as a byte array in some contexts.
-      try { return JSON.parse(String.fromCharCode(...raw)); } catch { return {}; }
-    }
-    if (typeof raw === "string") { try { return JSON.parse(raw); } catch { return {}; } }
-    return raw || {};
-  };
 
   const autoMemberIds = useMemo(() => {
     const ids = new Set();
@@ -186,12 +202,14 @@ export const ProxyListView = () => {
     } else if (sortBy === "newest") {
       result.reverse();
     } else if (sortBy === "provider") {
-      result.sort((a, b) =>
-        (a.provider || "").localeCompare(b.provider || ""),
+      result.sort((a, b) => (a.provider || "").localeCompare(b.provider || ""));
+    } else if (sortBy === "ping") {
+      result.sort(
+        (a, b) => getPingSortMetric(a, pings) - getPingSortMetric(b, pings),
       );
     }
     return result;
-  }, [proxies, searchQuery, sortBy, autoMemberIds]);
+  }, [proxies, searchQuery, sortBy, autoMemberIds, pings]);
 
   const groupedProxies = useMemo(() => {
     const groups = {};
@@ -273,9 +291,7 @@ export const ProxyListView = () => {
       const updated = await wailsAPI.refreshSubscription(sub.id);
       if (updated?.length) {
         setProxies((prev) => {
-          const filtered = prev.filter(
-            (p) => p.subscriptionUrl !== sub.url,
-          );
+          const filtered = prev.filter((p) => p.subscriptionUrl !== sub.url);
           const merged = mergeSubscriptionRefreshCountries(
             prev,
             updated,
@@ -352,9 +368,16 @@ export const ProxyListView = () => {
     const isCardFailed = !!failedProxy && failedProxy.id === proxy.id;
     const isFromSubscription = Boolean(proxy.subscriptionUrl);
     const isAutoProxy = proxy.type?.toUpperCase() === "AUTO";
+    const isSectionProxy = proxy.type?.toUpperCase() === "SECTION";
     const isFav = favoriteIds.has(String(proxy.id));
-    const protocolInfo = isVpnType(proxy.type) ? getProtocolLabel(proxy) : proxy.type;
-    const protocolLabel = isAutoProxy ? t("proxyList.autoType") : protocolInfo;
+    const protocolInfo = isVpnType(proxy.type)
+      ? getProtocolLabel(proxy)
+      : proxy.type;
+    const protocolLabel = isAutoProxy
+      ? t("proxyList.autoType")
+      : isSectionProxy
+        ? t("proxyList.sectionType")
+        : protocolInfo;
 
     // For AUTO cards: compute best ping from member servers.
     const autoBestPing = isAutoProxy
@@ -370,45 +393,67 @@ export const ProxyListView = () => {
         })()
       : null;
 
-    const pingDisplay = isAutoProxy
-      ? (autoBestPing ?? t("proxyList.pinging"))
-      : pings[proxy.id] || t("proxyList.pinging");
+    const pingPending = isPingPending(proxy);
+
+    const pingDisplay = pingPending
+      ? t("proxyList.pinging")
+      : isAutoProxy
+        ? (autoBestPing ?? t("proxyList.pinging"))
+        : pings[proxy.id] || t("proxyList.pinging");
 
     const pingIsError =
+      !pingPending &&
       !isAutoProxy &&
+      !isSectionProxy &&
       ["Timeout", "Error", "Unavailable", "Refused"].includes(pings[proxy.id]);
 
-    const ipDisplay = isFromSubscription
-      ? null
-      : `${proxy.ip}:${proxy.port}`;
+    const ipDisplay = isFromSubscription ? null : `${proxy.ip}:${proxy.port}`;
+
+    const inactiveCardBorder = isSectionProxy
+      ? "border-zinc-800 hover:border-zinc-600 hover:bg-zinc-800/20"
+      : "border-zinc-800 hover:border-[#00A819] hover:bg-zinc-800/30";
 
     return (
       <div
         key={proxy.id}
         onClick={() => handleCardConnect(proxy)}
-        className={`bg-zinc-900 p-4 rounded-[12px] border transition-all flex flex-col cursor-pointer group/card outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${isCardConnecting ? "border-amber-500 shadow-[0_0_20px_rgba(245,158,11,0.15)]" : isCardFailed ? "border-rose-500 shadow-[0_0_20px_rgba(244,63,94,0.15)]" : isActive ? "border-[#00A819] shadow-[0_0_20px_rgba(0,168,25,0.1)]" : "border-zinc-800 hover:border-[#00A819] hover:bg-zinc-800/30"}`}
+        className={`bg-zinc-900 p-4 rounded-[12px] border transition-all flex flex-col cursor-pointer group/card outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${isCardConnecting ? "border-amber-500 shadow-[0_0_20px_rgba(245,158,11,0.15)]" : isCardFailed ? "border-rose-500 shadow-[0_0_20px_rgba(244,63,94,0.15)]" : isActive ? "border-[#00A819] shadow-[0_0_20px_rgba(0,168,25,0.1)]" : inactiveCardBorder}`}
       >
         <div className="flex items-start gap-3 mb-4">
-          <div className="shrink-0 flex items-center justify-center w-10 h-10 bg-zinc-800/50 rounded-xl border border-zinc-700/50">
+          <div
+            className={`shrink-0 flex items-center justify-center w-10 h-10 rounded-xl border ${isSectionProxy ? "bg-violet-950/40 border-violet-800/50" : "bg-zinc-800/50 border-zinc-700/50"}`}
+          >
             {isAutoProxy ? (
               <Zap className="w-5 h-5 text-[#00A819]" />
+            ) : isSectionProxy ? (
+              <ListTree className="w-5 h-5 text-violet-300/90" />
             ) : (
               <FlagIcon code={proxy.country} className="w-6 rounded-[2px]" />
             )}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <h3 className="text-sm font-bold text-white group-hover/card:text-[#00A819] transition-colors min-w-0 flex-1">
-                <HoverMarquee text={formatProxyDisplayName(proxy.name, proxy.country)} />
+              <h3
+                className={`text-sm font-bold text-white transition-colors min-w-0 flex-1 ${isSectionProxy ? "group-hover/card:text-violet-200" : "group-hover/card:text-[#00A819]"}`}
+              >
+                <HoverMarquee
+                  text={formatProxyDisplayName(proxy.name, proxy.country)}
+                />
               </h3>
               <span className="text-[10px] font-medium px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap bg-zinc-800 text-zinc-300 border border-zinc-700/60">
                 {protocolLabel}
               </span>
             </div>
-            {ipDisplay && (
-              <p className="text-xs text-zinc-400 font-mono mt-1 truncate">
-                {ipDisplay}
+            {isSectionProxy ? (
+              <p className="text-xs text-zinc-400 mt-1 leading-snug">
+                {t("proxyList.sectionSubtitle")}
               </p>
+            ) : (
+              ipDisplay && (
+                <p className="text-xs text-zinc-400 font-mono mt-1 truncate">
+                  {ipDisplay}
+                </p>
+              )
             )}
           </div>
         </div>
@@ -416,23 +461,44 @@ export const ProxyListView = () => {
         <div className="flex items-center justify-between mt-auto pt-2 gap-2">
           <div
             className={`text-xs flex items-center shrink-0 ${pingIsError ? "text-rose-500" : "text-zinc-500"}`}
-            title={t("proxyList.pingTooltip")}
+            title={isSectionProxy ? undefined : t("proxyList.pingTooltip")}
           >
-            <Activity className="w-3.5 h-3.5 mr-1 shrink-0" />{" "}
-            {pingDisplay}
+            {isSectionProxy ? (
+              <ListTree
+                className="w-3.5 h-3.5 shrink-0 text-violet-400/80"
+                aria-label={t("proxyList.sectionType")}
+              />
+            ) : (
+              <>
+                <Activity className="w-3.5 h-3.5 mr-1 shrink-0" />
+                {pingDisplay}
+              </>
+            )}
           </div>
           <div className="flex space-x-1.5 shrink-0">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleFavorite(proxy.id);
-              }}
-              title={isFav ? t("proxyList.unfavoriteAria") : t("proxyList.favoriteAria")}
-              aria-label={isFav ? t("proxyList.unfavoriteAria") : t("proxyList.favoriteAria")}
-              className={`p-2 rounded-xl transition-colors shrink-0 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${isFav ? "bg-amber-400/15 text-amber-400 hover:bg-amber-400/25" : "bg-zinc-800 text-zinc-400 hover:text-amber-400 hover:bg-amber-400/10"}`}
-            >
-              <Star className={`w-3.5 h-3.5 ${isFav ? "fill-amber-400" : ""}`} />
-            </button>
+            {!isSectionProxy && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleFavorite(proxy.id);
+                }}
+                title={
+                  isFav
+                    ? t("proxyList.unfavoriteAria")
+                    : t("proxyList.favoriteAria")
+                }
+                aria-label={
+                  isFav
+                    ? t("proxyList.unfavoriteAria")
+                    : t("proxyList.favoriteAria")
+                }
+                className={`p-2 rounded-xl transition-colors shrink-0 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${isFav ? "bg-amber-400/15 text-amber-400 hover:bg-amber-400/25" : "bg-zinc-800 text-zinc-400 hover:text-amber-400 hover:bg-amber-400/10"}`}
+              >
+                <Star
+                  className={`w-3.5 h-3.5 ${isFav ? "fill-amber-400" : ""}`}
+                />
+              </button>
+            )}
             {!isFromSubscription && (
               <button
                 onClick={(e) => {
@@ -453,21 +519,23 @@ export const ProxyListView = () => {
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleCardConnect(proxy);
-              }}
-              className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-colors shrink-0 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${isCardConnecting ? "bg-amber-500/15 text-amber-400 font-bold" : isCardFailed ? "bg-rose-500/15 text-rose-400 font-bold hover:bg-rose-500/25" : isActive ? "bg-[#00A819] text-zinc-950 font-bold" : "bg-[#007E3A]/10 text-[#00A819] hover:bg-[#007E3A]/20"}`}
-            >
-              {isCardConnecting
-                ? t("proxyList.status.connecting")
-                : isCardFailed
-                  ? t("proxyList.status.disconnect")
-                  : isActive
-                    ? t("proxyList.status.connected")
-                    : t("proxyList.status.connect")}
-            </button>
+            {!isSectionProxy && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleCardConnect(proxy);
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-colors shrink-0 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${isCardConnecting ? "bg-amber-500/15 text-amber-400 font-bold" : isCardFailed ? "bg-rose-500/15 text-rose-400 font-bold hover:bg-rose-500/25" : isActive ? "bg-[#00A819] text-zinc-950 font-bold" : "bg-[#007E3A]/10 text-[#00A819] hover:bg-[#007E3A]/20"}`}
+              >
+                {isCardConnecting
+                  ? t("proxyList.status.connecting")
+                  : isCardFailed
+                    ? t("proxyList.status.disconnect")
+                    : isActive
+                      ? t("proxyList.status.connected")
+                      : t("proxyList.status.connect")}
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -509,20 +577,26 @@ export const ProxyListView = () => {
 
               {isSortOpen && (
                 <div className="absolute top-full left-0 right-0 mt-2 bg-zinc-900 border border-zinc-700/50 rounded-xl shadow-xl overflow-hidden z-10 animate-in slide-in-from-top-2 duration-200">
-                  {["default", "newest", "oldest", "country", "type", ...(hasProviders ? ["provider"] : [])].map(
-                    (option) => (
-                      <button
-                        key={option}
-                        onClick={() => {
-                          setSortBy(option);
-                          setIsSortOpen(false);
-                        }}
-                        className={`w-full text-left px-4 py-3 text-sm transition-colors ${sortBy === option ? "bg-[#00A819]/10 text-[#00A819]" : "text-zinc-300 hover:bg-zinc-800 hover:text-white"}`}
-                      >
-                        {t(`proxyList.sort.${option}`)}
-                      </button>
-                    ),
-                  )}
+                  {[
+                    "default",
+                    "newest",
+                    "oldest",
+                    "country",
+                    "type",
+                    ...(hasProviders ? ["provider"] : []),
+                    "ping",
+                  ].map((option) => (
+                    <button
+                      key={option}
+                      onClick={() => {
+                        setSortBy(option);
+                        setIsSortOpen(false);
+                      }}
+                      className={`w-full text-left px-4 py-3 text-sm transition-colors ${sortBy === option ? "bg-[#00A819]/10 text-[#00A819]" : "text-zinc-300 hover:bg-zinc-800 hover:text-white"}`}
+                    >
+                      {t(`proxyList.sort.${option}`)}
+                    </button>
+                  ))}
                 </div>
               )}
             </div>
@@ -578,38 +652,44 @@ export const ProxyListView = () => {
                     <button
                       type="button"
                       onClick={() => toggleGroup(groupName)}
-                      className="flex min-h-14 flex-1 min-w-0 items-center gap-3 rounded-xl bg-zinc-800/70 border border-zinc-700/60 px-3 py-2 text-left outline-none focus:outline-none focus:ring-2 focus:ring-[#00A819]/25 focus-visible:outline-none hover:border-zinc-600/80 transition-colors group/hdr"
+                      className="group/hdr flex h-14 min-w-0 flex-1 items-center gap-3 overflow-hidden rounded-xl border border-zinc-700/60 bg-zinc-800/70 px-3 text-left outline-none transition-colors hover:border-zinc-600/80 focus:outline-none focus:ring-2 focus:ring-[#00A819]/25 focus-visible:outline-none"
                     >
                       {isSub && (
                         <SubscriptionHeaderIcon
-                          key={`${subMeta?.id}-${subMeta?.iconUrl || ""}`}
+                          key={`${subMeta?.id}-${subMeta?.iconUrl || ""}-${subMeta?.source || ""}-${subMeta?.name || ""}`}
                           url={subMeta?.iconUrl}
                           subscriptionUrl={subMeta?.url}
+                          name={subMeta?.name}
+                          source={subMeta?.source}
                         />
                       )}
-                      <div className="flex min-w-0 flex-1 items-center gap-3 py-1">
-                        <h3 className="text-lg font-bold text-white transition-colors group-hover/hdr:text-zinc-100 whitespace-normal break-words">
+                      <div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5 overflow-hidden py-1">
+                        <h3 className="truncate text-lg font-bold leading-tight text-white transition-colors group-hover/hdr:text-zinc-100">
                           {groupName}
                         </h3>
-                        {isSub && (
-                          <span className="inline-flex items-center rounded-full border border-zinc-700/70 bg-zinc-900/80 px-2.5 py-0.5 text-xs font-medium whitespace-nowrap shrink-0">
-                            <span className="text-zinc-300">{usedTrafficStr}</span>
-                            <span className="text-zinc-500">/</span>
-                            <span className="text-zinc-400">{totalTrafficStr}</span>
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-3 ml-auto min-w-0 pl-2">
                         {isSub && expireLine && (
-                          <span className="text-[13px] text-zinc-300 mr-1 whitespace-nowrap shrink-0">
+                          <span className="truncate text-[11px] leading-tight text-zinc-500">
                             {expireLine}
                           </span>
                         )}
-                        <span className="text-xs text-zinc-400 bg-zinc-900/90 px-2 py-0.5 rounded-lg shrink-0 border border-zinc-700/50">
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2 pl-1">
+                        {isSub && (
+                          <span className="inline-flex shrink-0 items-center rounded-full border border-zinc-700/70 bg-zinc-900/80 px-2.5 py-0.5 text-xs font-medium whitespace-nowrap">
+                            <span className="text-zinc-300">
+                              {usedTrafficStr}
+                            </span>
+                            <span className="text-zinc-500">/</span>
+                            <span className="text-zinc-400">
+                              {totalTrafficStr}
+                            </span>
+                          </span>
+                        )}
+                        <span className="shrink-0 rounded-lg border border-zinc-700/50 bg-zinc-900/90 px-2 py-0.5 text-xs text-zinc-400">
                           {groupProxies.length}
                         </span>
                         <ChevronDown
-                          className={`w-4 h-4 shrink-0 text-zinc-400 transition-transform group-hover/hdr:text-zinc-200 ${isCollapsed ? "-rotate-90" : ""}`}
+                          className={`h-4 w-4 shrink-0 text-zinc-400 transition-transform group-hover/hdr:text-zinc-200 ${isCollapsed ? "-rotate-90" : ""}`}
                           aria-hidden
                         />
                       </div>
@@ -629,6 +709,21 @@ export const ProxyListView = () => {
                         >
                           <RefreshCw
                             className={`h-5 w-5 text-[#00A819] ${refreshingProvider === subMeta?.id ? "animate-spin" : ""}`}
+                          />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            refreshPings(groupProxies.map((p) => p.id));
+                          }}
+                          disabled={subBusy || isPinging}
+                          title={t("proxyList.manualPingAria")}
+                          aria-label={t("proxyList.manualPingAria")}
+                          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-zinc-700/60 bg-zinc-800/50 text-zinc-300 hover:text-white hover:border-violet-500/40 transition-colors outline-none focus:outline-none focus:ring-2 focus:ring-violet-500/25 disabled:opacity-50"
+                        >
+                          <Activity
+                            className={`h-5 w-5 text-violet-400 ${isManualPinging ? "animate-pulse" : ""}`}
                           />
                         </button>
                         <button

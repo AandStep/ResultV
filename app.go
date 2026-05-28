@@ -43,8 +43,8 @@ import (
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"resultproxy-wails/internal/adblock"
 	"resultproxy-wails/internal/config"
+	"resultproxy-wails/internal/filter"
 	"resultproxy-wails/internal/logger"
 	"resultproxy-wails/internal/proxy"
 	"resultproxy-wails/internal/system"
@@ -76,6 +76,14 @@ func sameHostReferer(referer, imageURL string) string {
 
 const subscriptionPageUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
+type subscriptionRequestMetadata struct {
+	UserAgent string
+	Platform  string
+	OSVersion string
+	Model     string
+	SendHWID  bool
+}
+
 type App struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -84,7 +92,7 @@ type App struct {
 	crypto     *config.CryptoService
 	config     *config.Manager
 	proxy      *proxy.Manager
-	adblock    *adblock.Blocker
+	filters    *filter.Manager
 	tray       *system.Tray
 	killSwitch system.KillSwitch
 	netmon     *system.NetMonitor
@@ -109,8 +117,7 @@ type App struct {
 
 func NewApp() *App {
 	return &App{
-		log:     logger.New(),
-		adblock: adblock.New(),
+		log: logger.New(),
 	}
 }
 
@@ -124,6 +131,55 @@ func (a *App) SetStartInTray(v bool) {
 
 func (a *App) GetVersion() string {
 	return productVersionFromWailsJSON()
+}
+
+func (a *App) subscriptionRequestMetadata() subscriptionRequestMetadata {
+	settings := config.DefaultConfig().Settings
+	if a.config != nil {
+		settings = a.config.GetConfig().Settings
+	}
+	info := system.SubscriptionDeviceInfo()
+	userAgent := strings.TrimSpace(settings.SubscriptionUserAgent)
+	if userAgent == "" {
+		platform := strings.TrimSpace(info.Platform)
+		if platform == "" {
+			platform = runtime.GOOS
+		}
+		uaPlatform := platform
+		if strings.EqualFold(platform, "windows") {
+			uaPlatform = "Windows"
+		}
+		uaVersion := strings.TrimSpace(info.OSVersion)
+		if uaVersion == "" {
+			uaVersion = runtime.GOOS + "_" + runtime.GOARCH
+		}
+		userAgent = fmt.Sprintf("ResultV/%s/%s/%s", productVersionFromWailsJSON(), uaPlatform, sanitizeUserAgentSegment(uaVersion))
+	}
+	return subscriptionRequestMetadata{
+		UserAgent: userAgent,
+		Platform:  firstNonEmpty(strings.TrimSpace(info.Platform), runtime.GOOS),
+		OSVersion: firstNonEmpty(strings.TrimSpace(info.OSVersion), runtime.GOOS+"_"+runtime.GOARCH),
+		Model:     firstNonEmpty(strings.TrimSpace(info.Model), runtime.GOOS+"_"+runtime.GOARCH),
+		SendHWID:  settings.EffectiveSubscriptionSendHWID(),
+	}
+}
+
+func sanitizeUserAgentSegment(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	replacer := strings.NewReplacer(" ", "_", "\t", "_", "\n", "_", "\r", "_", "/", "_")
+	return replacer.Replace(s)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 // GetUpdateManifest fetches update.json via the Go backend.
@@ -164,6 +220,15 @@ func (a *App) QueueDeepLink(url string) {
 	a.deepLinkMu.Unlock()
 }
 
+// DecodeDeepLink unwraps a resultv:// URL into its underlying subscription
+// payload (an http(s) URL, RVSUB1 body, or proxy URI list). Frontend uses this
+// for paste flows so the rest of the import path is identical to the
+// browser-click flow, which receives the already-decoded payload via the
+// "deeplink:received" event.
+func (a *App) DecodeDeepLink(url string) (string, error) {
+	return proxy.DecodeDeepLink(url)
+}
+
 // HandleDeepLink decrypts a resultv:// URL and forwards the decoded payload
 // to the frontend, which routes it through the regular "Add subscription"
 // flow (preview modal → user confirms → import). Called both from main() at
@@ -192,8 +257,13 @@ func (a *App) HandleDeepLink(url string) {
 		a.QueueDeepLink(url)
 		return
 	}
+	source := ""
+	if proxy.DeepLinkUsesRvsubPath(url) {
+		source = "rvsub"
+	}
 	wailsRuntime.EventsEmit(a.ctx, "deeplink:received", map[string]interface{}{
 		"payload": payload,
+		"source":  source,
 	})
 }
 
@@ -243,9 +313,12 @@ func (a *App) startup(ctx context.Context) {
 	rootDir := a.getAppRootDir()
 	a.initSmartBlockedDomains(userDataPath, rootDir)
 
-	if err := a.adblock.LoadFromCache(userDataPath); err != nil {
-		a.log.Warning(fmt.Sprintf("Кэш AdBlock не загружен: %v", err))
+	a.filters = filter.NewManager(userDataPath)
+	if err := a.filters.LoadCache(); err != nil {
+		a.log.Warning(fmt.Sprintf("[ADBLOCK] Кэш фильтров не загружен: %v", err))
 	}
+	a.proxy.SetAdBlockCoordinator(a)
+	a.initAdBlockFilters()
 
 	a.killSwitch = system.NewKillSwitch()
 	// Best-effort cleanup of any kill-switch firewall rules left over from a
@@ -274,9 +347,12 @@ func (a *App) startup(ctx context.Context) {
 			}
 		}
 		st := a.proxy.GetStatus()
-		if st.IsConnected && st.CurrentProxy != nil && a.tray != nil {
+		if st.IsConnected && st.CurrentProxy != nil {
 			cp := st.CurrentProxy
-			a.tray.SetConnectedProxy(a.resolveProxyID(*cp), fmt.Sprintf("%s:%d", cp.IP, cp.Port))
+			if a.tray != nil {
+				a.tray.SetConnectedProxy(a.resolveProxyID(*cp), fmt.Sprintf("%s:%d", cp.IP, cp.Port))
+			}
+			a.setWindowTitleConnected(*cp)
 		}
 	}
 
@@ -301,6 +377,17 @@ func (a *App) startup(ctx context.Context) {
 		},
 		OnConnectSelected: func(proxyID string) {
 			if err := a.connectFromTray(proxyID); err != nil {
+				a.log.Error(fmt.Sprintf("Ошибка подключения из трея: %v", err))
+			}
+		},
+		OnConnect: func() {
+			cfg := a.config.GetConfig()
+			last := cfg.Settings.LastSelectedProxyID
+			if last == "" {
+				a.log.Warning("Из трея запрошено подключение, но сервер не выбран")
+				return
+			}
+			if err := a.connectFromTray(last); err != nil {
 				a.log.Error(fmt.Sprintf("Ошибка подключения из трея: %v", err))
 			}
 		},
@@ -330,7 +417,6 @@ func (a *App) startup(ctx context.Context) {
 	})
 	a.tray.Start()
 	a.refreshTrayProxyList()
-	a.startTrayPingLoop()
 
 	if system.DetectGPOConflict() {
 		a.log.Warning("[СИСТЕМА] Обнаружен конфликт с групповой политикой (GPO). Настройки прокси могут быть переопределены.")
@@ -460,6 +546,7 @@ func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
 	if fromProxy := dnsServersFromProxyExtra(proxyDTO); len(fromProxy) > 0 {
 		dnsServers = fromProxy
 	}
+	a.proxy.SetTunStack(cfg.Settings.EffectiveTunStack())
 
 	result := a.proxy.Connect(
 		a.ctx,
@@ -474,6 +561,8 @@ func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
 		cfg.Settings.ListenLAN,
 		dnsServers,
 		cfg.Settings.TunIPv4,
+		"",
+		cfg.Settings.EffectiveDNSLeakProtection(),
 	)
 
 	if result.Success {
@@ -481,6 +570,7 @@ func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
 		if a.tray != nil {
 			a.tray.SetConnectedProxy(a.resolveProxyID(proxyDTO), serverName)
 		}
+		a.setWindowTitleConnected(proxyDTO)
 		wailsRuntime.EventsEmit(a.ctx, "proxy:connected", proxyDTO)
 	}
 
@@ -567,6 +657,7 @@ func (a *App) Disconnect() error {
 		if a.tray != nil {
 			a.tray.SetDisconnected()
 		}
+		a.setWindowTitleDisconnected()
 		wailsRuntime.EventsEmit(a.ctx, "proxy:disconnected", nil)
 	}
 	return err
@@ -604,6 +695,18 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 		return proxy.ConnectResultDTO{Success: false, Message: "proxy manager not initialized"}, nil
 	}
 
+	// Notify popup + main frontend of the final state once the function
+	// returns. ApplyMode has multiple terminal branches (success, cancelled,
+	// rollback-success, rollback-failed); doing this in defer guarantees
+	// neither surface gets stuck on stale mode/state regardless of which
+	// branch we exited through. The config emit uses the latest snapshot
+	// from disk, which reflects any rollback that happened above.
+	defer func() {
+		if a.ctx != nil {
+			wailsRuntime.EventsEmit(a.ctx, "config:updated", a.config.GetConfig())
+		}
+	}()
+
 	cfg := a.config.GetConfig()
 	previousMode := cfg.Settings.Mode
 	cfg.Settings.Mode = mode
@@ -619,6 +722,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 		if fromProxy := dnsServersFromProxyExtra(prevProxy); len(fromProxy) > 0 {
 			modeSwitchDNS = fromProxy
 		}
+		a.proxy.SetTunStack(cfg.Settings.EffectiveTunStack())
 		result := a.proxy.Connect(
 			a.ctx,
 			prevProxy,
@@ -632,12 +736,15 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 			cfg.Settings.ListenLAN,
 			modeSwitchDNS,
 			cfg.Settings.TunIPv4,
+			"",
+			cfg.Settings.EffectiveDNSLeakProtection(),
 		)
 		if result.Success {
 			serverName := fmt.Sprintf("%s:%d", status.CurrentProxy.IP, status.CurrentProxy.Port)
 			if a.tray != nil {
 				a.tray.SetConnectedProxy(a.resolveProxyID(*status.CurrentProxy), serverName)
 			}
+			a.setWindowTitleConnected(*status.CurrentProxy)
 			wailsRuntime.EventsEmit(a.ctx, "proxy:connected", *status.CurrentProxy)
 		} else if result.ErrorCode == "cancelled" {
 			// User explicitly cancelled the connect (Disconnect/CancelConnect).
@@ -650,6 +757,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 			if a.tray != nil {
 				a.tray.SetDisconnected()
 			}
+			a.setWindowTitleDisconnected()
 			wailsRuntime.EventsEmit(a.ctx, "proxy:disconnected", nil)
 		} else if !result.FallbackUsed {
 
@@ -668,16 +776,20 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 				cfg.Settings.ListenLAN,
 				modeSwitchDNS,
 				cfg.Settings.TunIPv4,
+				"",
+				cfg.Settings.EffectiveDNSLeakProtection(),
 			)
 			if rollback.Success {
 				if a.tray != nil {
 					a.tray.SetConnectedProxy(a.resolveProxyID(prevProxy), fmt.Sprintf("%s:%d", prevProxy.IP, prevProxy.Port))
 				}
+				a.setWindowTitleConnected(prevProxy)
 				wailsRuntime.EventsEmit(a.ctx, "proxy:connected", prevProxy)
 			} else {
 				if a.tray != nil {
 					a.tray.SetDisconnected()
 				}
+				a.setWindowTitleDisconnected()
 				wailsRuntime.EventsEmit(a.ctx, "proxy:disconnected", nil)
 			}
 		}
@@ -720,6 +832,7 @@ func (a *App) enableKillSwitchFirewall(proxyAddr string, dnsServers []string) er
 	if a.tray != nil {
 		a.tray.SetKillSwitchActive()
 	}
+	a.setWindowTitleKillSwitch()
 	a.log.Warning("[KILL SWITCH] Активирована полная блокировка интернета (firewall)")
 	return nil
 }
@@ -751,7 +864,194 @@ func (a *App) ToggleAdBlock(enable bool) error {
 	}
 	cfg := a.config.GetConfig()
 	cfg.Settings.AdBlock = enable
-	return a.config.SaveConfig(cfg)
+	if err := a.config.SaveConfig(cfg); err != nil {
+		return err
+	}
+	if a.proxy != nil && a.proxy.GetStatus().IsConnected {
+		result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist)
+		if !result.Success {
+			a.log.Warning(fmt.Sprintf("[ADBLOCK] Переподключение после переключения: %s", result.Message))
+		}
+	}
+	return nil
+}
+
+// StartMITM implements proxy.AdBlockCoordinator.
+func (a *App) StartMITM(upstreamPort int) (int, error) {
+	if a.filters == nil {
+		return 0, fmt.Errorf("filter manager not initialized")
+	}
+	port := proxy.GetFreeLocalPort(18080)
+	if err := a.filters.StartMITM(port, upstreamPort); err != nil {
+		return 0, err
+	}
+	a.log.Info(fmt.Sprintf("[ADBLOCK] MITM-фильтр на 127.0.0.1:%d (upstream :%d)", port, upstreamPort))
+	return port, nil
+}
+
+// StopMITM implements proxy.AdBlockCoordinator.
+func (a *App) StopMITM() {
+	if a.filters != nil {
+		a.filters.StopMITM()
+	}
+}
+
+// AdBlockStatusDTO is exposed to the Wails frontend.
+type AdBlockStatusDTO struct {
+	Enabled            bool   `json:"enabled"`
+	FilterCount        int    `json:"filterCount"`
+	RuleSetsReady      int    `json:"ruleSetsReady"`
+	RuleSetsTotal      int    `json:"ruleSetsTotal"`
+	LastUpdatedUnix    int64  `json:"lastUpdatedUnix"`
+	LastError          string `json:"lastError,omitempty"`
+	CAInstalled        bool   `json:"caInstalled"`
+	NetworkBlocked     uint64 `json:"networkBlocked"`
+	CosmeticBlocked    uint64 `json:"cosmeticBlocked"`
+	UpdateInProgress   bool   `json:"updateInProgress"`
+	UpdatePhase        string `json:"updatePhase,omitempty"`
+	UpdateCurrent      int    `json:"updateCurrent"`
+	UpdateTotal        int    `json:"updateTotal"`
+	UpdateItem         string `json:"updateItem,omitempty"`
+	NetworkBlockActive bool   `json:"networkBlockActive"`
+	NeedsReconnect     bool   `json:"needsReconnect"`
+}
+
+func (a *App) adBlockStatusDTO() AdBlockStatusDTO {
+	enabled := false
+	if a.config != nil {
+		enabled = a.config.GetConfig().Settings.AdBlock
+	}
+	connected := false
+	engineAdBlock := false
+	if a.proxy != nil {
+		st := a.proxy.GetStatus()
+		connected = st.IsConnected
+		engineAdBlock = a.proxy.IsAdBlockActive()
+	}
+	if a.filters == nil {
+		return AdBlockStatusDTO{Enabled: enabled, CAInstalled: filter.CAInstalled()}
+	}
+	s := a.filters.Status(enabled, connected, engineAdBlock)
+	return AdBlockStatusDTO{
+		Enabled:            s.Enabled,
+		FilterCount:        s.FilterCount,
+		RuleSetsReady:      s.RuleSetsReady,
+		RuleSetsTotal:      s.RuleSetsTotal,
+		LastUpdatedUnix:    s.LastUpdatedUnix,
+		LastError:          s.LastError,
+		CAInstalled:        s.CAInstalled,
+		NetworkBlocked:     s.NetworkBlocked,
+		CosmeticBlocked:    s.CosmeticBlocked,
+		UpdateInProgress:   s.UpdateInProgress,
+		UpdatePhase:        s.UpdatePhase,
+		UpdateCurrent:      s.UpdateCurrent,
+		UpdateTotal:        s.UpdateTotal,
+		UpdateItem:         s.UpdateItem,
+		NetworkBlockActive: s.NetworkBlockActive,
+		NeedsReconnect:     s.NeedsReconnect,
+	}
+}
+
+func (a *App) GetAdBlockStatus() AdBlockStatusDTO {
+	return a.adBlockStatusDTO()
+}
+
+func (a *App) emitAdBlockProgress(p filter.UpdateProgress) {
+	if a.ctx != nil {
+		wailsRuntime.EventsEmit(a.ctx, "adblock:update-progress", p)
+	}
+}
+
+func (a *App) UpdateAdBlockFilters() error {
+	if a.filters == nil {
+		return fmt.Errorf("filter manager not initialized")
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, 2*time.Minute)
+	defer cancel()
+	progress := func(p filter.UpdateProgress) {
+		a.emitAdBlockProgress(p)
+	}
+	if err := a.filters.Update(ctx, progress); err != nil {
+		a.log.Warning(fmt.Sprintf("[ADBLOCK] Обновление баз: %v", err))
+		return err
+	}
+	st := a.adBlockStatusDTO()
+	a.log.Success(fmt.Sprintf("[ADBLOCK] Базы блокировки обновлены (%d/%d)", st.RuleSetsReady, st.RuleSetsTotal))
+	if a.proxy != nil && a.proxy.GetStatus().IsConnected && a.config != nil {
+		cfg := a.config.GetConfig()
+		result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist)
+		if !result.Success {
+			a.log.Warning(fmt.Sprintf("[ADBLOCK] Переподключение после обновления: %s", result.Message))
+		}
+	}
+	return nil
+}
+
+func (a *App) InstallAdBlockCA() error {
+	if a.filters == nil {
+		return fmt.Errorf("filter manager not initialized")
+	}
+	if err := a.filters.InstallCA(); err != nil {
+		return err
+	}
+	a.log.Success("[ADBLOCK] Корневой сертификат установлен в хранилище Windows")
+	return nil
+}
+
+func (a *App) IsAdBlockCAInstalled() bool {
+	return filter.CAInstalled()
+}
+
+func (a *App) initAdBlockFilters() {
+	if a.ctx == nil || a.filters == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(a.ctx, 2*time.Minute)
+		defer cancel()
+		if a.filters.NeedsUpdate() {
+			if err := a.filters.Update(ctx, a.emitAdBlockProgress); err != nil {
+				a.log.Warning(fmt.Sprintf("[ADBLOCK] Фоновое обновление баз: %v", err))
+			} else {
+				a.log.Info("[ADBLOCK] Базы блокировки обновлены при запуске")
+			}
+		}
+	}()
+	a.startAdBlockFilterRefresh()
+}
+
+func (a *App) startAdBlockFilterRefresh() {
+	if a.ctx == nil || a.filters == nil {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-a.ctx.Done():
+				return
+			case <-ticker.C:
+				ctx, cancel := context.WithTimeout(a.ctx, 2*time.Minute)
+				err := a.filters.Update(ctx, a.emitAdBlockProgress)
+				cancel()
+				if err != nil {
+					a.log.Warning(fmt.Sprintf("[ADBLOCK] Периодическое обновление: %v", err))
+					continue
+				}
+				a.log.Info("[ADBLOCK] Периодические базы блокировки обновлены")
+				if a.proxy != nil && a.proxy.GetStatus().IsConnected && a.config != nil {
+					cfg := a.config.GetConfig()
+					if cfg.Settings.AdBlock {
+						result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist)
+						if !result.Success {
+							a.log.Warning(fmt.Sprintf("[ADBLOCK] Переподключение: %s", result.Message))
+						}
+					}
+				}
+			}
+		}
+	}()
 }
 
 func (a *App) SetAutostart(enable bool) error {
@@ -806,6 +1106,7 @@ func (a *App) UpdateRules(rules config.RoutingRules) error {
 		if a.tray != nil {
 			a.tray.SetDisconnected()
 		}
+		a.setWindowTitleDisconnected()
 		wailsRuntime.EventsEmit(a.ctx, "proxy:disconnected", nil)
 		return fmt.Errorf("%s", result.Message)
 	}
@@ -814,6 +1115,7 @@ func (a *App) UpdateRules(rules config.RoutingRules) error {
 	if a.tray != nil {
 		a.tray.SetConnectedProxy(a.resolveProxyID(cur), fmt.Sprintf("%s:%d", cur.IP, cur.Port))
 	}
+	a.setWindowTitleConnected(cur)
 	wailsRuntime.EventsEmit(a.ctx, "proxy:connected", cur)
 	return nil
 }
@@ -1325,12 +1627,20 @@ func inlineSmallImageFromURL(client *http.Client, imageURL string, referer strin
 	}
 	// Sandbox the connection through our SSRF-aware dialer. The default
 	// client passed in shares the cookie jar but we override the transport.
-	safeClient := *client
-	safeClient.Transport = &http.Transport{
+	// DisableKeepAlives + CloseIdleConnections on return guarantees this
+	// per-call Transport doesn't park idle sockets in a pool that nothing
+	// will ever drain — icon fetches are one-shot and the Transport itself
+	// is discarded after this function returns, so any kept-alive socket
+	// would just dangle in the OS FD table until GC eventually finalised it.
+	transport := &http.Transport{
 		DialContext:           safeImageDialer().DialContext,
 		TLSHandshakeTimeout:   5 * time.Second,
 		ResponseHeaderTimeout: 6 * time.Second,
+		DisableKeepAlives:     true,
 	}
+	defer transport.CloseIdleConnections()
+	safeClient := *client
+	safeClient.Transport = transport
 	resp, err := safeClient.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		if resp != nil {
@@ -1538,6 +1848,7 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 	}
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Timeout: 15 * time.Second, Jar: jar}
+	metadata := a.subscriptionRequestMetadata()
 
 	doFetch := func(userAgent string) ([]config.ProxyEntry, int64, int64, int64, int64, string, string, bool, error) {
 		req, err := http.NewRequest(http.MethodGet, subURL, nil)
@@ -1545,11 +1856,15 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 			return nil, 0, 0, 0, 0, "", "", false, fmt.Errorf("creating subscription request: %w", err)
 		}
 		req.Header.Set("User-Agent", userAgent)
+		// Remnawave HWID device identification headers.
+		req.Header.Set("x-device-os", metadata.Platform)
+		req.Header.Set("x-ver-os", metadata.OSVersion)
+		req.Header.Set("x-device-model", metadata.Model)
 		// Only attach HWID to HTTPS requests. On plaintext http:// the HWID
 		// would be sniffable end-to-end and would link the user's device
 		// across every network hop and intermediary — the privacy cost
 		// outweighs any HWID-based device-limit check the provider does.
-		if !insecure {
+		if !insecure && metadata.SendHWID {
 			if hwid := a.subscriptionHWID(subURL); hwid != "" {
 				req.Header.Set("x-hwid", hwid)
 			}
@@ -1596,49 +1911,7 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 		return entries, up, down, tot, exp, iconURL, profileTitle, isJSON, nil
 	}
 
-	primaryUA := fmt.Sprintf("ResultV/%s", productVersionFromWailsJSON())
-	entries, up, down, tot, exp, iconURL, profileTitle, isJSON, primaryErr := doFetch(primaryUA)
-
-	tryHapp := false
-	var err error
-	if primaryErr != nil {
-		tryHapp = true
-	} else {
-		hasHysteria := false
-		for _, e := range entries {
-			t := strings.ToUpper(e.Type)
-			if strings.Contains(t, "HYSTERIA") || strings.Contains(t, "HY2") {
-				hasHysteria = true
-				break
-			}
-		}
-		// Try Happ when primary lacks Hysteria2 and is not JSON (provider
-		// may offer a richer config to Happ UA).
-		if !hasHysteria && !isJSON {
-			tryHapp = true
-		}
-	}
-
-	if tryHapp {
-		fbEntries, fbUp, fbDown, fbTot, fbExp, fbIcon, fbTitle, _, fbErr := doFetch("Happ/1.0")
-		if fbErr == nil && len(fbEntries) > 0 {
-			if primaryErr != nil || len(fbEntries) > len(entries) {
-				a.log.Info("Retrying with Happ User-Agent...")
-				a.log.Success(fmt.Sprintf("Happ fallback: %d entries", len(fbEntries)))
-				entries = fbEntries
-				up, down, tot, exp = fbUp, fbDown, fbTot, fbExp
-				if fbIcon != "" {
-					iconURL = fbIcon
-				}
-				if fbTitle != "" {
-					profileTitle = fbTitle
-				}
-			}
-		} else if primaryErr != nil {
-			err = primaryErr
-		}
-	}
-
+	entries, up, down, tot, exp, iconURL, profileTitle, _, err := doFetch(metadata.UserAgent)
 	if err != nil {
 		return nil, 0, 0, 0, 0, "", "", err
 	}
@@ -1654,8 +1927,8 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 		entries[i].ID = fmt.Sprintf("%d", baseID+int64(i))
 	}
 
-	// Remove sentinel/routing-only entries that have no real host (0.0.0.0).
-	entries = proxy.FilterInvalidSubscriptionEntries(entries)
+	// Turn placeholder-host rows (e.g. 0.0.0.0) into SECTION labels; keep order.
+	entries = proxy.FinalizeSubscriptionEntries(entries)
 
 	autoCreated := false
 	var individualMembers []config.ProxyEntry
@@ -1748,13 +2021,30 @@ func (a *App) FetchSubscription(subURL string, allowInsecure bool) ([]config.Pro
 // target — there's no UI-side prompt for paste flows, so plaintext URLs are
 // refused outright.
 func (a *App) ParseSubscriptionText(text string) ([]config.ProxyEntry, error) {
+	if proxy.IsDeepLink(text) {
+		decoded, err := proxy.DecodeDeepLink(text)
+		if err != nil {
+			return nil, err
+		}
+		text = decoded
+	}
+	text = strings.TrimSpace(text)
+	lower := strings.ToLower(text)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		entries, _, _, _, _, _, _, ferr := a.fetchSubscriptionFromURL(text, false)
+		return entries, ferr
+	}
 	if proxy.IsEncryptedSubscription(text) {
 		if resolved, err := resolveEncryptedSubscriptionURL(text); err == nil && resolved != "" {
 			entries, _, _, _, _, _, _, ferr := a.fetchSubscriptionFromURL(resolved, false)
 			return entries, ferr
 		}
 	}
-	return proxy.ParseSubscriptionBody(text)
+	entries, err := proxy.ParseSubscriptionBody(text)
+	if err != nil {
+		return nil, err
+	}
+	return proxy.FinalizeSubscriptionEntries(entries), nil
 }
 
 func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
@@ -1843,7 +2133,7 @@ func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
 // passed explicitly for http:// URLs after the user has confirmed the
 // warning. The consent is persisted on the Subscription record so
 // RefreshSubscription doesn't need to re-prompt.
-func (a *App) AddSubscription(name, subURL string, allowInsecure bool) ([]config.ProxyEntry, error) {
+func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source string) ([]config.ProxyEntry, error) {
 	if a.config == nil {
 		return nil, fmt.Errorf("config manager not initialized")
 	}
@@ -1897,6 +2187,7 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool) ([]config
 		TrafficTotal:    tot,
 		ExpireUnix:      exp,
 		IconURL:         iconURL,
+		Source:          strings.TrimSpace(source),
 		// Only mark as allow-insecure when the URL actually is plaintext —
 		// no need to flag https:// subscriptions, which would be misleading.
 		AllowInsecure: allowInsecure && isInsecureSubURL(subURL),
@@ -2063,10 +2354,161 @@ func (a *App) refreshTrayProxyList() {
 	status := a.GetStatus()
 	if status.IsConnected && status.CurrentProxy != nil {
 		a.tray.SetConnectedProxy(a.resolveProxyID(*status.CurrentProxy), fmt.Sprintf("%s:%d", status.CurrentProxy.IP, status.CurrentProxy.Port))
+		a.setWindowTitleConnected(*status.CurrentProxy)
 	} else {
 		a.tray.SetDisconnected()
+		a.setWindowTitleDisconnected()
 	}
-	a.tray.UpdateProxyList(cfg.Proxies, selectedID)
+	a.tray.UpdateProxyList(a.filterTrayProxiesDiag(cfg.Proxies), selectedID)
+}
+
+// filterTrayProxiesDiag wraps filterTrayProxies with structured logging that
+// surfaces the two failure modes responsible for "click X, connect to Y":
+//
+//  1. Duplicate IDs in cfg.Proxies — connectFromTray's linear lookup picks
+//     the FIRST match, so the visually different second entry routes to the
+//     first one's IP.
+//  2. AUTO.Extra.members listing IDs that don't exist in cfg.Proxies
+//     ("orphan members") — filter does not hide them because there's
+//     nothing to hide, but they're also unreachable from resolveAutoProxy.
+//
+// Both anomalies are silent corruption that the user can only detect by
+// observing wrong-server behaviour; logging them here puts a breadcrumb in
+// the log so support can immediately tell what's wrong with a saved config.
+func (a *App) filterTrayProxiesDiag(proxies []config.ProxyEntry) []config.ProxyEntry {
+	if len(proxies) == 0 {
+		return proxies
+	}
+	// ID duplicate detection.
+	idCounts := make(map[string]int, len(proxies))
+	for _, p := range proxies {
+		if p.ID == "" {
+			continue
+		}
+		idCounts[p.ID]++
+	}
+	for id, n := range idCounts {
+		if n > 1 && a.log != nil {
+			var names []string
+			for _, p := range proxies {
+				if p.ID == id {
+					name := strings.TrimSpace(p.Name)
+					if name == "" {
+						name = fmt.Sprintf("%s:%d", p.IP, p.Port)
+					}
+					names = append(names, name)
+				}
+			}
+			a.log.Warning(fmt.Sprintf("[TRAY] коллизия ID=%s между %d прокси: %s — выбор из трея может попасть не на тот сервер. Удалите дубликаты.",
+				id, n, strings.Join(names, " / ")))
+		}
+	}
+	// Orphan AUTO members detection.
+	existingIDs := make(map[string]struct{}, len(proxies))
+	for _, p := range proxies {
+		if p.ID != "" {
+			existingIDs[p.ID] = struct{}{}
+		}
+	}
+	for _, p := range proxies {
+		if !strings.EqualFold(p.Type, "AUTO") || len(p.Extra) == 0 {
+			continue
+		}
+		var parsed struct {
+			Members []string `json:"members"`
+		}
+		if p.Extra[0] == '"' {
+			var s string
+			if err := json.Unmarshal(p.Extra, &s); err == nil {
+				_ = json.Unmarshal([]byte(s), &parsed)
+			}
+		} else {
+			_ = json.Unmarshal(p.Extra, &parsed)
+		}
+		orphans := 0
+		for _, mid := range parsed.Members {
+			if mid == "" {
+				continue
+			}
+			if _, ok := existingIDs[mid]; !ok {
+				orphans++
+			}
+		}
+		if orphans > 0 && a.log != nil {
+			autoLabel := strings.TrimSpace(p.Name)
+			if autoLabel == "" {
+				autoLabel = p.ID
+			}
+			a.log.Warning(fmt.Sprintf("[TRAY] AUTO «%s» ссылается на %d несуществующих узлов из %d — обновите подписку, иначе клик по AUTO попадёт не туда",
+				autoLabel, orphans, len(parsed.Members)))
+		}
+	}
+	return filterTrayProxies(proxies)
+}
+
+// filterTrayProxies returns the proxy entries shown in the tray Servers
+// submenu.
+//
+// Decision (user-driven, 2026-05-28 follow-up #2): the tray shows ONLY the
+// "individual" servers carrying their original subscription name — never
+// AUTO heads, never AUTO members. Specifically it hides:
+//
+//   - AUTO group heads (Type == "AUTO") — auto-routing silently picks a
+//     different-country member, so showing the head in the tray caused
+//     "click Austria, connect to Germany".
+//   - AUTO members — entries the subscription packed into the auto-group
+//     and that the import path renamed to generic "<flag> TYPE #N" labels.
+//     They duplicate the same backends as the human-readable individuals
+//     (subscriptions like impVPN/Remnawave commonly emit both), so showing
+//     them just clutters the tray with anonymous rows.
+//   - SECTION entries — subscription group labels with no IP/Port, never
+//     connectable.
+//
+// AUTO heads (and the routing they perform across renamed members) remain
+// available from the main React UI. The tray is the "I know exactly which
+// server I want, by name" surface; the main window is the "let the app
+// pick" surface.
+func filterTrayProxies(proxies []config.ProxyEntry) []config.ProxyEntry {
+	if len(proxies) == 0 {
+		return proxies
+	}
+	memberIDs := make(map[string]struct{})
+	for _, p := range proxies {
+		if !strings.EqualFold(p.Type, "AUTO") || len(p.Extra) == 0 {
+			continue
+		}
+		var parsed struct {
+			Members []string `json:"members"`
+		}
+		if p.Extra[0] == '"' {
+			var s string
+			if err := json.Unmarshal(p.Extra, &s); err == nil {
+				_ = json.Unmarshal([]byte(s), &parsed)
+			}
+		} else {
+			_ = json.Unmarshal(p.Extra, &parsed)
+		}
+		for _, id := range parsed.Members {
+			if id != "" {
+				memberIDs[id] = struct{}{}
+			}
+		}
+	}
+	out := make([]config.ProxyEntry, 0, len(proxies))
+	for _, p := range proxies {
+		t := strings.ToUpper(strings.TrimSpace(p.Type))
+		if t == "SECTION" {
+			continue
+		}
+		if t == "AUTO" {
+			continue
+		}
+		if _, isMember := memberIDs[p.ID]; isMember {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 func (a *App) setLastSelectedProxy(proxyID string) error {
@@ -2085,34 +2527,163 @@ func (a *App) setLastSelectedProxy(proxyID string) error {
 	return nil
 }
 
+// resolveAutoProxy turns an AUTO-group head into its best-pinging member.
+// For non-AUTO entries it returns the input unchanged.
+//
+// The merged result keeps the AUTO head's ID/Name (so UI labels stay stable
+// across pings) but takes IP/Port/Type/credentials AND SubscriptionURL from
+// the chosen member. The SubscriptionURL copy is critical: without it the
+// engine logs leak the member's raw host:port instead of the subscription
+// label (manager.Connect branches on SubscriptionURL != "").
+func (a *App) resolveAutoProxy(p *config.ProxyEntry) *config.ProxyEntry {
+	if !strings.EqualFold(p.Type, "AUTO") || len(p.Extra) == 0 {
+		return p
+	}
+	var parsed struct {
+		Members []string `json:"members"`
+	}
+	if len(p.Extra) > 0 && p.Extra[0] == '"' {
+		var s string
+		if err := json.Unmarshal(p.Extra, &s); err == nil {
+			_ = json.Unmarshal([]byte(s), &parsed)
+		}
+	} else {
+		_ = json.Unmarshal(p.Extra, &parsed)
+	}
+
+	cfg := a.config.GetConfig()
+	var best *config.ProxyEntry
+	var bestPing int64 = 9999999
+	pinged := 0
+	reachable := 0
+
+	for _, memberID := range parsed.Members {
+		if memberID == "" {
+			continue
+		}
+		for i := range cfg.Proxies {
+			if cfg.Proxies[i].ID == memberID {
+				member := &cfg.Proxies[i]
+				pinged++
+				pingRes := a.PingProxy(member.IP, member.Port, member.Type)
+				if pingRes.Reachable {
+					reachable++
+					if pingRes.LatencyMs < bestPing {
+						bestPing = pingRes.LatencyMs
+						best = member
+					}
+				}
+				break
+			}
+		}
+	}
+
+	autoLabel := strings.TrimSpace(p.Name)
+	if autoLabel == "" {
+		autoLabel = "AUTO"
+	}
+	if best != nil {
+		// Surface the AUTO routing decision so the user can see WHY the
+		// connection went to a particular IP/country — without this the
+		// engine logs show only the member IP and the user can't tell
+		// whether they clicked the right thing in the tray.
+		bestLabel := strings.TrimSpace(best.Name)
+		if bestLabel == "" {
+			bestLabel = fmt.Sprintf("%s:%d", best.IP, best.Port)
+		}
+		if a.log != nil {
+			a.log.Info(fmt.Sprintf("[PROXY] AUTO «%s»: выбран узел «%s» (пинг %dms, проверено %d из %d, доступно %d)",
+				autoLabel, bestLabel, bestPing, pinged, len(parsed.Members), reachable))
+		}
+		merged := *best
+		merged.ID = p.ID
+		merged.Name = p.Name
+		// Preserve the AUTO head's subscription metadata so logs/labels
+		// downstream show the subscription instead of the raw member host.
+		// best.SubscriptionURL is usually equal to p.SubscriptionURL, but
+		// fall back to the AUTO head's value when a member entry was added
+		// outside the subscription import path.
+		if strings.TrimSpace(merged.SubscriptionURL) == "" {
+			merged.SubscriptionURL = p.SubscriptionURL
+		}
+		if strings.TrimSpace(merged.Provider) == "" {
+			merged.Provider = p.Provider
+		}
+		return &merged
+	}
+	if a.log != nil {
+		a.log.Warning(fmt.Sprintf("[PROXY] AUTO «%s»: ни один из %d узлов не доступен — попытка по последней записи",
+			autoLabel, len(parsed.Members)))
+	}
+	return p
+}
+
 func (a *App) connectFromTray(proxyID string) error {
 	if proxyID == "" || a.config == nil {
 		return fmt.Errorf("proxy id is empty")
 	}
 	cfg := a.config.GetConfig()
+	// Detect ID duplicates in cfg.Proxies — they cause the wrong entry to
+	// match here and silently route the user to a different server. Manual
+	// proxies use Date.now()+index (frontend) while subscription members use
+	// time.Now().UnixMilli()+index (backend); both can collide if produced in
+	// the same millisecond window. When we hit a duplicate we still pick the
+	// first match (legacy behaviour) but warn loudly so the user can clean
+	// the config instead of chasing a phantom server selection bug.
 	var selected *config.ProxyEntry
+	matchCount := 0
 	for i := range cfg.Proxies {
 		if cfg.Proxies[i].ID == proxyID {
-			selected = &cfg.Proxies[i]
-			break
+			matchCount++
+			if selected == nil {
+				selected = &cfg.Proxies[i]
+			}
 		}
 	}
 	if selected == nil {
+		if a.log != nil {
+			a.log.Error(fmt.Sprintf("[TRAY] клик по серверу id=%s — записи нет в конфигурации (%d прокси загружено)", proxyID, len(cfg.Proxies)))
+		}
 		return fmt.Errorf("proxy %s not found", proxyID)
 	}
+	if matchCount > 1 && a.log != nil {
+		a.log.Warning(fmt.Sprintf("[TRAY] коллизия ID: %d записей делят id=%s — будет использована первая (%s %s:%d). Удалите дубликаты в списке прокси.",
+			matchCount, proxyID, selected.Name, selected.IP, selected.Port))
+	}
+
+	clickedLabel := strings.TrimSpace(selected.Name)
+	if clickedLabel == "" {
+		if selected.IP != "" {
+			clickedLabel = fmt.Sprintf("%s:%d", selected.IP, selected.Port)
+		} else {
+			clickedLabel = proxyID
+		}
+	}
+	if a.log != nil {
+		a.log.Info(fmt.Sprintf("[TRAY] клик по «%s» (id=%s, type=%s)", clickedLabel, proxyID, selected.Type))
+	}
+
+	selected = a.resolveAutoProxy(selected)
+
 	cfg.Settings.LastSelectedProxyID = proxyID
 	if err := a.config.SaveConfig(cfg); err != nil {
 		return err
 	}
 
+	// SubscriptionURL/Provider MUST be propagated: manager.Connect branches
+	// log output on SubscriptionURL != "" — without this the user sees the
+	// raw member IP in logs whenever they connect via the tray (which is
+	// exactly the leak the user complained about for AUTO routing).
 	result, err := a.Connect(proxy.ProxyConfig{
-		IP:       selected.IP,
-		Port:     selected.Port,
-		Type:     selected.Type,
-		Username: selected.Username,
-		Password: selected.Password,
-		URI:      selected.URI,
-		Extra:    selected.Extra,
+		ID:              selected.ID,
+		IP:              selected.IP,
+		Port:            selected.Port,
+		Type:            selected.Type,
+		Username:        selected.Username,
+		Password:        selected.Password,
+		URI:             selected.URI,
+		Extra:           selected.Extra,
+		SubscriptionURL: selected.SubscriptionURL,
 	}, cfg.RoutingRules, cfg.Settings.KillSwitch, cfg.Settings.AdBlock)
 	if err != nil {
 		return err
@@ -2124,6 +2695,12 @@ func (a *App) connectFromTray(proxyID string) error {
 	return nil
 }
 
+// resolveProxyID returns the canonical ID for a ProxyConfig. Callers must
+// populate proxyDTO.ID — the (IP, Port, Type) fallback exists only to
+// tolerate legacy code paths that built a ProxyConfig manually. The fallback
+// is unsafe when two subscriptions share the same address (typical for
+// Hysteria2 backbones), so a hit there is logged as a warning to surface
+// missing ID propagation early.
 func (a *App) resolveProxyID(proxyDTO proxy.ProxyConfig) string {
 	if proxyDTO.ID != "" {
 		return proxyDTO.ID
@@ -2134,41 +2711,55 @@ func (a *App) resolveProxyID(proxyDTO proxy.ProxyConfig) string {
 	cfg := a.config.GetConfig()
 	for _, p := range cfg.Proxies {
 		if p.IP == proxyDTO.IP && p.Port == proxyDTO.Port && strings.EqualFold(p.Type, proxyDTO.Type) {
+			if a.log != nil {
+				a.log.Warning(fmt.Sprintf("[PROXY] resolveProxyID: fallback по (IP,Port,Type) для %s:%d/%s → %s (ID не передан, возможен выбор не того сервера)", proxyDTO.IP, proxyDTO.Port, proxyDTO.Type, p.ID))
+			}
 			return p.ID
 		}
 	}
 	return ""
 }
 
-func (a *App) startTrayPingLoop() {
-	if a.ctx == nil || a.tray == nil || a.config == nil || a.proxy == nil {
-		return
-	}
-	go func() {
-		ticker := time.NewTicker(20 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-a.ctx.Done():
-				return
-			case <-ticker.C:
-				cfg := a.config.GetConfig()
-				if len(cfg.Proxies) == 0 {
-					continue
-				}
-				pings := make(map[string]int64, len(cfg.Proxies))
-				for _, p := range cfg.Proxies {
-					res := a.proxy.Ping(p.IP, p.Port, p.Type)
-					if res.Reachable {
-						pings[p.ID] = res.LatencyMs
-					} else {
-						pings[p.ID] = -1
-					}
-				}
-				a.tray.UpdateProxyPings(pings)
+// resolveProxyDisplayName returns the human-readable proxy name (e.g.
+// "Австрия | TROJAN TCP | №2") used in the window/taskbar title.
+// ProxyConfig itself doesn't carry Name — it's stored in config.ProxyEntry,
+// so we look it up by ID or (IP, Port, Type). Falls back to "IP:Port".
+func (a *App) resolveProxyDisplayName(proxyDTO proxy.ProxyConfig) string {
+	if a.config != nil {
+		cfg := a.config.GetConfig()
+		for _, p := range cfg.Proxies {
+			match := (proxyDTO.ID != "" && p.ID == proxyDTO.ID) ||
+				(p.IP == proxyDTO.IP && p.Port == proxyDTO.Port && strings.EqualFold(p.Type, proxyDTO.Type))
+			if match && strings.TrimSpace(p.Name) != "" {
+				return strings.TrimSpace(p.Name)
 			}
 		}
-	}()
+	}
+	return fmt.Sprintf("%s:%d", proxyDTO.IP, proxyDTO.Port)
+}
+
+// setWindowTitleConnected updates the OS window/taskbar title to reflect the
+// active proxy. Format: "ResultV — {server name}". Safe to call before ctx is
+// initialized.
+func (a *App) setWindowTitleConnected(proxyDTO proxy.ProxyConfig) {
+	if a.ctx == nil {
+		return
+	}
+	wailsRuntime.WindowSetTitle(a.ctx, "ResultV — "+a.resolveProxyDisplayName(proxyDTO))
+}
+
+func (a *App) setWindowTitleDisconnected() {
+	if a.ctx == nil {
+		return
+	}
+	wailsRuntime.WindowSetTitle(a.ctx, "ResultV")
+}
+
+func (a *App) setWindowTitleKillSwitch() {
+	if a.ctx == nil {
+		return
+	}
+	wailsRuntime.WindowSetTitle(a.ctx, "ResultV — Kill Switch")
 }
 
 func (a *App) initSmartBlockedDomains(userDataPath, rootDir string) {
@@ -2226,6 +2817,22 @@ func (a *App) startSmartBlockedRefresh(cachePath string) {
 			}
 		}
 	}()
+}
+
+func (a *App) prepareForUpdateInstall() error {
+	// Abort any in-flight connect attempt so update teardown is deterministic.
+	a.CancelConnect()
+	if err := a.Disconnect(); err != nil {
+		return fmt.Errorf("disconnect before update install: %w", err)
+	}
+	// Always call Disable() before installer handover. This mirrors shutdown():
+	// stale in-memory state must not leave firewall rules behind.
+	if a.killSwitch != nil {
+		if err := a.killSwitch.Disable(); err != nil {
+			return fmt.Errorf("disable kill switch before update install: %w", err)
+		}
+	}
+	return nil
 }
 
 // StartUpdate begins the in-app update: check manifest → download → verify → install.
@@ -2306,14 +2913,18 @@ func (a *App) StartUpdate() {
 		}
 
 		emit("update:verified", nil)
-		emit("update:installing", nil)
+		if err := a.prepareForUpdateInstall(); err != nil {
+			failEvent("install", err.Error())
+			return
+		}
 
+		emit("update:installing", nil)
 		if err := u.Install(path); err != nil {
 			failEvent("install", err.Error())
 			return
 		}
-		// Install staged the update script. Gracefully quit Wails so that
-		// WebView2 releases all exe handles before the script copies the file.
+		// Install is staged. Gracefully quit through Wails so OnShutdown runs
+		// and all proxy/kill-switch cleanup mirrors a normal app exit.
 		emit("update:restarting", nil)
 		time.Sleep(300 * time.Millisecond) // let the event reach the frontend
 		// Ensure BeforeClose allows real process exit (not "hide to tray"),
