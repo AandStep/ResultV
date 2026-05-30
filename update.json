@@ -1,12 +1,12 @@
 {
   "version": "",
   "releaseTitle": {
-    "ru": "Hotfixes 3.2.2",
-    "en": "Hotfixes 3.2.2"
+    "ru": "Hotfixes 3.2.3",
+    "en": "Hotfixes 3.2.3"
   },
   "releaseNotes": {
-    "ru": "Пофикшена недоступность deep link при запуске с правами администратора. Исправлена ошибка невозможности создания sing-tun без ipv6. Пофикшены AWG и WG к которым не получалось подключиться",
-    "en": "Fixed deep link unavailability when running with administrator rights. Fixed an error that prevented sing-tun creation without IPv6. Fixed AWG and WG that could not be connected to."
+    "ru": "Исправлено ложное срабатывание kill switch в прокси-режиме без прав администратора. Watchdog теперь проверяет соединение через локальный листенер, а не голым TCP к серверу. Kill switch emergency больше не всплывает если фаервол всё равно не может заблокировать трафик (нет прав админа). Убран автоматический пинг серверов каждые 60 секунд. Улучшен пинг для Hysteria2 — теперь корректно отображается реальная задержка вместо «Online».",
+    "en": "Fixed false kill switch trigger in proxy mode without administrator rights. The watchdog now checks connectivity through the local listener instead of a raw TCP connect to the server. Kill switch emergency no longer pops up when the firewall cannot actually block traffic (no admin rights). Removed automatic server ping every 60 seconds. Improved ping display for Hysteria2 — now shows actual latency instead of \"Online\"."
   },
   "downloadUrl": "https://result-proxy.ru/",
   "platforms": {}
