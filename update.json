@@ -1,5 +1,5 @@
 {
-  "version": "3.2.2",
+  "version": "3.2.3",
   "releaseTitle": {
     "ru": "Hotfixes 3.2.3",
     "en": "Hotfixes 3.2.3"
@@ -12,28 +12,28 @@
   "platforms": {
     "windows-amd64-portable": {
       "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.3/ResultV.exe",
-      "sha256": "dcef62e961548fe84601befa6396a170139e29e8e64781a3caae595d204865ef",
-      "size": 53488128
+      "sha256": "2833d5e181443658e06b23b9ee9b58d67b4e43b7ec8c438bd1f49c5640cfb1a8",
+      "size": 53489152
     },
     "windows-amd64-installer": {
       "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.3/ResultV-amd64-installer.exe",
-      "sha256": "9fbeea410e94a94eff9559f37f8ea637c593ede1b780972135295922a056c763",
-      "size": 26191104
+      "sha256": "2d2ee4ee83884ae95be66cb6283b3aa1437eabb5616a249d65a53b5528081eac",
+      "size": 26191697
     },
     "darwin-universal": {
       "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.3/ResultV.dmg",
-      "sha256": "971af922c8b3f236b98edb33e3588039ebb5904d080f9f69ddc04f58cf24aeb9",
-      "size": 59354741
+      "sha256": "49bf7e6b2b3bb3070174b54c11724f2823db1032fe89724f05867b60e1abc686",
+      "size": 59359552
     },
     "linux-amd64-appimage": {
       "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.3/ResultV-3.2.3-x86_64.AppImage",
-      "sha256": "b0112c662d28a1c2c0f42b937f50bed0d52fac585d62d413d7881e6a52bdf78a",
-      "size": 92912120
+      "sha256": "069a1b4f01a50380b591672008edae2232be546f52e09919962c2bc1e7a9b825",
+      "size": 92908024
     },
     "linux-amd64-deb": {
       "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.3/resultv_3.2.3_amd64.deb",
-      "sha256": "da6d57b5bcc15778644e1e7e85f98244aaf8215cff253f9c8ede77b15590878b",
-      "size": 25185702
+      "sha256": "9cdbedd6e6608d3ae4b9b8039d103f58c0a25be7b5493b00eec81a195337e7bf",
+      "size": 25186382
     }
   }
 }
