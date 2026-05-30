@@ -1,5 +1,6 @@
 package com.resultv.android.vpn
 
+import android.os.Build
 import mobile.Mobile
 import org.json.JSONObject
 
@@ -58,5 +59,25 @@ internal object BuildOptionsBuilder {
         } catch (t: Throwable) {
             null
         }
+    }
+
+    /**
+     * Build the JSON payload for `Mobile.fetchSubscriptionV3`. Pulls the
+     * user-configured UA / HWID preferences out of [SettingsRepository] and
+     * tags the request with the device-id headers Happ / Remnawave panels
+     * use for their device-list UI.
+     */
+    fun currentSubscriptionFetchOptionsJson(): String {
+        val s = SettingsRepository.state.value
+        return JSONObject().apply {
+            put("userAgent", s.subscriptionUserAgent)
+            put("sendHwid", s.subscriptionSendHwid)
+            put("deviceOs", "Android")
+            put("osVersion", Build.VERSION.RELEASE.orEmpty())
+            put("model", listOf(Build.MANUFACTURER, Build.MODEL)
+                .filter { !it.isNullOrBlank() }
+                .joinToString(" ")
+                .trim())
+        }.toString()
     }
 }

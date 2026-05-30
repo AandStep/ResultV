@@ -59,6 +59,36 @@
     <string name="settings_dns_preset_auto">Авто</string>
     <string name="settings_dns_preset_custom">Свой</string>
 
+    <!-- Settings — grouped. Тексты дословно с десктопа (frontend/src/locales/ru.json) -->
+    <string name="settings_title">Настройки приложения</string>
+    <string name="settings_desc">Управление безопасностью и системой</string>
+    <string name="settings_back">Назад к настройкам</string>
+    <string name="settings_group_advanced">Дополнительные настройки</string>
+    <string name="settings_group_advanced_desc">Параметры запуска, TUN и фильтрации трафика.</string>
+    <string name="settings_group_subscriptions">Подписки</string>
+    <string name="settings_group_subscriptions_desc">Автообновление и данные, которые приложение отправляет провайдеру подписки.</string>
+    <string name="settings_group_security">Безопасность</string>
+    <string name="settings_group_security_desc">Защита соединения при сбоях и утечках DNS.</string>
+    <string name="settings_group_network">Сеть</string>
+    <string name="settings_group_network_desc">DNS, локальный доступ и порт прокси.</string>
+    <string name="settings_group_appearance">Оформление</string>
+    <string name="settings_group_appearance_desc">Язык интерфейса.</string>
+
+    <string name="settings_killswitch_title">Включить Kill Switch</string>
+    <string name="settings_killswitch_desc">Моментально прервать интернет соединение при падении прокси.</string>
+
+    <string name="settings_sub_auto_update_title">Автоматическое обновление</string>
+    <string name="settings_sub_auto_update_desc">Периодически обновлять все добавленные подписки.</string>
+    <string name="settings_sub_interval_title">Интервал обновления</string>
+    <string name="settings_sub_interval_desc">Как часто обновлять подписки, в часах.</string>
+    <string name="settings_sub_hwid_title">Передавать HWID</string>
+    <string name="settings_sub_hwid_desc">Отправлять идентификатор устройства подписке по HTTPS для проверки лимита устройств.</string>
+    <string name="settings_sub_ua_title">User agent</string>
+    <string name="settings_sub_ua_desc">Очистите поле, чтобы использовать значение по умолчанию ResultV/&lt;версия&gt;/Android/&lt;версия ОС&gt;.</string>
+
+    <string name="settings_appearance_language_title">Язык</string>
+    <string name="settings_appearance_language_desc">Язык интерфейса во всём приложении.</string>
+
     <string name="vpn_status_connecting">Подключение…</string>
     <string name="vpn_status_connected">Подключено</string>
     <string name="vpn_status_idle">Не активен</string>
@@ -90,18 +120,15 @@
     <string name="add_msg_clipboard_empty">Буфер обмена пуст</string>
     <string name="add_msg_imported_clipboard">Импортировано из буфера: %1$d</string>
     <string name="add_msg_no_valid_uris_clipboard">В буфере нет корректных ссылок</string>
-    <string name="add_mode_paste">Ссылка</string>
+    <string name="add_mode_link">Ссылка</string>
     <string name="add_mode_manual">Вручную</string>
-    <string name="add_mode_subscription">Подписка</string>
 
-    <string name="add_paste_label">Share-ссылка</string>
-    <string name="add_paste_placeholder">vless:// vmess:// trojan:// hy2:// …</string>
-    <string name="add_paste_err_empty">Ссылка пустая</string>
-    <string name="add_paste_err_invalid">Некорректная ссылка</string>
+    <string name="add_link_label">Вставьте ссылку или подписку</string>
+    <string name="add_link_placeholder">resultv:// · https://… · vless:// vmess:// trojan:// hy2:// …</string>
+    <string name="add_link_err_empty">Ссылка пустая</string>
+    <string name="add_link_err_invalid">Не удалось распознать ссылку</string>
     <string name="add_paste_default_name">Профиль</string>
 
-    <string name="add_sub_label">URL подписки</string>
-    <string name="add_sub_placeholder">https://example.com/sub/…</string>
     <string name="add_sub_fetch">Получить</string>
     <string name="add_sub_fetching">Загрузка…</string>
     <string name="add_sub_selected">Выбрано %1$d из %2$d</string>
@@ -178,10 +205,25 @@
     <string name="sub_delete_cd">Удалить подписку</string>
     <string name="sub_delete_title">Удалить подписку?</string>
     <string name="sub_delete_message">«%1$s» и %2$d привязанных профилей будут удалены.</string>
-    <string name="sub_edit_cd">Изменить URL подписки</string>
-    <string name="sub_edit_title">Изменить URL подписки</string>
-    <string name="sub_edit_label">URL панели</string>
-    <string name="sub_edit_save">Сохранить и обновить</string>
+    <string name="sub_edit_cd">Настройки подписки</string>
+    <string name="sub_edit_title">Настройки</string>
+    <string name="sub_edit_section_name">Название</string>
+    <string name="sub_edit_section_visibility">Видимость</string>
+    <string name="sub_edit_section_links">Ссылки</string>
+    <string name="sub_edit_section_refresh">Интервал обновления</string>
+    <string name="sub_edit_visibility_toggle">Показывать на главной</string>
+    <string name="sub_edit_visibility_desc">Когда выключено, подписка остаётся в списке серверов, но скрывается с главного экрана</string>
+    <string name="sub_edit_link_support">Поддержка</string>
+    <string name="sub_edit_link_open_cd">Открыть ссылку</string>
+    <string name="sub_edit_custom_interval_title">Свой интервал</string>
+    <string name="sub_edit_custom_interval_desc">Иначе используется общий</string>
+    <string name="sub_edit_interval_30m">30 мин</string>
+    <string name="sub_edit_interval_1h">1 час</string>
+    <string name="sub_edit_interval_2h">2 часа</string>
+    <string name="sub_edit_interval_6h">6 часов</string>
+    <string name="sub_edit_interval_12h">12 часов</string>
+    <string name="sub_edit_interval_24h">24 часа</string>
+    <string name="sub_edit_close_cd">Закрыть</string>
     <string name="sub_traffic_used">%1$s / %2$s</string>
     <string name="sub_expires_in_days">Истекает через %1$d дн.</string>
     <string name="sub_expired">Срок истёк</string>

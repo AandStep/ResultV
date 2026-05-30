@@ -24,6 +24,14 @@ private const val FILE_NAME = "subscriptions.json"
  *   Parsed lazily by [SubscriptionUsage.parse] for the UI.
  * @property source Provenance tag — "rvsub" for deep links delivered via
  *   `resultv://rvsub/`, "" otherwise. Drives the impVPN logo override.
+ * @property customName User-set display name override; blank falls back to
+ *   the panel-supplied [name] / [title].
+ * @property hiddenOnHome When true, profiles from this subscription don't
+ *   appear in the Home picker (still visible on the Proxies tab).
+ * @property supportUrl Panel-provided "Support-Url" header value (or empty).
+ *   Surfaced in the edit sheet's Links section.
+ * @property customRefreshIntervalMinutes Per-sub auto-refresh override in
+ *   minutes; 0 = use the global SettingsRepository interval.
  */
 data class Subscription(
     val id: String,
@@ -33,6 +41,10 @@ data class Subscription(
     val userInfo: String = "",
     val source: String = "",
     val lastFetchedAt: Long = 0L,
+    val customName: String = "",
+    val hiddenOnHome: Boolean = false,
+    val supportUrl: String = "",
+    val customRefreshIntervalMinutes: Int = 0,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
@@ -42,10 +54,22 @@ data class Subscription(
         .put("userInfo", userInfo)
         .put("source", source)
         .put("lastFetchedAt", lastFetchedAt)
+        .put("customName", customName)
+        .put("hiddenOnHome", hiddenOnHome)
+        .put("supportUrl", supportUrl)
+        .put("customRefreshIntervalMinutes", customRefreshIntervalMinutes)
 
-    /** Best-effort display name; decodes the `base64:` panel convention. */
+    /**
+     * Best-effort display name. Order: user override → decoded `name` field
+     * → decoded panel `title` → raw URL. Decodes the `base64:` panel
+     * convention transparently.
+     */
     val displayName: String
-        get() = decodePanelTitle(name).ifBlank { decodePanelTitle(title) }.ifBlank { url }
+        get() {
+            val override = customName.trim()
+            if (override.isNotEmpty()) return override
+            return decodePanelTitle(name).ifBlank { decodePanelTitle(title) }.ifBlank { url }
+        }
 
     companion object {
         fun fromJson(o: JSONObject) = Subscription(
@@ -56,6 +80,10 @@ data class Subscription(
             userInfo = o.optString("userInfo"),
             source = o.optString("source"),
             lastFetchedAt = o.optLong("lastFetchedAt", 0L),
+            customName = o.optString("customName"),
+            hiddenOnHome = o.optBoolean("hiddenOnHome", false),
+            supportUrl = o.optString("supportUrl"),
+            customRefreshIntervalMinutes = o.optInt("customRefreshIntervalMinutes", 0),
         )
 
         fun new(url: String, name: String, title: String = "", userInfo: String = "", source: String = "") =

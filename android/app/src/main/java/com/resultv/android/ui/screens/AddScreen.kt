@@ -86,7 +86,7 @@ import mobile.Mobile
 import org.json.JSONArray
 import org.json.JSONObject
 
-private enum class AddMode { Paste, Manual, Subscription }
+private enum class AddMode { Link, Manual }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -97,7 +97,8 @@ fun AddScreen(
     val ctx = LocalContext.current
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
-    var mode by remember { mutableStateOf(AddMode.Paste) }
+    val scope = rememberCoroutineScope()
+    var mode by remember { mutableStateOf(AddMode.Link) }
     var importMessage by remember { mutableStateOf<String?>(null) }
 
     val defaultName = stringResource(R.string.add_paste_default_name)
@@ -149,12 +150,30 @@ fun AddScreen(
                 onClick = {
                     val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     val text = cm.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString().orEmpty()
-                    val added = importLines(text, defaultName)
-                    importMessage = when {
-                        text.isBlank() -> msgClipboardEmpty
-                        added > 0 -> ctx.getString(R.string.add_msg_imported_clipboard, added)
-                        else -> msgNoUrisClipboard
+                    if (text.isBlank()) {
+                        importMessage = msgClipboardEmpty
+                        return@QuickAddCard
                     }
+                    // Smart dispatch: deep-link → DeepLinkImporter (own toast,
+                    // no inline message); single http(s):// URL → fetch +
+                    // auto-import all entries; everything else → line-by-line
+                    // share-link import.
+                    smartClipboardImport(
+                        ctx = ctx,
+                        scope = scope,
+                        text = text,
+                        dataDir = dataDir,
+                        defaultName = defaultName,
+                        msgNoUrisClipboard = msgNoUrisClipboard,
+                        msgImportedClipboard = { n ->
+                            ctx.getString(R.string.add_msg_imported_clipboard, n)
+                        },
+                        msgFetchFailed = ctx.getString(R.string.deeplink_err_fetch),
+                        msgImportedSubscription = { n ->
+                            ctx.getString(R.string.deeplink_imported_subscription, n)
+                        },
+                        onMessage = { importMessage = it },
+                    )
                 },
                 modifier = Modifier.weight(1f),
             )
@@ -202,9 +221,8 @@ fun AddScreen(
                     Text(
                         text = stringResource(
                             when (m) {
-                                AddMode.Paste -> R.string.add_mode_paste
+                                AddMode.Link -> R.string.add_mode_link
                                 AddMode.Manual -> R.string.add_mode_manual
-                                AddMode.Subscription -> R.string.add_mode_subscription
                             },
                         ),
                     )
@@ -213,9 +231,8 @@ fun AddScreen(
         }
 
         when (mode) {
-            AddMode.Paste -> PastePane(onDone = onDone)
+            AddMode.Link -> LinkPane(dataDir = dataDir, onDone = onDone)
             AddMode.Manual -> ManualPane(onDone = onDone)
-            AddMode.Subscription -> SubscriptionPane(dataDir = dataDir, onDone = onDone)
         }
     }
 }
@@ -259,104 +276,37 @@ private fun QuickAddCard(
     }
 }
 
-// ──────────────────────────── Paste pane ────────────────────────────
+// ──────────────────────────── Unified Link pane ────────────────────────────
+//
+// One textfield handles everything a user might paste:
+//   - `resultv://…`         → DeepLinkImporter (RVSUB1 ciphertext, etc.)
+//   - `http(s)://…`         → subscription fetch + selection list
+//   - `vless://`, `vmess://`, `trojan://`, `hy2://`, …  → single share-link
+//
+// The previous split between "Paste link" and "Subscription" tabs was
+// forcing users to know in advance which format they had — the unified
+// pane just dispatches by prefix.
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PastePane(onDone: () -> Unit) {
-    var uri by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
+private fun LinkPane(dataDir: String, onDone: () -> Unit) {
+    val ctx = LocalContext.current
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
-    val errEmpty = stringResource(R.string.add_paste_err_empty)
-    val errInvalid = stringResource(R.string.add_paste_err_invalid)
-    val defaultName = stringResource(R.string.add_paste_default_name)
-
-    val tryAdd = tryAdd@{
-        val trimmed = uri.trim()
-        if (trimmed.isEmpty()) { error = errEmpty; return@tryAdd }
-        val name = try {
-            Mobile.parseProxyURI(trimmed)
-            nameFromUri(trimmed) ?: defaultName
-        } catch (t: Throwable) {
-            error = t.message ?: errInvalid
-            return@tryAdd
-        }
-        ProfileRepository.add(Profile.fromUri(name, trimmed))
-        keyboard?.hide()
-        focusManager.clearFocus()
-        onDone()
-    }
-
-    Card(
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = Brand.Surface),
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(
-                stringResource(R.string.add_paste_label),
-                style = MaterialTheme.typography.labelLarge,
-                color = Brand.SecondaryText,
-            )
-            OutlinedTextField(
-                value = uri,
-                onValueChange = { uri = it; error = null },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text(stringResource(R.string.add_paste_placeholder)) },
-                isError = error != null,
-                supportingText = error?.let { { Text(it) } },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { tryAdd() }),
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilledTonalButton(onClick = tryAdd) {
-                    Icon(Icons.Outlined.Add, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.action_add))
-                }
-                TextButton(onClick = {
-                    uri = ""; error = null
-                    keyboard?.hide(); focusManager.clearFocus()
-                }) { Text(stringResource(R.string.action_clear)) }
-            }
-        }
-    }
-}
-
-// ──────────────────────────── Subscription pane ─────────────────────
-
-private data class FetchedEntry(
-    val key: String,
-    val name: String,
-    val uri: String,
-    val entryJson: String,
-    val preview: String,
-    val type: String,
-    val isSection: Boolean,
-)
-
-/** What FetchSubscriptionV2 returns — entries + sub-level metadata. */
-private data class FetchedSubscription(
-    val entries: List<FetchedEntry>,
-    val title: String,
-    val userInfo: String,
-)
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SubscriptionPane(dataDir: String, onDone: () -> Unit) {
-    var url by remember { mutableStateOf("") }
-    var loading by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var fetched by remember { mutableStateOf<FetchedSubscription?>(null) }
-    val selected = remember { mutableStateOf(setOf<String>()) }
     val scope = rememberCoroutineScope()
-    val focusManager = LocalFocusManager.current
-    val keyboard = LocalSoftwareKeyboardController.current
+
+    var input by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(false) }
+    // Non-null once an http(s):// fetch succeeds — switches the pane from
+    // "paste field" mode to "pick entries" mode for that subscription.
+    var fetched by remember { mutableStateOf<FetchedSubscription?>(null) }
+    var fetchedUrl by remember { mutableStateOf("") }
+    val selected = remember { mutableStateOf(setOf<String>()) }
+
+    val errEmpty = stringResource(R.string.add_link_err_empty)
+    val errInvalid = stringResource(R.string.add_link_err_invalid)
+    val defaultName = stringResource(R.string.add_paste_default_name)
 
     // Auto-tick everything real when a new fetch lands (SECTION rows are
     // imported alongside the selection but not toggleable).
@@ -367,14 +317,48 @@ private fun SubscriptionPane(dataDir: String, onDone: () -> Unit) {
             .toSet()
     }
 
-    val triggerFetch: () -> Unit = {
-        if (!loading && url.isNotBlank()) {
-            keyboard?.hide(); focusManager.clearFocus()
-            doFetch(scope, url, dataDir,
-                onLoad = { loading = it },
-                onError = { error = it; fetched = null },
-                onResult = { fetched = it; error = null },
-            )
+    val submit = submit@{
+        val trimmed = input.trim()
+        if (trimmed.isEmpty()) { error = errEmpty; return@submit }
+        keyboard?.hide(); focusManager.clearFocus()
+        val lower = trimmed.lowercase()
+
+        when {
+            // resultv://… — RVSUB1 ciphertext or opaque deep-link. The
+            // importer parses, fetches if needed, and emits its own toast;
+            // we close the Add screen so the user lands on Proxies where
+            // the new entries show up.
+            lower.startsWith("resultv:") -> {
+                DeepLinkImporter.import(ctx, trimmed)
+                input = ""; error = null
+                onDone()
+            }
+            // http(s):// — subscription URL. Fetch and surface the selection
+            // list so the user can untick anything they don't want.
+            lower.startsWith("http://") || lower.startsWith("https://") -> {
+                error = null
+                doFetch(
+                    scope = scope,
+                    url = trimmed,
+                    dataDir = dataDir,
+                    onLoad = { loading = it },
+                    onError = { error = it; fetched = null; fetchedUrl = "" },
+                    onResult = { fetched = it; fetchedUrl = trimmed; error = null },
+                )
+            }
+            // Bare proxy share-link.
+            else -> {
+                val name = try {
+                    Mobile.parseProxyURI(trimmed)
+                    nameFromUri(trimmed) ?: defaultName
+                } catch (t: Throwable) {
+                    error = t.message ?: errInvalid
+                    return@submit
+                }
+                ProfileRepository.add(Profile.fromUri(name, trimmed))
+                input = ""; error = null
+                onDone()
+            }
         }
     }
 
@@ -387,30 +371,48 @@ private fun SubscriptionPane(dataDir: String, onDone: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                stringResource(R.string.add_sub_label),
+                stringResource(R.string.add_link_label),
                 style = MaterialTheme.typography.labelLarge,
                 color = Brand.SecondaryText,
             )
             OutlinedTextField(
-                value = url,
-                onValueChange = { url = it; error = null },
+                value = input,
+                onValueChange = {
+                    input = it
+                    error = null
+                    // Editing the input invalidates the previous fetch
+                    // preview — user has switched to a new URL.
+                    if (fetched != null && it.trim() != fetchedUrl) {
+                        fetched = null; fetchedUrl = ""
+                    }
+                },
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text(stringResource(R.string.add_sub_placeholder)) },
-                singleLine = true,
+                placeholder = { Text(stringResource(R.string.add_link_placeholder)) },
                 isError = error != null,
                 supportingText = error?.let { { Text(it) } },
+                singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { triggerFetch() }),
+                keyboardActions = KeyboardActions(onDone = { submit() }),
                 leadingIcon = { Icon(Icons.Outlined.Link, contentDescription = null) },
             )
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 FilledTonalButton(
-                    onClick = triggerFetch,
-                    enabled = !loading && url.isNotBlank(),
+                    onClick = submit,
+                    enabled = !loading && input.isNotBlank(),
                 ) {
-                    Icon(Icons.Outlined.CloudDownload, contentDescription = null)
+                    Icon(
+                        if (loading) Icons.Outlined.CloudDownload else Icons.Outlined.Add,
+                        contentDescription = null,
+                    )
                     Spacer(Modifier.width(8.dp))
-                    Text(stringResource(if (loading) R.string.add_sub_fetching else R.string.add_sub_fetch))
+                    Text(
+                        stringResource(
+                            if (loading) R.string.add_sub_fetching else R.string.action_add,
+                        ),
+                    )
                 }
                 if (loading) {
                     CircularProgressIndicator(
@@ -418,8 +420,16 @@ private fun SubscriptionPane(dataDir: String, onDone: () -> Unit) {
                         strokeWidth = 2.dp,
                     )
                 }
+                TextButton(onClick = {
+                    input = ""; error = null
+                    fetched = null; fetchedUrl = ""
+                    keyboard?.hide(); focusManager.clearFocus()
+                }) { Text(stringResource(R.string.action_clear)) }
             }
 
+            // Subscription preview — only rendered after a successful
+            // http(s):// fetch. SECTION rows are inlined as labels and ride
+            // along with whatever's selected.
             val sub = fetched
             if (sub != null && sub.entries.isNotEmpty()) {
                 val realCount = sub.entries.count { !it.isSection }
@@ -434,9 +444,6 @@ private fun SubscriptionPane(dataDir: String, onDone: () -> Unit) {
                 ) {
                     items(sub.entries, key = { it.key }) { e ->
                         if (e.isSection) {
-                            // Render SECTION rows as inline subtitles, not
-                            // checkboxes — they always import alongside the
-                            // selection.
                             Text(
                                 text = e.name,
                                 style = MaterialTheme.typography.labelLarge,
@@ -480,7 +487,7 @@ private fun SubscriptionPane(dataDir: String, onDone: () -> Unit) {
                     enabled = selected.value.isNotEmpty(),
                     onClick = {
                         importSubscription(
-                            url = url.trim(),
+                            url = fetchedUrl,
                             sub = sub,
                             selectedKeys = selected.value,
                             sourceTag = "",
@@ -496,6 +503,26 @@ private fun SubscriptionPane(dataDir: String, onDone: () -> Unit) {
         }
     }
 }
+
+// ──────────────────────────── Fetched-subscription model ─────────────────
+
+private data class FetchedEntry(
+    val key: String,
+    val name: String,
+    val uri: String,
+    val entryJson: String,
+    val preview: String,
+    val type: String,
+    val isSection: Boolean,
+)
+
+/** What FetchSubscriptionV2 returns — entries + sub-level metadata. */
+private data class FetchedSubscription(
+    val entries: List<FetchedEntry>,
+    val title: String,
+    val userInfo: String,
+    val supportUrl: String,
+)
 
 // ──────────────────────────── Helpers ──────────────────────────
 
@@ -535,7 +562,11 @@ private fun doFetch(
         onLoad(true)
         try {
             val responseJson = withContext(Dispatchers.IO) {
-                Mobile.fetchSubscriptionV2(url.trim(), dataDir)
+                Mobile.fetchSubscriptionV3(
+                    url.trim(),
+                    dataDir,
+                    com.resultv.android.vpn.BuildOptionsBuilder.currentSubscriptionFetchOptionsJson(),
+                )
             }
             val response = JSONObject(responseJson)
             val arr = response.optJSONArray("entries") ?: JSONArray()
@@ -545,6 +576,7 @@ private fun doFetch(
                     entries = list,
                     title = response.optString("title"),
                     userInfo = response.optString("userInfo"),
+                    supportUrl = response.optString("supportUrl"),
                 )
             )
         } catch (t: Throwable) {
@@ -595,7 +627,7 @@ private fun importSubscription(
         title = sub.title,
         userInfo = sub.userInfo,
         source = sourceTag,
-    )
+    ).copy(supportUrl = sub.supportUrl)
     SubscriptionRepository.add(subscription)
     // Preserve the response order so SECTION rows land between the right
     // group of real entries.
@@ -620,6 +652,71 @@ private fun nameFromUri(uri: String): String? = runCatching {
     val parsed = JSONObject(Mobile.parseProxyURI(uri))
     parsed.optString("name").ifBlank { parsed.optString("ip").ifBlank { null } }
 }.getOrNull()
+
+/**
+ * Clipboard quick-add dispatcher. Detects deep-links / subscription URLs /
+ * bare share-links and runs the right import path. For http(s):// URLs we
+ * auto-import every entry rather than surfacing the selection UI — the
+ * selection flow lives in the Link tab itself for users who want it.
+ */
+private fun smartClipboardImport(
+    ctx: Context,
+    scope: CoroutineScope,
+    text: String,
+    dataDir: String,
+    defaultName: String,
+    msgNoUrisClipboard: String,
+    msgImportedClipboard: (Int) -> String,
+    msgFetchFailed: String,
+    msgImportedSubscription: (Int) -> String,
+    onMessage: (String?) -> Unit,
+) {
+    val trimmed = text.trim()
+    val lower = trimmed.lowercase()
+
+    if (lower.startsWith("resultv:")) {
+        // DeepLinkImporter emits its own toast on success or failure;
+        // suppress the inline message so we don't double up.
+        DeepLinkImporter.import(ctx, trimmed)
+        onMessage(null)
+        return
+    }
+
+    val nonBlankLines = trimmed.lineSequence().filter { it.isNotBlank() }.toList()
+    val isSingleHttpUrl = nonBlankLines.size == 1 &&
+        (lower.startsWith("http://") || lower.startsWith("https://"))
+    if (isSingleHttpUrl) {
+        scope.launch {
+            try {
+                val responseJson = withContext(Dispatchers.IO) {
+                    Mobile.fetchSubscriptionV3(
+                        trimmed,
+                        dataDir,
+                        com.resultv.android.vpn.BuildOptionsBuilder.currentSubscriptionFetchOptionsJson(),
+                    )
+                }
+                val response = JSONObject(responseJson)
+                val arr = response.optJSONArray("entries") ?: JSONArray()
+                val list = (0 until arr.length()).map { i -> parseEntry(arr.getJSONObject(i), i) }
+                val sub = FetchedSubscription(
+                    entries = list,
+                    title = response.optString("title"),
+                    userInfo = response.optString("userInfo"),
+                    supportUrl = response.optString("supportUrl"),
+                )
+                val allKeys = list.filter { !it.isSection }.map { it.key }.toSet()
+                importSubscription(trimmed, sub, allKeys, "")
+                onMessage(msgImportedSubscription(allKeys.size))
+            } catch (_: Throwable) {
+                onMessage(msgFetchFailed)
+            }
+        }
+        return
+    }
+
+    val added = importLines(trimmed, defaultName)
+    onMessage(if (added > 0) msgImportedClipboard(added) else msgNoUrisClipboard)
+}
 
 /**
  * Open Google Play Services' bundled barcode scanner UI. Restricted to

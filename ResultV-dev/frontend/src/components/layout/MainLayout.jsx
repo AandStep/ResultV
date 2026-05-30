@@ -21,6 +21,7 @@ import { useTranslation } from "react-i18next";
 import { useConfigContext } from "../../context/ConfigContext";
 import { Sidebar } from "./Sidebar";
 import { MobileHeader } from "./MobileHeader";
+import { TitleBar } from "./TitleBar";
 
 const MobileNavItem = ({ icon, label, isActive, onClick }) => (
   <button
@@ -52,35 +53,39 @@ export const MainLayout = ({ children }) => {
   }, [activeTab]);
 
   return (
-    <div className="fixed inset-0 flex bg-zinc-950 text-zinc-200 font-sans overflow-hidden select-none">
+    <div className="fixed inset-0 flex flex-col bg-zinc-950 text-zinc-200 font-sans overflow-hidden select-none">
       <style>{`
-        * { 
-          outline: none !important; 
-          -webkit-tap-highlight-color: transparent !important; 
+        * {
+          outline: none !important;
+          -webkit-tap-highlight-color: transparent !important;
         }
         button { border-color: transparent; }
-        button:hover, a:hover { 
+        button:hover, a:hover {
           border-color: transparent;
         }
-        button:focus, input:focus, a:focus { 
-          outline: none !important; 
-          box-shadow: none !important; 
+        button:focus, input:focus, a:focus {
+          outline: none !important;
+          box-shadow: none !important;
         }
         :root { --bs-primary: transparent; }
         .scrollbar-hide::-webkit-scrollbar { display: none; }
       `}</style>
 
-      <Sidebar />
+      <TitleBar />
 
-      <div
-        ref={mainScrollRef}
-        className="flex-1 flex flex-col relative overflow-y-auto min-w-0 min-h-0 border-t border-zinc-800 [scrollbar-gutter:stable]"
-      >
-        <MobileHeader />
+      <div className="flex flex-1 min-h-0">
+        <Sidebar />
 
-        <div className="flex min-h-full w-full max-w-[1600px] flex-col p-6 mx-auto">
-          {children}
-          {activeTab !== "home" && <div className="h-24 md:h-6 w-full shrink-0"></div>}
+        <div
+          ref={mainScrollRef}
+          className="flex-1 flex flex-col relative overflow-y-auto min-w-0 min-h-0 border-t border-zinc-800 [scrollbar-gutter:stable]"
+        >
+          <MobileHeader />
+
+          <div className="flex min-h-full w-full max-w-[1600px] flex-col p-6 mx-auto">
+            {children}
+            {activeTab !== "home" && <div className="h-24 md:h-6 w-full shrink-0"></div>}
+          </div>
         </div>
       </div>
 

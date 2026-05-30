@@ -98,15 +98,13 @@ fun RulesScreen() {
 
     Column(
         modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .fillMaxWidth()
             .pointerInput(Unit) {
                 detectTapGestures(onTap = {
                     keyboard?.hide()
                     focusManager.clearFocus()
                 })
-            }
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            },
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         Section {
@@ -139,128 +137,98 @@ fun RulesScreen() {
                 title = stringResource(R.string.rules_section_domains_title),
                 subtitle = stringResource(R.string.rules_section_domains_subtitle),
             )
-            Card(
-                shape = CardShape,
-                colors = CardDefaults.cardColors(containerColor = Brand.Surface),
+            Column(
+                verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                val trimmedInput = domainInput.trim()
+                val coveredBy = remember(trimmedInput, rules.domainExclusions) {
+                    if (trimmedInput.isEmpty()) null
+                    else rules.domainExclusions.firstOrNull {
+                        domainPatternShadows(it, trimmedInput)
+                    }
+                }
+                val willShadow = remember(trimmedInput, rules.domainExclusions) {
+                    if (trimmedInput.isEmpty()) emptyList()
+                    else rules.domainExclusions.filter {
+                        domainPatternShadows(trimmedInput, it)
+                    }
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    val trimmedInput = domainInput.trim()
-                    val coveredBy = remember(trimmedInput, rules.domainExclusions) {
-                        if (trimmedInput.isEmpty()) null
-                        else rules.domainExclusions.firstOrNull {
-                            domainPatternShadows(it, trimmedInput)
-                        }
-                    }
-                    val willShadow = remember(trimmedInput, rules.domainExclusions) {
-                        if (trimmedInput.isEmpty()) emptyList()
-                        else rules.domainExclusions.filter {
-                            domainPatternShadows(trimmedInput, it)
-                        }
-                    }
-
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                    OutlinedTextField(
+                        value = domainInput,
+                        onValueChange = { domainInput = it },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        placeholder = { Text(stringResource(R.string.rules_domain_placeholder)) },
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = {
+                            RoutingRulesRepository.addDomain(domainInput)
+                            domainInput = ""
+                            keyboard?.hide(); focusManager.clearFocus()
+                        }),
+                    )
+                    FilledTonalButton(
+                        onClick = {
+                            RoutingRulesRepository.addDomain(domainInput)
+                            domainInput = ""
+                            keyboard?.hide(); focusManager.clearFocus()
+                        },
+                        shape = RoundedCornerShape(16.dp),
+                        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp),
                     ) {
-                        OutlinedTextField(
-                            value = domainInput,
-                            onValueChange = { domainInput = it },
-                            modifier = Modifier.weight(1f),
-                            singleLine = true,
-                            shape = RoundedCornerShape(16.dp),
-                            placeholder = { Text(stringResource(R.string.rules_domain_placeholder)) },
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                            keyboardActions = KeyboardActions(onDone = {
-                                RoutingRulesRepository.addDomain(domainInput)
-                                domainInput = ""
-                                keyboard?.hide(); focusManager.clearFocus()
-                            }),
-                        )
-                        FilledTonalButton(
-                            onClick = {
-                                RoutingRulesRepository.addDomain(domainInput)
-                                domainInput = ""
-                                keyboard?.hide(); focusManager.clearFocus()
-                            },
-                            shape = RoundedCornerShape(16.dp),
-                            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp),
-                        ) {
-                            Icon(Icons.Outlined.Add, contentDescription = null)
-                            Spacer(Modifier.width(6.dp))
-                            Text(stringResource(R.string.action_add))
-                        }
+                        Icon(Icons.Outlined.Add, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text(stringResource(R.string.action_add))
                     }
+                }
 
-                    if (coveredBy != null) {
-                        Text(
-                            stringResource(R.string.rules_shadow_covered, coveredBy),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Brand.Warning,
-                        )
-                    } else if (willShadow.isNotEmpty()) {
-                        Text(
-                            stringResource(
-                                R.string.rules_shadow_overrides,
-                                willShadow.joinToString(", "),
-                            ),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Brand.Warning,
-                        )
-                    }
+                if (coveredBy != null) {
+                    Text(
+                        stringResource(R.string.rules_shadow_covered, coveredBy),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Brand.Warning,
+                    )
+                } else if (willShadow.isNotEmpty()) {
+                    Text(
+                        stringResource(
+                            R.string.rules_shadow_overrides,
+                            willShadow.joinToString(", "),
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Brand.Warning,
+                    )
+                }
 
-                    if (rules.domainExclusions.isNotEmpty()) {
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            rules.domainExclusions.forEach { domain ->
-                                DomainChip(
-                                    label = domain,
-                                    onRemove = { RoutingRulesRepository.removeDomain(domain) },
-                                )
-                            }
-                        }
-                    }
-
-                    // "Recently used" suggestions — persisted history of every
-                    // domain the user has added at least once, filtered to
-                    // those not currently in the active list. Helps re-adding
-                    // a previously removed pattern without retyping.
-                    val recentSuggestions = remember(rules.domainHistory, rules.domainExclusions) {
-                        rules.domainHistory.asSequence()
-                            .filter { it !in rules.domainExclusions }
-                            .filter { it !in QuickDomains }
-                            .take(6)
-                            .toList()
-                    }
-                    if (recentSuggestions.isNotEmpty()) {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text(
-                                stringResource(R.string.rules_recent_title),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = Brand.MutedText,
+                if (rules.domainExclusions.isNotEmpty()) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        rules.domainExclusions.forEach { domain ->
+                            DomainChip(
+                                label = domain,
+                                onRemove = { RoutingRulesRepository.removeDomain(domain) },
                             )
-                            FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                recentSuggestions.forEach { d ->
-                                    QuickAddChip(
-                                        label = d,
-                                        already = false,
-                                        onAdd = { RoutingRulesRepository.addDomain(d) },
-                                    )
-                                }
-                            }
                         }
                     }
+                }
 
+                val recentSuggestions = remember(rules.domainHistory, rules.domainExclusions) {
+                    rules.domainHistory.asSequence()
+                        .filter { it !in rules.domainExclusions }
+                        .filter { it !in QuickDomains }
+                        .take(6)
+                        .toList()
+                }
+                if (recentSuggestions.isNotEmpty()) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(
-                            stringResource(R.string.rules_quick_add),
+                            stringResource(R.string.rules_recent_title),
                             style = MaterialTheme.typography.labelMedium,
                             color = Brand.MutedText,
                         )
@@ -268,13 +236,33 @@ fun RulesScreen() {
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            QuickDomains.forEach { d ->
+                            recentSuggestions.forEach { d ->
                                 QuickAddChip(
                                     label = d,
-                                    already = d in rules.domainExclusions,
+                                    already = false,
                                     onAdd = { RoutingRulesRepository.addDomain(d) },
                                 )
                             }
+                        }
+                    }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        stringResource(R.string.rules_quick_add),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Brand.MutedText,
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        QuickDomains.forEach { d ->
+                            QuickAddChip(
+                                label = d,
+                                already = d in rules.domainExclusions,
+                                onAdd = { RoutingRulesRepository.addDomain(d) },
+                            )
                         }
                     }
                 }
@@ -425,91 +413,86 @@ private fun PerAppRoutingSection() {
         }
     }
 
-    Card(
-        shape = CardShape,
-        colors = CardDefaults.cardColors(containerColor = Brand.Surface),
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                val modes = AppRoutingMode.entries
-                modes.forEachIndexed { i, m ->
-                    SegmentedButton(
-                        selected = routing.mode == m,
-                        onClick = { AppRoutingRepository.setMode(m) },
-                        shape = SegmentedButtonDefaults.itemShape(i, modes.size),
-                        icon = {
-                            Icon(
-                                imageVector = when (m) {
-                                    AppRoutingMode.All -> Icons.Outlined.Apps
-                                    AppRoutingMode.AllowList -> Icons.Outlined.PlaylistAddCheck
-                                    AppRoutingMode.DisallowList -> Icons.Outlined.Block
-                                },
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                            )
-                        },
-                    ) {
-                        Text(
-                            text = stringResource(
-                                when (m) {
-                                    AppRoutingMode.All -> R.string.rules_app_mode_all
-                                    AppRoutingMode.AllowList -> R.string.rules_app_mode_allow
-                                    AppRoutingMode.DisallowList -> R.string.rules_app_mode_block
-                                },
-                            ),
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            val modes = AppRoutingMode.entries
+            modes.forEachIndexed { i, m ->
+                SegmentedButton(
+                    selected = routing.mode == m,
+                    onClick = { AppRoutingRepository.setMode(m) },
+                    shape = SegmentedButtonDefaults.itemShape(i, modes.size),
+                    icon = {
+                        Icon(
+                            imageVector = when (m) {
+                                AppRoutingMode.All -> Icons.Outlined.Apps
+                                AppRoutingMode.AllowList -> Icons.Outlined.PlaylistAddCheck
+                                AppRoutingMode.DisallowList -> Icons.Outlined.Block
+                            },
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
                         )
-                    }
+                    },
+                ) {
+                    Text(
+                        text = stringResource(
+                            when (m) {
+                                AppRoutingMode.All -> R.string.rules_app_mode_all
+                                AppRoutingMode.AllowList -> R.string.rules_app_mode_allow
+                                AppRoutingMode.DisallowList -> R.string.rules_app_mode_block
+                            },
+                        ),
+                    )
                 }
             }
+        }
 
-            if (routing.mode == AppRoutingMode.All) {
-                Text(
-                    stringResource(R.string.rules_app_mode_all_hint),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Brand.SecondaryText,
-                )
-                return@Column
-            }
-
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    placeholder = { Text(stringResource(R.string.rules_app_search)) },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = {
-                        keyboard?.hide(); focusManager.clearFocus()
-                    }),
-                )
-                TextButton(onClick = { AppRoutingRepository.clearSelection() }) { Text(stringResource(R.string.action_clear)) }
-            }
-
+        if (routing.mode == AppRoutingMode.All) {
             Text(
-                stringResource(R.string.rules_app_selected_count, routing.selectedPackages.size),
-                style = MaterialTheme.typography.bodySmall,
+                stringResource(R.string.rules_app_mode_all_hint),
+                style = MaterialTheme.typography.bodyMedium,
                 color = Brand.SecondaryText,
             )
+            return@Column
+        }
 
-            if (loading) {
-                Box(modifier = Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 480.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    items(filtered, key = { it.packageName }) { app ->
-                        AppRow(
-                            app = app,
-                            checked = app.packageName in routing.selectedPackages,
-                            onToggle = { AppRoutingRepository.toggle(app.packageName) },
-                        )
-                    }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                placeholder = { Text(stringResource(R.string.rules_app_search)) },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = {
+                    keyboard?.hide(); focusManager.clearFocus()
+                }),
+            )
+            TextButton(onClick = { AppRoutingRepository.clearSelection() }) { Text(stringResource(R.string.action_clear)) }
+        }
+
+        Text(
+            stringResource(R.string.rules_app_selected_count, routing.selectedPackages.size),
+            style = MaterialTheme.typography.bodySmall,
+            color = Brand.SecondaryText,
+        )
+
+        if (loading) {
+            Box(modifier = Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 480.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                items(filtered, key = { it.packageName }) { app ->
+                    AppRow(
+                        app = app,
+                        checked = app.packageName in routing.selectedPackages,
+                        onToggle = { AppRoutingRepository.toggle(app.packageName) },
+                    )
                 }
             }
         }

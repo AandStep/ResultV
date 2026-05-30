@@ -101,7 +101,13 @@ object DeepLinkImporter {
     private suspend fun importSubscription(ctx: Context, subUrl: String, sourceTag: String) {
         val dataDir = ctx.filesDir.absolutePath
         val responseJson = withContext(Dispatchers.IO) {
-            runCatching { Mobile.fetchSubscriptionV2(subUrl, dataDir) }
+            runCatching {
+                Mobile.fetchSubscriptionV3(
+                    subUrl,
+                    dataDir,
+                    BuildOptionsBuilder.currentSubscriptionFetchOptionsJson(),
+                )
+            }
         }
         if (responseJson.isFailure) {
             toast(ctx, R.string.deeplink_err_fetch)
@@ -112,6 +118,7 @@ object DeepLinkImporter {
         val arr = response.optJSONArray("entries") ?: JSONArray()
         val title = response.optString("title")
         val userInfo = response.optString("userInfo")
+        val supportUrl = response.optString("supportUrl")
 
         val subscription = Subscription.new(
             url = subUrl,
@@ -119,7 +126,7 @@ object DeepLinkImporter {
             title = title,
             userInfo = userInfo,
             source = sourceTag,
-        )
+        ).copy(supportUrl = supportUrl)
         SubscriptionRepository.add(subscription)
 
         var imported = 0

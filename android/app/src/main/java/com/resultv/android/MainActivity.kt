@@ -10,6 +10,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -30,6 +31,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -45,14 +48,13 @@ import com.resultv.android.ui.screens.SettingsScreen
 import com.resultv.android.vpn.ACTION_START
 import com.resultv.android.vpn.ACTION_STOP
 import com.resultv.android.vpn.AppRoutingRepository
+import com.resultv.android.vpn.DeepLinkImporter
 import com.resultv.android.vpn.EXTRA_CONFIG_JSON
-import com.resultv.android.vpn.Profile
 import com.resultv.android.vpn.ProfileRepository
 import com.resultv.android.vpn.ResultVpnService
 import com.resultv.android.vpn.VpnState
 import com.resultv.android.vpn.VpnStatus
 import mobile.Mobile
-import org.json.JSONObject
 
 private const val TAG = "ResultV/UI"
 
@@ -63,7 +65,6 @@ private enum class Tab(
     Home(R.string.tab_home, Icons.Outlined.Home),
     Proxies(R.string.tab_proxies, Icons.Outlined.List),
     Add(R.string.tab_add, Icons.Outlined.Add),
-    Rules(R.string.tab_rules, Icons.Outlined.Apps),
     Settings(R.string.tab_settings, Icons.Outlined.Settings),
 }
 
@@ -110,7 +111,14 @@ class MainActivity : ComponentActivity() {
         AppRoutingRepository.init(applicationContext)
         com.resultv.android.vpn.RoutingRulesRepository.init(applicationContext)
         com.resultv.android.vpn.SettingsRepository.init(applicationContext)
-        seedFromBuildConfigIfEmpty()
+        // Periodic subscription auto-refresh — runs while the Activity is
+        // alive (matches the desktop's React hook). The refresher self-
+        // arms based on SettingsRepository.subscriptionAutoUpdate / interval.
+        com.resultv.android.vpn.SubscriptionRefresher.start(lifecycleScope, applicationContext)
+
+        // Auto-ping servers on startup and periodically
+        com.resultv.android.vpn.PingRepository.startPolling { ProfileRepository.state.value.profiles }
+        
         setContent {
             ResultVTheme {
                 AppShell(
@@ -119,15 +127,34 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+
+        // resultv:// VIEW intent from a browser or another app — singleTask
+        // means the cold-start case lands here. Hand the URL to the importer
+        // which already knows how to decode rvsub ciphertext, fetch a
+        // subscription, or parse a bare share-link.
+        handleDeepLinkIntent(intent)
     }
 
-    /** First-run convenience: import the URI from `local.properties` once. */
-    private fun seedFromBuildConfigIfEmpty() {
-        val seed = BuildConfig.VLESS_URI
-        if (seed.isBlank()) return
-        if (ProfileRepository.state.value.profiles.isNotEmpty()) return
-        val name = nameFromUri(seed) ?: "PoC profile"
-        ProfileRepository.add(Profile.fromUri(name, seed))
+    /**
+     * Warm-start path: when the activity is already alive (singleTask)
+     * Android delivers the resultv:// URL via onNewIntent instead of
+     * onCreate, so we have to mirror the cold-start handling here.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // Replace the held intent so getIntent() reflects what brought us
+        // back to the foreground — matches the Android contract for
+        // singleTask activities.
+        setIntent(intent)
+        handleDeepLinkIntent(intent)
+    }
+
+    private fun handleDeepLinkIntent(intent: Intent?) {
+        if (intent == null) return
+        if (intent.action != Intent.ACTION_VIEW) return
+        val data = intent.data ?: return
+        if (!data.scheme.equals("resultv", ignoreCase = true)) return
+        DeepLinkImporter.import(this, data.toString())
     }
 
     private fun onPowerPressed() {
@@ -198,7 +225,13 @@ private fun AppShell(
     dataDir: String,
     onPower: () -> Unit,
 ) {
-    var tab by remember { mutableStateOf(Tab.Home) }
+    var tab by rememberSaveable { mutableStateOf(Tab.Home) }
+    // SaveableStateHolder retains each tab's `rememberSaveable` state across
+    // tab switches, so returning to Proxies keeps the user's scroll position,
+    // expanded subscriptions, sort mode and protocol filter instead of
+    // resetting them — the previous `when` switch threw all that away every
+    // time the user touched the bottom nav.
+    val tabStateHolder = rememberSaveableStateHolder()
 
     Scaffold(
         topBar = {
@@ -229,25 +262,21 @@ private fun AppShell(
         },
     ) { padding ->
         Box(modifier = Modifier.padding(padding)) {
-            when (tab) {
-                Tab.Home -> HomeScreen(
-                    onPowerPressed = onPower,
-                    onOpenProxies = { tab = Tab.Proxies },
-                    onOpenAdd = { tab = Tab.Add },
-                )
-                Tab.Proxies -> ProxiesScreen(onAddPressed = { tab = Tab.Add })
-                Tab.Add -> AddScreen(
-                    dataDir = dataDir,
-                    onDone = { tab = Tab.Proxies },
-                )
-                Tab.Rules -> RulesScreen()
-                Tab.Settings -> SettingsScreen()
+            tabStateHolder.SaveableStateProvider(tab.name) {
+                when (tab) {
+                    Tab.Home -> HomeScreen(
+                        onPowerPressed = onPower,
+                        onOpenProxies = { tab = Tab.Proxies },
+                        onOpenAdd = { tab = Tab.Add },
+                    )
+                    Tab.Proxies -> ProxiesScreen(onAddPressed = { tab = Tab.Add })
+                    Tab.Add -> AddScreen(
+                        dataDir = dataDir,
+                        onDone = { tab = Tab.Proxies },
+                    )
+                    Tab.Settings -> SettingsScreen()
+                }
             }
         }
     }
 }
-
-private fun nameFromUri(uri: String): String? = runCatching {
-    val parsed = JSONObject(Mobile.parseProxyURI(uri))
-    parsed.optString("name").ifBlank { parsed.optString("ip").ifBlank { null } }
-}.getOrNull()

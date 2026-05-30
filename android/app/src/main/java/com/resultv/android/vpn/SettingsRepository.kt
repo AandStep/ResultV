@@ -28,6 +28,21 @@ data class SettingsState(
     val bypassLan: Boolean = true,
     /** sing-box log.level — "info" for ship, "debug" for protocol bring-up. */
     val logLevel: String = "info",
+    /** Auto-refresh subscriptions on the timer. */
+    val subscriptionAutoUpdate: Boolean = true,
+    /** Hours between auto-refresh cycles when [subscriptionAutoUpdate] is on. */
+    val subscriptionUpdateIntervalHours: Int = 6,
+    /**
+     * Send the stable device fingerprint (x-hwid header + x-device-* tags)
+     * with subscription fetches. Panels that gate by HWID need this; users
+     * who care about telemetry can disable it.
+     */
+    val subscriptionSendHwid: Boolean = true,
+    /**
+     * Override the User-Agent sent with subscription fetches. Blank =
+     * builder-default ("ResultV/<ver>/Android/<api>") — matches desktop.
+     */
+    val subscriptionUserAgent: String = "",
 )
 
 object SettingsRepository {
@@ -39,6 +54,10 @@ object SettingsRepository {
     private const val K_IPV6 = "ipv6"
     private const val K_BYPASS_LAN = "bypass_lan"
     private const val K_LOG_LEVEL = "log_level"
+    private const val K_SUB_AUTO = "sub_auto_update"
+    private const val K_SUB_INTERVAL = "sub_update_interval_hours"
+    private const val K_SUB_HWID = "sub_send_hwid"
+    private const val K_SUB_UA = "sub_user_agent"
 
     private lateinit var prefs: SharedPreferences
 
@@ -56,6 +75,10 @@ object SettingsRepository {
             ipv6 = prefs.getBoolean(K_IPV6, false),
             bypassLan = prefs.getBoolean(K_BYPASS_LAN, true),
             logLevel = prefs.getString(K_LOG_LEVEL, "info") ?: "info",
+            subscriptionAutoUpdate = prefs.getBoolean(K_SUB_AUTO, true),
+            subscriptionUpdateIntervalHours = prefs.getInt(K_SUB_INTERVAL, 6).coerceAtLeast(1),
+            subscriptionSendHwid = prefs.getBoolean(K_SUB_HWID, true),
+            subscriptionUserAgent = prefs.getString(K_SUB_UA, "") ?: "",
         )
     }
 
@@ -90,6 +113,28 @@ object SettingsRepository {
     fun setLogLevel(level: String) = mutate {
         prefs.edit().putString(K_LOG_LEVEL, level).apply()
         it.copy(logLevel = level)
+    }
+
+    fun setSubscriptionAutoUpdate(enabled: Boolean) = mutate {
+        prefs.edit().putBoolean(K_SUB_AUTO, enabled).apply()
+        it.copy(subscriptionAutoUpdate = enabled)
+    }
+
+    fun setSubscriptionUpdateIntervalHours(hours: Int) = mutate {
+        val sane = hours.coerceAtLeast(1)
+        prefs.edit().putInt(K_SUB_INTERVAL, sane).apply()
+        it.copy(subscriptionUpdateIntervalHours = sane)
+    }
+
+    fun setSubscriptionSendHwid(enabled: Boolean) = mutate {
+        prefs.edit().putBoolean(K_SUB_HWID, enabled).apply()
+        it.copy(subscriptionSendHwid = enabled)
+    }
+
+    fun setSubscriptionUserAgent(ua: String) = mutate {
+        val trimmed = ua.trim()
+        prefs.edit().putString(K_SUB_UA, trimmed).apply()
+        it.copy(subscriptionUserAgent = trimmed)
     }
 
     /**

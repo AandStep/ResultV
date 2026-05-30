@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -162,6 +163,54 @@ func TestFilterPhysicalAdapterDNS_DropsTun0(t *testing.T) {
 	got := filterPhysicalAdapterDNS(in)
 	if len(got) != 1 || got[0].InterfaceAlias != "Ethernet" {
 		t.Fatalf("got %+v, want only Ethernet", got)
+	}
+}
+
+func TestIsPermissionDeniedError(t *testing.T) {
+	cases := []struct {
+		msg  string
+		want bool
+	}{
+		{"powershell: exit status 1 (out=PermissionDenied: ... Set-DnsClientServerAddress)", true},
+		{"elevated powershell: access is denied", true},
+		{"отказано в доступе", true},
+		{"restore dns on \"Ethernet\": timeout", false},
+	}
+	for _, c := range cases {
+		if got := isPermissionDeniedError(errors.New(c.msg)); got != c.want {
+			t.Errorf("isPermissionDeniedError(%q) = %v, want %v", c.msg, got, c.want)
+		}
+	}
+	if !isPermissionDeniedError(ErrDNSRequiresAdmin) {
+		t.Fatal("expected ErrDNSRequiresAdmin to be detected")
+	}
+}
+
+func TestOverride_RequiresAdmin(t *testing.T) {
+	prev := dnsAdminCheck
+	dnsAdminCheck = func() bool { return false }
+	defer func() { dnsAdminCheck = prev }()
+
+	w := &windowsSystemDNS{snapshotPath: filepath.Join(t.TempDir(), "snap.json")}
+	err := w.Override([]string{"1.1.1.1"})
+	if !errors.Is(err, ErrDNSRequiresAdmin) {
+		t.Fatalf("expected ErrDNSRequiresAdmin, got %v", err)
+	}
+	if _, err := os.Stat(w.snapshotPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("snapshot must not be written without admin; stat err=%v", err)
+	}
+}
+
+func TestBuildRestorePSScript_SkipsTunnelAdapters(t *testing.T) {
+	script := buildRestorePSScript([]adapterDNS{
+		{InterfaceIndex: 3, InterfaceAlias: "tun0", ServerAddresses: []string{"1.1.1.1"}},
+		{InterfaceIndex: 14, InterfaceAlias: "Ethernet", ServerAddresses: []string{"192.168.1.1"}},
+	})
+	if strings.Contains(script, "InterfaceIndex 3") {
+		t.Fatalf("tun0 must be skipped, script=%q", script)
+	}
+	if !strings.Contains(script, "InterfaceIndex 14") {
+		t.Fatalf("Ethernet must be present, script=%q", script)
 	}
 }
 

@@ -4,17 +4,18 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+const val TRAFFIC_HISTORY_SIZE = 20
+
 data class TrafficSnapshot(
     val downloadBytes: Long = 0,
     val uploadBytes: Long = 0,
     val downloadBps: Long = 0,
     val uploadBps: Long = 0,
-    /** Recent download bytes/sec samples, oldest → newest. Capped at HISTORY_SIZE. */
-    val downloadHistory: List<Long> = emptyList(),
-    val uploadHistory: List<Long> = emptyList(),
+    // Pre-filled with zeros so the sparkline always renders a flat baseline
+    // instead of an empty/dashed state — matches desktop SpeedChart behavior.
+    val downloadHistory: List<Long> = List(TRAFFIC_HISTORY_SIZE) { 0L },
+    val uploadHistory: List<Long> = List(TRAFFIC_HISTORY_SIZE) { 0L },
 )
-
-const val TRAFFIC_HISTORY_SIZE = 60
 
 /**
  * Live traffic-stats source. [TrafficWatcher] subscribes to sing-box's

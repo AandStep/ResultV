@@ -2,7 +2,6 @@ package com.resultv.android.ui.screens
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,26 +27,23 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.ListAlt
-import androidx.compose.material.icons.outlined.NetworkPing
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -73,19 +69,16 @@ import com.resultv.android.ui.components.ProfileSortMenu
 import com.resultv.android.ui.components.ProfileSortMode
 import com.resultv.android.ui.components.ProtocolFilterChips
 import com.resultv.android.ui.components.ServerRow
+import com.resultv.android.ui.components.SubscriptionEditSheet
 import com.resultv.android.ui.components.sortProfiles
 import com.resultv.android.vpn.PingRepository
 import com.resultv.android.vpn.Profile
 import com.resultv.android.vpn.ProfileRepository
 import com.resultv.android.vpn.Subscription
+import com.resultv.android.vpn.SubscriptionRefresher
 import com.resultv.android.vpn.SubscriptionRepository
 import com.resultv.android.vpn.SubscriptionUsage
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import mobile.Mobile
-import org.json.JSONArray
-import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -96,13 +89,22 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
     val state by ProfileRepository.state.collectAsStateWithLifecycle()
     val subscriptions by SubscriptionRepository.state.collectAsStateWithLifecycle()
     val pings by PingRepository.results.collectAsStateWithLifecycle()
+    val pingInflight by PingRepository.inflight.collectAsStateWithLifecycle()
+    // Transient — these are dialogs/sheets that should always start dismissed.
     var pendingDeleteProfile by remember { mutableStateOf<Profile?>(null) }
     var pendingDeleteSub by remember { mutableStateOf<Subscription?>(null) }
     var refreshingSubId by remember { mutableStateOf<String?>(null) }
-    var sortMode by remember { mutableStateOf(ProfileSortMode.Default) }
     var editingProfileId by remember { mutableStateOf<String?>(null) }
     var editingSubId by remember { mutableStateOf<String?>(null) }
-    var protocolFilter by remember { mutableStateOf(emptySet<String>()) }
+    // Persisted across tab switches via the SaveableStateHolder in AppShell.
+    var sortMode by rememberSaveable { mutableStateOf(ProfileSortMode.Default) }
+    var protocolFilter by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    // Subscription collapse state hoisted here so each row can live as its
+    // own LazyColumn item (true virtualisation). List-of-ids form is what
+    // rememberSaveable can persist; the Set is the runtime lookup form.
+    var collapsedSubsList by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    val collapsedSubs = remember(collapsedSubsList) { collapsedSubsList.toSet() }
+    val listState = rememberLazyListState()
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val dataDir = remember(ctx) { ctx.filesDir.absolutePath }
@@ -125,7 +127,7 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
             )
             IconButton(onClick = { PingRepository.refreshAll(state.profiles) }) {
                 Icon(
-                    imageVector = Icons.Outlined.NetworkPing,
+                    imageVector = Icons.Outlined.Bolt,
                     contentDescription = stringResource(R.string.ping_refresh_cd),
                     tint = Brand.SecondaryText,
                 )
@@ -139,15 +141,18 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
         val availableProtocols = remember(state.profiles) {
             state.profiles.asSequence()
                 .filterNot { it.isSection }
-                .map { profileProtocol(it) }
+                .map { it.protocol }
                 .filter { it.isNotEmpty() }
                 .toSet()
         }
+        // Membership tests inside the chip use Set semantics — the list
+        // form is just for [rememberSaveable] friendliness.
+        val protocolFilterSet = remember(protocolFilter) { protocolFilter.toSet() }
         ProtocolFilterChips(
-            selected = protocolFilter,
+            selected = protocolFilterSet,
             available = availableProtocols,
             onToggle = { code ->
-                protocolFilter = if (code in protocolFilter)
+                protocolFilter = if (code in protocolFilterSet)
                     protocolFilter - code else protocolFilter + code
             },
             modifier = Modifier.padding(bottom = 8.dp),
@@ -157,58 +162,114 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
         // in their own bucket; SECTION rows stay with their subscription
         // and keep their original order so impVPN's "👇 выберите конфиг
         // ниже" labels land between the right blocks.
-        val standaloneRaw = state.profiles.filter { it.subscriptionId.isBlank() && !it.isSection }
-        val standalone = if (protocolFilter.isEmpty()) standaloneRaw
-            else standaloneRaw.filter { profileProtocol(it) in protocolFilter }
+        //
+        // Memoised on (profiles, filter) so a ping-only update doesn't
+        // re-walk every profile to rebuild the bucket lists.
+        val standalone = remember(state.profiles, protocolFilterSet) {
+            val raw = state.profiles.filter { it.subscriptionId.isBlank() && !it.isSection }
+            if (protocolFilterSet.isEmpty()) raw
+            else raw.filter { it.protocol in protocolFilterSet }
+        }
+        val sortedStandalone = remember(standalone, sortMode, pings) {
+            sortProfiles(standalone, sortMode, pings)
+        }
+        // Pre-bucket subscription profiles once per (profiles, subs, filter)
+        // change. Each bucket's rows are rendered as individual LazyColumn
+        // items below, so opening Proxies only composes rows actually on
+        // screen instead of all N at once.
+        val subscriptionBuckets = remember(state.profiles, subscriptions.subs, protocolFilterSet) {
+            subscriptions.subs.mapNotNull { sub ->
+                val raw = state.profiles.filter { it.subscriptionId == sub.id }
+                val subProfiles = if (protocolFilterSet.isEmpty()) raw
+                    else raw.filterNot { it.isSection }
+                        .filter { it.protocol in protocolFilterSet }
+                if (protocolFilterSet.isNotEmpty() && subProfiles.isEmpty()) null
+                else sub to subProfiles
+            }
+        }
+        // Sort each bucket once per (buckets, mode, pings) change — the
+        // LazyColumn body just walks the pre-sorted lists.
+        val orderedBySub = remember(subscriptionBuckets, sortMode, pings) {
+            subscriptionBuckets.associate { (sub, profiles) ->
+                sub.id to reorderForDisplay(profiles, sortMode, pings)
+            }
+        }
 
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            if (standalone.isNotEmpty()) {
-                item("standalone-header") {
-                    StandaloneHeader(standalone.size)
+            if (sortedStandalone.isNotEmpty()) {
+                item("standalone-header", contentType = "standalone-header") {
+                    StandaloneHeader(sortedStandalone.size)
                 }
-                items(sortProfiles(standalone, sortMode, pings), key = { it.id }) { p ->
-                    ProfileCard(
-                        profile = p,
-                        activeId = state.activeId,
-                        sample = pings[p.id],
-                        onClick = { ProfileRepository.setActive(p.id) },
-                        onLongClick = { editingProfileId = p.id },
-                    )
+                items(sortedStandalone, key = { it.id }, contentType = { "standalone-row" }) { p ->
+                    Box(modifier = Modifier.padding(top = 12.dp)) {
+                        ProfileCard(
+                            profile = p,
+                            activeId = state.activeId,
+                            sample = pings[p.id],
+                            isLoading = p.id in pingInflight,
+                            onClick = { ProfileRepository.setActive(p.id) },
+                            onLongClick = { editingProfileId = p.id },
+                        )
+                    }
                 }
             }
 
-            subscriptions.subs.forEach { sub ->
-                val raw = state.profiles.filter { it.subscriptionId == sub.id }
-                // When a protocol filter is on, drop sections (they're labels
-                // for surrounding rows) and any row whose protocol isn't picked.
-                val subProfiles = if (protocolFilter.isEmpty()) raw
-                    else raw.filterNot { it.isSection }
-                        .filter { profileProtocol(it) in protocolFilter }
-                if (protocolFilter.isNotEmpty() && subProfiles.isEmpty()) return@forEach
-                item("sub-${sub.id}") {
-                    SubscriptionGroup(
+            subscriptionBuckets.forEachIndexed { idx, (sub, subProfiles) ->
+                val collapsed = sub.id in collapsedSubs
+                val needsTopGap = idx > 0 || sortedStandalone.isNotEmpty()
+                val ordered = orderedBySub[sub.id].orEmpty()
+
+                item("sub-${sub.id}-head", contentType = "sub-head") {
+                    SubscriptionHeaderBlock(
+                        modifier = if (needsTopGap) Modifier.padding(top = 12.dp) else Modifier,
                         subscription = sub,
-                        profiles = subProfiles,
-                        activeId = state.activeId,
-                        pings = pings,
-                        sortMode = sortMode,
+                        profileCount = subProfiles.count { !it.isSection },
+                        collapsed = collapsed,
                         refreshing = refreshingSubId == sub.id,
-                        onPickProfile = { p -> ProfileRepository.setActive(p.id) },
-                        onLongPressProfile = { p -> editingProfileId = p.id },
-                        onRefresh = {
-                            if (refreshingSubId != null) return@SubscriptionGroup
+                        onToggleCollapsed = {
+                            collapsedSubsList = if (sub.id in collapsedSubs)
+                                collapsedSubsList - sub.id
+                            else
+                                collapsedSubsList + sub.id
+                        },
+                        onRefresh = onRefresh@{
+                            if (refreshingSubId != null) return@onRefresh
                             refreshingSubId = sub.id
                             scope.launch {
-                                refreshSubscription(sub, dataDir)
+                                runCatching { SubscriptionRefresher.refreshOne(sub, dataDir) }
                                 refreshingSubId = null
                             }
                         },
                         onEdit = { editingSubId = sub.id },
                         onDelete = { pendingDeleteSub = sub },
                     )
+                }
+
+                if (!collapsed) {
+                    items(
+                        ordered,
+                        key = { "sub-${sub.id}-${it.id}" },
+                        contentType = { if (it.isSection) "sub-sec" else "sub-row" },
+                    ) { p ->
+                        if (p.isSection) {
+                            SubscriptionSectionRowBlock(p.name)
+                        } else {
+                            SubscriptionServerRowBlock(
+                                profile = p,
+                                activeId = state.activeId,
+                                sample = pings[p.id],
+                                isLoading = p.id in pingInflight,
+                                onClick = { ProfileRepository.setActive(p.id) },
+                                onLongClick = { editingProfileId = p.id },
+                            )
+                        }
+                    }
+                    item("sub-${sub.id}-foot", contentType = "sub-foot") {
+                        SubscriptionTrailingCap()
+                    }
                 }
             }
         }
@@ -253,17 +314,24 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
             editingSubId = null
             return@let
         }
-        SubscriptionUrlEditDialog(
-            initialUrl = target.url,
+        SubscriptionEditSheet(
+            subscription = target,
             onDismiss = { editingSubId = null },
-            onSave = { newUrl ->
+            onSave = { result ->
                 editingSubId = null
-                SubscriptionRepository.update(id) { it.copy(url = newUrl) }
-                if (refreshingSubId != null) return@SubscriptionUrlEditDialog
-                refreshingSubId = id
-                scope.launch {
-                    SubscriptionRepository.byId(id)?.let { refreshSubscription(it, dataDir) }
-                    refreshingSubId = null
+                // Treat a custom name that matches the panel display name
+                // as "no override" so we don't freeze a stale title across
+                // future refreshes. Trim handles the visibility-only edit
+                // case where the user never touched the field.
+                val nameOverride = result.customName
+                    .takeIf { it.isNotBlank() && it != target.displayName }
+                    .orEmpty()
+                SubscriptionRepository.update(id) { sub ->
+                    sub.copy(
+                        customName = nameOverride,
+                        hiddenOnHome = result.hiddenOnHome,
+                        customRefreshIntervalMinutes = result.customRefreshIntervalMinutes,
+                    )
                 }
             },
         )
@@ -319,120 +387,33 @@ private fun ProfileCard(
     profile: Profile,
     activeId: String?,
     sample: PingRepository.Sample?,
+    isLoading: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
     ServerRow(
         name = profile.name,
-        subtitle = profileSubtitle(profile),
-        countryCode = profile.country(),
-        isAuto = profileIsAuto(profile),
+        subtitle = profile.subtitle,
+        countryCode = profile.country,
+        isAuto = profile.isAuto,
         isActive = profile.id == activeId,
         isFavorite = profile.isFavorite,
         onClick = onClick,
         onLongClick = onLongClick,
         latencyMs = sample?.takeIf { it.reachable }?.latencyMs,
+        isLoading = isLoading,
     )
 }
 
+/**
+ * Top portion of a subscription "card", but rendered as its own LazyColumn
+ * item so it doesn't drag the body's row composition along with it. Shape
+ * is fully-rounded when collapsed (header is the only chunk) and only
+ * top-rounded when the body items follow below.
+ */
 @Composable
-private fun SubscriptionGroup(
-    subscription: Subscription,
-    profiles: List<Profile>,
-    activeId: String?,
-    pings: Map<String, PingRepository.Sample>,
-    sortMode: ProfileSortMode,
-    refreshing: Boolean,
-    onPickProfile: (Profile) -> Unit,
-    onLongPressProfile: (Profile) -> Unit,
-    onRefresh: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit,
-) {
-    var collapsed by remember(subscription.id) { mutableStateOf(false) }
-
-    Card(
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = Brand.Surface),
-        border = null,
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(
-                1.dp,
-                Color.White.copy(alpha = 0.06f),
-                RoundedCornerShape(20.dp),
-            ),
-    ) {
-        Column {
-            SubscriptionHeader(
-                subscription = subscription,
-                profileCount = profiles.count { !it.isSection },
-                collapsed = collapsed,
-                refreshing = refreshing,
-                onToggleCollapsed = { collapsed = !collapsed },
-                onRefresh = onRefresh,
-                onEdit = onEdit,
-                onDelete = onDelete,
-            )
-
-            if (!collapsed) {
-                // Sort: favourites first + user-chosen sort mode applied
-                // within each SECTION-bounded block (sections are labels
-                // for the rows that follow, so reorder must not cross them).
-                val ordered = reorderForDisplay(profiles, sortMode, pings)
-                Column(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    ordered.forEach { p ->
-                        if (p.isSection) {
-                            SectionLabel(p.name)
-                        } else {
-                            ServerRow(
-                                name = p.name,
-                                subtitle = profileSubtitle(p),
-                                countryCode = p.country(),
-                                isAuto = profileIsAuto(p),
-                                isActive = p.id == activeId,
-                                isFavorite = p.isFavorite,
-                                onClick = { onPickProfile(p) },
-                                onLongClick = { onLongPressProfile(p) },
-                                latencyMs = pings[p.id]?.takeIf { it.reachable }?.latencyMs,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-private fun reorderForDisplay(
-    profiles: List<Profile>,
-    sortMode: ProfileSortMode,
-    pings: Map<String, PingRepository.Sample>,
-): List<Profile> {
-    if (profiles.isEmpty()) return profiles
-    val result = ArrayList<Profile>(profiles.size)
-    val current = ArrayList<Profile>()
-    fun flush() {
-        result += sortProfiles(current, sortMode, pings)
-        current.clear()
-    }
-    for (p in profiles) {
-        if (p.isSection) {
-            flush()
-            result += p
-        } else {
-            current += p
-        }
-    }
-    flush()
-    return result
-}
-
-@Composable
-private fun SubscriptionHeader(
+private fun SubscriptionHeaderBlock(
+    modifier: Modifier = Modifier,
     subscription: Subscription,
     profileCount: Int,
     collapsed: Boolean,
@@ -446,17 +427,18 @@ private fun SubscriptionHeader(
     val usesImpLogo = remember(subscription.id, subscription.name, subscription.source) {
         subscriptionUsesImpLogo(subscription)
     }
+    val shape = if (collapsed) RoundedCornerShape(20.dp)
+    else RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
+            .clip(shape)
+            .background(Brand.Surface)
             .clickable(onClick = onToggleCollapsed)
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        // Row 1 — [chevron] [logo] [title] [refresh] [delete]
-        // Chevron is leading per the desktop-parity mock; refresh and
-        // delete are independent circular chips (no merged pill).
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -515,17 +497,95 @@ private fun SubscriptionHeader(
             }
         }
 
-        // Row 2 — "Осталось N дней | [progress] used / total" packed into
-        // one line. Renders whenever we have *any* signal: quota, expiry,
-        // or just used bytes (panels often omit `total=` from the
-        // Subscription-Userinfo header but still report `download=`).
         if (usage.hasQuota || usage.hasExpiry || usage.used > 0) {
             UsageInlineStrip(usage)
         }
 
-        // Row 3 — small footer: last refresh + server count.
         SubscriptionFooter(subscription.lastFetchedAt, profileCount)
     }
+}
+
+/** Body row in a subscription, sharing the surface background of the header. */
+@Composable
+private fun SubscriptionServerRowBlock(
+    profile: Profile,
+    activeId: String?,
+    sample: PingRepository.Sample?,
+    isLoading: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Brand.Surface)
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+    ) {
+        ServerRow(
+            name = profile.name,
+            subtitle = profile.subtitle,
+            countryCode = profile.country,
+            isAuto = profile.isAuto,
+            isActive = profile.id == activeId,
+            isFavorite = profile.isFavorite,
+            onClick = onClick,
+            onLongClick = onLongClick,
+            latencyMs = sample?.takeIf { it.reachable }?.latencyMs,
+            isLoading = isLoading,
+        )
+    }
+}
+
+/** SECTION label inside a subscription (impVPN "выберите конфиг ниже" etc.). */
+@Composable
+private fun SubscriptionSectionRowBlock(name: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Brand.Surface),
+    ) {
+        SectionLabel(name)
+    }
+}
+
+/**
+ * Visual "cap" at the bottom of an expanded subscription — gives the
+ * grouped rows their rounded bottom edge without needing a wrapping Card
+ * (the rows would otherwise have to compose all at once to fit inside one).
+ */
+@Composable
+private fun SubscriptionTrailingCap() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(bottomStart = 20.dp, bottomEnd = 20.dp))
+            .background(Brand.Surface)
+            .height(8.dp),
+    )
+}
+
+private fun reorderForDisplay(
+    profiles: List<Profile>,
+    sortMode: ProfileSortMode,
+    pings: Map<String, PingRepository.Sample>,
+): List<Profile> {
+    if (profiles.isEmpty()) return profiles
+    val result = ArrayList<Profile>(profiles.size)
+    val current = ArrayList<Profile>()
+    fun flush() {
+        result += sortProfiles(current, sortMode, pings)
+        current.clear()
+    }
+    for (p in profiles) {
+        if (p.isSection) {
+            flush()
+            result += p
+        } else {
+            current += p
+        }
+    }
+    flush()
+    return result
 }
 
 /** Leading chevron — flips Up/Down based on [collapsed]. */
@@ -841,49 +901,6 @@ private fun subscriptionUsesImpLogo(s: Subscription): Boolean {
     return "impvpn" in haystack || "imp vpn" in haystack
 }
 
-/** Re-fetch a subscription, replace its profiles (preserving favourites by name). */
-private suspend fun refreshSubscription(sub: Subscription, dataDir: String) {
-    val responseJson = try {
-        withContext(Dispatchers.IO) { Mobile.fetchSubscriptionV2(sub.url, dataDir) }
-    } catch (_: Throwable) {
-        return
-    }
-    val response = JSONObject(responseJson)
-    val arr = response.optJSONArray("entries") ?: JSONArray()
-
-    val existingFavouriteNames = ProfileRepository.state.value.profiles
-        .asSequence()
-        .filter { it.subscriptionId == sub.id && it.isFavorite }
-        .map { it.name }
-        .toSet()
-
-    val fresh = (0 until arr.length()).mapNotNull { i ->
-        val o = arr.getJSONObject(i)
-        val type = o.optString("type")
-        val name = o.optString("name").ifBlank { "Profile ${i + 1}" }
-        val isSection = type.equals("SECTION", ignoreCase = true)
-        when {
-            isSection -> Profile.section(name = name, subscriptionId = sub.id)
-            else -> {
-                val uri = o.optString("uri")
-                val base = if (uri.isNotBlank())
-                    Profile.fromUri(name, uri, subscriptionId = sub.id)
-                else
-                    Profile.fromEntryJson(name, o.toString(), subscriptionId = sub.id)
-                base.copy(isFavorite = base.name in existingFavouriteNames)
-            }
-        }
-    }
-    ProfileRepository.replaceForSubscription(sub.id, fresh)
-    SubscriptionRepository.update(sub.id) {
-        it.copy(
-            title = response.optString("title").ifBlank { it.title },
-            userInfo = response.optString("userInfo"),
-            lastFetchedAt = System.currentTimeMillis(),
-        )
-    }
-}
-
 private val BYTE_UNITS = arrayOf("B", "KB", "MB", "GB", "TB")
 
 private fun scaleBytes(bytes: Long): Pair<Double, Int> {
@@ -904,45 +921,6 @@ private fun formatScaled(v: Double): String =
 private fun formatBytesShort(bytes: Long): String {
     val (v, i) = scaleBytes(bytes)
     return "${formatScaled(v)} ${BYTE_UNITS[i]}"
-}
-
-@Composable
-private fun SubscriptionUrlEditDialog(
-    initialUrl: String,
-    onDismiss: () -> Unit,
-    onSave: (String) -> Unit,
-) {
-    var url by remember(initialUrl) { mutableStateOf(initialUrl) }
-    val trimmed = url.trim()
-    val changed = trimmed != initialUrl.trim()
-    val valid = trimmed.startsWith("http://", ignoreCase = true) ||
-        trimmed.startsWith("https://", ignoreCase = true)
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.sub_edit_title)) },
-        text = {
-            OutlinedTextField(
-                value = url,
-                onValueChange = { url = it },
-                label = { Text(stringResource(R.string.sub_edit_label)) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        },
-        confirmButton = {
-            TextButton(
-                enabled = valid && changed,
-                onClick = { onSave(trimmed) },
-            ) {
-                Text(stringResource(R.string.sub_edit_save))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.action_cancel))
-            }
-        },
-    )
 }
 
 /**

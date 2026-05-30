@@ -299,15 +299,27 @@ Material 3) that calls into Go via a `gomobile bind` AAR.
 - [ ] Battery / data usage stats from libbox `CommandClient`.
 - [ ] Material You dynamic color — **dropped** at user request.
 
-## Phase 7 — Release engineering
+## Phase 7 — Release engineering — ⚠️ ONE ITEM LEFT (distribution)
 
-- [ ] Multi-ABI release build: arm64-v8a + armeabi-v7a (drop x86 unless we
-      keep emulator support in CI).
-- [ ] App signing config (release keystore, separate from debug).
-- [ ] R8 minification + Proguard rules audit.
-- [ ] AAR rebuild script in `scripts/` (`build-android-aar.ps1` + `.sh`)
-      — currently the gomobile invocation lives only in this doc.
-- [ ] CI: GitHub Actions builds AAR + APK on push, attaches to release.
+- [x] Multi-ABI release build: `splits.abi` block in `app/build.gradle.kts`
+      produces per-ABI APKs for `arm64-v8a` + `armeabi-v7a` + universal.
+      Per-ABI `versionCode` offsets for Play Store compatibility.
+- [x] App signing config: `keystore.properties` (gitignored) with
+      `keystore.properties.example` template. `signingConfigs.release`
+      reads credentials; falls back to debug signing when the file is
+      absent (CI without secrets, fresh clone).
+- [x] R8 minification + ProGuard rules audit: `isMinifyEnabled=true`,
+      `isShrinkResources=true` on release. `proguard-rules.pro` keeps
+      `mobile.**`, `libbox.**`, `go.**`, `org.golang.app.**`,
+      Compose `@Composable` metadata, ML Kit / Code Scanner classes.
+- [x] AAR rebuild script: `scripts/build-android-aar.sh` +
+      `scripts/build-android-aar.ps1`. `--with-naive` / `-WithNaive`
+      flag for future NaiveProxy support.
+- [x] CI: `build-android` job in `.github/workflows/release.yml`.
+      Builds AAR from source via gomobile, decodes base64 keystore
+      from secrets, assembles release APKs, attaches to GitHub Release.
+- [x] Version bump: `versionCode=10000`, `versionName="1.0.0"`
+      (from `0.2.0-poc` / `versionCode=1`).
 - [ ] Play Store listing OR direct-download APK + auto-update flow.
 
 ---
@@ -442,30 +454,34 @@ B4. **Battery / data-usage stats** — extend `Mobile` binding to expose
 
 ### C. Phase 7 — Release engineering
 
-C1. **Multi-ABI release build** — `app/build.gradle.kts` `splits.abi`
-    block for `arm64-v8a` + `armeabi-v7a`. Drop `x86_64` unless we
-    keep emulator-in-CI as a target.
+~~C1. Multi-ABI release build~~ — ✅ DONE. `splits.abi` block in
+    `app/build.gradle.kts` with arm64-v8a + armeabi-v7a + universal.
+    Per-ABI versionCode offsets (armeabi-v7a +1, arm64-v8a +2).
 
-C2. **Release signing config** — `keystore.properties` (gitignored),
-    `signingConfigs.release`, `buildTypes.release.signingConfig`. Use
-    `play-app-signing` (Google holds the upload key) for the Play
-    Store path; export the same key to debug-on-device APK distribution.
+~~C2. Release signing config~~ — ✅ DONE. `keystore.properties`
+    (gitignored) + `keystore.properties.example` template.
+    `signingConfigs.release` reads from the file; absent file =
+    debug signing fallback.
 
-C3. **R8 minification + ProGuard rules audit** — flip
-    `isMinifyEnabled = true` on `release`. Walk the existing
-    `proguard-rules.pro` (`-keep libbox.**`, `-keep mobile.**`,
-    `-keep go.**`) and verify reflective access still works.
+~~C3. R8 minification + ProGuard rules audit~~ — ✅ DONE.
+    `isMinifyEnabled=true`, `isShrinkResources=true` on release.
+    Added `-keep class libbox.** { *; }`,
+    `-keep class org.golang.app.** { *; }`, Compose @Composable
+    keeper, ML Kit / Code Scanner keeps.
 
-C4. **AAR rebuild script** — `scripts/build-android-aar.ps1` +
-    `scripts/build-android-aar.sh`. Today the gomobile invocation lives
-    only in the cheatsheet below; a script makes CI hookable and stops
-    contributors guessing the tag list.
+~~C4. AAR rebuild script~~ — ✅ DONE.
+    `scripts/build-android-aar.sh` + `scripts/build-android-aar.ps1`.
+    `--with-naive` / `-WithNaive` flag gates the NaiveProxy tag.
 
-C5. **CI — GitHub Actions** — build AAR + APK on push, attach to
-    releases. Cache `~/.gradle` + the `mobile/` go module dir;
-    `gomobile init` is required exactly once per runner.
+~~C5. CI — GitHub Actions~~ — ✅ DONE. `build-android` job in
+    `release.yml`: Go + Java 17 + Android SDK setup, gomobile init,
+    AAR build, base64-decoded keystore from secrets, assembleRelease,
+    APK upload as release asset.
 
-C6. **Distribution** — Play Store listing OR direct-download APK on
+~~C6. Version bump~~ — ✅ DONE. `versionCode=10000`,
+    `versionName="1.0.0"`.
+
+C7. **Distribution** — Play Store listing OR direct-download APK on
     `result-proxy.ru` with an auto-update flow (poll the same updater
     endpoint the desktop uses; `internal/updater` is desktop-only today
     so we'd need a `mobile_updater.go`).

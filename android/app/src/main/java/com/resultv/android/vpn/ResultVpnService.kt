@@ -7,6 +7,8 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import com.resultv.android.MainActivity
@@ -49,6 +51,11 @@ const val EXTRA_RECONNECT_AFTER_REVOKE = "reconnectAfterRevoke"
 class ResultVpnService : VpnService() {
 
     @Volatile var tunPfd: ParcelFileDescriptor? = null
+
+    // When true, onDestroy is part of a reload cycle (stopSelf + scheduled
+    // restart) and must NOT flip VpnState to Idle — UI should stay in
+    // Connecting through the gap.
+    @Volatile private var reloadInProgress = false
 
     // libbox start/stop is synchronous and blocks (DNS, REALITY handshake,
     // tun setup) — keep it off the main thread to avoid ANR on Connect.
@@ -165,7 +172,9 @@ class ResultVpnService : VpnService() {
         TrafficWatcher.stop()
         scope.cancel()
         closeTun()
-        VpnState.set(VpnStatus.Idle)
+        if (!reloadInProgress) {
+            VpnState.set(VpnStatus.Idle)
+        }
         worker.execute { BoxModule.stop() }
         worker.shutdown()
         super.onDestroy()
@@ -204,9 +213,64 @@ class ResultVpnService : VpnService() {
             Log.w(TAG, "rebuild config for reload failed or profile empty")
             return
         }
+        if (!BoxModule.isRunning) {
+            Log.w(TAG, "reload skipped — no running server")
+            return
+        }
+
+        // Any in-process restart of sing-box (libbox reload or stop/start in
+        // the same service instance) leaves Android's VPN NetworkAgent in a
+        // half-dead state — symptoms include "upload counts climb but
+        // downloads never arrive". The only reliable approach is to mimic
+        // what the user does manually: fully stop the VpnService, wait for
+        // libbox's closeService to fully drain (it can take "a couple of
+        // seconds"), give Android more time to tear down ConnectivityService
+        // state, then start a brand-new service instance with the new config.
+        Log.i(TAG, "triggerReload: full service restart for config change")
+
+        reloadInProgress = true
+        TrafficStats.reset()
+        TrafficWatcher.stop()
+        reloadWatcher?.cancel(); reloadWatcher = null
+
+        // Keep UI/notification in Connecting through the gap so the user
+        // doesn't see a flash of Idle.
+        VpnState.set(VpnStatus.Connecting)
+        renotify(buildNotification(VpnStatus.Connecting))
+
+        val ctx = applicationContext
+        val restartIntent = Intent(ctx, ResultVpnService::class.java).apply {
+            action = ACTION_START
+            putExtra(EXTRA_CONFIG_JSON, configJson)
+        }
+
+        // Tear down on the worker so we can SYNCHRONOUSLY wait for libbox's
+        // closeService to drain before scheduling the restart — otherwise
+        // the new BoxModule.start can race the old sing-box's shutdown and
+        // get a broken outbound (upload-only / no-download symptom).
         worker.execute {
-            if (!BoxModule.reload(configJson)) {
-                Log.w(TAG, "reload skipped — no running server")
+            Log.i(TAG, "triggerReload: closing TUN + stopping libbox (sync)")
+            closeTun()
+            val t0 = System.currentTimeMillis()
+            BoxModule.stop()
+            Log.i(TAG, "triggerReload: BoxModule.stop took ${System.currentTimeMillis() - t0}ms")
+
+            // Schedule the fresh start on the main looper so it survives
+            // this service instance's onDestroy. 1500ms past the stop gives
+            // Android time to fully tear down the VPN NetworkAgent.
+            Handler(Looper.getMainLooper()).postDelayed({
+                Log.i(TAG, "triggerReload: dispatching ACTION_START to fresh service")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    ctx.startForegroundService(restartIntent)
+                } else {
+                    ctx.startService(restartIntent)
+                }
+            }, 1500)
+
+            // Stop the current service on the main thread.
+            Handler(Looper.getMainLooper()).post {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
             }
         }
     }

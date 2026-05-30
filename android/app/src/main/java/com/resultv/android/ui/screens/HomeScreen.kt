@@ -12,11 +12,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -24,8 +21,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.ExpandMore
-import androidx.compose.material.icons.outlined.NetworkPing
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.AlertDialog
@@ -41,8 +38,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,9 +65,9 @@ import com.resultv.android.ui.components.sortProfiles
 import com.resultv.android.vpn.PingRepository
 import com.resultv.android.vpn.Profile
 import com.resultv.android.vpn.ProfileRepository
+import com.resultv.android.vpn.SubscriptionRepository
 import com.resultv.android.vpn.VpnState
 import com.resultv.android.vpn.VpnStatus
-import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,9 +78,22 @@ fun HomeScreen(
 ) {
     val status by VpnState.status.collectAsStateWithLifecycle()
     val profilesState by ProfileRepository.state.collectAsStateWithLifecycle()
+    val subsState by SubscriptionRepository.state.collectAsStateWithLifecycle()
     val pings by PingRepository.results.collectAsStateWithLifecycle()
-    var dropdownOpen by remember { mutableStateOf(false) }
-    var sortMode by remember { mutableStateOf(ProfileSortMode.Default) }
+    val pingInflight by PingRepository.inflight.collectAsStateWithLifecycle()
+    // Persisted across tab switches so reopening Home doesn't snap shut.
+    var dropdownOpen by rememberSaveable { mutableStateOf(false) }
+    var sortMode by rememberSaveable { mutableStateOf(ProfileSortMode.Default) }
+
+    // Subscriptions can be hidden from Home individually. Build a quick
+    // lookup so the dropdown filter is O(1) per profile.
+    val hiddenSubIds = remember(subsState.subs) {
+        subsState.subs.asSequence().filter { it.hiddenOnHome }.map { it.id }.toSet()
+    }
+    val visibleHomeProfiles = remember(profilesState.profiles, hiddenSubIds) {
+        if (hiddenSubIds.isEmpty()) profilesState.profiles
+        else profilesState.profiles.filter { it.subscriptionId !in hiddenSubIds }
+    }
     var editingProfileId by remember { mutableStateOf<String?>(null) }
     var pendingDeleteProfile by remember { mutableStateOf<Profile?>(null) }
 
@@ -127,7 +139,7 @@ fun HomeScreen(
                 modifier = Modifier.size(36.dp),
             ) {
                 Icon(
-                    imageVector = Icons.Outlined.NetworkPing,
+                    imageVector = Icons.Outlined.Bolt,
                     contentDescription = stringResource(R.string.ping_refresh_cd),
                     tint = Brand.SecondaryText,
                     modifier = Modifier.size(20.dp),
@@ -161,9 +173,10 @@ fun HomeScreen(
 
             AnimatedVisibility(visible = dropdownOpen) {
                 ProfileDropdown(
-                    profiles = profilesState.profiles,
+                    profiles = visibleHomeProfiles,
                     activeId = profilesState.activeId,
                     pings = pings,
+                    pingInflight = pingInflight,
                     sortMode = sortMode,
                     onSelect = {
                         ProfileRepository.setActive(it.id)
@@ -423,6 +436,7 @@ private fun ProfileDropdown(
     profiles: List<Profile>,
     activeId: String?,
     pings: Map<String, PingRepository.Sample>,
+    pingInflight: Set<String>,
     sortMode: ProfileSortMode,
     onSelect: (Profile) -> Unit,
     onLongPress: (Profile) -> Unit,
@@ -443,29 +457,32 @@ private fun ProfileDropdown(
         } else {
             // SECTION rows are list labels, never selectable. Favourites
             // bubble to the top via sortProfiles regardless of [sortMode].
-            val real = profiles.filterNot { it.isSection }
-            val ordered = sortProfiles(real, sortMode, pings)
+            // Memoised so ping updates don't trigger an O(N log N) re-sort
+            // when the dropdown is open.
+            val ordered = remember(profiles, sortMode, pings) {
+                sortProfiles(profiles.filterNot { it.isSection }, sortMode, pings)
+            }
 
-            // Cap the dropdown's *vertical* size so it doesn't push the
-            // rest of Home off-screen, but render every profile (no count
-            // truncation) — the user wants to pick from the full list
-            // without leaving Home.
-            LazyColumn(
-                modifier = Modifier.heightIn(max = 420.dp),
+            // Render every profile without vertical size constraints so the
+            // entire Home screen scrolls, rather than an inner list.
+            Column(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                items(ordered, key = { it.id }) { p ->
-                    ServerRow(
-                        name = p.name,
-                        subtitle = profileSubtitle(p),
-                        countryCode = profileCountry(p),
-                        isAuto = profileIsAuto(p),
-                        isActive = p.id == activeId,
-                        isFavorite = p.isFavorite,
-                        onClick = { onSelect(p) },
-                        onLongClick = { onLongPress(p) },
-                        latencyMs = pings[p.id]?.takeIf { it.reachable }?.latencyMs,
-                    )
+                ordered.forEach { p ->
+                    key(p.id) {
+                        ServerRow(
+                            name = p.name,
+                            subtitle = p.subtitle,
+                            countryCode = p.country,
+                            isAuto = p.isAuto,
+                            isActive = p.id == activeId,
+                            isFavorite = p.isFavorite,
+                            onClick = { onSelect(p) },
+                            onLongClick = { onLongPress(p) },
+                            latencyMs = pings[p.id]?.takeIf { it.reachable }?.latencyMs,
+                            isLoading = p.id in pingInflight,
+                        )
+                    }
                 }
             }
         }
@@ -514,72 +531,11 @@ private fun AddProfileShortcut(onClick: () -> Unit) {
 }
 
 // ───────────────────────── Profile field helpers ──────────────────────────
+// Thin aliases over the cached properties on [Profile]. They exist so call
+// sites read uniformly across screens — and to keep the existing function
+// shape that consumers were already using.
 
-/** Best-effort country code — proxies to [Profile.country]. */
-internal fun profileCountry(p: Profile): String? = p.country()
-
-internal fun profileIsAuto(p: Profile): Boolean {
-    val src = p.entryJson.ifBlank { return false }
-    return runCatching {
-        JSONObject(src).optString("type").equals("AUTO", ignoreCase = true)
-    }.getOrDefault(false)
-}
-
-internal fun profileSubtitle(p: Profile): String {
-    if (p.isSection) return ""
-    // Subscription profiles: hide raw host/IP — the provider's panel owns
-    // those (and they're usually meaningless to the user). Show only the
-    // protocol tag.
-    val src = p.entryJson
-    val protocolFromEntry = runCatching {
-        if (src.isNotBlank()) JSONObject(src).optString("type") else ""
-    }.getOrDefault("")
-    if (p.subscriptionId.isNotBlank()) {
-        return protocolFromEntry.ifBlank { protocolFromUri(p.uri).orEmpty() }
-    }
-    if (p.uri.isNotBlank()) {
-        // Trim long URIs into "vless://… host"
-        val short = p.uri.substringBefore("?").take(64)
-        return short
-    }
-    if (src.isBlank()) return ""
-    return runCatching {
-        val o = JSONObject(src)
-        val type = o.optString("type")
-        val ip = o.optString("ip")
-        val port = o.optInt("port")
-        listOfNotNull(
-            type.takeIf { it.isNotBlank() },
-            "$ip:$port".takeIf { ip.isNotBlank() }
-        ).joinToString("  ·  ")
-    }.getOrDefault("")
-}
-
-/** Extract "vless" / "vmess" / "trojan" etc. from a `<proto>://...` URI. */
-private fun protocolFromUri(uri: String): String? {
-    val schemeEnd = uri.indexOf("://")
-    if (schemeEnd <= 0) return null
-    return uri.substring(0, schemeEnd).uppercase()
-}
-
-/**
- * Canonical protocol code for a [Profile] — used by the protocol-filter
- * chips on Proxies. Returns `""` for sections, AUTO virtual entries (they
- * mix multiple inner protocols), or anything we can't classify. Aliases
- * are normalised so `SS`/`SHADOWSOCKS`, `WG`/`WIREGUARD`,
- * `AWG`/`AMNEZIAWG` collapse to a single bucket.
- */
-internal fun profileProtocol(p: Profile): String {
-    if (p.isSection) return ""
-    val raw = runCatching {
-        if (p.entryJson.isNotBlank()) JSONObject(p.entryJson).optString("type") else ""
-    }.getOrDefault("").ifBlank { protocolFromUri(p.uri).orEmpty() }
-    val up = raw.uppercase()
-    if (up == "AUTO") return ""
-    return when (up) {
-        "SS", "SHADOWSOCKS" -> "SHADOWSOCKS"
-        "WG", "WIREGUARD" -> "WIREGUARD"
-        "AWG", "AMNEZIAWG", "AMNEZIA-WG" -> "AMNEZIAWG"
-        else -> up
-    }
-}
+internal fun profileCountry(p: Profile): String? = p.country
+internal fun profileIsAuto(p: Profile): Boolean = p.isAuto
+internal fun profileSubtitle(p: Profile): String = p.subtitle
+internal fun profileProtocol(p: Profile): String = p.protocol

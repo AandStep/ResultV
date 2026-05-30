@@ -49,6 +49,12 @@ fun ServerRow(
     trailing: @Composable (() -> Unit)? = null,
     /** Latest ping in milliseconds, or null if not yet probed. */
     latencyMs: Int? = null,
+    /**
+     * True while a user-triggered ping refresh for this row is in flight.
+     * Forces the spinner even when [latencyMs] is non-null, so re-pinging
+     * already-pinged servers gives visible feedback.
+     */
+    isLoading: Boolean = false,
     /** Long-press handler — used by Proxies to open the edit sheet. */
     onLongClick: (() -> Unit)? = null,
 ) {
@@ -58,8 +64,8 @@ fun ServerRow(
     // Latency is colour-coded: green <80ms, amber 80–200ms, rose >200ms.
     val latencyColor = when {
         latencyMs == null -> Brand.MutedText
-        latencyMs < 80 -> Brand.GreenLight
-        latencyMs < 200 -> Brand.Warning
+        latencyMs <= 200 -> Brand.GreenLight
+        latencyMs <= 499 -> Brand.Warning
         else -> Brand.Danger
     }
 
@@ -144,12 +150,22 @@ fun ServerRow(
             )
         }
 
-        // Latency reading — single number, colour reflects health.
-        Text(
-            text = if (latencyMs != null) "$latencyMs ms" else "— ms",
-            style = MaterialTheme.typography.labelMedium,
-            color = latencyColor,
-        )
+        // Latency reading — single number, colour reflects health, or loading spinner.
+        // Spinner wins while a user-triggered refresh is in flight, so re-pinging
+        // already-pinged servers still shows the loading state.
+        if (isLoading || latencyMs == null) {
+            androidx.compose.material3.CircularProgressIndicator(
+                modifier = Modifier.size(14.dp),
+                color = Brand.MutedText,
+                strokeWidth = 2.dp
+            )
+        } else {
+            Text(
+                text = "$latencyMs ms",
+                style = MaterialTheme.typography.labelMedium,
+                color = latencyColor,
+            )
+        }
 
         if (trailing != null) trailing()
     }

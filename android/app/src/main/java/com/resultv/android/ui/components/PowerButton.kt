@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.draw.shadow
 import com.resultv.android.R
 import com.resultv.android.theme.Brand
 import com.resultv.android.vpn.VpnStatus
@@ -94,18 +95,18 @@ fun PowerButton(
         connected -> Brand.Green.copy(alpha = 0.55f)
         errored -> Brand.Danger.copy(alpha = 0.30f)
         connecting -> Brand.Warning.copy(alpha = 0.40f)
-        else -> Color.Transparent
+        else -> Color.Black.copy(alpha = 0.20f)
     }
     val glowSize by animateDpAsState(
-        // Container is 260dp now; cap the glow to match so the halo doesn't
+        // Container is 240dp now; cap the glow to match so the halo doesn't
         // pad the parent Column with invisible dead space.
-        targetValue = if (connected || errored || connecting) 260.dp else 0.dp,
+        targetValue = if (connected || errored || connecting) 240.dp else 220.dp,
         animationSpec = tween(600),
         label = "glow",
     )
 
     Box(
-        modifier = modifier.size(260.dp),
+        modifier = modifier.size(240.dp),
         contentAlignment = Alignment.Center,
     ) {
         // Halo behind the button.
@@ -136,7 +137,13 @@ fun PowerButton(
             color = fillColor,
             contentColor = iconTint,
             modifier = Modifier
-                .size(220.dp)
+                .size(200.dp)
+                .shadow(
+                    elevation = if (connected) 0.dp else 24.dp,
+                    shape = CircleShape,
+                    spotColor = glowCenter,
+                    ambientColor = glowCenter,
+                )
                 .then(
                     if (borderWidth > 0.dp)
                         Modifier.border(borderWidth, borderColor, CircleShape)
@@ -149,11 +156,11 @@ fun PowerButton(
                     contentDescription = stringResource(
                         if (connected) R.string.action_disconnect else R.string.action_connect,
                     ),
-                    modifier = Modifier.size(96.dp),
+                    modifier = Modifier.size(86.dp),
                 )
                 if (connecting) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(212.dp),
+                        modifier = Modifier.size(192.dp),
                         color = Brand.Warning,
                         strokeWidth = 3.dp,
                         trackColor = Brand.Warning.copy(alpha = 0.30f),

@@ -64,6 +64,36 @@
     <string name="settings_dns_preset_auto">Auto</string>
     <string name="settings_dns_preset_custom">Custom</string>
 
+    <!-- Settings — grouped. Text mirrors desktop (frontend/src/locales/ru.json) -->
+    <string name="settings_title">App settings</string>
+    <string name="settings_desc">Security and system management</string>
+    <string name="settings_back">Back to settings</string>
+    <string name="settings_group_advanced">Advanced settings</string>
+    <string name="settings_group_advanced_desc">Startup, TUN and traffic filtering options.</string>
+    <string name="settings_group_subscriptions">Subscriptions</string>
+    <string name="settings_group_subscriptions_desc">Auto-refresh and the data the app sends to the subscription provider.</string>
+    <string name="settings_group_security">Security</string>
+    <string name="settings_group_security_desc">Protect the connection against drops and DNS leaks.</string>
+    <string name="settings_group_network">Network</string>
+    <string name="settings_group_network_desc">DNS, local access and proxy port.</string>
+    <string name="settings_group_appearance">Appearance</string>
+    <string name="settings_group_appearance_desc">Interface language.</string>
+
+    <string name="settings_killswitch_title">Enable Kill Switch</string>
+    <string name="settings_killswitch_desc">Instantly cut internet if the proxy drops.</string>
+
+    <string name="settings_sub_auto_update_title">Automatic update</string>
+    <string name="settings_sub_auto_update_desc">Periodically refresh every added subscription.</string>
+    <string name="settings_sub_interval_title">Update interval</string>
+    <string name="settings_sub_interval_desc">How often subscriptions are refreshed, in hours.</string>
+    <string name="settings_sub_hwid_title">Send HWID</string>
+    <string name="settings_sub_hwid_desc">Sends the device identifier to the subscription over HTTPS for device-limit checks.</string>
+    <string name="settings_sub_ua_title">User agent</string>
+    <string name="settings_sub_ua_desc">Clear the field to use the default value ResultV/&lt;version&gt;/Android/&lt;OS version&gt;.</string>
+
+    <string name="settings_appearance_language_title">Language</string>
+    <string name="settings_appearance_language_desc">Interface language used across the app.</string>
+
     <!-- VPN service notification -->
     <string name="vpn_status_connecting">Connecting…</string>
     <string name="vpn_status_connected">Connected</string>
@@ -96,20 +126,17 @@
     <string name="add_msg_clipboard_empty">Clipboard is empty</string>
     <string name="add_msg_imported_clipboard">Imported %1$d profile(s) from clipboard</string>
     <string name="add_msg_no_valid_uris_clipboard">No valid URIs in clipboard</string>
-    <string name="add_mode_paste">Paste link</string>
+    <string name="add_mode_link">Link</string>
     <string name="add_mode_manual">Manual</string>
-    <string name="add_mode_subscription">Subscription</string>
 
-    <!-- Add screen — paste pane -->
-    <string name="add_paste_label">Share link</string>
-    <string name="add_paste_placeholder">vless:// vmess:// trojan:// hy2:// …</string>
-    <string name="add_paste_err_empty">URI is empty</string>
-    <string name="add_paste_err_invalid">Invalid URI</string>
+    <!-- Add screen — unified Link pane -->
+    <string name="add_link_label">Paste link or subscription</string>
+    <string name="add_link_placeholder">resultv:// · https://… · vless:// vmess:// trojan:// hy2:// …</string>
+    <string name="add_link_err_empty">Link is empty</string>
+    <string name="add_link_err_invalid">Could not recognize this link</string>
     <string name="add_paste_default_name">Profile</string>
 
-    <!-- Add screen — subscription pane -->
-    <string name="add_sub_label">Subscription URL</string>
-    <string name="add_sub_placeholder">https://example.com/sub/…</string>
+    <!-- Add screen — subscription preview (shown when Link is an http(s):// URL) -->
     <string name="add_sub_fetch">Fetch</string>
     <string name="add_sub_fetching">Fetching…</string>
     <string name="add_sub_selected">%1$d of %2$d selected</string>
@@ -206,10 +233,25 @@
     <string name="sub_delete_cd">Delete subscription</string>
     <string name="sub_delete_title">Delete subscription?</string>
     <string name="sub_delete_message">"%1$s" and its %2$d profile(s) will be removed.</string>
-    <string name="sub_edit_cd">Edit subscription URL</string>
-    <string name="sub_edit_title">Edit subscription URL</string>
-    <string name="sub_edit_label">Panel URL</string>
-    <string name="sub_edit_save">Save and refresh</string>
+    <string name="sub_edit_cd">Subscription settings</string>
+    <string name="sub_edit_title">Settings</string>
+    <string name="sub_edit_section_name">Name</string>
+    <string name="sub_edit_section_visibility">Visibility</string>
+    <string name="sub_edit_section_links">Links</string>
+    <string name="sub_edit_section_refresh">Refresh interval</string>
+    <string name="sub_edit_visibility_toggle">Show on home</string>
+    <string name="sub_edit_visibility_desc">When off, the subscription stays in the server list but is hidden from the home screen</string>
+    <string name="sub_edit_link_support">Support</string>
+    <string name="sub_edit_link_open_cd">Open link</string>
+    <string name="sub_edit_custom_interval_title">Custom interval</string>
+    <string name="sub_edit_custom_interval_desc">Otherwise the global interval is used</string>
+    <string name="sub_edit_interval_30m">30 min</string>
+    <string name="sub_edit_interval_1h">1 hour</string>
+    <string name="sub_edit_interval_2h">2 hours</string>
+    <string name="sub_edit_interval_6h">6 hours</string>
+    <string name="sub_edit_interval_12h">12 hours</string>
+    <string name="sub_edit_interval_24h">24 hours</string>
+    <string name="sub_edit_close_cd">Close</string>
     <string name="sub_traffic_used">%1$s / %2$s</string>
     <string name="sub_traffic_used_unlimited">%1$s / ∞</string>
     <string name="sub_expires_in_days">Expires in %1$d days</string>

@@ -11,3 +11,9 @@ captures/
 # Built artifacts (regenerated via `gomobile bind` in mobile/)
 libs/*.aar
 libs/*-sources.jar
+
+# Release signing — credentials live in keystore.properties (copy from
+# keystore.properties.example and fill in real values)
+keystore.properties
+*.keystore
+*.jks

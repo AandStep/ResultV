@@ -190,7 +190,7 @@
     },
     "dns_leak_protection": {
       "title": "DNS leak protection",
-      "desc": "Blocks Windows' parallel DNS queries from escaping via the LAN adapter. Protects against ISP DNS hijacking (Rostelecom, MSK-IX, etc.). Disable only if it interferes with local-network workflows."
+      "desc": "Blocks Windows' parallel DNS queries from escaping via the LAN adapter. Protects against ISP DNS hijacking (Rostelecom, MSK-IX, etc.). On Windows, changing system DNS requires administrator privileges. Disable only if it interferes with local-network workflows."
     },
     "adblock": {
       "title": "Ad Blocker",
@@ -356,6 +356,9 @@
     "desc": "System logs and connection information",
     "empty": "No logs available",
     "clear_btn": "Clear",
+    "save_btn": "Save to file",
+    "save_tooltip": "Save all logs to a text file",
+    "clear_tooltip": "Clear the log journal",
     "msg": {
       "app_started": "Interface started. Loading configuration...",
       "daemon_offline": "Daemon is unavailable.",

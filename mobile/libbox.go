@@ -162,10 +162,10 @@ func ParseProxyURI(uri string) (string, error) {
 // line-separated, and JSON subscription formats (see
 // proxy.ParseSubscriptionBody).
 //
-// Mirrors the desktop's two-pass fetch: many panels return a richer
-// config (Hysteria2, Xray JSON) only to the Happ User-Agent; we try our
-// own UA first, then fall back to Happ if the primary either failed or
-// produced an entry list missing Hysteria2.
+// Uses the default ResultV/<ver> User-Agent. Users who need to
+// impersonate another client (e.g. a panel that only returns the rich
+// config to a specific UA) can override it via Settings → Subscriptions
+// → User Agent — see FetchSubscriptionV3.
 //
 // Returns the JSON array as a string so gomobile can shuttle it across
 // the JNI boundary; Kotlin re-parses with org.json.
@@ -173,7 +173,7 @@ func ParseProxyURI(uri string) (string, error) {
 // Legacy entrypoint: returns only the entry list. Use FetchSubscriptionV2
 // to also receive Subscription-Userinfo / Profile-Title metadata.
 func FetchSubscription(subURL, dataDir string) (string, error) {
-	out, err := fetchSubscription(subURL, dataDir)
+	out, err := fetchSubscription(subURL, dataDir, SubscriptionFetchOptions{})
 	if err != nil {
 		return "", err
 	}
@@ -187,10 +187,14 @@ func FetchSubscription(subURL, dataDir string) (string, error) {
 // SubscriptionResponse is the JSON shape returned by FetchSubscriptionV2.
 // Mirrors the desktop's Subscription model: parsed entries + the
 // SIP008-style metadata headers the panel exposed.
+//
+// SupportURL is the panel-supplied `Support-Url` header, surfaced by the
+// mobile edit sheet's Links section. Empty when the panel doesn't ship one.
 type SubscriptionResponse struct {
-	Entries  json.RawMessage `json:"entries"`
-	UserInfo string          `json:"userInfo,omitempty"` // "upload=…; download=…; total=…; expire=…"
-	Title    string          `json:"title,omitempty"`
+	Entries    json.RawMessage `json:"entries"`
+	UserInfo   string          `json:"userInfo,omitempty"` // "upload=…; download=…; total=…; expire=…"
+	Title      string          `json:"title,omitempty"`
+	SupportURL string          `json:"supportUrl,omitempty"`
 }
 
 // FetchSubscriptionV2 returns the entries together with subscription
@@ -198,7 +202,37 @@ type SubscriptionResponse struct {
 // the new traffic/expiry surface) and `title` (default subscription name
 // when the user hasn't typed one).
 func FetchSubscriptionV2(subURL, dataDir string) (string, error) {
-	out, err := fetchSubscription(subURL, dataDir)
+	return FetchSubscriptionV3(subURL, dataDir, "")
+}
+
+// SubscriptionFetchOptions carries Settings-driven knobs for the
+// subscription fetch path. Encoded as JSON so gomobile can shuttle the
+// payload across the JNI boundary (struct binding isn't supported).
+//
+// All fields are optional — empty / zero values fall back to the same
+// defaults FetchSubscriptionV2 uses.
+type SubscriptionFetchOptions struct {
+	// UserAgent overrides the default ResultV/<ver> UA.
+	UserAgent string `json:"userAgent,omitempty"`
+	// SendHWID controls the x-hwid header. Pointer so the absence of the
+	// field defaults to true (matches desktop EffectiveSubscriptionSendHWID).
+	SendHWID *bool `json:"sendHwid,omitempty"`
+	// DeviceOS / OSVersion / Model fill the x-device-os / x-ver-os /
+	// x-device-model headers that Happ / Remnawave panels read for the
+	// device-list / HWID-limit UI. Empty means "don't send".
+	DeviceOS  string `json:"deviceOs,omitempty"`
+	OSVersion string `json:"osVersion,omitempty"`
+	Model     string `json:"model,omitempty"`
+}
+
+// FetchSubscriptionV3 is the options-aware variant of V2. Kotlin should
+// build the options JSON from SettingsRepository state so user-configured
+// UA / HWID / device-tag preferences flow through to the fetcher.
+//
+// Empty / malformed [optionsJson] falls back to the V2 defaults.
+func FetchSubscriptionV3(subURL, dataDir, optionsJson string) (string, error) {
+	opts := decodeSubscriptionFetchOptions(optionsJson)
+	out, err := fetchSubscription(subURL, dataDir, opts)
 	if err != nil {
 		return "", err
 	}
@@ -207,9 +241,10 @@ func FetchSubscriptionV2(subURL, dataDir string) (string, error) {
 		return "", fmt.Errorf("marshaling entries: %w", err)
 	}
 	resp := SubscriptionResponse{
-		Entries:  entries,
-		UserInfo: out.UserInfo,
-		Title:    out.Title,
+		Entries:    entries,
+		UserInfo:   out.UserInfo,
+		Title:      out.Title,
+		SupportURL: out.SupportURL,
 	}
 	data, err := json.Marshal(resp)
 	if err != nil {
@@ -218,40 +253,51 @@ func FetchSubscriptionV2(subURL, dataDir string) (string, error) {
 	return string(data), nil
 }
 
-// fetchSubscription is the shared fetch path used by both V1 and V2.
-// Returns parsed entries + the metadata captured from the HTTP response.
-func fetchSubscription(subURL, dataDir string) (subscriptionResult, error) {
+func decodeSubscriptionFetchOptions(optionsJson string) SubscriptionFetchOptions {
+	var o SubscriptionFetchOptions
+	if strings.TrimSpace(optionsJson) == "" {
+		return o
+	}
+	if err := json.Unmarshal([]byte(optionsJson), &o); err != nil {
+		return SubscriptionFetchOptions{}
+	}
+	return o
+}
+
+// fetchSubscription is the shared fetch path used by V1/V2/V3. Returns
+// parsed entries + the metadata captured from the HTTP response (userinfo,
+// title, support URL).
+func fetchSubscription(subURL, dataDir string, opts SubscriptionFetchOptions) (subscriptionResult, error) {
 	subURL = strings.TrimSpace(subURL)
 	if subURL == "" {
 		return subscriptionResult{}, fmt.Errorf("subscription URL is empty")
 	}
 	subURL = normalizeSubscriptionURL(subURL)
 
-	hwid, err := config.StableHardwareID(dataDir)
-	if err != nil {
+	sendHWID := true
+	if opts.SendHWID != nil {
+		sendHWID = *opts.SendHWID
+	}
+	hwid := ""
+	if sendHWID {
+		if h, err := config.StableHardwareID(dataDir); err == nil {
+			hwid = h
+		}
 		// HWID isn't strictly required — some panels just won't gate the
 		// real config without it. Continue and let the fetch decide.
-		hwid = ""
 	}
 
-	// Match desktop's User-Agent exactly — provider gating regularly keys
-	// on it, so anything with "(Android)" or version drift breaks parity.
-	primaryUA := "ResultV/3.1.1"
-	primaryRes, primaryErr := fetchSubscriptionWithUA(subURL, primaryUA, hwid)
-	primaryDiag := primaryRes.Diag
-
-	tryHapp := primaryErr != nil || !hasHysteria(primaryRes.Entries)
-	var fallbackDiag string
-	if tryHapp {
-		if fallback, err := fetchSubscriptionWithUA(subURL, "Happ/1.0", hwid); err == nil && len(fallback.Entries) > 0 {
-			fallbackDiag = fallback.Diag
-			if primaryErr != nil || len(fallback.Entries) > len(primaryRes.Entries) {
-				primaryRes = fallback
-				primaryDiag = fallback.Diag
-				primaryErr = nil
-			}
-		}
+	// User-Agent: Settings override (Subscriptions → User Agent) wins,
+	// otherwise match desktop's `ResultV/<ver>` so panels that gate on
+	// the string see the same identity across platforms. No more Happ/1.0
+	// fallback — users who need to impersonate Happ can do so explicitly
+	// via the UA override.
+	userAgent := strings.TrimSpace(opts.UserAgent)
+	if userAgent == "" {
+		userAgent = "ResultV/3.1.1"
 	}
+	headers := subscriptionDeviceHeaders(opts)
+	primaryRes, primaryErr := fetchSubscriptionWithUA(subURL, userAgent, hwid, headers)
 
 	if primaryErr != nil {
 		return subscriptionResult{}, primaryErr
@@ -273,8 +319,8 @@ func fetchSubscription(subURL, dataDir string) (subscriptionResult, error) {
 	}
 	if !hasReal {
 		return subscriptionResult{}, fmt.Errorf(
-			"no valid proxies in subscription (parsed=%d, all sections, url=%s, primary=%s, fallback=%s)",
-			rawCount, subURL, primaryDiag, fallbackDiag,
+			"no valid proxies in subscription (parsed=%d, all sections, url=%s, diag=%s)",
+			rawCount, subURL, primaryRes.Diag,
 		)
 	}
 
@@ -284,16 +330,18 @@ func fetchSubscription(subURL, dataDir string) (subscriptionResult, error) {
 	visible := buildAutoAwareEntries(entries)
 
 	return subscriptionResult{
-		Entries:  visible,
-		UserInfo: primaryRes.UserInfo,
-		Title:    primaryRes.Title,
+		Entries:    visible,
+		UserInfo:   primaryRes.UserInfo,
+		Title:      primaryRes.Title,
+		SupportURL: primaryRes.SupportURL,
 	}, nil
 }
 
 type subscriptionResult struct {
-	Entries  []config.ProxyEntry
-	UserInfo string
-	Title    string
+	Entries    []config.ProxyEntry
+	UserInfo   string
+	Title      string
+	SupportURL string
 }
 
 // buildAutoAwareEntries reproduces app.go's auto-bundling and extends it
@@ -352,18 +400,38 @@ func marshalAutoMembers(members []config.ProxyEntry) json.RawMessage {
 
 // subscriptionFetchResult bundles the parsed entries with the
 // metadata headers we surface to the UI (subscription-userinfo for
-// traffic quota, profile-title for default subscription name).
+// traffic quota, profile-title for default subscription name, support-url
+// for the per-sub help link in the edit sheet).
 type subscriptionFetchResult struct {
-	Entries  []config.ProxyEntry
-	UserInfo string
-	Title    string
-	Diag     string
+	Entries    []config.ProxyEntry
+	UserInfo   string
+	Title      string
+	SupportURL string
+	Diag       string
+}
+
+// subscriptionDeviceHeaders pulls the user-tag headers out of the fetch
+// options. Mirrors the desktop trio (x-device-os / x-ver-os /
+// x-device-model) — panels read these for the device-list UI and (in
+// some Remnawave deployments) the HWID-limit decision.
+func subscriptionDeviceHeaders(opts SubscriptionFetchOptions) map[string]string {
+	out := map[string]string{}
+	if s := strings.TrimSpace(opts.DeviceOS); s != "" {
+		out["x-device-os"] = s
+	}
+	if s := strings.TrimSpace(opts.OSVersion); s != "" {
+		out["x-ver-os"] = s
+	}
+	if s := strings.TrimSpace(opts.Model); s != "" {
+		out["x-device-model"] = s
+	}
+	return out
 }
 
 // fetchSubscriptionWithUA returns the parsed result + diag string for
 // telemetry. diag is a short human-readable summary used when the
 // caller wants to surface why a fetch produced zero usable entries.
-func fetchSubscriptionWithUA(subURL, userAgent, hwid string) (subscriptionFetchResult, error) {
+func fetchSubscriptionWithUA(subURL, userAgent, hwid string, extraHeaders map[string]string) (subscriptionFetchResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -374,6 +442,9 @@ func fetchSubscriptionWithUA(subURL, userAgent, hwid string) (subscriptionFetchR
 	req.Header.Set("User-Agent", userAgent)
 	if hwid != "" {
 		req.Header.Set("x-hwid", hwid)
+	}
+	for k, v := range extraHeaders {
+		req.Header.Set(k, v)
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -404,25 +475,17 @@ func fetchSubscriptionWithUA(subURL, userAgent, hwid string) (subscriptionFetchR
 		return subscriptionFetchResult{Diag: diag}, fmt.Errorf("parsing subscription (%s): %w", diag, err)
 	}
 	// SIP008 / clash convention: traffic quota and expiry come in via
-	// `Subscription-Userinfo`, friendly name in `Profile-Title`. Both
-	// optional — providers that don't set them get empty strings here
-	// and the UI falls back to defaults.
+	// `Subscription-Userinfo`, friendly name in `Profile-Title`,
+	// per-sub help link in `Support-Url`. All optional — providers that
+	// don't set them get empty strings here and the UI hides the
+	// corresponding affordance instead of falling back to a hardcoded value.
 	return subscriptionFetchResult{
-		Entries:  entries,
-		UserInfo: resp.Header.Get("Subscription-Userinfo"),
-		Title:    resp.Header.Get("Profile-Title"),
-		Diag:     diag,
+		Entries:    entries,
+		UserInfo:   resp.Header.Get("Subscription-Userinfo"),
+		Title:      resp.Header.Get("Profile-Title"),
+		SupportURL: strings.TrimSpace(resp.Header.Get("Support-Url")),
+		Diag:       diag,
 	}, nil
-}
-
-func hasHysteria(entries []config.ProxyEntry) bool {
-	for _, e := range entries {
-		t := strings.ToUpper(e.Type)
-		if strings.Contains(t, "HYSTERIA") || strings.Contains(t, "HY2") {
-			return true
-		}
-	}
-	return false
 }
 
 // normalizeSubscriptionURL applies provider-specific URL tweaks. impio.space
@@ -694,15 +757,19 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 			URI:      entry.URI,
 			Extra:    entry.Extra,
 		},
-		Mode:            proxy.ProxyModeTunnel,
-		DataDir:         dataDir,
-		TunIPv4:         "172.19.0.1/30",
-		IsAndroid:       true,
-		IPv6:            opts.IPv6,
-		BypassLAN:       opts.BypassLAN,
-		LogLevel:        opts.LogLevel,
+		Mode:                proxy.ProxyModeTunnel,
+		DataDir:             dataDir,
+		TunIPv4:             "172.19.0.1/30",
+		IsAndroid:           true,
+		IPv6:                opts.IPv6,
+		BypassLAN:           opts.BypassLAN,
+		LogLevel:            opts.LogLevel,
 		SmartMode:           opts.SmartMode,
 		SmartBlockedDomains: splitSmartList(opts.SmartBlockedDomainsList),
+		// Desktop's DNSLeakProtection (toggles strict_route) is forced off
+		// on Android — VpnService can't manipulate routes outside its TUN,
+		// and AutoRoute already catches all egress traffic, so DNS bypass
+		// isn't possible the way it is on desktop.
 	}
 	if opts.DNSServers != "" {
 		for _, p := range strings.Split(opts.DNSServers, ",") {
@@ -769,8 +836,16 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 	// means /etc/resolv.conf (absent) or 127.0.0.1:53 (no daemon) — every
 	// proxy-server hostname lookup fails with "connection refused" and the
 	// VLESS dial never starts. Replace the local server with a real public
-	// DNS dialed via `direct` outbound — that goes through Android's normal
-	// network because our package is in addDisallowedApplication.
+	// DNS dialled via `direct` (Android's normal network, works even
+	// before the tunnel comes up).
+	//
+	// MUST always be direct/UDP regardless of DNSLeakProtection: the
+	// "local" tag is the bootstrap resolver — engine.go adds a DNS rule
+	// routing the proxy server's own hostname to "local". Sending that
+	// query through the proxy creates a chicken-and-egg loop (proxy can't
+	// dial because we can't resolve its hostname; we can't resolve
+	// because the proxy isn't up). User DNS leak protection is already
+	// covered by the custom-* servers, which use `detour: proxy`.
 	if sb.DNS != nil {
 		for i := range sb.DNS.Servers {
 			if sb.DNS.Servers[i].Type == "local" {

@@ -30,6 +30,30 @@ data class Profile(
     /** SECTION rows are labels (impVPN "выберите конфиг ниже"), not real outbounds. */
     val isSection: Boolean = false,
 ) {
+    // Cached derived metadata — body-properties are computed once at
+    // construction time and aren't part of equals/hashCode/copy/toString.
+    // A .copy() reparses for the new instance (happens on rename / favourite
+    // toggle, never in render paths).
+
+    private val parsedEntry: JSONObject? = if (entryJson.isBlank()) null
+        else runCatching { JSONObject(entryJson) }.getOrNull()
+
+    /** Raw `type` from entryJson (e.g. "VLESS", "AUTO"). Empty if no entry. */
+    val rawType: String = parsedEntry?.optString("type").orEmpty()
+
+    /** ISO-2 country code from entryJson, or null for sections / URI-only. */
+    val country: String? = if (isSection) null
+        else parsedEntry?.optString("country")?.takeIf { it.length == 2 }
+
+    /** True when this is an AUTO multi-target entry. */
+    val isAuto: Boolean = rawType.equals("AUTO", ignoreCase = true)
+
+    /** Normalised protocol code for the filter chips (SS→SHADOWSOCKS, WG/AWG aliases collapsed, AUTO→""). */
+    val protocol: String = computeProtocol(isSection, rawType, uri)
+
+    /** Pre-formatted subtitle string used by ServerRow — avoids per-render JSON parsing. */
+    val subtitle: String = computeSubtitle()
+
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
         .put("name", name)
@@ -39,12 +63,25 @@ data class Profile(
         .put("subscriptionId", subscriptionId)
         .put("isSection", isSection)
 
-    /** Display country code parsed from entryJson, or null for URI-only / section rows. */
-    fun country(): String? {
-        if (isSection || entryJson.isBlank()) return null
-        return runCatching {
-            JSONObject(entryJson).optString("country").takeIf { it.length == 2 }
-        }.getOrNull()
+    /** PingRepository reads this to avoid re-parsing entryJson on every probe. */
+    internal fun cachedEntry(): JSONObject? = parsedEntry
+
+    private fun computeSubtitle(): String {
+        if (isSection) return ""
+        if (subscriptionId.isNotBlank()) {
+            return rawType.ifBlank { protocolFromUri(uri).orEmpty() }
+        }
+        if (uri.isNotBlank()) {
+            return uri.substringBefore("?").take(64)
+        }
+        val entry = parsedEntry ?: return ""
+        val type = entry.optString("type")
+        val ip = entry.optString("ip")
+        val port = entry.optInt("port")
+        return listOfNotNull(
+            type.takeIf { it.isNotBlank() },
+            "$ip:$port".takeIf { ip.isNotBlank() }
+        ).joinToString("  ·  ")
     }
 
     companion object {
@@ -80,6 +117,25 @@ data class Profile(
             isSection = true,
         )
     }
+}
+
+private fun computeProtocol(isSection: Boolean, rawType: String, uri: String): String {
+    if (isSection) return ""
+    val raw = rawType.ifBlank { protocolFromUri(uri).orEmpty() }
+    val up = raw.uppercase()
+    if (up == "AUTO") return ""
+    return when (up) {
+        "SS", "SHADOWSOCKS" -> "SHADOWSOCKS"
+        "WG", "WIREGUARD" -> "WIREGUARD"
+        "AWG", "AMNEZIAWG", "AMNEZIA-WG" -> "AMNEZIAWG"
+        else -> up
+    }
+}
+
+private fun protocolFromUri(uri: String): String? {
+    val schemeEnd = uri.indexOf("://")
+    if (schemeEnd <= 0) return null
+    return uri.substring(0, schemeEnd).uppercase()
 }
 
 data class ProfilesState(

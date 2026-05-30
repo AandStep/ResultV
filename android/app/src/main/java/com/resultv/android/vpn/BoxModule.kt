@@ -35,6 +35,9 @@ object BoxModule {
     private var setupDone = false
     private var commandServer: CommandServer? = null
 
+    val isRunning: Boolean
+        @Synchronized get() = commandServer != null
+
     /**
      * Configure libbox global paths. Must be called before any Service
      * construction. Safe to call multiple times.
@@ -87,29 +90,20 @@ object BoxModule {
         Log.i(TAG, "BoxModule started")
     }
 
-    /**
-     * Reload the running engine with a fresh config. libbox's
-     * `startOrReloadService` is idempotent — if the server is up it swaps
-     * the engine in-place (drops connections briefly, re-invokes openTun
-     * on the platform interface, applies the new route table).
-     *
-     * Returns false if no server is running, in which case the caller
-     * should fall through to a fresh `start()`.
-     */
     @Synchronized
-    fun reload(configJson: String): Boolean {
-        val server = commandServer ?: return false
-        Log.i(TAG, "── reload config begin ──")
-        configJson.chunked(3500).forEach { Log.i(TAG, it) }
-        Log.i(TAG, "── reload config end ──")
-        try {
-            server.startOrReloadService(configJson, OverrideOptions())
-            Log.i(TAG, "BoxModule reloaded")
-            return true
-        } catch (t: Throwable) {
-            Log.e(TAG, "reload failed", t)
-            return false
+    fun reload(configJson: String) {
+        val server = commandServer
+        if (server == null) {
+            Log.w(TAG, "reload() called while not running")
+            return
         }
+        
+        Log.i(TAG, "── config reload begin ──")
+        configJson.chunked(3500).forEach { Log.i(TAG, it) }
+        Log.i(TAG, "── config reload end ──")
+        
+        server.startOrReloadService(configJson, OverrideOptions())
+        Log.i(TAG, "BoxModule reloaded")
     }
 
     @Synchronized
@@ -188,18 +182,33 @@ private class BoxPlatform(private val service: ResultVpnService) : PlatformInter
 
         builder.setBlocking(false)
 
+        // Service owns the PFD so it can close it on Disconnect/destroy.
+        // During a reload, libbox asks for a new TUN. To perform a seamless handover
+        // without dropping the VPN network (which causes connections to fail), we MUST
+        // call builder.establish() BEFORE closing the old interface.
+        val oldPfd = service.tunPfd
+        service.tunPfd = null
+
         val pfd: ParcelFileDescriptor = builder.establish()
             ?: error("VpnService.Builder.establish() returned null — VPN permission revoked?")
-        // Service owns the PFD so it can close it on Disconnect/destroy.
-        // libbox dup()s the fd internally (service.go:76), so closing the
-        // original later does not invalidate libbox's tun handle.
-        service.tunPfd?.let {
-            try { it.close() } catch (_: Throwable) {}
+        
+        val newFd = pfd.fd
+        
+        if (oldPfd != null) {
+            if (oldPfd.fd == newFd) {
+                // FD was recycled! libbox already closed the raw FD in native code,
+                // freeing the integer, which Binder immediately reused for the new TUN.
+                // We MUST detach the old PFD to prevent its finalizer from closing the new TUN.
+                oldPfd.detachFd()
+            } else {
+                // Safe to close the old interface now that the new one is established.
+                try { oldPfd.close() } catch (_: Throwable) {}
+            }
         }
+
         service.tunPfd = pfd
-        val fd = pfd.fd
-        Log.i(TAG, "openTun → fd=$fd, mtu=$mtu, autoRoute=${options.autoRoute}")
-        return fd
+        Log.i(TAG, "openTun → fd=$newFd, mtu=$mtu, autoRoute=${options.autoRoute}")
+        return newFd
     }
 
     /**

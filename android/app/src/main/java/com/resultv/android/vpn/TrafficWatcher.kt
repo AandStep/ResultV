@@ -12,7 +12,15 @@ import libbox.StatusMessage
 import libbox.StringIterator
 
 private const val TAG = "ResultV/Traffic"
-private const val STATUS_INTERVAL_MS = 1000L
+
+// libbox's CommandClientOptions.StatusInterval is an int64 of NANOSECONDS
+// (Go time.Duration under the hood — see sing-box daemon/started_service.go
+// SubscribeStatus: `interval := time.Duration(request.Interval)`).
+// The server uses this as its ticker AND derives Uplink/Downlink as
+// (UplinkTotal - lastUplinkTotal) per tick, so when the value is wrong the
+// reported "bps" silently becomes "bytes per tick" rather than per second.
+// 1_000_000_000 ns = 1 s — one sample per second, matches desktop cadence.
+private const val STATUS_INTERVAL_NS = 1_000_000_000L
 
 /**
  * Subscribes to sing-box's internal status command via libbox's
@@ -31,7 +39,7 @@ object TrafficWatcher {
             return
         }
         val opts = CommandClientOptions().apply {
-            statusInterval = STATUS_INTERVAL_MS
+            statusInterval = STATUS_INTERVAL_NS
             addCommand(Libbox.CommandStatus)
         }
         val handler = StatusHandler()
@@ -93,8 +101,8 @@ private class StatusHandler : CommandClientHandler {
             // last snapshot so the UI doesn't flicker to zero.
             return
         }
-        val uplink = message.uplink
-        val downlink = message.downlink
+        val uplink = if (message.uplink < 0L) 0L else message.uplink
+        val downlink = if (message.downlink < 0L) 0L else message.downlink
         val uplinkTotal = message.uplinkTotal
         val downlinkTotal = message.downlinkTotal
         lastUplinkTotal = uplinkTotal

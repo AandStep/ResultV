@@ -5,7 +5,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -68,6 +71,15 @@ object PingRepository {
     private val _targetResults = MutableStateFlow<Map<String, Sample>>(emptyMap())
     val targetResults: StateFlow<Map<String, Sample>> = _targetResults.asStateFlow()
 
+    /**
+     * Profile IDs currently being probed via a user-triggered refresh. UI
+     * binds here to keep showing the loading spinner during a manual
+     * re-ping of already-pinged servers. Background poll ticks do NOT
+     * mark inflight — the spinner would flash on every row every 60s.
+     */
+    private val _inflight = MutableStateFlow<Set<String>>(emptySet())
+    val inflight: StateFlow<Set<String>> = _inflight.asStateFlow()
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var pollerJob: Job? = null
 
@@ -98,20 +110,48 @@ object PingRepository {
 
     /** Re-probe [profile] and update the cache. Safe to call from any thread. */
     fun refresh(profile: Profile) {
-        scope.launch { refreshSuspending(profile) }
+        if (profile.isSection) return
+        markInflight(listOf(profile.id))
+        scope.launch {
+            try { refreshSuspending(profile) }
+            finally { clearInflight(listOf(profile.id)) }
+        }
     }
 
-    /** Re-probe every passed profile in parallel (capped concurrency). */
+    /**
+     * Re-probe every passed profile in parallel (capped concurrency). Each
+     * profile publishes its sample to `_results` / `_targetResults` as soon
+     * as it finishes so the UI fills in progressively rather than all-at-once
+     * at the end of the sweep. Marks every profile as inflight up-front so
+     * already-pinged rows show the loading spinner during the refresh.
+     */
     fun refreshAll(profiles: List<Profile>) {
+        val real = profiles.filterNot { it.isSection }
+        if (real.isEmpty()) return
+        markInflight(real.map { it.id })
         scope.launch {
-            // Limit concurrent probes — typical subscription has 20–40
-            // entries and we don't want 40 TCP/QUIC dials racing.
-            val real = profiles.filterNot { it.isSection }
-            real.chunked(6).forEach { chunk ->
-                val jobs = chunk.map { p -> launch { refreshSuspending(p) } }
+            real.chunked(24).forEach { chunk ->
+                val jobs = chunk.map { p ->
+                    launch {
+                        try { refreshSuspending(p) }
+                        finally { clearInflight(listOf(p.id)) }
+                    }
+                }
                 jobs.forEach { it.join() }
             }
         }
+    }
+
+    @Synchronized
+    private fun markInflight(ids: Collection<String>) {
+        if (ids.isEmpty()) return
+        _inflight.value = _inflight.value + ids
+    }
+
+    @Synchronized
+    private fun clearInflight(ids: Collection<String>) {
+        if (ids.isEmpty()) return
+        _inflight.value = _inflight.value - ids.toSet()
     }
 
     /**
@@ -123,7 +163,7 @@ object PingRepository {
         val targets = targetsFor(profile)
         if (targets.isEmpty()) return emptyList()
         val samples = HashMap<String, Sample>()
-        for (chunk in targets.chunked(6)) {
+        for (chunk in targets.chunked(24)) {
             val jobs = chunk.map { t ->
                 scope.launch {
                     val s = probeOne(t)
@@ -147,7 +187,13 @@ object PingRepository {
         pollerJob = scope.launch {
             while (isActive) {
                 try {
-                    refreshAll(profiles())
+                    // Background sweep — don't mark inflight; the UI spinner
+                    // is for user-triggered refreshes only.
+                    val real = profiles().filterNot { it.isSection }
+                    real.chunked(24).forEach { chunk ->
+                        val jobs = chunk.map { p -> launch { refreshSuspending(p) } }
+                        jobs.forEach { it.join() }
+                    }
                 } catch (t: Throwable) {
                     Log.w(TAG, "poll tick failed", t)
                 }
@@ -164,13 +210,16 @@ object PingRepository {
 
     // ──────────────────────── Internals ────────────────────────
 
-    private suspend fun refreshSuspending(profile: Profile) {
+    private suspend fun refreshSuspending(profile: Profile) = coroutineScope {
         val targets = targetsFor(profile)
-        if (targets.isEmpty()) return
-        val samples = HashMap<String, Sample>()
-        for (t in targets) {
-            samples[t.key] = probeOne(t)
+        if (targets.isEmpty()) return@coroutineScope
+        
+        val deferreds = targets.map { t ->
+            async { t to probeOne(t) }
         }
+        val results = deferreds.awaitAll()
+        val samples = results.associate { it.first.key to it.second }
+        
         publishTargetSamples(samples)
         publishProfileBest(profile.id, targets, samples)
     }
@@ -223,12 +272,13 @@ object PingRepository {
 
     /** Parse the profile's ProxyEntry JSON, falling back to URI parsing. */
     private fun parseEntry(p: Profile): JSONObject? {
-        if (p.entryJson.isNotBlank()) {
-            return runCatching { JSONObject(p.entryJson) }.getOrNull()
-        }
-        if (p.uri.isBlank()) return null
-        val cached = uriCache[p.uri]
+        // entryJson-based profiles use the parse cached on Profile itself —
+        // saves an O(N) parse per refresh cycle for subscription profiles.
+        val cached = p.cachedEntry()
         if (cached != null) return cached
+        if (p.uri.isBlank()) return null
+        val uriCached = uriCache[p.uri]
+        if (uriCached != null) return uriCached
         return runCatching {
             JSONObject(Mobile.parseProxyURI(p.uri)).also { uriCache[p.uri] = it }
         }.getOrNull()

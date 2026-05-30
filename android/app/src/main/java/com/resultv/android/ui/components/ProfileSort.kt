@@ -23,7 +23,6 @@ import com.resultv.android.R
 import com.resultv.android.theme.Brand
 import com.resultv.android.vpn.PingRepository
 import com.resultv.android.vpn.Profile
-import org.json.JSONObject
 
 /**
  * Sort orderings shared by Home dropdown and Proxies list. "Default" keeps
@@ -63,19 +62,12 @@ fun sortProfiles(
             val s = pings[it.id]
             if (s == null || !s.reachable) Int.MAX_VALUE else s.latencyMs
         }
-        ProfileSortMode.Country -> compareBy(nullsLast()) { it.country() }
-        ProfileSortMode.Type -> compareBy { profileType(it) ?: "zzz" }
+        ProfileSortMode.Country -> compareBy(nullsLast()) { it.country }
+        ProfileSortMode.Type -> compareBy { it.rawType.ifBlank { "zzz" } }
         ProfileSortMode.Name -> compareBy(String.CASE_INSENSITIVE_ORDER) { it.name }
         else -> return profiles.sortedWith(favFirst)
     }
     return profiles.sortedWith(favFirst.then(comparator))
-}
-
-private fun profileType(p: Profile): String? {
-    if (p.entryJson.isBlank()) return null
-    return runCatching { JSONObject(p.entryJson).optString("type") }
-        .getOrNull()
-        ?.takeIf { it.isNotBlank() }
 }
 
 /** Compact sort icon-button + dropdown menu. */
