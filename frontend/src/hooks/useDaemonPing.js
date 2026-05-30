@@ -23,10 +23,14 @@ import { parseExtra } from "../utils/pingSort";
 /** @param {unknown} data */
 function pingResultToLabel(data) {
     if (data && data.reachable) {
-        if (typeof data.latencyMs === "number" && data.latencyMs > 0) {
-            return `${data.latencyMs}ms`;
+        if (typeof data.latencyMs === "number") {
+            if (data.latencyMs > 0) {
+                return `${data.latencyMs}ms`;
+            } else if (data.latencyMs === 0) {
+                return "<1ms";
+            }
         }
-        return "Online";
+        return "Unknown";
     }
     const reason = data?.reason || "";
     if (reason === "timeout") return "Timeout";
@@ -137,10 +141,6 @@ export const useDaemonPing = (proxies, isConfigLoaded) => {
         if (!isConfigLoaded || proxies.length === 0) return;
 
         runPing(undefined, { userInitiated: false });
-        const interval = setInterval(() => {
-            runPing(undefined, { userInitiated: false });
-        }, 60000);
-        return () => clearInterval(interval);
     }, [proxies, isConfigLoaded, runPing]);
 
     const refreshPings = useCallback(

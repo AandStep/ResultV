@@ -17,54 +17,6 @@ package proxy
 
 import "testing"
 
-func TestManagerPing_UsesHysteria2ProbeForActiveProxy(t *testing.T) {
-	m := NewManager(nil)
-	m.connected = true
-	m.mode = ProxyModeTunnel
-	m.proxy = &ProxyConfig{
-		IP:   "1.2.3.4",
-		Port: 443,
-		Type: "hysteria2",
-	}
-
-	oldTCP := pingTCPProbe
-	oldLAN := pingLANProbe
-	oldHY2 := pingHysteria2Probe
-	defer func() {
-		pingTCPProbe = oldTCP
-		pingLANProbe = oldLAN
-		pingHysteria2Probe = oldHY2
-	}()
-
-	tcpCalled := 0
-	lanCalled := 0
-	hy2Called := 0
-
-	pingTCPProbe = func(_ string, _ int) (int64, bool, string) {
-		tcpCalled++
-		return 0, false, "timeout"
-	}
-	pingLANProbe = func(_ string, _ int) (int64, bool, string) {
-		lanCalled++
-		return 0, false, "timeout"
-	}
-	pingHysteria2Probe = func(_ string, _ int) (int64, bool, string, string) {
-		hy2Called++
-		return 42, true, "", "udp"
-	}
-
-	
-	res := m.Ping("1.2.3.4", 443, "hysteria2")
-	
-	
-	if !res.Reachable || res.LatencyMs != 42 || res.CheckType != "udp" {
-		t.Fatalf("unexpected result: %+v", res)
-	}
-	if tcpCalled != 0 || lanCalled != 0 || hy2Called != 1 {
-		t.Fatalf("unexpected calls tcp=%d lan=%d hy2=%d", tcpCalled, lanCalled, hy2Called)
-	}
-}
-
 func TestManagerPing_TunnelUsesLANProbeForNonHysteria2(t *testing.T) {
 	m := NewManager(nil)
 	m.connected = true

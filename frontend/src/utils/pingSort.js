@@ -71,7 +71,7 @@ export function getPingSortMetric(proxy, pings) {
     const v = pings[proxy.id];
     if (v == null || v === "") return UNKNOWN_RANK;
     if (/^\d+/.test(String(v))) return parseInt(String(v), 10);
-    if (v === "Online") return 500_000;
+    if (v === "Unknown") return 500_000;
     const err = ERR_ORDER[v];
     if (err != null) return 700_000 + err * 100;
     return UNKNOWN_RANK;
