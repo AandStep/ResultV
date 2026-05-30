@@ -234,6 +234,89 @@ func TestProbeProxyAlive_TunnelUsesLANProbeForWireGuard(t *testing.T) {
 	}
 }
 
+func TestProbeHealthy_TunnelWithEngineUsesHTTPProbe(t *testing.T) {
+	m := NewManager(nil)
+	m.engine = &stubEngine{running: true}
+
+	oldTunnel := probeTunnelHealthProbe
+	oldProxy := probeProxyHealthProbe
+	defer func() {
+		probeTunnelHealthProbe = oldTunnel
+		probeProxyHealthProbe = oldProxy
+	}()
+
+	tunnelCalled := 0
+	proxyCalled := 0
+	probeTunnelHealthProbe = func() bool {
+		tunnelCalled++
+		return true
+	}
+	probeProxyHealthProbe = func(_ int) bool {
+		proxyCalled++
+		return false
+	}
+
+	alive := m.probeHealthy(ProxyConfig{IP: "1.2.3.4", Port: 443, Type: "hysteria2"}, ProxyModeTunnel, 0, true)
+	if !alive {
+		t.Fatal("expected alive via tunnel HTTP probe")
+	}
+	if tunnelCalled != 1 || proxyCalled != 0 {
+		t.Fatalf("unexpected calls tunnel=%d proxy=%d", tunnelCalled, proxyCalled)
+	}
+}
+
+func TestProbeHealthy_TunnelEngineNotRunningFallsBackToDirectProbe(t *testing.T) {
+	m := NewManager(nil)
+
+	oldTunnel := probeTunnelHealthProbe
+	oldLAN := pingHysteria2LANProbe
+	defer func() {
+		probeTunnelHealthProbe = oldTunnel
+		pingHysteria2LANProbe = oldLAN
+	}()
+
+	tunnelCalled := 0
+	probeTunnelHealthProbe = func() bool {
+		tunnelCalled++
+		return true
+	}
+	pingHysteria2LANProbe = func(_ string, _ int) (int64, bool, string, string) {
+		return -1, true, "", "udp_lan_bind"
+	}
+
+	alive := m.probeHealthy(ProxyConfig{IP: "1.2.3.4", Port: 443, Type: "hysteria2"}, ProxyModeTunnel, 0, false)
+	if !alive {
+		t.Fatal("expected alive via direct probe fallback")
+	}
+	if tunnelCalled != 0 {
+		t.Fatalf("tunnel HTTP probe must not be called when engine is not running")
+	}
+}
+
+func TestProbeHealthy_TunnelHTTPProbeCalledForAllProtocols(t *testing.T) {
+	protocols := []string{"hysteria2", "wireguard", "amneziawg", "http", "vmess", "vless"}
+	for _, proto := range protocols {
+		t.Run(proto, func(t *testing.T) {
+			m := NewManager(nil)
+			m.engine = &stubEngine{running: true}
+
+			oldTunnel := probeTunnelHealthProbe
+			defer func() { probeTunnelHealthProbe = oldTunnel }()
+
+			called := 0
+			probeTunnelHealthProbe = func() bool {
+				called++
+				return true
+			}
+
+			alive := m.probeHealthy(ProxyConfig{IP: "1.2.3.4", Port: 443, Type: proto}, ProxyModeTunnel, 0, true)
+			if !alive || called != 1 {
+				t.Fatalf("proto=%s: expected HTTP probe, called=%d alive=%v", proto, called, alive)
+			}
+		})
+	}
+}
+
 func TestProbeProxyAlive_TunnelUsesLANProbeForHysteria2(t *testing.T) {
 	m := NewManager(nil)
 	proxy := ProxyConfig{IP: "1.2.3.4", Port: 443, Type: "hysteria2"}
