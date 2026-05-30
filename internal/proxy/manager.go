@@ -154,6 +154,7 @@ var pingWireGuardLANProbe = PingProxyUDPLANBind
 var probeTunnelHTTPProbe = probeHTTPDirect
 var probeHTTPThroughProxyProbe = probeHTTPThroughProxy
 var probeProxyHealthProbe = probeProxyHealth
+var probeTunnelHealthProbe = probeTunnelHealth
 var isAdminCheck = sys.IsAdmin
 
 // tunnelProbeDomains are the hostnames used by post-start HTTP probes.
@@ -1357,6 +1358,37 @@ func probeProxyHealth(localPort int) bool {
 	return false
 }
 
+// probeTunnelHealth checks the tunnel-mode data path by sending a short HTTP
+// request through the system default route, which in tunnel mode goes through
+// the TUN interface. The probe domains are forced through the proxy outbound by
+// sing-box routing rules (see buildRoute / tunnelProbeDomains), so the request
+// actually traverses the tunnel rather than the self-direct shortcut used for
+// the app's own traffic. A successful response proves the data path works end-
+// to-end. Using this instead of a raw QUIC handshake eliminates false kill-
+// switch trips: the handshake opens a *new* connection that can be rate-limited
+// or dropped transiently even when the existing session is healthy.
+func probeTunnelHealth() bool {
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			DialContext:         (&net.Dialer{Timeout: 3 * time.Second}).DialContext,
+			TLSHandshakeTimeout: 3 * time.Second,
+			DisableKeepAlives:   true,
+		},
+	}
+	for _, target := range tunnelProbeURLs() {
+		resp, err := client.Get(target)
+		if err != nil {
+			continue
+		}
+		_ = resp.Body.Close()
+		if isProbeHTTPStatusAcceptable(resp.StatusCode) {
+			return true
+		}
+	}
+	return false
+}
+
 func probeHTTPDirect() (bool, string) {
 	client := &http.Client{
 		Timeout: 10 * time.Second,
@@ -1693,13 +1725,15 @@ func (m *Manager) stopHealthWatchdogLocked() {
 }
 
 func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy ProxyConfig, mode ProxyMode) {
-	// Proxy mode gets a slower cadence and one extra strike: its probe now runs
-	// end-to-end through the local listener (see probeHealthy/probeProxyHealth),
-	// and a transient blip must never trip a kill switch that, without admin,
-	// can't even block traffic. Tunnel mode keeps the original responsiveness —
-	// its LAN-bind reachability probe is reliable and there the firewall actually
-	// enforces, so faster detection is worth more than a wider false-positive
-	// margin.
+	// Both modes now probe the data path (see probeHealthy): proxy mode through
+	// the local listener, tunnel mode through the TUN default route. Direct
+	// server probes (QUIC handshake, UDP/TCP connect) were opening *new*
+	// connections that could be rate-limited or dropped transiently even when
+	// the existing session was healthy — causing false kill-switch trips.
+	//
+	// Proxy mode gets a slower cadence and one extra strike because it has no
+	// admin-enforced firewall, so false positives are pure noise. Tunnel mode
+	// keeps tighter thresholds since the firewall actually blocks traffic there.
 	interval := 10 * time.Second
 	failuresBeforeDead := 3
 	if mode == ProxyModeTunnel {
@@ -1791,14 +1825,23 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy Proxy
 
 // probeHealthy decides whether the active session is still carrying traffic.
 //
-// Proxy mode (with sing-box running) is checked end-to-end through the local
-// listener — see probeProxyHealth for why a bare connect to the server port
-// caused false kill-switch trips. Tunnel mode, and the proxy-fallback path where
-// sing-box failed to start and the system proxy points straight at the server
-// (no local listener to probe), fall back to direct server reachability.
+// Both proxy and tunnel modes check the *data path* when the sing-box engine is
+// running, not the raw server reachability. A bare connect/handshake to the
+// server opens a *new* connection that can be rate-limited or dropped transiently
+// even when the existing session is healthy — exactly the false kill-switch trips
+// the user observed.
+//
+//   - Proxy mode: HTTP through the local listener (127.0.0.1:localPort)
+//   - Tunnel mode: HTTP through the TUN default route (see probeTunnelHealth)
+//
+// Falls back to direct server reachability only when the engine is not running
+// (sing-box failed to start, system proxy points straight at the server).
 func (m *Manager) probeHealthy(proxy ProxyConfig, mode ProxyMode, localPort int, engineRunning bool) bool {
 	if mode == ProxyModeProxy && engineRunning && localPort > 0 {
 		return probeProxyHealthProbe(localPort)
+	}
+	if mode == ProxyModeTunnel && engineRunning {
+		return probeTunnelHealthProbe()
 	}
 	return m.probeProxyAlive(proxy, mode)
 }
