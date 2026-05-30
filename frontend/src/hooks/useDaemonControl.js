@@ -62,7 +62,7 @@ export const useDaemonControl = (
             const pingScore = (id) => {
                 const v = pings[id];
                 if (!v) return null;
-                if (v === "Online") return Number.MAX_SAFE_INTEGER - 1;
+                if (v === "Unknown") return Number.MAX_SAFE_INTEGER - 1;
                 const m = /^(\d+)/.exec(String(v));
                 return m ? parseInt(m[1], 10) : null;
             };

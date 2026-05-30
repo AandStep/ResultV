@@ -37,8 +37,11 @@ type StatusDTO struct {
 	IsConnected    bool `json:"isConnected"`
 	IsEstablishing bool `json:"isEstablishing"`
 	IsProxyDead    bool `json:"isProxyDead"`
-	// KillSwitchEmergency is true only for real kill-switch incidents:
-	// upstream is dead while kill switch is armed.
+	// KillSwitchEmergency is true only for real, *enforceable* kill-switch
+	// incidents: the upstream is dead, kill switch is armed, AND the app has the
+	// admin rights the OS firewall needs to actually block traffic. Without admin
+	// there is nothing to "kill", so we report IsProxyDead but not an emergency —
+	// otherwise the UI raised a blocking alarm in proxy mode that blocked nothing.
 	KillSwitchEmergency bool         `json:"killSwitchEmergency"`
 	CurrentProxy        *ProxyConfig `json:"currentProxy"`
 	Mode                ProxyMode    `json:"mode"`
@@ -75,6 +78,12 @@ type Manager struct {
 	router   *Router
 	sysProxy SystemProxy
 	sysDNS   SystemDNS
+
+	// isAdmin is captured once at Init and never changes for a running process.
+	// It gates the kill-switch *emergency*: the OS firewall needs admin rights to
+	// actually drop traffic, so without admin a dead upstream is surfaced as
+	// information rather than a blocking alarm the app cannot back up.
+	isAdmin bool
 
 	connected    bool
 	mode         ProxyMode
@@ -144,6 +153,7 @@ var pingWireGuardProbe = PingProxyUDP
 var pingWireGuardLANProbe = PingProxyUDPLANBind
 var probeTunnelHTTPProbe = probeHTTPDirect
 var probeHTTPThroughProxyProbe = probeHTTPThroughProxy
+var probeProxyHealthProbe = probeProxyHealth
 var isAdminCheck = sys.IsAdmin
 
 // tunnelProbeDomains are the hostnames used by post-start HTTP probes.
@@ -185,6 +195,7 @@ func (m *Manager) Init(ctx context.Context) {
 	defer m.mu.Unlock()
 
 	m.ctx = ctx
+	m.isAdmin = isAdminCheck()
 	m.sysProxy = newSystemProxy(m.router)
 	m.sysDNS = NewSystemDNS()
 	m.procTracker = processtree.New(nil)
@@ -1300,6 +1311,52 @@ func probeHTTPThroughProxy(proxyAddr string) (bool, string) {
 	return false, lastReason
 }
 
+// probeProxyHealth checks the proxy-mode data path by sending short HTTP requests
+// to connectivity-check endpoints THROUGH the local listener (127.0.0.1:localPort),
+// instead of opening a bare TCP connection to the proxy server port.
+//
+// The old watchdog dialed the server port directly every few seconds, which had
+// two failure modes that tripped the kill switch on a perfectly working link:
+//   - a raw connect-then-close looks like port scanning, so servers behind
+//     nginx/fail2ban/SYN-cookies start dropping the probe SYNs after a while;
+//   - when the server is addressed by domain, every probe re-resolved it through
+//     whatever local resolver was active (the ISP one, since the DNS-leak
+//     override needs admin) — flaky resolvers produced false "dead" verdicts.
+//
+// Routing the probe through the local listener fixes both: it is indistinguishable
+// from ordinary proxied traffic (no rate-limit trigger), the target hostname is
+// resolved remotely by sing-box (not the local resolver), and a success actually
+// proves sing-box → upstream → exit carries traffic. Timeouts are kept short so a
+// genuine outage is still caught within a few ticks.
+func probeProxyHealth(localPort int) bool {
+	proxyURL, err := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", localPort))
+	if err != nil {
+		return false
+	}
+	client := &http.Client{
+		Timeout: 4 * time.Second,
+		Transport: &http.Transport{
+			Proxy:               http.ProxyURL(proxyURL),
+			DialContext:         (&net.Dialer{Timeout: 3 * time.Second}).DialContext,
+			TLSHandshakeTimeout: 3 * time.Second,
+			DisableKeepAlives:   true,
+		},
+	}
+	for _, target := range tunnelProbeURLs() {
+		resp, err := client.Get(target)
+		if err != nil {
+			continue
+		}
+		_ = resp.Body.Close()
+		// Any HTTP response (even 5xx) means the tunnel carried the request.
+		// Only 407 means the local proxy itself rejected it.
+		if isProxyProbeResponseAcceptable(resp.StatusCode) {
+			return true
+		}
+	}
+	return false
+}
+
 func probeHTTPDirect() (bool, string) {
 	client := &http.Client{
 		Timeout: 10 * time.Second,
@@ -1556,7 +1613,6 @@ func (m *Manager) Ping(ip string, port int, proxyType string) PingResultDTO {
 	m.mu.Lock()
 	mode := m.mode
 	connected := m.connected
-	activeProxy := m.proxy
 	m.mu.Unlock()
 
 	var latency int64
@@ -1566,43 +1622,10 @@ func (m *Manager) Ping(ip string, port int, proxyType string) PingResultDTO {
 
 	ptUpper := strings.ToUpper(strings.TrimSpace(proxyType))
 
-	isActiveProxy := false
-	if activeProxy != nil &&
-		strings.EqualFold(strings.TrimSpace(activeProxy.IP), strings.TrimSpace(ip)) &&
-		activeProxy.Port == port {
-		isActiveProxy = true
-	}
-
 	isHysteria2 := ptUpper == "HYSTERIA2"
 	isWireGuard := ptUpper == "WIREGUARD" || ptUpper == "AMNEZIAWG"
-	isUDPProtocol := isHysteria2 || isWireGuard
 
-	if connected && isActiveProxy && isUDPProtocol {
-		if m.engine != nil && m.engine.IsRunning() {
-			reachable = true
-			reason = "session_active"
-
-			latency = -1
-			if isHysteria2 {
-				checkType = "hysteria2_session"
-			} else {
-				checkType = "wireguard_session"
-			}
-		} else {
-
-			if isHysteria2 {
-
-				latency, reachable, reason, checkType = pingHysteria2Probe(ip, port)
-			} else {
-
-				latency, reachable, reason = pingTCPProbe(ip, port)
-				checkType = "tcp"
-			}
-		}
-		if !reachable {
-			m.log.Warning(fmt.Sprintf("[PING] %s check failed: %s:%d reason=%s", ptUpper, ip, port, reason))
-		}
-	} else if connected && mode == ProxyModeTunnel {
+	if connected && mode == ProxyModeTunnel {
 		if isHysteria2 {
 			latency, reachable, reason, checkType = pingHysteria2LANProbe(ip, port)
 		} else if isWireGuard {
@@ -1670,10 +1693,22 @@ func (m *Manager) stopHealthWatchdogLocked() {
 }
 
 func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy ProxyConfig, mode ProxyMode) {
-	ticker := time.NewTicker(5 * time.Second)
+	// Proxy mode gets a slower cadence and one extra strike: its probe now runs
+	// end-to-end through the local listener (see probeHealthy/probeProxyHealth),
+	// and a transient blip must never trip a kill switch that, without admin,
+	// can't even block traffic. Tunnel mode keeps the original responsiveness —
+	// its LAN-bind reachability probe is reliable and there the firewall actually
+	// enforces, so faster detection is worth more than a wider false-positive
+	// margin.
+	interval := 10 * time.Second
+	failuresBeforeDead := 3
+	if mode == ProxyModeTunnel {
+		interval = 5 * time.Second
+		failuresBeforeDead = 2
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	const failuresBeforeDead = 2
 	consecutiveFails := 0
 
 	for {
@@ -1691,10 +1726,12 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy Proxy
 			return
 		}
 		ks := m.killSwitch
+		localPort := m.localPort
+		engineRunning := m.engine != nil && m.engine.IsRunning()
 		m.mu.Unlock()
 
-		// Probe runs without the lock — TCP/UDP dial can block for seconds.
-		alive := m.probeProxyAlive(proxy, mode)
+		// Probe runs without the lock — the HTTP/TCP dial can block for seconds.
+		alive := m.probeHealthy(proxy, mode, localPort, engineRunning)
 
 		m.mu.Lock()
 		// Re-check after the probe: Disconnect or a reconnect may have run
@@ -1727,15 +1764,20 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy Proxy
 		var engageDNS []string
 		if consecutiveFails >= failuresBeforeDead && !wasDead {
 			m.proxyDead = true
-			if ks {
+			switch {
+			case ks && m.isAdmin && m.KillSwitchFirewallEngage != nil:
 				m.log.Warning(fmt.Sprintf("[KILL SWITCH] VPN-сервер %s:%d недоступен — kill switch блокирует весь трафик", proxy.IP, proxy.Port))
-				if m.KillSwitchFirewallEngage != nil {
-					shouldEngage = true
-					engageFn = m.KillSwitchFirewallEngage
-					engageProxy = proxy
-					engageDNS = append([]string(nil), m.dnsServers...)
-				}
-			} else {
+				shouldEngage = true
+				engageFn = m.KillSwitchFirewallEngage
+				engageProxy = proxy
+				engageDNS = append([]string(nil), m.dnsServers...)
+			case ks && !m.isAdmin:
+				// Kill switch armed but unenforceable — the OS firewall needs admin.
+				// Report the outage without raising KillSwitchEmergency (see
+				// buildStatusLocked): a blocking alarm that blocks nothing is
+				// exactly the "fires for no reason" the user hit in proxy mode.
+				m.log.Warning(fmt.Sprintf("[KILL SWITCH] VPN-сервер %s:%d не отвечает. Блокировка трафика недоступна без прав администратора — перезапустите приложение от имени администратора.", proxy.IP, proxy.Port))
+			default:
 				m.log.Warning(fmt.Sprintf("[PROXY] VPN-сервер %s:%d недоступен", proxy.IP, proxy.Port))
 			}
 			m.emitStatusLocked()
@@ -1745,6 +1787,20 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy Proxy
 			engageFn(engageProxy, engageDNS)
 		}
 	}
+}
+
+// probeHealthy decides whether the active session is still carrying traffic.
+//
+// Proxy mode (with sing-box running) is checked end-to-end through the local
+// listener — see probeProxyHealth for why a bare connect to the server port
+// caused false kill-switch trips. Tunnel mode, and the proxy-fallback path where
+// sing-box failed to start and the system proxy points straight at the server
+// (no local listener to probe), fall back to direct server reachability.
+func (m *Manager) probeHealthy(proxy ProxyConfig, mode ProxyMode, localPort int, engineRunning bool) bool {
+	if mode == ProxyModeProxy && engineRunning && localPort > 0 {
+		return probeProxyHealthProbe(localPort)
+	}
+	return m.probeProxyAlive(proxy, mode)
 }
 
 // probeProxyAlive picks the right probe for the proxy's transport. HYSTERIA2
@@ -1843,7 +1899,7 @@ func (m *Manager) buildStatusLocked(uptime, bytesDown, bytesUp, speedDown, speed
 		IsConnected:         m.connected,
 		IsEstablishing:      isEstablishing,
 		IsProxyDead:         m.proxyDead,
-		KillSwitchEmergency: m.proxyDead && m.killSwitch,
+		KillSwitchEmergency: m.proxyDead && m.killSwitch && m.isAdmin,
 		CurrentProxy:        currentProxy,
 		Mode:                mode,
 		Uptime:              uptime,
