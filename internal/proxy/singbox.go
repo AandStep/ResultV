@@ -105,6 +105,37 @@ type SingBoxEngine struct {
 
 type singBoxLogWriter struct {
 	log *logger.Logger
+	// redact holds server identifiers (domain + resolved IP) that must never
+	// surface in logs for subscription servers — sing-box errors like
+	// "lookup <domain>: ..." or "open connection ... using outbound" would
+	// otherwise leak the provider's backend address. Empty for manual servers.
+	redact []string
+}
+
+// newSingBoxLogWriter builds a log writer that hides the server's domain/IP when
+// the active proxy comes from a subscription. Manual servers keep full detail —
+// the user owns them and the address is already visible in the UI.
+func newSingBoxLogWriter(log *logger.Logger, proxy ProxyConfig) *singBoxLogWriter {
+	w := &singBoxLogWriter{log: log}
+	if proxy.SubscriptionURL == "" {
+		return w
+	}
+	for _, tok := range []string{proxy.IP, proxy.ResolvedIP} {
+		tok = strings.TrimSpace(tok)
+		if tok != "" {
+			w.redact = append(w.redact, tok)
+		}
+	}
+	return w
+}
+
+func (w *singBoxLogWriter) redactServer(msg string) string {
+	for _, tok := range w.redact {
+		if strings.Contains(msg, tok) {
+			msg = strings.ReplaceAll(msg, tok, "<сервер>")
+		}
+	}
+	return msg
 }
 
 var ansiEscapeRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -135,7 +166,7 @@ func (w *singBoxLogWriter) WriteMessage(level sblog.Level, message string) {
 		clean = ansiEscapeRE.ReplaceAllString(message, "")
 	}
 
-	msg := "[SING-BOX] " + clean
+	msg := "[SING-BOX] " + w.redactServer(clean)
 	if level <= sblog.LevelError {
 		w.log.Error(msg)
 	} else if level == sblog.LevelWarn {
@@ -323,7 +354,7 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 	instance, err := box.New(box.Options{
 		Context:           boxCtx,
 		Options:           options,
-		PlatformLogWriter: &singBoxLogWriter{log: e.log},
+		PlatformLogWriter: newSingBoxLogWriter(e.log, cfg.Proxy),
 	})
 	if err != nil {
 		cancel()

@@ -48,6 +48,16 @@ type ProxyConfig struct {
 	URI             string          `json:"uri,omitempty"`
 	Extra           json.RawMessage `json:"extra,omitempty"`
 	SubscriptionURL string          `json:"subscriptionUrl,omitempty"`
+
+	// ResolvedIP is the server address resolved once at connect time, while the
+	// host OS resolver still works (before we redirect system DNS). When IP is a
+	// domain, sing-box would otherwise re-resolve it for every new connection via
+	// the `local` DNS server — which is fragile in tunnel mode (the OS resolver we
+	// ourselves redirect can time out). A single transient failure there collapsed
+	// every new connection and tripped a false kill switch (see buildProxyOutbound,
+	// buildRoute, and the kill-switch engage callback). Empty when IP is already a
+	// literal address. Not serialized — it is an internal connect-time cache.
+	ResolvedIP string `json:"-"`
 }
 
 type EngineConfig struct {
@@ -517,10 +527,17 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 
 	var routeExclude []string
 	if pt != "WIREGUARD" && pt != "AMNEZIAWG" {
-		if serverIP := net.ParseIP(cfg.Proxy.IP); serverIP != nil {
-			cidr := cfg.Proxy.IP + "/32"
+		// Prefer the IP pinned at connect time so domain-addressed servers also
+		// get a route-exclude CIDR (previously skipped — net.ParseIP fails on a
+		// hostname — which let the server's own traffic loop back into the TUN).
+		serverHost := cfg.Proxy.IP
+		if cfg.Proxy.ResolvedIP != "" {
+			serverHost = cfg.Proxy.ResolvedIP
+		}
+		if serverIP := net.ParseIP(serverHost); serverIP != nil {
+			cidr := serverHost + "/32"
 			if serverIP.To4() == nil {
-				cidr = cfg.Proxy.IP + "/128"
+				cidr = serverHost + "/128"
 			}
 			routeExclude = append(routeExclude, cidr)
 		}

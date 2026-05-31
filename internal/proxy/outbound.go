@@ -174,7 +174,19 @@ func extraSecurityExplicitlyNone(extra map[string]interface{}) bool {
 }
 
 func buildProxyOutbound(proxy ProxyConfig) SBOutbound {
-	return buildProxyOutboundRaw(proxy)
+	out := buildProxyOutboundRaw(proxy)
+	// Pin the pre-resolved server IP so sing-box never re-resolves the server
+	// domain mid-session. Re-resolution via the `local` DNS server is fragile in
+	// tunnel mode (the OS resolver we redirect for leak protection can time out),
+	// and a single transient failure there collapsed every new connection and
+	// tripped a false kill switch. The TLS SNI / server_name stays the original
+	// domain (set in buildProxyOutboundRaw from proxy.IP), so TLS still validates.
+	// Guard on out.Server == proxy.IP so we only swap when the builder used the
+	// raw host and never clobber a protocol that derived a different server.
+	if proxy.ResolvedIP != "" && out.Server == proxy.IP {
+		out.Server = proxy.ResolvedIP
+	}
+	return out
 }
 
 func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {

@@ -229,10 +229,13 @@ export const useDaemonStatus = (
             }
             if (connected) {
                 if (data.isProxyDead && !prevProxyDead.current) {
+                    // Subscription servers must not reveal the provider's backend
+                    // address; only manual servers (no subscriptionUrl) show the IP.
+                    const nodeAddr = data.currentProxy?.subscriptionUrl
+                        ? ""
+                        : data.currentProxy?.ip || "";
                     addLog(
-                        `Внимание: Узел ${
-                            data.currentProxy?.ip || ""
-                        } перестал отвечать! (Kill Switch: ${data.killSwitchActive})`,
+                        `Внимание: Узел ${nodeAddr} перестал отвечать! (Kill Switch: ${data.killSwitchActive})`,
                         "error",
                     );
                 } else if (!data.isProxyDead && prevProxyDead.current) {

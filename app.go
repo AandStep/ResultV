@@ -333,7 +333,15 @@ func (a *App) startup(ctx context.Context) {
 	}
 
 	a.proxy.KillSwitchFirewallEngage = func(p proxy.ProxyConfig, dns []string) {
-		addr := fmt.Sprintf("%s:%d", p.IP, p.Port)
+		// Use the IP resolved at connect time, not the raw domain: the kill
+		// switch fires precisely when DNS is failing, so resolving the host now
+		// would return nothing and the firewall ("no proxy IP to allow") would
+		// never actually block — leaving the user unprotected on a real outage.
+		host := p.IP
+		if p.ResolvedIP != "" {
+			host = p.ResolvedIP
+		}
+		addr := fmt.Sprintf("%s:%d", host, p.Port)
 		if err := a.enableKillSwitchFirewall(addr, dns); err != nil {
 			a.log.Warning(fmt.Sprintf("[KILL SWITCH] Не удалось включить фаервол при недоступности узла: %v", err))
 		}

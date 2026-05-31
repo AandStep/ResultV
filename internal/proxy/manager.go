@@ -563,6 +563,16 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 		m.setConnectCancel(nil)
 	}()
 
+	// Resolve a domain server to a stable IP now, before engine start and before
+	// applySystemDNSOverride redirects the OS resolver. The pinned IP flows into
+	// both the engine config (so sing-box never re-resolves the server mid-session)
+	// and the proxy value captured by the watchdog/kill switch below. Off-lock: a
+	// flaky resolver must not stall Disconnect/GetStatus.
+	if resolved := resolvePinnedServerIP(proxy.IP); resolved != "" {
+		proxy.ResolvedIP = resolved
+		engineCfg.Proxy.ResolvedIP = resolved
+	}
+
 	// Engine запускается с долгоживущим ctx (контекст приложения), НЕ с connectCtx.
 	// connectCtx отменяется когда Connect() возвращается — если передать его движку,
 	// sing-box начнёт умирать сразу после установки соединения (DNS context canceled).
@@ -765,6 +775,33 @@ func (m *Manager) applySystemDNSOverride(skip bool, dnsServers []string) {
 	m.log.Success("[СИСТЕМА] Системный DNS перенаправлен на защищённые резолверы")
 }
 
+// resolvePinnedServerIP resolves a domain server address to a single IP once,
+// at connect time, while the host OS resolver still works (before we redirect
+// system DNS for leak protection). The returned IP is pinned into the sing-box
+// outbound and the kill switch so neither depends on a live resolver mid-session
+// — see ProxyConfig.ResolvedIP. Returns "" when host is empty, already an IP
+// literal, or resolution fails (callers then keep the original domain behaviour,
+// so this can only improve robustness, never regress it). IPv4 is preferred
+// because the tunnel DNS strategy is ipv4_only.
+func resolvePinnedServerIP(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" || net.ParseIP(host) != nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil || len(addrs) == 0 {
+		return ""
+	}
+	for _, a := range addrs {
+		if v4 := a.IP.To4(); v4 != nil {
+			return v4.String()
+		}
+	}
+	return addrs[0].IP.String()
+}
+
 func dnsOverrideServers(custom []string) []string {
 	out := make([]string, 0, 2)
 	seen := make(map[string]struct{}, len(custom))
@@ -872,6 +909,13 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 	}
 
 	m.setPendingLocked(proxy, mode)
+
+	// Pin the resolved server IP (see Connect for rationale) so sing-box and the
+	// kill switch never depend on a live resolver mid-session.
+	if resolved := resolvePinnedServerIP(proxy.IP); resolved != "" {
+		proxy.ResolvedIP = resolved
+		engineCfg.Proxy.ResolvedIP = resolved
+	}
 
 	if err := m.engine.Start(ctx, engineCfg); err != nil {
 		m.stopAdBlockMITM()
@@ -1798,9 +1842,16 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy Proxy
 		var engageDNS []string
 		if consecutiveFails >= failuresBeforeDead && !wasDead {
 			m.proxyDead = true
+			// Subscription servers must never expose the provider's backend
+			// address in logs (see newSingBoxLogWriter); a manual server keeps
+			// "host:port" since the user owns it and already sees it in the UI.
+			srv := "VPN-сервер"
+			if proxy.SubscriptionURL == "" {
+				srv = fmt.Sprintf("VPN-сервер %s:%d", proxy.IP, proxy.Port)
+			}
 			switch {
 			case ks && m.isAdmin && m.KillSwitchFirewallEngage != nil:
-				m.log.Warning(fmt.Sprintf("[KILL SWITCH] VPN-сервер %s:%d недоступен — kill switch блокирует весь трафик", proxy.IP, proxy.Port))
+				m.log.Warning(fmt.Sprintf("[KILL SWITCH] %s недоступен — kill switch блокирует весь трафик", srv))
 				shouldEngage = true
 				engageFn = m.KillSwitchFirewallEngage
 				engageProxy = proxy
@@ -1810,9 +1861,9 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy Proxy
 				// Report the outage without raising KillSwitchEmergency (see
 				// buildStatusLocked): a blocking alarm that blocks nothing is
 				// exactly the "fires for no reason" the user hit in proxy mode.
-				m.log.Warning(fmt.Sprintf("[KILL SWITCH] VPN-сервер %s:%d не отвечает. Блокировка трафика недоступна без прав администратора — перезапустите приложение от имени администратора.", proxy.IP, proxy.Port))
+				m.log.Warning(fmt.Sprintf("[KILL SWITCH] %s не отвечает. Блокировка трафика недоступна без прав администратора — перезапустите приложение от имени администратора.", srv))
 			default:
-				m.log.Warning(fmt.Sprintf("[PROXY] VPN-сервер %s:%d недоступен", proxy.IP, proxy.Port))
+				m.log.Warning(fmt.Sprintf("[PROXY] %s недоступен", srv))
 			}
 			m.emitStatusLocked()
 		}
