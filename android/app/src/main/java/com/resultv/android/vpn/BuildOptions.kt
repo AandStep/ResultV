@@ -72,6 +72,9 @@ internal object BuildOptionsBuilder {
         return JSONObject().apply {
             put("userAgent", s.subscriptionUserAgent)
             put("sendHwid", s.subscriptionSendHwid)
+            // Stable across reinstalls — keeps the panel from registering a
+            // duplicate device (and eating a HWID slot) on every install.
+            put("hwid", SettingsRepository.deviceHwidSource())
             put("deviceOs", "Android")
             put("osVersion", Build.VERSION.RELEASE.orEmpty())
             put("model", listOf(Build.MANUFACTURER, Build.MODEL)

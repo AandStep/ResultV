@@ -11,21 +11,30 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
 import androidx.lifecycle.lifecycleScope
+import androidx.core.net.toUri
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.List
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -34,9 +43,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import com.resultv.android.locale.LocaleManager
 import com.resultv.android.theme.Brand
 import com.resultv.android.theme.ResultVTheme
@@ -57,6 +71,19 @@ import com.resultv.android.vpn.VpnStatus
 import mobile.Mobile
 
 private const val TAG = "ResultV/UI"
+
+private const val WEBSITE_URL = "https://result-proxy.ru/"
+private const val TELEGRAM_URL = "https://t.me/resultvpn"
+
+/** Open an external URL in the user's browser / Telegram app. */
+private fun openUrl(ctx: Context, url: String) {
+    runCatching {
+        ctx.startActivity(
+            Intent(Intent.ACTION_VIEW, url.toUri())
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }
+}
 
 private enum class Tab(
     @StringRes val titleRes: Int,
@@ -132,7 +159,15 @@ class MainActivity : ComponentActivity() {
         // means the cold-start case lands here. Hand the URL to the importer
         // which already knows how to decode rvsub ciphertext, fetch a
         // subscription, or parse a bare share-link.
-        handleDeepLinkIntent(intent)
+        //
+        // Only on a genuine cold start (savedInstanceState == null). When the
+        // Activity is recreated for a configuration change — notably the
+        // language switch, which calls recreate() — getIntent() still returns
+        // the original launch intent, so re-running this would re-import the
+        // same subscription. The warm-start path is handled by onNewIntent.
+        if (savedInstanceState == null) {
+            handleDeepLinkIntent(intent)
+        }
     }
 
     /**
@@ -219,6 +254,51 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/**
+ * Home top bar — brand logo + wordmark pinned left, website + Telegram
+ * shortcuts pinned right. Mirrors the desktop header layout.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HomeTopBar(
+    onOpenWebsite: () -> Unit,
+    onOpenTelegram: () -> Unit,
+) {
+    TopAppBar(
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Image(
+                    painter = painterResource(R.drawable.resultv_logo),
+                    contentDescription = null,
+                    modifier = Modifier.size(28.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = stringResource(R.string.app_name),
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        },
+        actions = {
+            IconButton(onClick = onOpenWebsite) {
+                Icon(
+                    imageVector = Icons.Outlined.Language,
+                    contentDescription = stringResource(R.string.header_open_website),
+                    tint = Brand.SecondaryText,
+                )
+            }
+            IconButton(onClick = onOpenTelegram) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_telegram),
+                    contentDescription = stringResource(R.string.header_open_telegram),
+                    tint = Brand.SecondaryText,
+                )
+            }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = Brand.Bg),
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AppShell(
@@ -233,19 +313,22 @@ private fun AppShell(
     // time the user touched the bottom nav.
     val tabStateHolder = rememberSaveableStateHolder()
 
+    val ctx = LocalContext.current
     Scaffold(
         topBar = {
-            CenterAlignedTopAppBar(
-                title = {
-                    Text(
-                        text = if (tab == Tab.Home) stringResource(R.string.app_name)
-                        else stringResource(tab.titleRes),
-                    )
-                },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = Brand.Bg,
-                ),
-            )
+            if (tab == Tab.Home) {
+                HomeTopBar(
+                    onOpenWebsite = { openUrl(ctx, WEBSITE_URL) },
+                    onOpenTelegram = { openUrl(ctx, TELEGRAM_URL) },
+                )
+            } else {
+                CenterAlignedTopAppBar(
+                    title = { Text(text = stringResource(tab.titleRes)) },
+                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                        containerColor = Brand.Bg,
+                    ),
+                )
+            }
         },
         bottomBar = {
             NavigationBar(containerColor = Brand.Surface) {

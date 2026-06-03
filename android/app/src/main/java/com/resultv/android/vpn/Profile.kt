@@ -187,6 +187,18 @@ object ProfileRepository {
         s.copy(profiles = list, activeId = active)
     }
 
+    /**
+     * Names of the user's favourited profiles within one subscription.
+     * Used to carry favourites across a refresh / re-import, where the old
+     * profile records are dropped and rebuilt — favourites are matched back
+     * by display name (the only stable identity an entry keeps across fetches).
+     */
+    fun favouriteNamesFor(subscriptionId: String): Set<String> =
+        _state.value.profiles.asSequence()
+            .filter { it.subscriptionId == subscriptionId && it.isFavorite }
+            .map { it.name }
+            .toSet()
+
     /** Replace all profiles for one subscription with a fresh set (used on refresh). */
     @Synchronized
     fun replaceForSubscription(subscriptionId: String, fresh: List<Profile>) = mutate { s ->

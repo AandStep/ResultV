@@ -120,32 +120,35 @@ object DeepLinkImporter {
         val userInfo = response.optString("userInfo")
         val supportUrl = response.optString("supportUrl")
 
-        val subscription = Subscription.new(
+        // Re-importing the same URL updates the existing record in place
+        // rather than spawning a duplicate; a fresh URL inserts a new one.
+        val subId = SubscriptionRepository.upsert(
             url = subUrl,
             name = title.ifBlank { subUrl.substringAfter("://").substringBefore('/') },
             title = title,
             userInfo = userInfo,
+            supportUrl = supportUrl,
             source = sourceTag,
-        ).copy(supportUrl = supportUrl)
-        SubscriptionRepository.add(subscription)
+        )
+        val favouriteNames = ProfileRepository.favouriteNamesFor(subId)
 
-        var imported = 0
-        for (i in 0 until arr.length()) {
+        val profiles = (0 until arr.length()).map { i ->
             val o = arr.getJSONObject(i)
             val type = o.optString("type")
             val name = o.optString("name").ifBlank { "Profile ${i + 1}" }
             if (type.equals("SECTION", ignoreCase = true)) {
-                ProfileRepository.add(Profile.section(name, subscriptionId = subscription.id))
-                continue
+                Profile.section(name, subscriptionId = subId)
+            } else {
+                val uri = o.optString("uri")
+                val base = if (uri.isNotBlank())
+                    Profile.fromUri(name, uri, subscriptionId = subId)
+                else
+                    Profile.fromEntryJson(name, o.toString(), subscriptionId = subId)
+                if (base.name in favouriteNames) base.copy(isFavorite = true) else base
             }
-            val uri = o.optString("uri")
-            val profile = if (uri.isNotBlank())
-                Profile.fromUri(name, uri, subscriptionId = subscription.id)
-            else
-                Profile.fromEntryJson(name, o.toString(), subscriptionId = subscription.id)
-            ProfileRepository.add(profile)
-            imported++
         }
+        ProfileRepository.replaceForSubscription(subId, profiles)
+        val imported = profiles.count { !it.isSection }
         toast(ctx, R.string.deeplink_imported_subscription, imported)
     }
 

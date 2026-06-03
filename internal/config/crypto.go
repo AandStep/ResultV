@@ -93,6 +93,24 @@ func StableHardwareID(userDataPath string) (string, error) {
 	return hex.EncodeToString(h[:]), nil
 }
 
+// HashHWIDSource derives a subscription HWID from a caller-supplied stable
+// identifier, applying the same salt StableHardwareID uses so the on-the-wire
+// format is identical regardless of which path produced it.
+//
+// Mobile callers pass an OS-level id (Android: Settings.Secure.ANDROID_ID)
+// that survives app reinstalls. The dataDir fallback file StableHardwareID
+// relies on does NOT survive a reinstall / clear-data, so without this the
+// panel would register a fresh "device" on every install and burn the
+// provider's HWID-limit slots. Empty source returns "" (caller skips x-hwid).
+func HashHWIDSource(source string) string {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return ""
+	}
+	h := sha256.Sum256([]byte(source + hwidSalt))
+	return hex.EncodeToString(h[:])
+}
+
 
 
 func NewCryptoServiceWithID(machineID string) *CryptoService {

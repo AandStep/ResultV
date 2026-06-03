@@ -14,6 +14,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -34,17 +35,20 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.AltRoute
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Hub
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.PlaylistAddCheck
 import androidx.compose.material.icons.outlined.Public
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -70,6 +74,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -77,6 +82,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
 import com.resultv.android.theme.Brand
+import com.resultv.android.ui.components.SettingIcon
 import com.resultv.android.vpn.AppRoutingMode
 import com.resultv.android.vpn.AppRoutingRepository
 import com.resultv.android.vpn.RoutingMode
@@ -99,6 +105,9 @@ fun RulesScreen() {
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            // Match the top breathing room other settings sheets get from their
+            // group wrappers, so the sheet header → content gap reads the same.
+            .padding(top = 8.dp)
             .pointerInput(Unit) {
                 detectTapGestures(onTap = {
                     keyboard?.hide()
@@ -109,37 +118,39 @@ fun RulesScreen() {
     ) {
         Section {
             SectionHeader(
+                // Distinct from the sheet's "Rules" AltRoute glyph so the two
+                // routing-related headers don't read as duplicates.
+                icon = Icons.Outlined.Hub,
+                iconBg = Color(0xFF3b82f6).copy(alpha = 0.18f),
+                iconTint = Color(0xFF60a5fa),
                 title = stringResource(R.string.rules_section_smart_title),
                 subtitle = stringResource(R.string.rules_section_smart_subtitle),
             )
-            ModeCard(
-                title = stringResource(R.string.rules_mode_global),
-                subtitle = stringResource(R.string.rules_mode_global_subtitle),
-                selected = rules.mode == RoutingMode.Global,
-                onClick = { RoutingRulesRepository.setMode(RoutingMode.Global) },
-            )
-            ModeCard(
-                title = stringResource(R.string.rules_mode_smart),
-                subtitle = stringResource(R.string.rules_mode_smart_subtitle),
-                selected = rules.mode == RoutingMode.Smart,
-                onClick = {
-                    RoutingRulesRepository.setMode(RoutingMode.Smart)
-                    // Kick off the blocked-list download as soon as the
-                    // user opts in — first connect after toggling Smart
-                    // would otherwise have to block on the fetch.
-                    SmartListRepository.refreshAsync()
-                },
-            )
+            SectionBody {
+                RoutingModeSelector(
+                    mode = rules.mode,
+                    onSelect = { mode ->
+                        RoutingRulesRepository.setMode(mode)
+                        // Kick off the blocked-list download as soon as the user
+                        // opts into Smart — first connect after toggling would
+                        // otherwise have to block on the fetch.
+                        if (mode == RoutingMode.Smart) SmartListRepository.refreshAsync()
+                    },
+                )
+            }
         }
+
+        HorizontalDivider(color = Brand.SurfaceHigh)
 
         Section {
             SectionHeader(
+                icon = Icons.Outlined.Dns,
+                iconBg = Color(0xFF10b981).copy(alpha = 0.18f),
+                iconTint = Color(0xFF34d399),
                 title = stringResource(R.string.rules_section_domains_title),
                 subtitle = stringResource(R.string.rules_section_domains_subtitle),
             )
-            Column(
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
+            SectionBody {
                 val trimmedInput = domainInput.trim()
                 val coveredBy = remember(trimmedInput, rules.domainExclusions) {
                     if (trimmedInput.isEmpty()) null
@@ -269,12 +280,19 @@ fun RulesScreen() {
             }
         }
 
+        HorizontalDivider(color = Brand.SurfaceHigh)
+
         Section {
             SectionHeader(
+                icon = Icons.Outlined.Apps,
+                iconBg = Color(0xFF8b5cf6).copy(alpha = 0.18f),
+                iconTint = Color(0xFFa78bfa),
                 title = stringResource(R.string.rules_section_perapp_title),
                 subtitle = stringResource(R.string.rules_section_perapp_subtitle),
             )
-            PerAppRoutingSection()
+            SectionBody {
+                PerAppRoutingSection()
+            }
         }
     }
 }
@@ -282,54 +300,98 @@ fun RulesScreen() {
 /** Common section wrapper — keeps header + body together with consistent spacing. */
 @Composable
 private fun Section(content: @Composable () -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) { content() }
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { content() }
+}
+
+/**
+ * Section content, indented so it lines up under the header title rather than
+ * the screen edge — mirrors the DNS block in Settings. The 50dp inset is the
+ * 36dp [SettingIcon] plus the 14dp header gap.
+ */
+@Composable
+private fun SectionBody(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier = Modifier.padding(start = 50.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+        content = content,
+    )
 }
 
 @Composable
-private fun SectionHeader(title: String, subtitle: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-        Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = Brand.SecondaryText)
+private fun SectionHeader(
+    icon: ImageVector,
+    iconBg: Color,
+    iconTint: Color,
+    title: String,
+    subtitle: String,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        SettingIcon(icon, iconBg, iconTint)
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = Brand.SecondaryText)
+        }
+    }
+}
+
+/**
+ * Compact segmented Global / Smart picker — replaces the two stacked
+ * mode cards. The description of the active mode is shown below so the
+ * trade-off stays visible without the bulky cards.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RoutingModeSelector(
+    mode: RoutingMode,
+    onSelect: (RoutingMode) -> Unit,
+) {
+    val modes = listOf(RoutingMode.Global, RoutingMode.Smart)
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            modes.forEachIndexed { i, m ->
+                SegmentedButton(
+                    selected = mode == m,
+                    onClick = { onSelect(m) },
+                    shape = SegmentedButtonDefaults.itemShape(i, modes.size),
+                    icon = {
+                        Icon(
+                            imageVector = when (m) {
+                                RoutingMode.Global -> Icons.Outlined.Language
+                                RoutingMode.Smart -> Icons.Outlined.AltRoute
+                            },
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    },
+                ) {
+                    Text(
+                        stringResource(
+                            when (m) {
+                                RoutingMode.Global -> R.string.rules_mode_global
+                                RoutingMode.Smart -> R.string.rules_mode_smart
+                            },
+                        ),
+                    )
+                }
+            }
+        }
+        Text(
+            text = stringResource(
+                when (mode) {
+                    RoutingMode.Global -> R.string.rules_mode_global_subtitle
+                    RoutingMode.Smart -> R.string.rules_mode_smart_subtitle
+                },
+            ),
+            style = MaterialTheme.typography.bodyMedium,
+            color = Brand.SecondaryText,
+        )
     }
 }
 
 private val ChipShape = RoundedCornerShape(50)
-// Same radius as Home/Add main cards (20dp) so the standard reads as one
-// design language across screens.
-private val CardShape = RoundedCornerShape(20.dp)
-
-@Composable
-private fun ModeCard(
-    title: String,
-    subtitle: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    val borderColor = if (selected) Brand.Green.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.07f)
-    val containerColor = if (selected) Brand.Green.copy(alpha = 0.10f) else Brand.Surface
-    Card(
-        shape = CardShape,
-        colors = CardDefaults.cardColors(containerColor = containerColor),
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, borderColor, CardShape)
-            .clickable(onClick = onClick),
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(
-                title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = if (selected) Brand.GreenLight else MaterialTheme.colorScheme.onBackground,
-            )
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodyMedium,
-                color = Brand.SecondaryText,
-            )
-        }
-    }
-}
 
 @Composable
 private fun DomainChip(label: String, onRemove: () -> Unit) {

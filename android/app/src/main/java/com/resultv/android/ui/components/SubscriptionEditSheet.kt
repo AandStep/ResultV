@@ -8,18 +8,25 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.DriveFileRenameOutline
+import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.NorthEast
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material.icons.outlined.RssFeed
+import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
@@ -27,8 +34,6 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -44,6 +49,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -63,15 +69,17 @@ data class SubscriptionEditResult(
 )
 
 /**
- * Bottom-sheet settings panel for a single [Subscription]. Visual language
- * is taken verbatim from `SettingsScreen` group cards
- * (`SubscriptionsGroup`, `NetworkGroup`): one [Card] per logical group,
- * rows inside separated by [HorizontalDivider]s with `Brand.SurfaceHigh`,
- * `ListItem` for switch rows so padding matches what `SettingsScreen` ships.
+ * Bottom-sheet settings panel for a single [Subscription]. Visual language is
+ * taken verbatim from `SettingsScreen`'s sub-category sheets: `Brand.Surface`
+ * container, a drag handle, NO inner cards — every option is a flat row laid
+ * out on the sheet background, separated by `Brand.SurfaceHigh`
+ * [HorizontalDivider]s, with the same `vertical = 8.dp` row rhythm and
+ * `spacedBy(12.dp)` column spacing the settings groups ship.
  *
  * Sections:
- *   • Name (single row, OutlinedTextField inside the same card as below).
- *   • Refresh — auto-update toggle + chip flow.
+ *   • Name (single labelled OutlinedTextField row).
+ *   • Visibility — show-on-home toggle.
+ *   • Refresh — custom-interval toggle + chip flow.
  *   • Links — surfaced only when the panel response carried at least one
  *     known link header (currently `Support-Url`). No hardcoded fallbacks.
  *
@@ -106,97 +114,87 @@ fun SubscriptionEditSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
         sheetState = sheetState,
-        containerColor = Brand.Bg,
+        containerColor = Brand.Surface,
         contentColor = MaterialTheme.colorScheme.onSurface,
+        dragHandle = { BottomSheetDefaults.DragHandle() },
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .padding(bottom = 48.dp), // Safe area
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             SheetHeader(displayName = subscription.displayName, onClose = onDismiss)
 
-            // Card 1 — Name + Visibility, joined by a divider exactly like
-            // SubscriptionsGroup pairs Auto-update toggle with Interval row.
-            Card(
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = Brand.Surface),
+            NameRow(
+                title = stringResource(R.string.sub_edit_section_name),
+                value = name,
+                onValueChange = { name = it },
+            )
+
+            HorizontalDivider(color = Brand.SurfaceHigh)
+
+            ToggleRow(
+                title = stringResource(R.string.sub_edit_visibility_toggle),
+                subtitle = stringResource(R.string.sub_edit_visibility_desc),
+                icon = Icons.Outlined.Home,
+                iconBg = Color(0xFF10b981).copy(alpha = 0.18f),
+                iconTint = Color(0xFF34d399),
+                checked = !hiddenOnHome,
+                onCheckedChange = { hiddenOnHome = !it },
+            )
+
+            HorizontalDivider(color = Brand.SurfaceHigh)
+
+            ToggleRow(
+                title = stringResource(R.string.sub_edit_custom_interval_title),
+                subtitle = stringResource(R.string.sub_edit_custom_interval_desc),
+                icon = Icons.Outlined.Timer,
+                iconBg = Color(0xFFf59e0b).copy(alpha = 0.18f),
+                iconTint = Color(0xFFfbbf24),
+                checked = customIntervalOn,
+                onCheckedChange = { customIntervalOn = it },
+            )
+            FlowRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 50.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Column {
-                    NameRow(
-                        title = stringResource(R.string.sub_edit_section_name),
-                        value = name,
-                        onValueChange = { name = it },
-                    )
-                    HorizontalDivider(color = Brand.SurfaceHigh)
-                    ToggleRow(
-                        title = stringResource(R.string.sub_edit_visibility_toggle),
-                        subtitle = stringResource(R.string.sub_edit_visibility_desc),
-                        checked = !hiddenOnHome,
-                        onCheckedChange = { hiddenOnHome = !it },
+                INTERVAL_CHOICES.forEach { choice ->
+                    FilterChip(
+                        selected = customIntervalOn && choice.minutes == customIntervalMinutes,
+                        onClick = { customIntervalMinutes = choice.minutes },
+                        enabled = customIntervalOn,
+                        label = { Text(stringResource(choice.labelResId)) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = Brand.Green.copy(alpha = 0.2f),
+                            selectedLabelColor = Brand.GreenLight,
+                        ),
                     )
                 }
             }
 
-            // Card 2 — Refresh interval (toggle + chips). Same shape as
-            // SettingsScreen.NetworkGroup's chip card.
-            Card(
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = Brand.Surface),
-            ) {
-                Column {
-                    ToggleRow(
-                        title = stringResource(R.string.sub_edit_custom_interval_title),
-                        subtitle = stringResource(R.string.sub_edit_custom_interval_desc),
-                        checked = customIntervalOn,
-                        onCheckedChange = { customIntervalOn = it },
-                    )
-                    HorizontalDivider(color = Brand.SurfaceHigh)
-                    FlowRow(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        INTERVAL_CHOICES.forEach { choice ->
-                            FilterChip(
-                                selected = customIntervalOn && choice.minutes == customIntervalMinutes,
-                                onClick = { customIntervalMinutes = choice.minutes },
-                                enabled = customIntervalOn,
-                                label = { Text(stringResource(choice.labelResId)) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Brand.Green.copy(alpha = 0.2f),
-                                    selectedLabelColor = Brand.GreenLight,
-                                ),
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Card 3 — Links. Rendered ONLY when the panel response shipped a
+            // Links — rendered ONLY when the panel response shipped a
             // `Support-Url` header (or anything else we plumb through later).
             if (supportUrl.isNotEmpty()) {
-                Card(
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = Brand.Surface),
-                ) {
-                    LinkRow(
-                        title = stringResource(R.string.sub_edit_link_support),
-                        onClick = {
-                            runCatching {
-                                ctx.startActivity(
-                                    Intent(Intent.ACTION_VIEW, supportUrl.toUri())
-                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                                )
-                            }
-                        },
-                    )
-                }
+                HorizontalDivider(color = Brand.SurfaceHigh)
+                LinkRow(
+                    title = stringResource(R.string.sub_edit_link_support),
+                    onClick = {
+                        runCatching {
+                            ctx.startActivity(
+                                Intent(Intent.ACTION_VIEW, supportUrl.toUri())
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                            )
+                        }
+                    },
+                )
             }
 
             FilledTonalButton(
@@ -211,7 +209,7 @@ fun SubscriptionEditSheet(
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 4.dp),
+                    .padding(top = 8.dp),
             ) {
                 Icon(
                     imageVector = Icons.Outlined.Check,
@@ -225,25 +223,35 @@ fun SubscriptionEditSheet(
     }
 }
 
+/**
+ * Header mirrors `SettingsScreen`'s sheet header (icon chip + title/desc
+ * column) with a trailing close affordance the settings sheets don't need.
+ */
 @Composable
 private fun SheetHeader(displayName: String, onClose: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 4.dp),
+            .padding(bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        SettingIcon(
+            icon = Icons.Outlined.RssFeed,
+            bg = Color(0xFFf59e0b).copy(alpha = 0.18f),
+            tint = Color(0xFFfbbf24),
+        )
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = stringResource(R.string.sub_edit_title),
-                style = MaterialTheme.typography.labelMedium,
-                color = Brand.SecondaryText,
-            )
             Text(
                 text = displayName,
                 style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
+                fontWeight = FontWeight.Bold,
                 maxLines = 2,
+            )
+            Text(
+                text = stringResource(R.string.sub_edit_title),
+                style = MaterialTheme.typography.bodyMedium,
+                color = Brand.SecondaryText,
             )
         }
         IconButton(onClick = onClose) {
@@ -257,9 +265,8 @@ private fun SheetHeader(displayName: String, onClose: () -> Unit) {
 }
 
 /**
- * One-line OutlinedTextField row. Padding mirrors `IntervalRow` /
- * `TextFieldRow` from SettingsScreen so the input lines up against the
- * same edges as the [ToggleRow]s that share the card.
+ * Labelled OutlinedTextField row matching SettingsScreen's `TextFieldRow`:
+ * icon + title on one line, the field below indented to clear the icon chip.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -271,64 +278,83 @@ private fun NameRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(title, style = MaterialTheme.typography.bodyLarge)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            SettingIcon(
+                icon = Icons.Outlined.DriveFileRenameOutline,
+                bg = Color(0xFF3b82f6).copy(alpha = 0.18f),
+                tint = Color(0xFF60a5fa),
+            )
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+        }
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 50.dp),
         )
     }
 }
 
 /**
- * Same shape as SettingsScreen's ToggleRow — drives uniform horizontal
- * padding via `ListItem` defaults. Subtitle styling mirrors what
- * SettingsScreen passes (no explicit style → bodyMedium).
+ * Flat toggle row — identical layout to SettingsScreen's `ToggleRow`
+ * (icon chip + title/subtitle column + Switch, `vertical = 8.dp`).
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ToggleRow(
     title: String,
     subtitle: String,
+    icon: ImageVector,
+    iconBg: Color,
+    iconTint: Color,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    ListItem(
-        headlineContent = { Text(title) },
-        supportingContent = { Text(subtitle, color = Brand.SecondaryText) },
-        trailingContent = {
-            Switch(checked = checked, onCheckedChange = onCheckedChange)
-        },
-        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        SettingIcon(icon, iconBg, iconTint)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Brand.SecondaryText)
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LinkRow(title: String, onClick: () -> Unit) {
-    ListItem(
-        headlineContent = { Text(title) },
-        leadingContent = {
-            Icon(
-                imageVector = Icons.AutoMirrored.Outlined.HelpOutline,
-                contentDescription = null,
-                tint = Brand.GreenLight,
-            )
-        },
-        trailingContent = {
-            Icon(
-                imageVector = Icons.Outlined.NorthEast,
-                contentDescription = stringResource(R.string.sub_edit_link_open_cd),
-                tint = Brand.SecondaryText,
-            )
-        },
-        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-        modifier = Modifier.clickable(onClick = onClick),
-    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        SettingIcon(
+            icon = Icons.AutoMirrored.Outlined.HelpOutline,
+            bg = Brand.Green.copy(alpha = 0.18f),
+            tint = Brand.GreenLight,
+        )
+        Text(title, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+        Icon(
+            imageVector = Icons.Outlined.NorthEast,
+            contentDescription = stringResource(R.string.sub_edit_link_open_cd),
+            tint = Brand.SecondaryText,
+        )
+    }
 }
 
 /** Refresh-interval presets in display order. Minutes is the source of truth. */

@@ -60,11 +60,14 @@ import com.resultv.android.ui.components.ProfileSortMode
 import com.resultv.android.ui.components.ServerRow
 import com.resultv.android.ui.components.Sparkline
 import com.resultv.android.ui.components.StatusHeader
+import com.resultv.android.ui.components.SubscriptionLogo
 import com.resultv.android.ui.components.flagFromCountry
 import com.resultv.android.ui.components.sortProfiles
+import com.resultv.android.ui.components.subscriptionUsesImpLogo
 import com.resultv.android.vpn.PingRepository
 import com.resultv.android.vpn.Profile
 import com.resultv.android.vpn.ProfileRepository
+import com.resultv.android.vpn.Subscription
 import com.resultv.android.vpn.SubscriptionRepository
 import com.resultv.android.vpn.VpnState
 import com.resultv.android.vpn.VpnStatus
@@ -174,6 +177,7 @@ fun HomeScreen(
             AnimatedVisibility(visible = dropdownOpen) {
                 ProfileDropdown(
                     profiles = visibleHomeProfiles,
+                    subscriptions = subsState.subs,
                     activeId = profilesState.activeId,
                     pings = pings,
                     pingInflight = pingInflight,
@@ -434,6 +438,7 @@ private fun ActiveProfileRow(
 @Composable
 private fun ProfileDropdown(
     profiles: List<Profile>,
+    subscriptions: List<Subscription>,
     activeId: String?,
     pings: Map<String, PingRepository.Sample>,
     pingInflight: Set<String>,
@@ -441,49 +446,155 @@ private fun ProfileDropdown(
     onSelect: (Profile) -> Unit,
     onLongPress: (Profile) -> Unit,
 ) {
+    // Build the grouped layout the same way the desktop does: a Favourites
+    // bucket pulled to the top, then one bucket per subscription (in the
+    // order subscriptions were added), then unaffiliated "My proxies".
+    // Headers are suppressed when there's effectively a single flat list —
+    // i.e. no favourites and at most one group — so a user with one
+    // subscription still sees a plain list.
+    val groups = remember(profiles, subscriptions, sortMode, pings) {
+        buildHomeGroups(profiles, subscriptions, sortMode, pings)
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        if (profiles.isEmpty()) {
+        if (groups.isEmpty()) {
             Text(
                 text = stringResource(R.string.home_no_profiles_yet),
                 style = MaterialTheme.typography.bodySmall,
                 color = Brand.MutedText,
                 modifier = Modifier.padding(8.dp),
             )
-        } else {
-            // SECTION rows are list labels, never selectable. Favourites
-            // bubble to the top via sortProfiles regardless of [sortMode].
-            // Memoised so ping updates don't trigger an O(N log N) re-sort
-            // when the dropdown is open.
-            val ordered = remember(profiles, sortMode, pings) {
-                sortProfiles(profiles.filterNot { it.isSection }, sortMode, pings)
-            }
+            return@Column
+        }
 
-            // Render every profile without vertical size constraints so the
-            // entire Home screen scrolls, rather than an inner list.
-            Column(
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                ordered.forEach { p ->
-                    key(p.id) {
-                        ServerRow(
-                            name = p.name,
-                            subtitle = p.subtitle,
-                            countryCode = p.country,
-                            isAuto = p.isAuto,
-                            isActive = p.id == activeId,
-                            isFavorite = p.isFavorite,
-                            onClick = { onSelect(p) },
-                            onLongClick = { onLongPress(p) },
-                            latencyMs = pings[p.id]?.takeIf { it.reachable }?.latencyMs,
-                            isLoading = p.id in pingInflight,
-                        )
-                    }
+        val showHeaders = groups.size > 1 || groups.any { it.kind == HomeGroupKind.Favorites }
+        groups.forEach { group ->
+            if (showHeaders) {
+                HomeGroupHeader(group)
+            }
+            group.profiles.forEach { p ->
+                key(p.id) {
+                    ServerRow(
+                        name = p.name,
+                        subtitle = p.subtitle,
+                        countryCode = p.country,
+                        isAuto = p.isAuto,
+                        isActive = p.id == activeId,
+                        isFavorite = p.isFavorite,
+                        onClick = { onSelect(p) },
+                        onLongClick = { onLongPress(p) },
+                        latencyMs = pings[p.id]?.takeIf { it.reachable }?.latencyMs,
+                        isLoading = p.id in pingInflight,
+                    )
                 }
+            }
+        }
+    }
+}
+
+private enum class HomeGroupKind { Favorites, Subscription, Standalone }
+
+/**
+ * One rendered section in the Home picker. [subscription] is set only for
+ * [HomeGroupKind.Subscription] groups so the header can show its logo/name.
+ */
+private data class HomeGroup(
+    val kind: HomeGroupKind,
+    val subscription: Subscription?,
+    val profiles: List<Profile>,
+)
+
+/**
+ * Partition the visible Home profiles into Favourites → per-subscription →
+ * standalone, sorting within each bucket via [sortProfiles]. Favourites are
+ * pulled out of their groups so they aren't shown twice. SECTION rows are
+ * dropped (they're list labels, never selectable). Empty buckets are
+ * omitted, so callers can decide whether to draw headers based on the
+ * resulting group count.
+ */
+private fun buildHomeGroups(
+    profiles: List<Profile>,
+    subscriptions: List<Subscription>,
+    sortMode: ProfileSortMode,
+    pings: Map<String, PingRepository.Sample>,
+): List<HomeGroup> {
+    val selectable = profiles.filterNot { it.isSection }
+    if (selectable.isEmpty()) return emptyList()
+
+    val favorites = selectable.filter { it.isFavorite }
+    val rest = selectable.filterNot { it.isFavorite }
+
+    val groups = mutableListOf<HomeGroup>()
+    if (favorites.isNotEmpty()) {
+        groups += HomeGroup(HomeGroupKind.Favorites, null, sortProfiles(favorites, sortMode, pings))
+    }
+    subscriptions.forEach { sub ->
+        val bucket = rest.filter { it.subscriptionId == sub.id }
+        if (bucket.isNotEmpty()) {
+            groups += HomeGroup(HomeGroupKind.Subscription, sub, sortProfiles(bucket, sortMode, pings))
+        }
+    }
+    val standalone = rest.filter { it.subscriptionId.isBlank() }
+    if (standalone.isNotEmpty()) {
+        groups += HomeGroup(HomeGroupKind.Standalone, null, sortProfiles(standalone, sortMode, pings))
+    }
+    return groups
+}
+
+@Composable
+private fun HomeGroupHeader(group: HomeGroup) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 4.dp, top = 6.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        when (group.kind) {
+            HomeGroupKind.Favorites -> {
+                Icon(
+                    imageVector = Icons.Filled.Star,
+                    contentDescription = null,
+                    tint = Brand.Favorite,
+                    modifier = Modifier.size(16.dp),
+                )
+                Text(
+                    text = stringResource(R.string.home_favorites),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Brand.MutedText,
+                )
+            }
+            HomeGroupKind.Subscription -> {
+                val sub = group.subscription
+                val usesImp = remember(sub?.id, sub?.name, sub?.source) {
+                    sub?.let { subscriptionUsesImpLogo(it) } ?: false
+                }
+                SubscriptionLogo(usesImpLogo = usesImp, size = 22.dp)
+                Text(
+                    text = sub?.displayName.orEmpty().uppercase(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Brand.MutedText,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            HomeGroupKind.Standalone -> {
+                Icon(
+                    imageVector = Icons.Outlined.Bolt,
+                    contentDescription = null,
+                    tint = Brand.SecondaryText,
+                    modifier = Modifier.size(16.dp),
+                )
+                Text(
+                    text = stringResource(R.string.home_group_standalone),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Brand.MutedText,
+                )
             }
         }
     }

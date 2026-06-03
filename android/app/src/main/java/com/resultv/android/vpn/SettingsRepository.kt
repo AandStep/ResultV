@@ -2,6 +2,7 @@ package com.resultv.android.vpn
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.provider.Settings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -61,12 +62,30 @@ object SettingsRepository {
 
     private lateinit var prefs: SharedPreferences
 
+    /**
+     * Stable per-device fingerprint source for the subscription `x-hwid`
+     * header. Settings.Secure.ANDROID_ID survives app reinstalls (it's keyed
+     * to device + signing key + user), unlike the Go-side fallback file in
+     * filesDir which is wiped on reinstall/clear-data — relying on that file
+     * registered a fresh panel device on every install and burned HWID slots.
+     * Captured once at [init]; Go hashes it with the shared HWID salt.
+     */
+    @Volatile
+    private var hwidSource: String = ""
+
+    /** Stable device id passed to `Mobile.fetchSubscriptionV3` as `hwid`. */
+    fun deviceHwidSource(): String = hwidSource
+
     private val _state = MutableStateFlow(SettingsState())
     val state: StateFlow<SettingsState> = _state.asStateFlow()
 
     fun init(context: Context) {
         if (::prefs.isInitialized) return
-        prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val app = context.applicationContext
+        hwidSource = runCatching {
+            Settings.Secure.getString(app.contentResolver, Settings.Secure.ANDROID_ID)
+        }.getOrNull().orEmpty()
+        prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         _state.value = SettingsState(
             dnsPreset = prefs.getString(K_DNS_PRESET, "Cloudflare") ?: "Cloudflare",
             dnsCustom = prefs.getString(K_DNS_CUSTOM, "") ?: "",

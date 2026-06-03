@@ -148,11 +148,7 @@ object SubscriptionRefresher {
         val response = JSONObject(responseJson)
         val arr = response.optJSONArray("entries") ?: JSONArray()
 
-        val existingFavouriteNames = ProfileRepository.state.value.profiles
-            .asSequence()
-            .filter { it.subscriptionId == sub.id && it.isFavorite }
-            .map { it.name }
-            .toSet()
+        val existingFavouriteNames = ProfileRepository.favouriteNamesFor(sub.id)
 
         val fresh = (0 until arr.length()).mapNotNull { i ->
             val o = arr.getJSONObject(i)

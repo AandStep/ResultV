@@ -1,6 +1,5 @@
 package com.resultv.android.ui.screens
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -20,7 +19,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Bolt
-import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Edit
@@ -49,9 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -70,7 +66,9 @@ import com.resultv.android.ui.components.ProfileSortMode
 import com.resultv.android.ui.components.ProtocolFilterChips
 import com.resultv.android.ui.components.ServerRow
 import com.resultv.android.ui.components.SubscriptionEditSheet
+import com.resultv.android.ui.components.SubscriptionLogo
 import com.resultv.android.ui.components.sortProfiles
+import com.resultv.android.ui.components.subscriptionUsesImpLogo
 import com.resultv.android.vpn.PingRepository
 import com.resultv.android.vpn.Profile
 import com.resultv.android.vpn.ProfileRepository
@@ -641,38 +639,6 @@ private fun CircleActionChip(
     }
 }
 
-@Composable
-private fun SubscriptionLogo(usesImpLogo: Boolean) {
-    Box(
-        modifier = Modifier
-            .size(40.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(
-                if (usesImpLogo) Brand.Green.copy(alpha = 0.18f)
-                else Color.White.copy(alpha = 0.07f)
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (usesImpLogo) {
-            // Real impVPN brand artwork (PNG copied from the PC frontend
-            // assets) — replaces the rocket-emoji placeholder.
-            Image(
-                painter = painterResource(R.drawable.imp_logo),
-                contentDescription = null,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.size(32.dp),
-            )
-        } else {
-            Icon(
-                imageVector = Icons.Outlined.CloudDownload,
-                contentDescription = null,
-                tint = Brand.SecondaryText,
-                modifier = Modifier.size(22.dp),
-            )
-        }
-    }
-}
-
 /**
  * One-line strip packing days-left + traffic progress + used/total. Three
  * cells separated by a thin divider, mirroring the desktop mock:
@@ -881,24 +847,6 @@ private fun EmptyState(onAddPressed: () -> Unit) {
             }
         }
     }
-}
-
-/**
- * impVPN logo override: pulled when the subscription came from a
- * `resultv://rvsub/…` deep link, or when the (decoded) name / title /
- * URL mentions impVPN. Mirrors `subscriptionUsesImpLogo` on the PC side.
- * `displayName` already runs `base64:` decoding, so panels that wrap their
- * Profile-Title in base64 still light up the logo.
- */
-private fun subscriptionUsesImpLogo(s: Subscription): Boolean {
-    if (s.source == "rvsub") return true
-    val haystack = buildString {
-        append(s.displayName).append(' ')
-        append(com.resultv.android.vpn.decodePanelTitle(s.name)).append(' ')
-        append(com.resultv.android.vpn.decodePanelTitle(s.title)).append(' ')
-        append(s.url)
-    }.lowercase()
-    return "impvpn" in haystack || "imp vpn" in haystack
 }
 
 private val BYTE_UNITS = arrayOf("B", "KB", "MB", "GB", "TB")

@@ -1,6 +1,7 @@
 package com.resultv.android.ui.screens
 
 import android.app.Activity
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -28,9 +29,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import android.content.ContextWrapper
 import com.resultv.android.R
 import com.resultv.android.locale.LocaleManager
 import com.resultv.android.theme.Brand
+import com.resultv.android.ui.components.SettingIcon
 import com.resultv.android.vpn.SettingsRepository
 
 private data class DnsPreset(val key: String, val label: String, val servers: String)
@@ -145,7 +148,7 @@ fun SettingsScreen() {
                     SettingsSubcategory.Subscriptions -> SubscriptionsGroup(settings)
                     SettingsSubcategory.Security -> SecurityGroup(settings)
                     SettingsSubcategory.Network -> NetworkGroup(settings)
-                    SettingsSubcategory.Appearance -> AppearanceGroup()
+                    SettingsSubcategory.Appearance -> AppearanceGroup(onBeforeRecreate = { activeSheet = null })
                     SettingsSubcategory.Routing -> RulesScreen()
                     null -> {}
                 }
@@ -198,24 +201,6 @@ private fun SubcategoryRow(subcategory: SettingsSubcategory, onClick: () -> Unit
             imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
             contentDescription = null,
             tint = Brand.MutedText,
-        )
-    }
-}
-
-@Composable
-private fun SettingIcon(icon: ImageVector, bg: Color, tint: Color) {
-    Box(
-        modifier = Modifier
-            .size(36.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(bg),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = tint,
-            modifier = Modifier.size(20.dp),
         )
     }
 }
@@ -364,11 +349,23 @@ private fun NetworkGroup(settings: com.resultv.android.vpn.SettingsState) {
     )
 }
 
+/**
+ * Walk the context-wrapper chain to the hosting Activity. Required because
+ * `ModalBottomSheet` hosts its content in a sub-window whose
+ * `LocalContext.current` is a `ContextThemeWrapper`, not the Activity — so a
+ * plain `ctx as? Activity` returns null and the language tap did nothing.
+ */
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AppearanceGroup() {
+private fun AppearanceGroup(onBeforeRecreate: () -> Unit) {
     val ctx = LocalContext.current
-    val activity = ctx as? Activity
+    val activity = remember(ctx) { ctx.findActivity() }
     val currentLang = remember(activity) { LocaleManager.currentLocale(ctx) ?: "EN" }
     var menuOpen by remember { mutableStateOf(false) }
 
@@ -403,6 +400,9 @@ private fun AppearanceGroup() {
                         onClick = {
                             menuOpen = false
                             if (l.code != currentLang && activity != null) {
+                                // Dismiss the sheet before recreate() so the
+                                // sub-window doesn't outlive the Activity.
+                                onBeforeRecreate()
                                 LocaleManager.setLocale(activity, l.code)
                             }
                         },

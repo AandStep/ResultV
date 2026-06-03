@@ -432,12 +432,57 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
             // along with whatever's selected.
             val sub = fetched
             if (sub != null && sub.entries.isNotEmpty()) {
-                val realCount = sub.entries.count { !it.isSection }
-                Text(
-                    text = stringResource(R.string.add_sub_selected, selected.value.size, realCount),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Brand.SecondaryText,
-                )
+                val realKeys = remember(sub) {
+                    sub.entries.filterNot { it.isSection }.map { it.key }.toSet()
+                }
+                val realCount = realKeys.size
+                val allSelected = selected.value.size >= realCount && realCount > 0
+
+                // Selection summary + select-all toggle, kept directly above
+                // the import action so neither is buried under the (possibly
+                // long) server list.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = stringResource(R.string.add_sub_selected, selected.value.size, realCount),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Brand.SecondaryText,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = {
+                        selected.value = if (allSelected) emptySet() else realKeys
+                    }) {
+                        Text(
+                            stringResource(
+                                if (allSelected) R.string.add_sub_clear_all
+                                else R.string.add_sub_select_all,
+                            ),
+                        )
+                    }
+                }
+
+                // Import button pinned above the list — the user no longer
+                // has to scroll to the bottom of all entries to commit.
+                FilledTonalButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = selected.value.isNotEmpty(),
+                    onClick = {
+                        importSubscription(
+                            url = fetchedUrl,
+                            sub = sub,
+                            selectedKeys = selected.value,
+                            sourceTag = "",
+                        )
+                        onDone()
+                    },
+                ) {
+                    Icon(Icons.Outlined.Check, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.add_sub_import, selected.value.size))
+                }
+
                 LazyColumn(
                     modifier = Modifier.heightIn(max = 360.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -471,33 +516,18 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
-                                Text(
-                                    e.preview,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Brand.MutedText,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
+                                if (e.preview.isNotBlank()) {
+                                    Text(
+                                        e.preview,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Brand.MutedText,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
                             }
                         }
                     }
-                }
-
-                FilledTonalButton(
-                    enabled = selected.value.isNotEmpty(),
-                    onClick = {
-                        importSubscription(
-                            url = fetchedUrl,
-                            sub = sub,
-                            selectedKeys = selected.value,
-                            sourceTag = "",
-                        )
-                        onDone()
-                    },
-                ) {
-                    Icon(Icons.Outlined.Check, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.add_sub_import, selected.value.size))
                 }
             }
         }
@@ -594,13 +624,11 @@ private fun parseEntry(o: JSONObject, index: Int): FetchedEntry {
     val type = o.optString("type")
     val isSection = type.equals("SECTION", ignoreCase = true)
     val name = o.optString("name")
-        .ifBlank { if (isSection) "—" else ip }
-        .ifBlank { "Profile ${index + 1}" }
-    val preview = when {
-        isSection -> ""
-        uri.isNotBlank() -> uri
-        else -> listOf(type, "$ip:$port").filter { it.isNotBlank() }.joinToString("  ·  ")
-    }
+        .ifBlank { if (isSection) "—" else "Profile ${index + 1}" }
+    // Preview intentionally omits host/ip:port — the server address is
+    // sensitive and shouldn't be shown while the user is still deciding
+    // what to import. Only the protocol/type is surfaced as a hint.
+    val preview = if (isSection) "" else type.uppercase()
     val key = when {
         isSection -> "section|$index|${o.optString("name")}"
         uri.isNotBlank() -> uri
@@ -621,25 +649,28 @@ private fun importSubscription(
     selectedKeys: Set<String>,
     sourceTag: String,
 ) {
-    val subscription = Subscription.new(
+    // Re-importing the same URL updates the existing record in place rather
+    // than spawning a duplicate; a fresh URL inserts a new one.
+    val subId = SubscriptionRepository.upsert(
         url = url,
         name = sub.title.ifBlank { defaultSubscriptionName(url) },
         title = sub.title,
         userInfo = sub.userInfo,
+        supportUrl = sub.supportUrl,
         source = sourceTag,
-    ).copy(supportUrl = sub.supportUrl)
-    SubscriptionRepository.add(subscription)
+    )
+    val favouriteNames = ProfileRepository.favouriteNamesFor(subId)
     // Preserve the response order so SECTION rows land between the right
     // group of real entries.
     val profiles = sub.entries.mapNotNull { e ->
         when {
-            e.isSection -> Profile.section(name = e.name, subscriptionId = subscription.id)
+            e.isSection -> Profile.section(name = e.name, subscriptionId = subId)
             e.key !in selectedKeys -> null
-            e.uri.isNotBlank() -> Profile.fromUri(e.name, e.uri, subscriptionId = subscription.id)
-            else -> Profile.fromEntryJson(e.name, e.entryJson, subscriptionId = subscription.id)
-        }
+            e.uri.isNotBlank() -> Profile.fromUri(e.name, e.uri, subscriptionId = subId)
+            else -> Profile.fromEntryJson(e.name, e.entryJson, subscriptionId = subId)
+        }?.let { p -> if (!p.isSection && p.name in favouriteNames) p.copy(isFavorite = true) else p }
     }
-    profiles.forEach { ProfileRepository.add(it) }
+    ProfileRepository.replaceForSubscription(subId, profiles)
 }
 
 private fun defaultSubscriptionName(url: String): String {

@@ -2,6 +2,10 @@
 <resources>
     <string name="app_name">ResultV</string>
 
+    <!-- Top app bar (Home) -->
+    <string name="header_open_website">Открыть сайт</string>
+    <string name="header_open_telegram">Открыть Telegram</string>
+
     <string name="tab_home">Главная</string>
     <string name="tab_proxies">Серверы</string>
     <string name="tab_add">Добавить</string>
@@ -23,6 +27,7 @@
     <string name="home_no_profiles_yet">Нет профилей — добавьте, чтобы начать.</string>
     <string name="home_view_all_profiles">Показать все %1$d профилей</string>
     <string name="home_favorites">ИЗБРАННОЕ</string>
+    <string name="home_group_standalone">МОИ ПРОКСИ</string>
     <string name="home_add_server">Добавить сервер</string>
     <string name="home_add_server_subtitle">Вставьте ссылку или URL подписки</string>
     <string name="home_stat_download">ЗАГРУЗКА</string>
@@ -133,6 +138,8 @@
     <string name="add_sub_fetching">Загрузка…</string>
     <string name="add_sub_selected">Выбрано %1$d из %2$d</string>
     <string name="add_sub_import">Импорт %1$d</string>
+    <string name="add_sub_select_all">Выбрать всё</string>
+    <string name="add_sub_clear_all">Снять всё</string>
 
     <!-- Manual entry -->
     <string name="manual_choose_protocol">Выберите протокол</string>

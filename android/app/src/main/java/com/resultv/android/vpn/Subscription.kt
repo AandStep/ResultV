@@ -187,6 +187,50 @@ object SubscriptionRepository {
     }
 
     /**
+     * Insert-or-update by URL: re-importing a subscription whose URL we
+     * already track updates that record's panel metadata in place instead of
+     * creating a duplicate. Returns the subscription id to tag profiles with.
+     *
+     * For an existing record we mirror [SubscriptionRefresher.refreshOne]:
+     * only the panel-supplied fields (title / userInfo / supportUrl) and the
+     * fetch timestamp move — the user's [Subscription.customName], display
+     * [Subscription.name] and [Subscription.source] are left untouched. The
+     * caller is expected to rebuild this sub's profiles afterwards via
+     * [ProfileRepository.replaceForSubscription].
+     */
+    @Synchronized
+    fun upsert(
+        url: String,
+        name: String,
+        title: String,
+        userInfo: String,
+        supportUrl: String,
+        source: String,
+    ): String {
+        val existing = _state.value.subs.firstOrNull { it.url == url }
+        if (existing != null) {
+            update(existing.id) {
+                it.copy(
+                    title = title.ifBlank { it.title },
+                    userInfo = userInfo,
+                    supportUrl = supportUrl,
+                    lastFetchedAt = System.currentTimeMillis(),
+                )
+            }
+            return existing.id
+        }
+        val created = Subscription.new(
+            url = url,
+            name = name,
+            title = title,
+            userInfo = userInfo,
+            source = source,
+        ).copy(supportUrl = supportUrl)
+        add(created)
+        return created.id
+    }
+
+    /**
      * Cascade-delete: drop the subscription record and every profile tagged
      * with this subscriptionId. Active profile is cleared if it belonged here.
      */

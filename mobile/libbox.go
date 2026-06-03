@@ -223,6 +223,13 @@ type SubscriptionFetchOptions struct {
 	DeviceOS  string `json:"deviceOs,omitempty"`
 	OSVersion string `json:"osVersion,omitempty"`
 	Model     string `json:"model,omitempty"`
+	// HWID is a stable OS-level device identifier (Android:
+	// Settings.Secure.ANDROID_ID) the caller supplies as the x-hwid source.
+	// Unlike the dataDir fallback file, it survives app reinstalls — without
+	// it every reinstall mints a fresh random fingerprint and the panel
+	// registers a duplicate device, burning the provider's HWID-limit slots.
+	// Empty falls back to config.StableHardwareID(dataDir).
+	HWID string `json:"hwid,omitempty"`
 }
 
 // FetchSubscriptionV3 is the options-aware variant of V2. Kotlin should
@@ -280,7 +287,13 @@ func fetchSubscription(subURL, dataDir string, opts SubscriptionFetchOptions) (s
 	}
 	hwid := ""
 	if sendHWID {
-		if h, err := config.StableHardwareID(dataDir); err == nil {
+		// Prefer the caller-supplied stable OS identifier (mobile passes
+		// Android's ANDROID_ID) so the fingerprint survives reinstalls. Only
+		// fall back to the dataDir-derived id when none was provided — that
+		// file is wiped on reinstall and would mint a duplicate device.
+		if src := strings.TrimSpace(opts.HWID); src != "" {
+			hwid = config.HashHWIDSource(src)
+		} else if h, err := config.StableHardwareID(dataDir); err == nil {
 			hwid = h
 		}
 		// HWID isn't strictly required — some panels just won't gate the

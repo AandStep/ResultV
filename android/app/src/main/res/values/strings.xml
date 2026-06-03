@@ -2,6 +2,10 @@
 <resources>
     <string name="app_name">ResultV</string>
 
+    <!-- Top app bar (Home) -->
+    <string name="header_open_website">Open website</string>
+    <string name="header_open_telegram">Open Telegram</string>
+
     <!-- Bottom nav tabs -->
     <string name="tab_home">Home</string>
     <string name="tab_proxies">Proxies</string>
@@ -26,6 +30,7 @@
     <string name="home_no_profiles_yet">No profiles yet — add one to get started.</string>
     <string name="home_view_all_profiles">View all %1$d profiles</string>
     <string name="home_favorites">FAVORITES</string>
+    <string name="home_group_standalone">MY PROXIES</string>
     <string name="home_add_server">Add server</string>
     <string name="home_add_server_subtitle">Paste link or subscription URL</string>
     <string name="home_stat_download">DOWNLOAD</string>
@@ -141,6 +146,8 @@
     <string name="add_sub_fetching">Fetching…</string>
     <string name="add_sub_selected">%1$d of %2$d selected</string>
     <string name="add_sub_import">Import %1$d</string>
+    <string name="add_sub_select_all">Select all</string>
+    <string name="add_sub_clear_all">Clear all</string>
 
     <!-- Manual protocol entry -->
     <string name="manual_choose_protocol">Choose protocol</string>
