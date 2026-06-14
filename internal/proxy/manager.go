@@ -22,7 +22,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -2444,10 +2443,12 @@ func (m *Manager) RecoverSystemLeftovers() (scan LeftoverScan) {
 	scan.DNS = hasDNSLeft
 	scan.Tun = hasTunLeft
 
-	if !isAdminCheck() && runtime.GOOS == "windows" {
+	if !isAdminCheck() {
 		// Removing the DNS override / the orphan adapter's default route needs
-		// admin. Don't fire a UAC here — report up so the user is asked to
-		// restart elevated (one explicit click instead of a surprise prompt).
+		// elevated rights (admin on Windows, root on macOS/Linux). Don't fire an
+		// elevation prompt here — report up so the user is asked to restart
+		// elevated (one explicit click instead of a surprise UAC / password
+		// dialog). RestartAsAdmin is implemented on every platform.
 		scan.NeedsElevation = true
 		return
 	}
