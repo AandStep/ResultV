@@ -65,6 +65,21 @@ func TestConnect_PropagatesDNSLeakProtection(t *testing.T) {
 	isAdminCheck = func() bool { return true }
 	defer func() { isAdminCheck = prevAdmin }()
 
+	// Stub the orphan-adapter pre-clear: on a dev machine with a REAL leftover
+	// sing-tun adapter and no admin, the un-stubbed path would attempt a UAC
+	// elevation from inside the test (faked isAdminCheck reaches tunnel connect,
+	// but clearLeftoverTun checks the real token).
+	prevHas, prevClear := hasLeftoverTunFn, clearLeftoverTunFn
+	hasLeftoverTunFn = func() bool { return false }
+	clearLeftoverTunFn = func() error { return nil }
+	defer func() { hasLeftoverTunFn, clearLeftoverTunFn = prevHas, prevClear }()
+
+	// The tunnel post-start probe now goes through the loopback probe inbound;
+	// stub it — no engine actually serves it under stubEngine.
+	prevProbe := probeHTTPThroughProxyProbe
+	probeHTTPThroughProxyProbe = func(string) (bool, string) { return true, "" }
+	defer func() { probeHTTPThroughProxyProbe = prevProbe }()
+
 	host, port, closeFn := startReachableTCP(t)
 	defer closeFn()
 

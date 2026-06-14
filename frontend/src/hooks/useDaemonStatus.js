@@ -41,6 +41,7 @@ export const useDaemonStatus = (
         down: new Array(20).fill(0),
         up: new Array(20).fill(0),
     });
+    const [uptime, setUptime] = useState(0);
     const [daemonStatus, setDaemonStatus] = useState("checking");
     const prevProxyDead = useRef(false);
     const emergencyPopupShownRef = useRef(false);
@@ -163,18 +164,22 @@ export const useDaemonStatus = (
                 setFailedProxy(null);
             }
 
-            // Keep the spinner up while the backend is in the establishing
-            // phase: engine has booted but runPostStartProbe is still verifying
-            // end-to-end traffic (1-3s for WG/Hysteria/VLESS handshakes). The
-            // earlier code flipped this off here, which combined with the
-            // sessionActive→isConnected mapping below made the UI lie green
-            // a couple of seconds before the backend's "Подключено" log.
+            // Mirror the backend's establishing phase into the spinner while no
+            // user-initiated control op owns it. The engine has booted but
+            // runPostStartProbe is still verifying end-to-end traffic (1-3s for
+            // WG/Hysteria/VLESS handshakes), so we keep the spinner up — but it
+            // must also come back DOWN when establishing ends, not only go up.
+            // A hot-reload reconnect (rules/adblock change) goes
+            // establishing→connected with no control op in flight; the old
+            // raise-only code then left isConnecting stuck true forever, so the
+            // UI showed an endless "connecting" spinner even though traffic
+            // already flowed.
             //
-            // Skip when a user-initiated control op is in flight — in that
-            // case useDaemonControl owns the spinner and we'd otherwise stomp
-            // its setIsConnecting(false) right after a disconnect.
-            if (establishing && !isSwitchingRef.current) {
-                setIsConnecting(true);
+            // Skip when a user-initiated control op is in flight — in that case
+            // useDaemonControl owns the spinner and we'd otherwise stomp its
+            // setIsConnecting(false) right after a disconnect.
+            if (!isSwitchingRef.current) {
+                setIsConnecting(establishing);
             }
 
             const killSwitchTriggered =
@@ -229,10 +234,13 @@ export const useDaemonStatus = (
             }
             if (connected) {
                 if (data.isProxyDead && !prevProxyDead.current) {
+                    // Subscription servers must not reveal the provider's backend
+                    // address; only manual servers (no subscriptionUrl) show the IP.
+                    const nodeAddr = data.currentProxy?.subscriptionUrl
+                        ? ""
+                        : data.currentProxy?.ip || "";
                     addLog(
-                        `Внимание: Узел ${
-                            data.currentProxy?.ip || ""
-                        } перестал отвечать! (Kill Switch: ${data.killSwitchActive})`,
+                        `Внимание: Узел ${nodeAddr} перестал отвечать! (Kill Switch: ${data.killSwitchActive})`,
                         "error",
                     );
                 } else if (!data.isProxyDead && prevProxyDead.current) {
@@ -254,6 +262,7 @@ export const useDaemonStatus = (
                 resolveActiveProxy(data);
             }
 
+            setUptime(typeof data.uptime === "number" ? data.uptime : 0);
             setStats({ download: data.bytesReceived, upload: data.bytesSent });
             setSpeedHistory((h) => ({
                 down: [...h.down.slice(1), data.speedReceived || 0],
@@ -309,5 +318,5 @@ export const useDaemonStatus = (
         t,
     ]);
 
-    return { isProxyDead, stats, speedHistory, daemonStatus };
+    return { isProxyDead, stats, speedHistory, daemonStatus, uptime };
 };

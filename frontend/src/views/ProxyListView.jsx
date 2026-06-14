@@ -160,9 +160,8 @@ export const ProxyListView = () => {
     failedProxy,
     pings,
     refreshPings,
-    isPinging,
-    isManualPinging,
     isPingPending,
+    isManualPingPending,
   } = useConnectionContext();
 
   useEffect(() => {
@@ -645,6 +644,10 @@ export const ProxyListView = () => {
               expireLine = `до ${dd}.${mm}.${yy}. в ${hh}:${min}`;
             }
 
+            const isGroupPinging = groupProxies.some((p) =>
+              isManualPingPending(p),
+            );
+
             return (
               <div key={groupName} className="space-y-4">
                 <div className="flex flex-col gap-2 w-full">
@@ -717,13 +720,13 @@ export const ProxyListView = () => {
                             e.stopPropagation();
                             refreshPings(groupProxies.map((p) => p.id));
                           }}
-                          disabled={subBusy || isPinging}
+                          disabled={subBusy || isGroupPinging}
                           title={t("proxyList.manualPingAria")}
                           aria-label={t("proxyList.manualPingAria")}
                           className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-zinc-700/60 bg-zinc-800/50 text-zinc-300 hover:text-white hover:border-violet-500/40 transition-colors outline-none focus:outline-none focus:ring-2 focus:ring-violet-500/25 disabled:opacity-50"
                         >
                           <Activity
-                            className={`h-5 w-5 text-violet-400 ${isManualPinging ? "animate-pulse" : ""}`}
+                            className={`h-5 w-5 text-violet-400 ${isGroupPinging ? "animate-pulse" : ""}`}
                           />
                         </button>
                         <button
@@ -742,18 +745,35 @@ export const ProxyListView = () => {
                       </>
                     )}
                     {isMyProxies && groupProxies.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteManualGroup(groupProxies);
-                        }}
-                        title={t("proxyList.deleteManualGroupAria")}
-                        aria-label={t("proxyList.deleteManualGroupAria")}
-                        className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-rose-500/40 bg-rose-500/15 text-rose-400 hover:bg-rose-500/25 hover:text-rose-300 transition-colors outline-none focus:outline-none focus:ring-2 focus:ring-rose-500/30"
-                      >
-                        <Trash2 className="h-5 w-5" />
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            refreshPings(groupProxies.map((p) => p.id));
+                          }}
+                          disabled={isGroupPinging}
+                          title={t("proxyList.manualPingMyServersAria")}
+                          aria-label={t("proxyList.manualPingMyServersAria")}
+                          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-zinc-700/60 bg-zinc-800/50 text-zinc-300 hover:text-white hover:border-violet-500/40 transition-colors outline-none focus:outline-none focus:ring-2 focus:ring-violet-500/25 disabled:opacity-50"
+                        >
+                          <Activity
+                            className={`h-5 w-5 text-violet-400 ${isGroupPinging ? "animate-pulse" : ""}`}
+                          />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteManualGroup(groupProxies);
+                          }}
+                          title={t("proxyList.deleteManualGroupAria")}
+                          aria-label={t("proxyList.deleteManualGroupAria")}
+                          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-rose-500/40 bg-rose-500/15 text-rose-400 hover:bg-rose-500/25 hover:text-rose-300 transition-colors outline-none focus:outline-none focus:ring-2 focus:ring-rose-500/30"
+                        >
+                          <Trash2 className="h-5 w-5" />
+                        </button>
+                      </>
                     )}
                   </div>
                   {isSub && (

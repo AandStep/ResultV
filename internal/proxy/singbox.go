@@ -100,11 +100,49 @@ type SingBoxEngine struct {
 
 	uploadBytes   atomic.Int64
 	downloadBytes atomic.Int64
+
+	// proxyUploadBytes/proxyDownloadBytes count ONLY traffic carried by the
+	// proxy/endpoint outbound (the tracker increments them only when the matched
+	// outbound is not direct/block). The watchdog's traffic veto reads these so
+	// direct/split-tunnel traffic cannot make a dead upstream look alive.
+	proxyUploadBytes   atomic.Int64
+	proxyDownloadBytes atomic.Int64
 }
 
 
 type singBoxLogWriter struct {
 	log *logger.Logger
+	// redact holds server identifiers (domain + resolved IP) that must never
+	// surface in logs for subscription servers — sing-box errors like
+	// "lookup <domain>: ..." or "open connection ... using outbound" would
+	// otherwise leak the provider's backend address. Empty for manual servers.
+	redact []string
+}
+
+// newSingBoxLogWriter builds a log writer that hides the server's domain/IP when
+// the active proxy comes from a subscription. Manual servers keep full detail —
+// the user owns them and the address is already visible in the UI.
+func newSingBoxLogWriter(log *logger.Logger, proxy ProxyConfig) *singBoxLogWriter {
+	w := &singBoxLogWriter{log: log}
+	if proxy.SubscriptionURL == "" {
+		return w
+	}
+	for _, tok := range []string{proxy.IP, proxy.ResolvedIP} {
+		tok = strings.TrimSpace(tok)
+		if tok != "" {
+			w.redact = append(w.redact, tok)
+		}
+	}
+	return w
+}
+
+func (w *singBoxLogWriter) redactServer(msg string) string {
+	for _, tok := range w.redact {
+		if strings.Contains(msg, tok) {
+			msg = strings.ReplaceAll(msg, tok, "<сервер>")
+		}
+	}
+	return msg
 }
 
 var ansiEscapeRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -135,7 +173,7 @@ func (w *singBoxLogWriter) WriteMessage(level sblog.Level, message string) {
 		clean = ansiEscapeRE.ReplaceAllString(message, "")
 	}
 
-	msg := "[SING-BOX] " + clean
+	msg := "[SING-BOX] " + w.redactServer(clean)
 	if level <= sblog.LevelError {
 		w.log.Error(msg)
 	} else if level == sblog.LevelWarn {
@@ -146,16 +184,18 @@ func (w *singBoxLogWriter) WriteMessage(level sblog.Level, message string) {
 
 
 type trafficTracker struct {
-	upload   *atomic.Int64
-	download *atomic.Int64
-	log      *logger.Logger
-	server   string
-	protocol string
-	mode     ProxyMode
-	logged   sync.Map
-	count    atomic.Int32
-	rotateMu sync.Mutex
-	isSub    bool
+	upload        *atomic.Int64
+	download      *atomic.Int64
+	proxyUpload   *atomic.Int64
+	proxyDownload *atomic.Int64
+	log           *logger.Logger
+	server        string
+	protocol      string
+	mode          ProxyMode
+	logged        sync.Map
+	count         atomic.Int32
+	rotateMu      sync.Mutex
+	isSub         bool
 }
 
 // loggedRotateThreshold is how many unique host→outbound pairs we remember
@@ -323,7 +363,7 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 	instance, err := box.New(box.Options{
 		Context:           boxCtx,
 		Options:           options,
-		PlatformLogWriter: &singBoxLogWriter{log: e.log},
+		PlatformLogWriter: newSingBoxLogWriter(e.log, cfg.Proxy),
 	})
 	if err != nil {
 		cancel()
@@ -334,20 +374,30 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 		// Counters reset on first start; preserved across reloads.
 		e.uploadBytes.Store(0)
 		e.downloadBytes.Store(0)
+		e.proxyUploadBytes.Store(0)
+		e.proxyDownloadBytes.Store(0)
 	}
 
 	tracker := &trafficTracker{
-		upload:   &e.uploadBytes,
-		download: &e.downloadBytes,
-		log:      e.log,
-		server:   fmt.Sprintf("%s:%d", cfg.Proxy.IP, cfg.Proxy.Port),
-		protocol: strings.ToLower(strings.TrimSpace(cfg.Proxy.Type)),
-		mode:     cfg.Mode,
-		isSub:    cfg.Proxy.SubscriptionURL != "",
+		upload:        &e.uploadBytes,
+		download:      &e.downloadBytes,
+		proxyUpload:   &e.proxyUploadBytes,
+		proxyDownload: &e.proxyDownloadBytes,
+		log:           e.log,
+		server:        fmt.Sprintf("%s:%d", cfg.Proxy.IP, cfg.Proxy.Port),
+		protocol:      strings.ToLower(strings.TrimSpace(cfg.Proxy.Type)),
+		mode:          cfg.Mode,
+		isSub:         cfg.Proxy.SubscriptionURL != "",
 	}
 	instance.Router().AppendTracker(tracker)
 
 	if err := instance.Start(); err != nil {
+		// Start can partially bring up the TUN inbound (Wintun adapter + WFP
+		// filters for strict_route) before failing. Releasing it here lets the
+		// caller's retry get a clean slate: cancel() unwinds goroutines but not
+		// the OS-level adapter/filters, which would otherwise linger and make the
+		// next CreateAdapter fail with "configure tun interface / access denied".
+		closeInstanceBounded(instance, 5*time.Second, e.log)
 		cancel()
 		return fmt.Errorf("starting sing-box: %w", err)
 	}
@@ -358,19 +408,37 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 	return nil
 }
 
+// closeInstanceBounded closes a sing-box instance with a hard ceiling, returning
+// once Close finishes or the ceiling elapses.
+//
+// Close runs in a goroutine. Synchronous Close (which we briefly used to avoid a
+// goroutine leak under TUN/DNS handles) deadlocked the disconnect path for
+// WireGuard / AmneziaWG sessions: the upstream wireguard endpoint's Close blocks
+// on UDP socket teardown for many seconds, and while it ran the caller held e.mu
+// — so the next manager.Disconnect() call (which also goes through engine.Stop →
+// e.mu) never returned, freezing the UI until the process was killed. On timeout
+// the goroutine is left running: a single stale sing-box instance is
+// GC-collected eventually; a frozen disconnect button is not.
+func closeInstanceBounded(inst *box.Box, ceiling time.Duration, log *logger.Logger) {
+	closeDone := make(chan struct{}, 1)
+	started := time.Now()
+	go func() {
+		_ = inst.Close()
+		closeDone <- struct{}{}
+	}()
+	select {
+	case <-closeDone:
+		if elapsed := time.Since(started); elapsed > 3*time.Second {
+			log.Warning(fmt.Sprintf("[SING-BOX] Close занял %s", elapsed.Round(100*time.Millisecond)))
+		}
+	case <-time.After(ceiling):
+		log.Warning("[SING-BOX] Close() timeout — продолжаем без ожидания (goroutine завершится позже)")
+	}
+}
+
 // shutdownInstanceLocked cancels the running sing-box instance and removes the
 // on-disk config. Caller must hold e.mu. Does not flip e.running — that is the
 // caller's job, since Stop and reload have different semantics.
-//
-// Close runs in a goroutine with a hard 5s ceiling. Synchronous Close (which
-// we briefly used to avoid a goroutine leak under TUN/DNS handles) deadlocked
-// the disconnect path for WireGuard / AmneziaWG sessions: the upstream
-// wireguard endpoint's Close blocks on UDP socket teardown for many seconds,
-// and while it ran we held e.mu — so the next manager.Disconnect() call (which
-// also goes through engine.Stop → e.mu) never returned, freezing the UI until
-// the process was killed. Leaking the goroutine is the lesser evil: a single
-// stale sing-box instance is GC-collected eventually; a frozen disconnect
-// button is not.
 func (e *SingBoxEngine) shutdownInstanceLocked() {
 	if e.cancel != nil {
 		e.cancel()
@@ -379,20 +447,7 @@ func (e *SingBoxEngine) shutdownInstanceLocked() {
 	if e.instance != nil {
 		inst := e.instance
 		e.instance = nil
-		closeDone := make(chan struct{}, 1)
-		started := time.Now()
-		go func() {
-			_ = inst.Close()
-			closeDone <- struct{}{}
-		}()
-		select {
-		case <-closeDone:
-			if elapsed := time.Since(started); elapsed > 3*time.Second {
-				e.log.Warning(fmt.Sprintf("[SING-BOX] Close занял %s", elapsed.Round(100*time.Millisecond)))
-			}
-		case <-time.After(5 * time.Second):
-			e.log.Warning("[SING-BOX] Close() timeout — продолжаем без ожидания (goroutine завершится позже)")
-		}
+		closeInstanceBounded(inst, 5*time.Second, e.log)
 	}
 	if e.configPath != "" {
 		os.Remove(e.configPath)
@@ -483,6 +538,28 @@ func (e *SingBoxEngine) GetTrafficStats() (up, down int64) {
 	return e.uploadBytes.Load(), e.downloadBytes.Load()
 }
 
+func (e *SingBoxEngine) GetProxyTrafficStats() (up, down int64) {
+	return e.proxyUploadBytes.Load(), e.proxyDownloadBytes.Load()
+}
+
+// downCounters/upCounters return the byte counters a routed connection should
+// increment. Every connection feeds the global counters; only proxy-outbound
+// connections (shouldTrack) additionally feed the proxy-only counters used by
+// the watchdog traffic veto.
+func (t *trafficTracker) downCounters(shouldTrack bool) []*atomic.Int64 {
+	if shouldTrack {
+		return []*atomic.Int64{t.download, t.proxyDownload}
+	}
+	return []*atomic.Int64{t.download}
+}
+
+func (t *trafficTracker) upCounters(shouldTrack bool) []*atomic.Int64 {
+	if shouldTrack {
+		return []*atomic.Int64{t.upload, t.proxyUpload}
+	}
+	return []*atomic.Int64{t.upload}
+}
+
 func (t *trafficTracker) RoutedConnection(
 	_ context.Context,
 	conn net.Conn,
@@ -491,7 +568,7 @@ func (t *trafficTracker) RoutedConnection(
 	matchOutbound adapter.Outbound,
 ) net.Conn {
 	host, dest, shouldTrack := t.logConnection(metadata, matchOutbound)
-	wrapped := bufio.NewInt64CounterConn(conn, []*atomic.Int64{t.download}, []*atomic.Int64{t.upload})
+	wrapped := bufio.NewInt64CounterConn(conn, t.downCounters(shouldTrack), t.upCounters(shouldTrack))
 	if !shouldTrack {
 		return wrapped
 	}
@@ -515,8 +592,8 @@ func (t *trafficTracker) RoutedPacketConnection(
 	_ adapter.Rule,
 	matchOutbound adapter.Outbound,
 ) N.PacketConn {
-	t.logConnection(metadata, matchOutbound)
-	return bufio.NewInt64CounterPacketConn(conn, []*atomic.Int64{t.download}, nil, []*atomic.Int64{t.upload}, nil)
+	_, _, shouldTrack := t.logConnection(metadata, matchOutbound)
+	return bufio.NewInt64CounterPacketConn(conn, t.downCounters(shouldTrack), nil, t.upCounters(shouldTrack), nil)
 }
 
 // rotateLogged drops every entry in the dedup map and resets the counter.

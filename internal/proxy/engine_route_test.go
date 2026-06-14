@@ -698,6 +698,52 @@ func TestBuildTunnelModeConfig_CustomTunIPv6Respected(t *testing.T) {
 	}
 }
 
+// TestBuildTunnelModeConfig_LoopbackProbeInbound pins the 2026-06 fix for
+// false kill-switch trips: tunnel mode must expose a loopback-only mixed
+// inbound so health probes resolve hostnames remotely via sing-box instead of
+// the OS resolver (which the session itself degrades via the DNS override +
+// strict_route). The TUN inbound must stay first — other tests and the engine
+// teardown logic index Inbounds[0].
+func TestBuildTunnelModeConfig_LoopbackProbeInbound(t *testing.T) {
+	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
+		Mode:      ProxyModeTunnel,
+		Proxy:     ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		LocalPort: 14081,
+	})
+	if len(cfg.Inbounds) != 2 {
+		t.Fatalf("expected tun + probe inbounds, got %+v", cfg.Inbounds)
+	}
+	if cfg.Inbounds[0].Type != "tun" {
+		t.Fatalf("tun inbound must stay first, got %+v", cfg.Inbounds[0])
+	}
+	probe := cfg.Inbounds[1]
+	if probe.Type != "mixed" {
+		t.Fatalf("expected mixed probe inbound, got %+v", probe)
+	}
+	if probe.Listen != "127.0.0.1" {
+		t.Fatalf("probe inbound must bind loopback only, got listen=%q", probe.Listen)
+	}
+	if probe.ListenPort != 14081 {
+		t.Fatalf("probe inbound must use EngineConfig.LocalPort, got %d", probe.ListenPort)
+	}
+}
+
+// Without an explicit LocalPort the probe inbound still comes up on a free
+// port instead of silently disappearing (the watchdog falls back to the
+// OS-resolver probe only when no local port exists).
+func TestBuildTunnelModeConfig_LoopbackProbeInboundDefaultPort(t *testing.T) {
+	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
+		Mode:  ProxyModeTunnel,
+		Proxy: ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+	})
+	if len(cfg.Inbounds) != 2 {
+		t.Fatalf("expected tun + probe inbounds, got %+v", cfg.Inbounds)
+	}
+	if cfg.Inbounds[1].ListenPort == 0 {
+		t.Fatalf("probe inbound must get a free port, got %+v", cfg.Inbounds[1])
+	}
+}
+
 // TestBuildRoute_ProxyMode_AppWhitelistGetsDirectRule covers the actual
 // excluded-process rule. In proxy mode the mixed inbound terminates the
 // connection locally; sing-box looks up the originating PID and matches

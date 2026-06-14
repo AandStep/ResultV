@@ -44,7 +44,9 @@
     "favorite": "Add to favorites",
     "unfavorite": "Remove from favorites",
     "pingTooltip": "Measure latency to servers (TCP, not through tunnel)",
-    "sortMenuTooltip": "Sort servers in this list"
+    "sortMenuTooltip": "Sort servers in this list",
+    "websiteTooltip": "Official website",
+    "telegramTooltip": "Telegram channel"
   },
   "add": {
     "titleAdd": "Add Configuration",
@@ -227,7 +229,7 @@
     "subscription_user_agent": {
       "title": "User agent",
       "desc": "Clear the field to use the default ResultV/<version>/Windows/<OS version> value.",
-      "placeholder": "ResultV/3.2.3/Windows/11_10.0.26200"
+      "placeholder": "ResultV/3.2.4/Windows/11_10.0.26200"
     },
     "dns": {
       "title": "DNS Servers",
@@ -236,6 +238,7 @@
       "preset_google": "Google DNS",
       "preset_cloudflare": "Cloudflare DNS",
       "preset_quad9": "Quad9 DNS",
+      "preset_yandex": "Yandex DNS",
       "custom_placeholder": "Example: 8.8.8.8, 1.1.1.1",
       "apply": "Apply"
     },
@@ -328,6 +331,7 @@
     "refreshSub": "Refresh",
     "refreshSubAria": "Refresh subscription",
     "manualPingAria": "Ping servers in this subscription",
+    "manualPingMyServersAria": "Ping my servers",
     "deleteSubscriptionAria": "Delete subscription",
     "deleteManualGroupAria": "Delete all manual servers",
     "confirmDeleteSubscription": "Delete subscription \"{{name}}\" and all its servers from the list?",
@@ -434,6 +438,18 @@
     "title": "Kill Switch Triggered",
     "message": "The VPN server is unreachable — Kill Switch is blocking all traffic.\n\nDisconnect the server and clear the firewall block? The Kill Switch setting stays on, so protection will engage again on the next connection.",
     "confirm": "Disconnect and clear block"
+  },
+  "leftovers": {
+    "title": "Recovered from an unclean exit",
+    "lead": "The app exited uncleanly last time (for example, via Task Manager). The following were detected and cleaned up automatically:",
+    "tail": "Your internet connection has been restored.",
+    "itemTun": "Tunnel adapter and default route",
+    "itemProxy": "System proxy",
+    "itemDns": "System DNS",
+    "itemFirewall": "Firewall rules (Kill Switch)",
+    "elevTitle": "Leftovers from the previous session detected",
+    "elevLead": "The app exited uncleanly last time (for example, via Task Manager) and left system settings behind:",
+    "elevTail": "Administrator rights are required to clean them up. Restart the app as administrator — cleanup will run automatically."
   },
   "app": {
     "loading": "Loading system..."

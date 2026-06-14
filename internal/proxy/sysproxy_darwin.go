@@ -103,6 +103,10 @@ func (d *DarwinSystemProxy) ApplyKillSwitch() error {
 	return d.Set(killSwitchSinkhole, nil)
 }
 
+// LeftoverActive is Windows-only; macOS uses tunnel mode where sing-box owns
+// the network state and there is no registry proxy to strand on force-kill.
+func (d *DarwinSystemProxy) LeftoverActive() bool { return false }
+
 func (d *DarwinSystemProxy) buildBypass(whitelist []string) []string {
 	base := []string{"localhost", "127.0.0.1", "::1", "*.local", "169.254/16"}
 	if len(whitelist) == 0 || d.router == nil {

@@ -32,6 +32,8 @@ type stubEngine struct {
 	running    bool
 	applyCalls [][]string
 	applyErr   error
+	proxyUp    int64
+	proxyDown  int64
 }
 
 func (s *stubEngine) Start(_ context.Context, cfg EngineConfig) error {
@@ -54,6 +56,10 @@ func (s *stubEngine) GetTrafficStats() (up, down int64) {
 	return 0, 0
 }
 
+func (s *stubEngine) GetProxyTrafficStats() (up, down int64) {
+	return s.proxyUp, s.proxyDown
+}
+
 func (s *stubEngine) ApplyAppWhitelist(paths []string) error {
 	s.applyCalls = append(s.applyCalls, append([]string(nil), paths...))
 	return s.applyErr
@@ -62,6 +68,7 @@ func (s *stubEngine) ApplyAppWhitelist(paths []string) error {
 type stubSystemProxy struct {
 	setCalls    []string
 	disableCall int
+	leftover    bool
 }
 
 func (s *stubSystemProxy) Set(addr string, _ []string) error {
@@ -76,6 +83,7 @@ func (s *stubSystemProxy) Disable() error {
 
 func (s *stubSystemProxy) DisableSync()           {}
 func (s *stubSystemProxy) ApplyKillSwitch() error { return nil }
+func (s *stubSystemProxy) LeftoverActive() bool   { return s.leftover }
 
 func startReachableTCP(t *testing.T) (host string, port int, closeFn func()) {
 	t.Helper()
@@ -105,6 +113,9 @@ func TestConnect_TunnelStartFailureIncludesReasonAndFallbackFlag(t *testing.T) {
 	prev := isAdminCheck
 	isAdminCheck = func() bool { return true }
 	defer func() { isAdminCheck = prev }()
+	prevDelay := tunRetryDelay
+	tunRetryDelay = 0
+	defer func() { tunRetryDelay = prevDelay }()
 
 	host, port, closeFn := startReachableTCP(t)
 	defer closeFn()
@@ -146,8 +157,11 @@ func TestConnect_TunnelStartFailureIncludesReasonAndFallbackFlag(t *testing.T) {
 	if !strings.Contains(strings.ToLower(result.Reason), "access is denied") {
 		t.Fatalf("expected reason to mention access denied, got: %q", result.Reason)
 	}
-	if result.ErrorCode != ConnectErrorTunPrivileges {
-		t.Fatalf("expected tun privilege error code, got: %q", result.ErrorCode)
+	// Elevated already, so a TUN setup failure must NOT be reported as a
+	// privilege problem (that would pop a futile UAC prompt) — it is downgraded
+	// to a generic engine-start error while the reason still names the cause.
+	if result.ErrorCode != ConnectErrorEngineStart {
+		t.Fatalf("expected engine-start error code for elevated user, got: %q", result.ErrorCode)
 	}
 }
 
@@ -155,6 +169,13 @@ func TestSetMode_ReconnectsWhenConnected(t *testing.T) {
 	prev := isAdminCheck
 	isAdminCheck = func() bool { return true }
 	defer func() { isAdminCheck = prev }()
+
+	// The tunnel reconnect runs the post-start tunnel probe; stub it so the
+	// test is hermetic instead of dialing the real loopback probe listener
+	// (no engine actually serves it under stubEngine).
+	prevTunnelProbe := probeHTTPThroughProxyProbe
+	probeHTTPThroughProxyProbe = func(string) (bool, string) { return true, "" }
+	defer func() { probeHTTPThroughProxyProbe = prevTunnelProbe }()
 
 	host, port, closeFn := startReachableTCP(t)
 	defer closeFn()
@@ -295,16 +316,16 @@ func TestConnect_Hysteria2PostStartProbeFailure(t *testing.T) {
 func TestConnect_WireGuardTunnelFailsWhenE2EProbeFails(t *testing.T) {
 	prevAdmin := isAdminCheck
 	prevWG := pingWireGuardProbe
-	prevHTTP := probeTunnelHTTPProbe
+	prevHTTP := probeHTTPThroughProxyProbe
 	isAdminCheck = func() bool { return true }
 	pingWireGuardProbe = func(ip string, port int) (int64, bool, string) {
 		return 5, true, ""
 	}
-	probeTunnelHTTPProbe = func() (bool, string) { return false, "timeout" }
+	probeHTTPThroughProxyProbe = func(string) (bool, string) { return false, "timeout" }
 	defer func() {
 		isAdminCheck = prevAdmin
 		pingWireGuardProbe = prevWG
-		probeTunnelHTTPProbe = prevHTTP
+		probeHTTPThroughProxyProbe = prevHTTP
 	}()
 
 	extra := `{"private_key":"a","public_key":"b","address":["10.0.0.2/32"],"allowed_ips":["0.0.0.0/0"]}`
@@ -345,16 +366,16 @@ func TestConnect_WireGuardTunnelFailsWhenE2EProbeFails(t *testing.T) {
 func TestConnect_WireGuardPostStartProbeSuccess(t *testing.T) {
 	prevAdmin := isAdminCheck
 	prevWG := pingWireGuardProbe
-	prevHTTP := probeTunnelHTTPProbe
+	prevHTTP := probeHTTPThroughProxyProbe
 	isAdminCheck = func() bool { return true }
 	pingWireGuardProbe = func(ip string, port int) (int64, bool, string) {
 		return 5, true, ""
 	}
-	probeTunnelHTTPProbe = func() (bool, string) { return true, "" }
+	probeHTTPThroughProxyProbe = func(string) (bool, string) { return true, "" }
 	defer func() {
 		isAdminCheck = prevAdmin
 		pingWireGuardProbe = prevWG
-		probeTunnelHTTPProbe = prevHTTP
+		probeHTTPThroughProxyProbe = prevHTTP
 	}()
 
 	extra := `{"private_key":"a","public_key":"b","address":["10.0.0.2/32"],"allowed_ips":["0.0.0.0/0"]}`
@@ -389,20 +410,20 @@ func TestConnect_WireGuardPostStartProbeSuccess(t *testing.T) {
 func TestConnect_AmneziaWGTunnelFailsWhenE2EProbeFails(t *testing.T) {
 	prevAdmin := isAdminCheck
 	prevWG := pingWireGuardProbe
-	prevHTTP := probeTunnelHTTPProbe
+	prevHTTP := probeHTTPThroughProxyProbe
 	isAdminCheck = func() bool { return true }
 	pingWireGuardProbe = func(ip string, port int) (int64, bool, string) {
 		return 5, true, ""
 	}
 	httpCalls := 0
-	probeTunnelHTTPProbe = func() (bool, string) {
+	probeHTTPThroughProxyProbe = func(string) (bool, string) {
 		httpCalls++
 		return false, "timeout"
 	}
 	defer func() {
 		isAdminCheck = prevAdmin
 		pingWireGuardProbe = prevWG
-		probeTunnelHTTPProbe = prevHTTP
+		probeHTTPThroughProxyProbe = prevHTTP
 	}()
 
 	extra := `{"private_key":"a","public_key":"b","address":["10.0.0.2/32"],"allowed_ips":["0.0.0.0/0"],"amnezia":{"jc":3,"jmin":50,"jmax":1000,"s1":36,"s2":109,"h1":1129554205,"h2":1552545164,"h3":16997694,"h4":747701986}}`
@@ -443,20 +464,20 @@ func TestConnect_AmneziaWGTunnelFailsWhenE2EProbeFails(t *testing.T) {
 func TestConnect_WireGuardTunnelE2EProbeRetriesThreeTimes(t *testing.T) {
 	prevAdmin := isAdminCheck
 	prevWG := pingWireGuardProbe
-	prevHTTP := probeTunnelHTTPProbe
+	prevHTTP := probeHTTPThroughProxyProbe
 	isAdminCheck = func() bool { return true }
 	pingWireGuardProbe = func(ip string, port int) (int64, bool, string) {
 		return 5, true, ""
 	}
 	httpCalls := 0
-	probeTunnelHTTPProbe = func() (bool, string) {
+	probeHTTPThroughProxyProbe = func(string) (bool, string) {
 		httpCalls++
 		return false, "timeout"
 	}
 	defer func() {
 		isAdminCheck = prevAdmin
 		pingWireGuardProbe = prevWG
-		probeTunnelHTTPProbe = prevHTTP
+		probeHTTPThroughProxyProbe = prevHTTP
 	}()
 
 	extra := `{"private_key":"a","public_key":"b","address":["10.0.0.2/32"],"allowed_ips":["0.0.0.0/0"]}`
@@ -493,12 +514,12 @@ func TestConnect_WireGuardTunnelE2EProbeRetriesThreeTimes(t *testing.T) {
 
 func TestConnect_TrojanTunnelFailsWhenE2EProbeFails(t *testing.T) {
 	prevAdmin := isAdminCheck
-	prevHTTP := probeTunnelHTTPProbe
+	prevHTTP := probeHTTPThroughProxyProbe
 	isAdminCheck = func() bool { return true }
-	probeTunnelHTTPProbe = func() (bool, string) { return false, "timeout" }
+	probeHTTPThroughProxyProbe = func(string) (bool, string) { return false, "timeout" }
 	defer func() {
 		isAdminCheck = prevAdmin
-		probeTunnelHTTPProbe = prevHTTP
+		probeHTTPThroughProxyProbe = prevHTTP
 	}()
 
 	host, port, closeFn := startReachableTCP(t)
@@ -584,20 +605,20 @@ func TestConnect_TrojanProxyFailsWhenE2EProbeFails(t *testing.T) {
 func TestConnect_AmneziaWGTunnelStopsSessionWhenE2EProbeFails(t *testing.T) {
 	prevAdmin := isAdminCheck
 	prevWG := pingWireGuardProbe
-	prevHTTP := probeTunnelHTTPProbe
+	prevHTTP := probeHTTPThroughProxyProbe
 	isAdminCheck = func() bool { return true }
 	pingWireGuardProbe = func(ip string, port int) (int64, bool, string) {
 		return 5, true, ""
 	}
 	httpCalls := 0
-	probeTunnelHTTPProbe = func() (bool, string) {
+	probeHTTPThroughProxyProbe = func(string) (bool, string) {
 		httpCalls++
 		return false, "timeout"
 	}
 	defer func() {
 		isAdminCheck = prevAdmin
 		pingWireGuardProbe = prevWG
-		probeTunnelHTTPProbe = prevHTTP
+		probeHTTPThroughProxyProbe = prevHTTP
 	}()
 
 	extra := `{"private_key":"a","public_key":"b","address":["10.0.0.2/32"],"allowed_ips":["0.0.0.0/0"],"amnezia":{"jc":3,"jmin":50,"jmax":1000,"s1":36,"s2":109,"h1":1129554205,"h2":1552545164,"h3":16997694,"h4":747701986}}`
@@ -641,16 +662,16 @@ func TestConnect_AmneziaWGTunnelStopsSessionWhenE2EProbeFails(t *testing.T) {
 func TestConnect_AmneziaWGTunnelClearsSystemProxy(t *testing.T) {
 	prevAdmin := isAdminCheck
 	prevWG := pingWireGuardProbe
-	prevHTTP := probeTunnelHTTPProbe
+	prevHTTP := probeHTTPThroughProxyProbe
 	isAdminCheck = func() bool { return true }
 	pingWireGuardProbe = func(ip string, port int) (int64, bool, string) {
 		return 5, true, ""
 	}
-	probeTunnelHTTPProbe = func() (bool, string) { return true, "" }
+	probeHTTPThroughProxyProbe = func(string) (bool, string) { return true, "" }
 	defer func() {
 		isAdminCheck = prevAdmin
 		pingWireGuardProbe = prevWG
-		probeTunnelHTTPProbe = prevHTTP
+		probeHTTPThroughProxyProbe = prevHTTP
 	}()
 
 	extra := `{"private_key":"a","public_key":"b","address":["10.0.0.2/32"],"allowed_ips":["0.0.0.0/0"],"amnezia":{"jc":3,"jmin":50}}`

@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,6 +56,13 @@ func newSystemDNS() SystemDNS {
 	}
 }
 
+// SnapshotExists reports whether a DNS snapshot is on disk — a previous run
+// overrode the system resolver and never restored it (crash / force-kill).
+func (w *windowsSystemDNS) SnapshotExists() bool {
+	_, err := os.Stat(w.snapshotPath)
+	return err == nil
+}
+
 func (w *windowsSystemDNS) Override(servers []string) error {
 	if len(servers) == 0 {
 		return errors.New("system dns override: empty server list")
@@ -86,6 +94,46 @@ func (w *windowsSystemDNS) Override(servers []string) error {
 		}
 	}
 	return firstErr
+}
+
+// OverrideTunnelAdapter sets the resolver on the sing-tun adapter (located by
+// its interface address) so Windows DNS queries are routed into the TUN and
+// answered by sing-box's hijack-dns rule through the tunnel. Requires admin —
+// tunnel mode already is. No snapshot: the adapter vanishes on disconnect.
+func (w *windowsSystemDNS) OverrideTunnelAdapter(adapterIP, dnsIP string) error {
+	if !dnsAdminCheck() {
+		return ErrDNSRequiresAdmin
+	}
+	idx, err := findInterfaceIndexByIP(adapterIP)
+	if err != nil {
+		return err
+	}
+	return setAdapterDNS(idx, []string{dnsIP})
+}
+
+// findInterfaceIndexByIP returns the OS interface index of the adapter that
+// carries ifaceIP as one of its unicast addresses.
+func findInterfaceIndexByIP(ifaceIP string) (int, error) {
+	want := net.ParseIP(ifaceIP)
+	if want == nil {
+		return 0, fmt.Errorf("bad interface ip %q", ifaceIP)
+	}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return 0, fmt.Errorf("enumerate interfaces: %w", err)
+	}
+	for _, ifi := range ifaces {
+		addrs, err := ifi.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			if ipnet, ok := a.(*net.IPNet); ok && ipnet.IP.Equal(want) {
+				return ifi.Index, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("adapter with ip %s not found", ifaceIP)
 }
 
 func (w *windowsSystemDNS) Restore() error {
@@ -159,7 +207,38 @@ func writeSnapshot(path string, adapters []adapterDNS) error {
 	return os.Rename(tmp, path)
 }
 
+// listAdapterDNS / setAdapterDNS / resetAdapterDNS dispatch to the native
+// (iphlpapi) fast path and fall back to PowerShell on error — and, for the
+// apply path, on a read-back verification mismatch. Native is sub-millisecond;
+// PowerShell costs a process spawn per call. Worst case is therefore today's
+// speed, never a broken leak-protection feature. Whether native or PowerShell
+// ran is visible via the "dns=Xms" figure in the connect timing line.
 func listAdapterDNS() ([]adapterDNS, error) {
+	if adapters, err := listAdapterDNSNative(); err == nil {
+		return adapters, nil
+	}
+	return listAdapterDNSPowerShell()
+}
+
+func setAdapterDNS(ifIdx int, servers []string) error {
+	if err := setAdapterDNSNative(ifIdx, servers); err == nil && verifyAdapterDNS(ifIdx, servers) {
+		return nil
+	}
+	return setAdapterDNSPowerShell(ifIdx, servers)
+}
+
+func resetAdapterDNS(ifIdx int) error {
+	// Reset reverts to DHCP, whose servers we can't predict, so there's nothing
+	// to verify by value — trust the native status and fall back on error only.
+	// A silent reset miss is recoverable (snapshot restore at next start) and is
+	// not a leak.
+	if err := resetAdapterDNSNative(ifIdx); err == nil {
+		return nil
+	}
+	return resetAdapterDNSPowerShell(ifIdx)
+}
+
+func listAdapterDNSPowerShell() ([]adapterDNS, error) {
 	// Statically-configured adapters report their servers in ServerAddresses;
 	// DHCP-configured ones also do (the resolved value). PowerShell surfaces
 	// them the same way, so we snapshot whatever's effective right now and
@@ -266,7 +345,7 @@ func stripBOM(b []byte) []byte {
 	return b
 }
 
-func setAdapterDNS(ifIdx int, servers []string) error {
+func setAdapterDNSPowerShell(ifIdx int, servers []string) error {
 	quoted := make([]string, 0, len(servers))
 	for _, s := range servers {
 		s = strings.TrimSpace(s)
@@ -285,7 +364,7 @@ func setAdapterDNS(ifIdx int, servers []string) error {
 	return nil
 }
 
-func resetAdapterDNS(ifIdx int) error {
+func resetAdapterDNSPowerShell(ifIdx int) error {
 	script := fmt.Sprintf(
 		`Set-DnsClientServerAddress -InterfaceIndex %d -ResetServerAddresses`,
 		ifIdx,
@@ -389,6 +468,51 @@ func powerShellRunElevated(script string) error {
 	)
 	if out, err := powerShellRun(launcher); err != nil {
 		return fmt.Errorf("elevated powershell: %w (out=%s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (w *windowsSystemDNS) RestoreCommands() ([]string, error) {
+	data, err := os.ReadFile(w.snapshotPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read dns snapshot: %w", err)
+	}
+
+	var snap dnsSnapshot
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return nil, fmt.Errorf("parse dns snapshot: %w", err)
+	}
+
+	var cmds []string
+	for _, a := range snap.Adapters {
+		if skipAdapterDNS(a.InterfaceAlias) {
+			continue
+		}
+		if len(a.ServerAddresses) == 0 {
+			cmds = append(cmds, fmt.Sprintf("netsh interface ipv4 set dnsservers name=%d source=dhcp", a.InterfaceIndex))
+			cmds = append(cmds, fmt.Sprintf("netsh interface ipv6 set dnsservers name=%d source=dhcp", a.InterfaceIndex))
+		} else {
+			first := a.ServerAddresses[0]
+			if isSafeDNSToken(first) {
+				cmds = append(cmds, fmt.Sprintf("netsh interface ipv4 set dnsservers name=%d source=static address=%s register=primary validate=no", a.InterfaceIndex, first))
+			}
+			for idx, s := range a.ServerAddresses[1:] {
+				s = strings.TrimSpace(s)
+				if isSafeDNSToken(s) {
+					cmds = append(cmds, fmt.Sprintf("netsh interface ipv4 add dnsservers name=%d address=%s index=%d validate=no", a.InterfaceIndex, s, idx+2))
+				}
+			}
+		}
+	}
+	return cmds, nil
+}
+
+func (w *windowsSystemDNS) DeleteSnapshot() error {
+	if err := os.Remove(w.snapshotPath); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	return nil
 }

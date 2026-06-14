@@ -43,3 +43,5 @@ func (s *StubSystemProxy) DisableSync() {}
 func (s *StubSystemProxy) ApplyKillSwitch() error {
 	return fmt.Errorf("kill switch not implemented on this platform")
 }
+
+func (s *StubSystemProxy) LeftoverActive() bool { return false }

@@ -62,6 +62,10 @@ export function GetLANIPs() {
   return window['go']['main']['App']['GetLANIPs']();
 }
 
+export function GetLeftoverRecoveryReport() {
+  return window['go']['main']['App']['GetLeftoverRecoveryReport']();
+}
+
 export function GetLogs(arg1, arg2) {
   return window['go']['main']['App']['GetLogs'](arg1, arg2);
 }
@@ -136,6 +140,10 @@ export function QueueDeepLink(arg1) {
 
 export function RefreshSubscription(arg1) {
   return window['go']['main']['App']['RefreshSubscription'](arg1);
+}
+
+export function ResetLeftoverReport() {
+  return window['go']['main']['App']['ResetLeftoverReport']();
 }
 
 export function RestartAsAdmin() {

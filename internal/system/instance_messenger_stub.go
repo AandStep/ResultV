@@ -23,6 +23,10 @@ func InitSingletonMessenger(onActivate func(payload string)) (cleanup func()) {
 	return func() {}
 }
 
+// ReleaseSingletonLock is a no-op off Windows: the single-instance lock there is
+// owned by Wails' SingleInstanceLock, not our named mutex.
+func ReleaseSingletonLock() {}
+
 // ExtractDeepLinkArg scans process args for the first resultv: URL.
 func ExtractDeepLinkArg(args []string) string {
 	const scheme = "resultv:"

@@ -28,8 +28,12 @@ release
 CLAUDE.md
 
 
+
 # Claude Superpowers
 superpowers/
+.agent-skills/
+.agents/
+docs/plans/
 
 # Build artifacts and local cache
 build/bin/*.exe

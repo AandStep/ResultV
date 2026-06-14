@@ -44,6 +44,78 @@ import { useTranslation } from "react-i18next";
 import wailsAPI from "../utils/wailsAPI";
 import { rebuildSubscriptionsFromProxies } from "../utils/proxyParser";
 
+const SettingsGroupIcon = ({ Icon, size = "md" }) => {
+  const box = size === "lg" ? "w-12 h-12 rounded-2xl" : "w-10 h-10 rounded-xl";
+  const icon = size === "lg" ? "w-6 h-6" : "w-5 h-5";
+  return (
+    <div
+      className={`flex items-center justify-center ${box} bg-[#007E3A]/10 shrink-0`}
+    >
+      <Icon className={`${icon} text-[#00A819]`} />
+    </div>
+  );
+};
+
+const SettingsMenuCard = ({ id, title, Icon, onSelect }) => (
+  <button
+    type="button"
+    onClick={() => onSelect(id)}
+    className="w-full p-5 bg-zinc-900 hover:bg-zinc-800 rounded-3xl border border-zinc-800 hover:border-zinc-700 transition-colors text-left flex items-center justify-between gap-4"
+  >
+    <div className="flex items-center gap-4 min-w-0">
+      <SettingsGroupIcon Icon={Icon} />
+      <h3 className="text-white font-bold text-lg">{title}</h3>
+    </div>
+    <ChevronRight className="w-5 h-5 text-zinc-500 shrink-0" />
+  </button>
+);
+
+const SettingsSection = ({ children, className = "", t, onBack }) => (
+  <div className={`space-y-4 ${className}`}>
+    <button
+      type="button"
+      onClick={onBack}
+      className="inline-flex items-center gap-2 text-zinc-400 hover:text-white transition-colors"
+    >
+      <ArrowLeft className="w-4 h-4" />
+      {t("settings.back")}
+    </button>
+    <div className="space-y-4">{children}</div>
+  </div>
+);
+
+const SettingsFieldCard = ({
+  title,
+  description,
+  children,
+  footer,
+  inline = false,
+}) => {
+  if (inline) {
+    return (
+      <div className="flex items-center justify-between gap-6 p-6 bg-zinc-900 rounded-3xl border border-zinc-800">
+        <div className="pr-6 min-w-0">
+          <h3 className="text-white font-bold text-lg">{title}</h3>
+          {description ? (
+            <p className="text-zinc-500 text-sm mt-1">{description}</p>
+          ) : null}
+        </div>
+        <div className="shrink-0">{children}</div>
+      </div>
+    );
+  }
+  return (
+    <div className="p-6 bg-zinc-900 rounded-3xl border border-zinc-800">
+      <h3 className="text-white font-bold text-lg mb-2">{title}</h3>
+      {description ? (
+        <p className="text-zinc-500 text-sm mb-4">{description}</p>
+      ) : null}
+      {children}
+      {footer ? <p className="text-zinc-500 text-sm mt-3">{footer}</p> : null}
+    </div>
+  );
+};
+
 export const SettingsView = () => {
   const { t } = useTranslation();
   const {
@@ -87,6 +159,7 @@ export const SettingsView = () => {
       google: ["8.8.8.8", "8.8.4.4"],
       cloudflare: ["1.1.1.1", "1.0.0.1"],
       quad9: ["9.9.9.9", "149.112.112.112"],
+      yandex: ["77.88.8.8", "77.88.8.1"],
     }),
     [],
   );
@@ -256,6 +329,10 @@ export const SettingsView = () => {
       setDnsPreset("quad9");
       return;
     }
+    if (current === toKey(DNS_PRESETS.yandex)) {
+      setDnsPreset("yandex");
+      return;
+    }
     setDnsPreset("custom");
   }, [settings?.dnsServers, DNS_PRESETS]);
 
@@ -345,54 +422,8 @@ export const SettingsView = () => {
     await updateSetting("dnsServers", list);
   };
 
-  const SettingsSection = ({ children, className = "" }) => (
-    <div className={`space-y-4 ${className}`}>
-      <button
-        type="button"
-        onClick={() => setActiveSection(null)}
-        className="inline-flex items-center gap-2 text-zinc-400 hover:text-white transition-colors"
-      >
-        <ArrowLeft className="w-4 h-4" />
-        {t("settings.back")}
-      </button>
-      <div className="space-y-4">{children}</div>
-    </div>
-  );
-
   const selectFieldButtonClass =
     "w-full bg-zinc-950 border border-zinc-800 px-4 py-3 text-base hover:border-zinc-700 focus:ring-[#00A819]/35";
-
-  const SettingsFieldCard = ({
-    title,
-    description,
-    children,
-    footer,
-    inline = false,
-  }) => {
-    if (inline) {
-      return (
-        <div className="flex items-center justify-between gap-6 p-6 bg-zinc-900 rounded-3xl border border-zinc-800">
-          <div className="pr-6 min-w-0">
-            <h3 className="text-white font-bold text-lg">{title}</h3>
-            {description ? (
-              <p className="text-zinc-500 text-sm mt-1">{description}</p>
-            ) : null}
-          </div>
-          <div className="shrink-0">{children}</div>
-        </div>
-      );
-    }
-    return (
-      <div className="p-6 bg-zinc-900 rounded-3xl border border-zinc-800">
-        <h3 className="text-white font-bold text-lg mb-2">{title}</h3>
-        {description ? (
-          <p className="text-zinc-500 text-sm mb-4">{description}</p>
-        ) : null}
-        {children}
-        {footer ? <p className="text-zinc-500 text-sm mt-3">{footer}</p> : null}
-      </div>
-    );
-  };
 
   const tunStackOptions = useMemo(
     () => [
@@ -401,32 +432,6 @@ export const SettingsView = () => {
       { value: "gvisor", label: t("settings.tun_stack.gvisor") },
     ],
     [t],
-  );
-
-  const SettingsGroupIcon = ({ Icon, size = "md" }) => {
-    const box = size === "lg" ? "w-12 h-12 rounded-2xl" : "w-10 h-10 rounded-xl";
-    const icon = size === "lg" ? "w-6 h-6" : "w-5 h-5";
-    return (
-      <div
-        className={`flex items-center justify-center ${box} bg-[#007E3A]/10 shrink-0`}
-      >
-        <Icon className={`${icon} text-[#00A819]`} />
-      </div>
-    );
-  };
-
-  const SettingsMenuCard = ({ id, title, Icon }) => (
-    <button
-      type="button"
-      onClick={() => setActiveSection(id)}
-      className="w-full p-5 bg-zinc-900 hover:bg-zinc-800 rounded-3xl border border-zinc-800 hover:border-zinc-700 transition-colors text-left flex items-center justify-between gap-4"
-    >
-      <div className="flex items-center gap-4 min-w-0">
-        <SettingsGroupIcon Icon={Icon} />
-        <h3 className="text-white font-bold text-lg">{title}</h3>
-      </div>
-      <ChevronRight className="w-5 h-5 text-zinc-500 shrink-0" />
-    </button>
   );
 
   const activeGroup = SETTINGS_GROUPS.find((g) => g.id === activeSection);
@@ -483,6 +488,7 @@ export const SettingsView = () => {
                 id={id}
                 Icon={Icon}
                 title={t(`settings.groups.${id}.title`)}
+                onSelect={setActiveSection}
               />
             ))}
           </div>
@@ -524,7 +530,7 @@ export const SettingsView = () => {
       )}
 
       {activeSection === "advanced" && (
-      <SettingsSection>
+      <SettingsSection t={t} onBack={() => setActiveSection(null)}>
         <SettingsFieldCard
           title={t("settings.tun_stack.title")}
           description={t("settings.tun_stack.desc")}
@@ -551,7 +557,7 @@ export const SettingsView = () => {
       )}
 
       {activeSection === "subscriptions" && (
-      <SettingsSection>
+      <SettingsSection t={t} onBack={() => setActiveSection(null)}>
         <SettingToggle
           title={t("settings.subscription_auto_update.title")}
           description={t("settings.subscription_auto_update.desc")}
@@ -620,7 +626,7 @@ export const SettingsView = () => {
       )}
 
       {activeSection === "security" && (
-      <SettingsSection>
+      <SettingsSection t={t} onBack={() => setActiveSection(null)}>
         <SettingToggle
           title={t("settings.killswitch.title")}
           description={t("settings.killswitch.desc")}
@@ -642,7 +648,7 @@ export const SettingsView = () => {
       )}
 
       {activeSection === "network" && (
-      <SettingsSection>
+      <SettingsSection t={t} onBack={() => setActiveSection(null)}>
         <div className="p-6 bg-zinc-900 rounded-3xl border border-zinc-800">
           <h3 className="text-white font-bold text-lg mb-2">
             {t("settings.dns.title")}
@@ -673,6 +679,12 @@ export const SettingsView = () => {
               className={`px-4 py-3 rounded-xl font-medium transition-colors border ${dnsPreset === "quad9" ? "bg-[#007E3A] text-white border-[#007E3A]" : "bg-zinc-800 hover:bg-zinc-700 text-white border-zinc-700"}`}
             >
               {t("settings.dns.preset_quad9")}
+            </button>
+            <button
+              onClick={() => applyDNSPreset("yandex")}
+              className={`px-4 py-3 rounded-xl font-medium transition-colors border ${dnsPreset === "yandex" ? "bg-[#007E3A] text-white border-[#007E3A]" : "bg-zinc-800 hover:bg-zinc-700 text-white border-zinc-700"}`}
+            >
+              {t("settings.dns.preset_yandex")}
             </button>
           </div>
 

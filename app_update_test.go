@@ -8,6 +8,8 @@ import (
 type stubKillSwitch struct {
 	disableCalls int
 	disableErr   error
+	hasLeftover  bool
+	removeCalls  int
 }
 
 func (s *stubKillSwitch) Enable(string, []string) error { return nil }
@@ -15,7 +17,13 @@ func (s *stubKillSwitch) Disable() error {
 	s.disableCalls++
 	return s.disableErr
 }
-func (s *stubKillSwitch) IsEnabled() bool { return false }
+func (s *stubKillSwitch) IsEnabled() bool        { return false }
+func (s *stubKillSwitch) HasLeftoverRules() bool { return s.hasLeftover }
+func (s *stubKillSwitch) RemoveLeftoverRules() error {
+	s.removeCalls++
+	return nil
+}
+func (s *stubKillSwitch) RestoreCommands() []string { return nil }
 
 func TestPrepareForUpdateInstall_DisablesKillSwitchEvenWithoutProxy(t *testing.T) {
 	app := NewApp()

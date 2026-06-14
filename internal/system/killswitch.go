@@ -39,6 +39,19 @@ type KillSwitch interface {
 	Disable() error
 
 	IsEnabled() bool
+
+	// HasLeftoverRules reports whether firewall rules from a previous run are
+	// still installed in the OS. Unlike IsEnabled (in-memory, reset on every
+	// fresh process), it survives a crash / force-kill and is the detection
+	// anchor for startup leftover cleanup.
+	HasLeftoverRules() bool
+
+	// RemoveLeftoverRules deletes any kill-switch firewall rules regardless of
+	// in-memory state. Safe to call when nothing is installed (no-op).
+	RemoveLeftoverRules() error
+
+	// RestoreCommands returns CLI commands to clean up firewall rules elevated.
+	RestoreCommands() []string
 }
 
 // fallbackDNS is applied when the user has no custom resolver configured. The

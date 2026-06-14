@@ -48,6 +48,16 @@ type ProxyConfig struct {
 	URI             string          `json:"uri,omitempty"`
 	Extra           json.RawMessage `json:"extra,omitempty"`
 	SubscriptionURL string          `json:"subscriptionUrl,omitempty"`
+
+	// ResolvedIP is the server address resolved once at connect time, while the
+	// host OS resolver still works (before we redirect system DNS). When IP is a
+	// domain, sing-box would otherwise re-resolve it for every new connection via
+	// the `local` DNS server — which is fragile in tunnel mode (the OS resolver we
+	// ourselves redirect can time out). A single transient failure there collapsed
+	// every new connection and tripped a false kill switch (see buildProxyOutbound,
+	// buildRoute, and the kill-switch engage callback). Empty when IP is already a
+	// literal address. Not serialized — it is an internal connect-time cache.
+	ResolvedIP string `json:"-"`
 }
 
 type EngineConfig struct {
@@ -87,6 +97,14 @@ type Engine interface {
 	IsRunning() bool
 
 	GetTrafficStats() (up, down int64)
+
+	// GetProxyTrafficStats returns cumulative bytes carried specifically by the
+	// proxy/endpoint outbound (NOT direct/split-tunnel traffic). The health
+	// watchdog uses the per-tick delta to veto a kill-switch engage while the
+	// upstream is demonstrably moving real traffic — counting only proxy bytes so
+	// direct traffic can never mask a genuinely dead upstream (which must still
+	// trip the kill switch).
+	GetProxyTrafficStats() (up, down int64)
 
 	// ApplyAppWhitelist swaps the active per-app exclusion list without
 	// disconnecting. No-op when not running. Implementations may briefly
@@ -517,10 +535,17 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 
 	var routeExclude []string
 	if pt != "WIREGUARD" && pt != "AMNEZIAWG" {
-		if serverIP := net.ParseIP(cfg.Proxy.IP); serverIP != nil {
-			cidr := cfg.Proxy.IP + "/32"
+		// Prefer the IP pinned at connect time so domain-addressed servers also
+		// get a route-exclude CIDR (previously skipped — net.ParseIP fails on a
+		// hostname — which let the server's own traffic loop back into the TUN).
+		serverHost := cfg.Proxy.IP
+		if cfg.Proxy.ResolvedIP != "" {
+			serverHost = cfg.Proxy.ResolvedIP
+		}
+		if serverIP := net.ParseIP(serverHost); serverIP != nil {
+			cidr := serverHost + "/32"
 			if serverIP.To4() == nil {
-				cidr = cfg.Proxy.IP + "/128"
+				cidr = serverHost + "/128"
 			}
 			routeExclude = append(routeExclude, cidr)
 		}
@@ -554,11 +579,30 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 		tun.UDPTimeout = "30s"
 		tun.EndpointIndependentNat = true
 	}
+	// Loopback probe inbound: post-start and watchdog health probes go through
+	// this listener instead of the TUN default route. The target hostname
+	// travels inside the proxy request and is resolved remotely by sing-box DNS
+	// (detour=proxy), so probes keep working when the OS resolver degrades
+	// mid-session — applySystemDNSOverride pins physical adapters to public
+	// resolvers that are unreachable outside the tunnel, and strict_route drops
+	// off-TUN lookups; probes relying on getaddrinfo then time out and falsely
+	// trip the kill switch on a healthy server. Bound to 127.0.0.1 only — never
+	// LAN-exposed (same surface proxy mode has always had).
+	probePort := cfg.LocalPort
+	if probePort == 0 {
+		probePort = getFreeLocalPort(14081)
+	}
+	probeIn := SBInbound{
+		Type:       "mixed",
+		Tag:        "probe-in",
+		Listen:     "127.0.0.1",
+		ListenPort: probePort,
+	}
 	sbCfg := SingBoxConfig{
 		Log:          &SBLog{Level: "error", Disabled: false},
 		DNS:          buildDNS(cfg),
 		Endpoints:    endpoints,
-		Inbounds:     []SBInbound{tun},
+		Inbounds:     []SBInbound{tun, probeIn},
 		Outbounds:    appendOutbounds(outbounds, cfg),
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
@@ -1053,7 +1097,7 @@ func PingProxyUDP(ip string, port int) (latencyMs int64, reachable bool, reason 
 	}
 	defer conn.Close()
 
-	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(1 * time.Second))
 	start := time.Now()
 	_, _ = conn.Write([]byte{0x00})
 	buf := make([]byte, 1)
@@ -1073,6 +1117,20 @@ func PingProxyUDP(ip string, port int) (latencyMs int64, reachable bool, reason 
 	}
 
 	return elapsed.Milliseconds(), true, ""
+}
+
+// PingWireGuard probes a WireGuard / AmneziaWG endpoint for latency. Those
+// transports are UDP-only and silently drop any packet that isn't a valid
+// handshake, so neither a TCP connect nor a raw UDP byte yields an RTT (the UDP
+// probe can only confirm the host didn't actively refuse). An ICMP echo to the
+// host measures the real network round-trip independent of the VPN transport;
+// only when ICMP is blocked do we fall back to the UDP liveness probe (which
+// returns -1ms → shown as "—").
+func PingWireGuard(ip string, port int) (latencyMs int64, reachable bool, reason string) {
+	if ms, ok := pingICMPHost(ip, ""); ok {
+		return ms, true, ""
+	}
+	return PingProxyUDP(ip, port)
 }
 
 func pingReasonFromError(err error) string {

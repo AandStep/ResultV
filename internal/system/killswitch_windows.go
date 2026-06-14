@@ -35,8 +35,12 @@ package system
 import (
 	"fmt"
 	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 )
 
 const (
@@ -99,10 +103,10 @@ func (ks *WindowsKillSwitch) Disable() error {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 
-	if !ks.enabled {
-		return nil
-	}
-
+	// Always attempt to remove rules regardless of in-memory state.
+	// The enabled flag can be stale after a crash recovery or when kill switch
+	// was toggled via a non-standard path. disableFirewall() is a no-op when
+	// no rules are installed, so unconditional calls are safe.
 	if err := ks.disableFirewall(); err != nil {
 		return fmt.Errorf("disabling firewall kill switch: %w", err)
 	}
@@ -116,6 +120,54 @@ func (ks *WindowsKillSwitch) IsEnabled() bool {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 	return ks.enabled
+}
+
+// HasLeftoverRules reports whether kill-switch firewall rules from a previous
+// run are still installed. Unlike IsEnabled (in-memory, reset on every fresh
+// process), this queries the OS, so it detects rules stranded by a crash or
+// force-kill. We probe the _BlockAll rule — the one that actually severs the
+// internet; if it's gone, any stray allow rules are harmless. netsh echoes the
+// literal rule name when the rule exists and prints "No rules match..."
+// otherwise, so a substring check on our ASCII name is locale-independent.
+func (ks *WindowsKillSwitch) HasLeftoverRules() bool {
+	out, _ := command("netsh", "advfirewall", "firewall", "show", "rule",
+		"name="+firewallRuleName+"_BlockAll").CombinedOutput()
+	return strings.Contains(string(out), firewallRuleName+"_BlockAll")
+}
+
+// RemoveLeftoverRules deletes all kill-switch firewall rules regardless of
+// in-memory state. Used by the startup leftover-cleanup flow, where the rules
+// exist in the OS but ks.enabled is false because the process is fresh.
+// When the process lacks admin rights (typical after a crash relaunch), firewall
+// rules cannot be deleted directly — netsh requires elevation. In that case we
+// fall back to an elevated PowerShell (UAC prompt), mirroring the DNS restore
+// path. Without this, a non-admin relaunch after a kill-switch crash leaves the
+// _BlockAll rule in place and the internet stays dead.
+func (ks *WindowsKillSwitch) RemoveLeftoverRules() error {
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
+	var err error
+	if ks.isAdmin {
+		err = ks.disableFirewall()
+	} else {
+		err = ks.disableFirewallElevated()
+	}
+	ks.enabled = false
+	return err
+}
+
+func (ks *WindowsKillSwitch) RestoreCommands() []string {
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
+	script := ks.buildFirewallCleanupScript()
+	var cmds []string
+	for _, line := range strings.Split(script, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			cmds = append(cmds, line)
+		}
+	}
+	return cmds
 }
 
 
@@ -235,12 +287,23 @@ func extractValidIP(addr string) string {
 
 
 func (ks *WindowsKillSwitch) disableFirewall() error {
-	suffixes := []string{"_BlockAll", "_AllowProxy", "_AllowLocal"}
-	for _, suffix := range suffixes {
-		cmd := command("netsh", "advfirewall", "firewall", "delete", "rule",
+	// Delete the _BlockAll rule first — this is the one that kills the internet.
+	// Check its error: "access denied" means we can't restore connectivity and
+	// the caller needs to know. "No rules match" is success (already gone).
+	blockCmd := command("netsh", "advfirewall", "firewall", "delete", "rule",
+		"name="+firewallRuleName+"_BlockAll",
+	)
+	blockOut, blockErr := blockCmd.CombinedOutput()
+	if blockErr != nil && !isNetshNoRulesMatch(blockOut) {
+		return fmt.Errorf("delete _BlockAll: %s: %w", strings.TrimSpace(string(blockOut)), blockErr)
+	}
+
+	// Allow rules are best-effort: harmless if stranded (they only permit,
+	// not block), so errors are swallowed.
+	for _, suffix := range []string{"_AllowProxy", "_AllowLocal"} {
+		_ = command("netsh", "advfirewall", "firewall", "delete", "rule",
 			"name="+firewallRuleName+suffix,
-		)
-		_ = cmd.Run()
+		).Run()
 	}
 	// Clean up _AllowProxy_<i> rules (i >= 1) from a previous Enable() that
 	// had multiple proxy IPs. We sweep up to max(stored count, 8) to handle
@@ -268,6 +331,85 @@ func (ks *WindowsKillSwitch) disableFirewall() error {
 	}
 	ks.dnsRuleCount = 0
 	return nil
+}
+
+// isNetshNoRulesMatch returns true when netsh output indicates there was nothing
+// to delete — locale-independent because we check the ASCII rule name echo plus
+// the English-only "No rules" string that netsh prints regardless of UI lang.
+func isNetshNoRulesMatch(out []byte) bool {
+	s := string(out)
+	return strings.Contains(s, "No rules") || !strings.Contains(s, firewallRuleName)
+}
+
+// disableFirewallElevated builds a netsh script that deletes all kill-switch
+// rules and runs it through an elevated PowerShell process (UAC prompt).
+// Used by RemoveLeftoverRules when the app lacks admin rights — netsh firewall
+// commands require elevation, and without this the _BlockAll rule would stay
+// in place after a crash, leaving the user with no internet.
+func (ks *WindowsKillSwitch) disableFirewallElevated() error {
+	script := ks.buildFirewallCleanupScript()
+
+	dir := filepath.Join(UserDataDir(), "elevated")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create elevated dir: %w", err)
+	}
+	tmp, err := os.CreateTemp(dir, "ks-cleanup-*.ps1")
+	if err != nil {
+		return fmt.Errorf("create temp script: %w", err)
+	}
+	path := tmp.Name()
+	if _, err := tmp.WriteString(script); err != nil {
+		tmp.Close()
+		_ = os.Remove(path)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(path)
+		return err
+	}
+	defer os.Remove(path)
+
+	esc := strings.ReplaceAll(path, "'", "''")
+	launcher := fmt.Sprintf(
+		`Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File','%s'`,
+		esc,
+	)
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", launcher)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("elevated kill switch cleanup: %w (out=%s)", err, strings.TrimSpace(string(out)))
+	}
+	ks.proxyRuleCount = 0
+	ks.dnsRuleCount = 0
+	return nil
+}
+
+// buildFirewallCleanupScript generates a PowerShell script that deletes every
+// known kill-switch rule name via netsh. The script is self-contained (no
+// external deps) and suitable for running elevated.
+func (ks *WindowsKillSwitch) buildFirewallCleanupScript() string {
+	var b strings.Builder
+	// Block rule — the critical one.
+	fmt.Fprintf(&b, "netsh advfirewall firewall delete rule name=%s_BlockAll\n", firewallRuleName)
+	// Static allow rules.
+	for _, suffix := range []string{"_AllowProxy", "_AllowLocal"} {
+		fmt.Fprintf(&b, "netsh advfirewall firewall delete rule name=%s%s\n", firewallRuleName, suffix)
+	}
+	// Numbered proxy rules.
+	proxyCount := max(ks.proxyRuleCount, 8)
+	for i := 1; i < proxyCount; i++ {
+		fmt.Fprintf(&b, "netsh advfirewall firewall delete rule name=%s_AllowProxy_%d\n", firewallRuleName, i)
+	}
+	// Legacy single DNS rule.
+	fmt.Fprintf(&b, "netsh advfirewall firewall delete rule name=%s_AllowDNS\n", firewallRuleName)
+	// Numbered DNS rules.
+	count := max(ks.dnsRuleCount, len(fallbackDNS))
+	for i := 0; i < count; i++ {
+		for _, proto := range []string{"udp", "tcp"} {
+			fmt.Fprintf(&b, "netsh advfirewall firewall delete rule name=%s_AllowDNS_%d_%s\n", firewallRuleName, i, proto)
+		}
+	}
+	return b.String()
 }
 
 
