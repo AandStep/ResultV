@@ -1097,7 +1097,7 @@ func PingProxyUDP(ip string, port int) (latencyMs int64, reachable bool, reason 
 	}
 	defer conn.Close()
 
-	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(1 * time.Second))
 	start := time.Now()
 	_, _ = conn.Write([]byte{0x00})
 	buf := make([]byte, 1)
@@ -1117,6 +1117,20 @@ func PingProxyUDP(ip string, port int) (latencyMs int64, reachable bool, reason 
 	}
 
 	return elapsed.Milliseconds(), true, ""
+}
+
+// PingWireGuard probes a WireGuard / AmneziaWG endpoint for latency. Those
+// transports are UDP-only and silently drop any packet that isn't a valid
+// handshake, so neither a TCP connect nor a raw UDP byte yields an RTT (the UDP
+// probe can only confirm the host didn't actively refuse). An ICMP echo to the
+// host measures the real network round-trip independent of the VPN transport;
+// only when ICMP is blocked do we fall back to the UDP liveness probe (which
+// returns -1ms → shown as "—").
+func PingWireGuard(ip string, port int) (latencyMs int64, reachable bool, reason string) {
+	if ms, ok := pingICMPHost(ip, ""); ok {
+		return ms, true, ""
+	}
+	return PingProxyUDP(ip, port)
 }
 
 func pingReasonFromError(err error) string {

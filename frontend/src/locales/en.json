@@ -331,6 +331,7 @@
     "refreshSub": "Refresh",
     "refreshSubAria": "Refresh subscription",
     "manualPingAria": "Ping servers in this subscription",
+    "manualPingMyServersAria": "Ping my servers",
     "deleteSubscriptionAria": "Delete subscription",
     "deleteManualGroupAria": "Delete all manual servers",
     "confirmDeleteSubscription": "Delete subscription \"{{name}}\" and all its servers from the list?",

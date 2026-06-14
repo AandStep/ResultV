@@ -203,7 +203,7 @@ func PingProxyUDPLANBind(host string, port int) (latencyMs int64, reachable bool
 	}
 	defer conn.Close()
 
-	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(1 * time.Second))
 	start := time.Now()
 	_, _ = conn.Write([]byte{0x00})
 	buf := make([]byte, 1)
@@ -220,6 +220,21 @@ func PingProxyUDPLANBind(host string, port int) (latencyMs int64, reachable bool
 		return -1, true, ""
 	}
 	return elapsed.Milliseconds(), true, ""
+}
+
+// PingWireGuardLANBind is the tunnel-mode counterpart of PingWireGuard: it sends
+// the ICMP echo from the physical LAN adapter so the probe reaches the real
+// server instead of looping through the TUN default route. Falls back to the
+// LAN-bound UDP liveness probe when ICMP is blocked.
+func PingWireGuardLANBind(host string, port int) (latencyMs int64, reachable bool, reason string) {
+	source := ""
+	if ip, err := pickLANBindIPv4(); err == nil && ip != nil {
+		source = ip.String()
+	}
+	if ms, ok := pingICMPHost(host, source); ok {
+		return ms, true, ""
+	}
+	return PingProxyUDPLANBind(host, port)
 }
 
 func PingHysteria2QUICLANBind(host string, port int) (latencyMs int64, reachable bool, reason, checkType string) {

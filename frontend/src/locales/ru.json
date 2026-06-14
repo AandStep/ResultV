@@ -332,6 +332,7 @@
     "refreshSub": "Обновить",
     "refreshSubAria": "Обновить подписку",
     "manualPingAria": "Пинг серверов этой подписки",
+    "manualPingMyServersAria": "Пинг моих серверов",
     "deleteSubscriptionAria": "Удалить подписку",
     "deleteManualGroupAria": "Удалить все серверы вручную",
     "confirmDeleteSubscription": "Удалить подписку «{{name}}» и все её серверы из списка?",
