@@ -127,6 +127,10 @@ func (l *LinuxSystemProxy) ApplyKillSwitch() error {
 	return l.Set(killSwitchSinkhole, nil)
 }
 
+// LeftoverActive is Windows-only; Linux uses tunnel mode where sing-box owns
+// the network state and there is no registry proxy to strand on force-kill.
+func (l *LinuxSystemProxy) LeftoverActive() bool { return false }
+
 // --- GNOME / GTK backend (gsettings) ---
 
 type gnomeBackend struct{}

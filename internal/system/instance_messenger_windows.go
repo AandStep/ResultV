@@ -21,6 +21,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"unsafe"
@@ -96,17 +97,42 @@ var (
 
 const MSGFLT_ALLOW = 1
 
+var (
+	singletonMutexHandle windows.Handle
+	singletonReleaseOnce  sync.Once
+)
+
+// ReleaseSingletonLock frees the single-instance mutex so a successor process
+// acquires the lock immediately and shows its own window. Without it, a process
+// launched while we are still in our (slow) shutdown — the elevation restart for
+// tunnel mode, or a user relaunch — finds the mutex still held, treats itself as
+// a "second instance", pings this dying process and exits with NO window.
+// Idempotent; called at the very start of the quit path, well before the lock
+// would otherwise be released on process exit.
+func ReleaseSingletonLock() {
+	singletonReleaseOnce.Do(func() {
+		if singletonMutexHandle != 0 {
+			windows.CloseHandle(singletonMutexHandle)
+			singletonMutexHandle = 0
+		}
+	})
+}
+
 func InitSingletonMessenger(onActivate func(payload string)) (cleanup func()) {
 	mxName, err := windows.UTF16PtrFromString(mutexName)
 	if err != nil {
 		return func() {}
 	}
-	_, err = windows.CreateMutex(nil, false, mxName)
+	mutexHandle, err := windows.CreateMutex(nil, false, mxName)
 	secondInstance := err == windows.ERROR_ALREADY_EXISTS || err == windows.ERROR_ACCESS_DENIED
 	if secondInstance {
 		notifyRunningInstance(extractDeepLinkArg(os.Args))
 		os.Exit(0)
 	}
+	// We are the first instance. Keep the handle so the quit path can release
+	// the lock EARLY (see ReleaseSingletonLock) — before the slow shutdown
+	// teardown — instead of holding it until process exit.
+	singletonMutexHandle = mutexHandle
 
 	var bridgeThreadID atomic.Uint32
 	ready := make(chan struct{})

@@ -1,12 +1,12 @@
 {
   "version": "",
   "releaseTitle": {
-    "ru": "Hotfixes 3.2.3",
-    "en": "Hotfixes 3.2.3"
+    "ru": "Улучшение туннель режима, ускорение подключения и баг фиксы",
+    "en": "Tunnel mode improvements, connection speedup and bug fixes"
   },
   "releaseNotes": {
-    "ru": "Устранены ложные срабатывания kill switch — во всех режимах (прокси и туннель). Watchdog теперь проверяет реальный канал передачи данных (через локальный листенер в прокси-режиме и через TUN-интерфейс в туннельном), а не открывает новое соединение к серверу — такое соединение могло кратковременно не отвечать даже при полностью рабочем туннеле, из-за чего kill switch ложно срабатывал. Kill switch emergency больше не всплывает, если фаервол всё равно не может заблокировать трафик (нет прав администратора). Убран автоматический пинг серверов каждые 60 секунд. Улучшен пинг для Hysteria2 — теперь корректно отображается реальная задержка вместо «Online».",
-    "en": "Eliminated false kill switch trips — in all modes (proxy and tunnel). The watchdog now checks the actual data path (through the local listener in proxy mode and through the TUN interface in tunnel mode) instead of opening a new connection to the server — such a connection could fail transiently even when the tunnel was fully working, causing a false kill switch trip. Kill switch emergency no longer pops up when the firewall cannot actually block traffic (no administrator rights). Removed automatic server ping every 60 seconds. Improved ping display for Hysteria2 — now shows actual latency instead of \"Online\"."
+    "ru": "Улучшен режим туннеля, теперь работает стабильнее учитывая новые волны блокировок. Ускорено подключение к серверам. Пофикшены некоторые баги. Добавлен счетчик времени на главной странице, а также иконки сайта и телеграм канала. Улучшена очистка хвостов приложения при принудительном завершении, теперь выход через трей корректно очищает систему, а при аварийном выходе и запуске приложения оно автоматически очищает систему от хвостов.",
+    "en": "The tunneling mode has been improved and is now more stable, featuring new mechanisms to bypass blocking. Server connection speeds have been increased. Some bugs have been fixed. A timer has been added to the main page, along with icons for the website and Telegram channel. Application cleanup upon exit has been improved; exiting via the system tray now correctly cleans up the system, and the application automatically clears out any leftover traces upon startup following an unexpected shutdown."
   },
   "downloadUrl": "https://result-proxy.ru/",
   "platforms": {}

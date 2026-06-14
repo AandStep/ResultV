@@ -106,6 +106,41 @@ func (k *LinuxKillSwitch) IsEnabled() bool {
 	return k.enabled
 }
 
+// HasLeftoverRules detects a stranded nftables ruleset by its on-disk file,
+// written on Enable and removed on Disable. nftables/iptables rules are not
+// persistent across reboot, and the file lives in /tmp (cleared on reboot), so
+// a present file means this session armed the kill switch and didn't tear it
+// down. Pure-iptables hosts (no nft) are not covered — querying the chain needs
+// root, which we don't want to prompt for during passive detection.
+func (k *LinuxKillSwitch) HasLeftoverRules() bool {
+	_, err := os.Stat(nftablesRulesPath)
+	return err == nil
+}
+
+// RemoveLeftoverRules tears down the kill-switch table/chain regardless of
+// in-memory state. Uses the same backend selected at construction; root is
+// requested through the privileged helper.
+func (k *LinuxKillSwitch) RemoveLeftoverRules() error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	var firstErr error
+	if k.useNftBackend {
+		if err := disableNftables(); err != nil {
+			firstErr = err
+		}
+	} else {
+		if err := disableIptables(); err != nil {
+			firstErr = err
+		}
+	}
+	k.enabled = false
+	return firstErr
+}
+
+func (k *LinuxKillSwitch) RestoreCommands() []string {
+	return nil
+}
+
 // DetectGPOConflict has no analogue on Linux.
 func DetectGPOConflict() bool { return false }
 

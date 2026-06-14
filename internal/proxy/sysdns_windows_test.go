@@ -239,3 +239,50 @@ func TestOverride_EmptyServerListErrors(t *testing.T) {
 		t.Fatalf("snapshot must not be written when args are invalid; stat err=%v", err)
 	}
 }
+
+func TestRestoreCommands(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "snap.json")
+
+	adapters := []adapterDNS{
+		{InterfaceIndex: 4, InterfaceAlias: "Ethernet", ServerAddresses: []string{"8.8.8.8", "1.1.1.1"}},
+		{InterfaceIndex: 8, InterfaceAlias: "Wi-Fi", ServerAddresses: nil},
+		{InterfaceIndex: 12, InterfaceAlias: "sing-tun Tunnel", ServerAddresses: []string{"10.0.0.1"}},
+	}
+	if err := writeSnapshot(path, adapters); err != nil {
+		t.Fatalf("writeSnapshot: %v", err)
+	}
+
+	w := &windowsSystemDNS{snapshotPath: path}
+	cmds, err := w.RestoreCommands()
+	if err != nil {
+		t.Fatalf("RestoreCommands: %v", err)
+	}
+
+	expected := []string{
+		"netsh interface ipv4 set dnsservers name=4 source=static address=8.8.8.8 register=primary validate=no",
+		"netsh interface ipv4 add dnsservers name=4 address=1.1.1.1 index=2 validate=no",
+		"netsh interface ipv4 set dnsservers name=8 source=dhcp",
+		"netsh interface ipv6 set dnsservers name=8 source=dhcp",
+	}
+
+	for _, exp := range expected {
+		found := false
+		for _, cmd := range cmds {
+			if cmd == exp {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected command %q not found in %v", exp, cmds)
+		}
+	}
+
+	// Verify sing-tun Tunnel is skipped
+	for _, cmd := range cmds {
+		if strings.Contains(cmd, "name=12") {
+			t.Errorf("expected sing-tun Tunnel to be skipped, but found command: %q", cmd)
+		}
+	}
+}

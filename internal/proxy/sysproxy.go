@@ -23,4 +23,13 @@ type SystemProxy interface {
 	DisableSync()
 
 	ApplyKillSwitch() error
+
+	// LeftoverActive reports whether a system proxy set by a previous run is
+	// still in effect — i.e. the process exited (crash / force-kill) without
+	// calling Disable, leaving the OS pointed at our now-dead local port.
+	// Detection is marker-based (a file written on Set, removed on Disable),
+	// so it is independent of in-memory state. Non-Windows platforms return
+	// false: the force-kill leftover problem this guards against is specific
+	// to the Windows Internet Settings registry proxy.
+	LeftoverActive() bool
 }

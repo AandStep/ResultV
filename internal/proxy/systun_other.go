@@ -13,35 +13,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-//go:build !windows && !darwin && !linux
+//go:build !windows
 
 package proxy
 
-import "fmt"
+// Leftover sing-tun cleanup is Windows-only: on macOS/Linux sing-box's TUN is
+// torn down by the OS when the process dies, and route cleanup there is handled
+// differently. The stubs keep the cross-platform Manager code compiling.
 
+func hasLeftoverTun() bool { return false }
 
-func newSystemProxy(router *Router) SystemProxy {
-	return NewStubSystemProxy()
-}
-
-
-
-type StubSystemProxy struct{}
-
-func NewStubSystemProxy() *StubSystemProxy { return &StubSystemProxy{} }
-
-func (s *StubSystemProxy) Set(addr string, bypass []string) error {
-	return fmt.Errorf("system proxy not implemented on this platform")
-}
-
-func (s *StubSystemProxy) Disable() error {
-	return nil
-}
-
-func (s *StubSystemProxy) DisableSync() {}
-
-func (s *StubSystemProxy) ApplyKillSwitch() error {
-	return fmt.Errorf("kill switch not implemented on this platform")
-}
-
-func (s *StubSystemProxy) LeftoverActive() bool { return false }
+func clearLeftoverTun() error { return nil }

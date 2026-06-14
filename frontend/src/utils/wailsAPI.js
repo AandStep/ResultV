@@ -55,6 +55,8 @@ import {
   DecodeDeepLink,
   StartUpdate,
   CancelUpdate,
+  GetLeftoverRecoveryReport,
+  ResetLeftoverReport,
 } from '../../wailsjs/go/main/App';
 
 export const wailsAPI = {
@@ -433,6 +435,26 @@ export const wailsAPI = {
       await CancelUpdate();
     } catch (e) {
       console.error("wailsAPI.cancelUpdate error:", e);
+    }
+  },
+
+  // Report of OS-level leftovers (sing-tun adapter / system proxy / DNS /
+  // kill-switch firewall) that startup recovery already cleaned after a prior
+  // unclean exit. Returns + clears the stored report; used for a one-time notice.
+  getLeftoverRecoveryReport: async () => {
+    try {
+      return await GetLeftoverRecoveryReport();
+    } catch (e) {
+      console.error("wailsAPI.getLeftoverRecoveryReport error:", e);
+      return { proxy: false, dns: false, tun: false, firewall: false };
+    }
+  },
+
+  resetLeftoverReport: async () => {
+    try {
+      await ResetLeftoverReport();
+    } catch (e) {
+      console.error("wailsAPI.resetLeftoverReport error:", e);
     }
   },
 };

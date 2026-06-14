@@ -39,6 +39,11 @@ func (ks *StubKillSwitch) IsEnabled() bool {
 	return false
 }
 
+func (ks *StubKillSwitch) HasLeftoverRules() bool { return false }
+
+func (ks *StubKillSwitch) RemoveLeftoverRules() error { return nil }
+func (ks *StubKillSwitch) RestoreCommands() []string   { return nil }
+
 
 func DetectGPOConflict() bool {
 	return false

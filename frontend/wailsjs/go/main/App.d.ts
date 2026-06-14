@@ -37,6 +37,8 @@ export function GetConfig():Promise<config.AppConfig>;
 
 export function GetLANIPs():Promise<Array<string>>;
 
+export function GetLeftoverRecoveryReport():Promise<Record<string, boolean>>;
+
 export function GetLogs(arg1:number,arg2:number):Promise<logger.LogPage>;
 
 export function GetMode():Promise<string>;
@@ -74,6 +76,8 @@ export function PingProxy(arg1:string,arg2:number,arg3:string):Promise<proxy.Pin
 export function QueueDeepLink(arg1:string):Promise<void>;
 
 export function RefreshSubscription(arg1:string):Promise<Array<config.ProxyEntry>>;
+
+export function ResetLeftoverReport():Promise<string>;
 
 export function RestartAsAdmin():Promise<void>;
 

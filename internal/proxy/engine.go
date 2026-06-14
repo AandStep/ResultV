@@ -98,6 +98,14 @@ type Engine interface {
 
 	GetTrafficStats() (up, down int64)
 
+	// GetProxyTrafficStats returns cumulative bytes carried specifically by the
+	// proxy/endpoint outbound (NOT direct/split-tunnel traffic). The health
+	// watchdog uses the per-tick delta to veto a kill-switch engage while the
+	// upstream is demonstrably moving real traffic — counting only proxy bytes so
+	// direct traffic can never mask a genuinely dead upstream (which must still
+	// trip the kill switch).
+	GetProxyTrafficStats() (up, down int64)
+
 	// ApplyAppWhitelist swaps the active per-app exclusion list without
 	// disconnecting. No-op when not running. Implementations may briefly
 	// interrupt traffic while rebuilding the routing config.
@@ -571,11 +579,30 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 		tun.UDPTimeout = "30s"
 		tun.EndpointIndependentNat = true
 	}
+	// Loopback probe inbound: post-start and watchdog health probes go through
+	// this listener instead of the TUN default route. The target hostname
+	// travels inside the proxy request and is resolved remotely by sing-box DNS
+	// (detour=proxy), so probes keep working when the OS resolver degrades
+	// mid-session — applySystemDNSOverride pins physical adapters to public
+	// resolvers that are unreachable outside the tunnel, and strict_route drops
+	// off-TUN lookups; probes relying on getaddrinfo then time out and falsely
+	// trip the kill switch on a healthy server. Bound to 127.0.0.1 only — never
+	// LAN-exposed (same surface proxy mode has always had).
+	probePort := cfg.LocalPort
+	if probePort == 0 {
+		probePort = getFreeLocalPort(14081)
+	}
+	probeIn := SBInbound{
+		Type:       "mixed",
+		Tag:        "probe-in",
+		Listen:     "127.0.0.1",
+		ListenPort: probePort,
+	}
 	sbCfg := SingBoxConfig{
 		Log:          &SBLog{Level: "error", Disabled: false},
 		DNS:          buildDNS(cfg),
 		Endpoints:    endpoints,
-		Inbounds:     []SBInbound{tun},
+		Inbounds:     []SBInbound{tun, probeIn},
 		Outbounds:    appendOutbounds(outbounds, cfg),
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),

@@ -27,6 +27,8 @@ import { LogsView } from "./views/LogsView";
 import { SettingsView } from "./views/SettingsView";
 import { formatBytes, formatSpeed } from "./utils/formatters";
 import { useConfigContext } from "./context/ConfigContext";
+import wailsAPI from "./utils/wailsAPI";
+import { EventsOn, EventsOff } from "../wailsjs/runtime/runtime";
 import logo from "./assets/logo.png";
 import { useTranslation } from "react-i18next";
 import { useCheckUpdate } from "./hooks/useCheckUpdate";
@@ -46,6 +48,7 @@ const AppContent = () => {
         appDialog,
         closeAppDialog,
         handleAppDialogConfirm,
+        showAlertDialog,
     } = useConfigContext();
     const { updateAvailable, latestVersionData, currentVersion, hasPlatformAsset } =
         useCheckUpdate();
@@ -63,6 +66,54 @@ const AppContent = () => {
         window.sessionStorage.removeItem("updateDismissed");
         setDismissedUpdateVersion(latestVersion);
     };
+
+    // Startup recovery runs in Go and reliably removes OS-level leftovers from a
+    // prior unclean exit (force-kill / crash) — including a stranded sing-tun
+    // adapter that still owns the default route, which is what actually breaks
+    // the internet in tunnel mode. Here we only show a one-time informational
+    // notice of what was cleaned. The report is both pulled (recovery finished
+    // before mount) and pushed via the "leftovers:recovered" event (recovery
+    // finished after mount); a ref guard shows the notice exactly once.
+    const leftoverNoticeShownRef = React.useRef(false);
+    React.useEffect(() => {
+        const showNotice = (rep) => {
+            if (leftoverNoticeShownRef.current) return;
+            if (!rep || (!rep.proxy && !rep.dns && !rep.tun && !rep.firewall)) return;
+            leftoverNoticeShownRef.current = true;
+            wailsAPI.resetLeftoverReport();
+            const items = [];
+            if (rep.tun) items.push(t("leftovers.itemTun"));
+            if (rep.proxy) items.push(t("leftovers.itemProxy"));
+            if (rep.dns) items.push(t("leftovers.itemDns"));
+            if (rep.firewall) items.push(t("leftovers.itemFirewall"));
+            const bullets = items.map((it) => `• ${it}`).join("\n");
+            if (rep.needsElevation) {
+                // Admin-requiring leftovers were only DETECTED (we run without
+                // elevation): offer an explicit elevated restart instead of the
+                // old surprise mid-startup UAC. The elevated instance cleans
+                // them on its own startup pass and shows the normal notice.
+                showAlertDialog({
+                    title: t("leftovers.elevTitle"),
+                    message: `${t("leftovers.elevLead")}\n\n${bullets}\n\n${t("leftovers.elevTail")}`,
+                    variant: "warning",
+                    confirmText: t("tunnel.restartAsAdmin"),
+                    onConfirmAction: () => wailsAPI.restartAsAdmin(),
+                });
+                return;
+            }
+            showAlertDialog({
+                title: t("leftovers.title"),
+                message: `${t("leftovers.lead")}\n\n${bullets}\n\n${t("leftovers.tail")}`,
+                variant: "warning",
+                confirmText: t("common.ok"),
+            });
+        };
+        (async () => {
+            showNotice(await wailsAPI.getLeftoverRecoveryReport());
+        })();
+        EventsOn("leftovers:recovered", showNotice);
+        return () => EventsOff("leftovers:recovered");
+    }, [t, showAlertDialog]);
 
     if (!isConfigLoaded) {
         return (

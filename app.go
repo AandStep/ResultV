@@ -113,6 +113,12 @@ type App struct {
 
 	updateMu     sync.Mutex
 	updateCancel context.CancelFunc
+
+	// leftoverReport holds what startup recovery cleaned up after a prior
+	// unclean exit, consumed once by the frontend to show an informational
+	// notice. Guarded by leftoverMu.
+	leftoverMu     sync.Mutex
+	leftoverReport LeftoverReport
 }
 
 func NewApp() *App {
@@ -310,6 +316,24 @@ func (a *App) startup(ctx context.Context) {
 
 	a.proxy = proxy.NewManager(a.log)
 	a.proxy.Init(a.ctx)
+	// Encrypt the persistent server-IP pin cache with the same hardware-keyed
+	// CryptoService as the rest of the config — those hostname→backend-IP
+	// entries must never sit on disk in the clear.
+	a.proxy.SetSecretCodec(cs)
+
+	// Create the kill switch and launch leftover recovery NOW — before the
+	// network-bound, multi-second SMART list fetch in initSmartBlockedDomains
+	// below (and the rest of startup). Recovery's only dependencies are a.proxy
+	// (just initialized) and a.killSwitch; when it was deferred to the end of
+	// startup, a force-kill / crash leftover lingered for the entire startup
+	// duration (~15s in the field, dominated by the remote list fetch) before the
+	// internet was restored. Run async so the window still appears immediately;
+	// the slow route/adapter cleanup only runs when a leftover is actually
+	// detected. The frontend shows an informational notice via
+	// GetLeftoverRecoveryReport + the "leftovers:recovered" event.
+	a.killSwitch = system.NewKillSwitch()
+	go a.recoverLeftovers()
+
 	rootDir := a.getAppRootDir()
 	a.initSmartBlockedDomains(userDataPath, rootDir)
 
@@ -320,17 +344,11 @@ func (a *App) startup(ctx context.Context) {
 	a.proxy.SetAdBlockCoordinator(a)
 	a.initAdBlockFilters()
 
-	a.killSwitch = system.NewKillSwitch()
-	// Best-effort cleanup of any kill-switch firewall rules left over from a
-	// previous run — if the app crashed or was force-killed while kill switch
-	// was active, Windows kept the rules but our in-memory state is fresh.
-	// Without this the user starts with the internet already blocked and no
-	// way to recover from the UI (Disable() is now state-agnostic, see
-	// killswitch_windows.go). Rules are re-applied when the health watchdog
-	// detects a dead upstream while kill switch is armed (see proxy.Manager).
-	if err := a.killSwitch.Disable(); err != nil {
-		a.log.Warning(fmt.Sprintf("[KILL SWITCH] Не удалось снять остаточные правила фаервола: %v", err))
-	}
+	// Leftover kill-switch firewall rules from a crashed / force-killed prior
+	// run are NOT silently cleared here (the old Disable() call was a no-op on a
+	// fresh process anyway — in-memory state starts disabled). They are detected
+	// via HasLeftoverRules and removed by recoverLeftovers (launched above),
+	// bundled into the single startup UAC prompt when admin rights are needed.
 
 	a.proxy.KillSwitchFirewallEngage = func(p proxy.ProxyConfig, dns []string) {
 		// Use the IP resolved at connect time, not the raw domain: the kill
@@ -441,6 +459,11 @@ func (a *App) startup(ctx context.Context) {
 		},
 	})
 
+	// NOTE: leftover recovery is launched ONCE, early in startup (right after the
+	// kill switch is created) — see the `go a.recoverLeftovers()` above. A second
+	// launch here used to double both the UAC prompt risk and the race surface
+	// with the frontend auto-connect.
+
 	if a.startInTray {
 		a.trayHidden.Store(1)
 		wailsRuntime.WindowHide(a.ctx)
@@ -460,6 +483,11 @@ func (a *App) startup(ctx context.Context) {
 func (a *App) shutdown(ctx context.Context) {
 	a.log.Info("ResultV завершает работу...")
 
+	// Free the single-instance lock first thing, so a relaunch during this
+	// (possibly slow) teardown starts a fresh, working instance instead of
+	// bouncing off us. Harmless if markQuitRequested already released it.
+	system.ReleaseSingletonLock()
+
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -473,21 +501,30 @@ func (a *App) shutdown(ctx context.Context) {
 			a.netmon.Stop()
 		}
 
-		if a.tray != nil {
-			a.tray.Stop()
-		}
-
-		// Always run Disable() — never trust in-memory IsEnabled() at
-		// shutdown. If the user toggled kill switch from another path
-		// (tray, headless API) the in-memory flag may be stale, and
-		// leaving stray firewall rules on quit means the user reboots
-		// with no internet. Disable() is a no-op when nothing is set.
-		if a.killSwitch != nil {
-			_ = a.killSwitch.Disable()
+		// Revert OS-level network state FIRST, before the slower UI teardown
+		// (tray.Stop waits up to 2s). If anything later hangs and trips the 10s
+		// force-exit below, the system proxy / DNS / tun are already restored —
+		// the user is never left without internet.
+		//
+		// Use RemoveLeftoverRules (not Disable) — it deletes all firewall rules
+		// regardless of in-memory state and self-elevates via UAC when admin
+		// rights are needed. This covers stale flags, toggle-off races, and the
+		// non-admin relaunch after a kill-switch crash. Gate it on
+		// HasLeftoverRules (one netsh query, ~150ms): the unconditional sweep
+		// was ~20 serial netsh spawns on EVERY quit — seconds of delay before
+		// the network-critical DNS/route cleanup in proxy.Shutdown below — and
+		// on a non-admin instance it fired a pointless UAC prompt. _BlockAll is
+		// the only rule that severs traffic; stray allow rules are harmless.
+		if a.killSwitch != nil && a.killSwitch.HasLeftoverRules() {
+			_ = a.killSwitch.RemoveLeftoverRules()
 		}
 
 		if a.proxy != nil {
 			a.proxy.Shutdown()
+		}
+
+		if a.tray != nil {
+			a.tray.Stop()
 		}
 
 		if a.cancel != nil {
@@ -676,6 +713,104 @@ func (a *App) GetStatus() proxy.StatusDTO {
 		return proxy.StatusDTO{Mode: proxy.ProxyModeProxy}
 	}
 	return a.proxy.GetStatus()
+}
+
+// LeftoverReport describes OS-level network state left behind by a previous run
+// that exited without cleanup (crash / force-kill via Task Manager). When
+// NeedsElevation is false the listed leftovers were removed; when true they
+// were only DETECTED — removing them needs admin rights the process lacks, and
+// the frontend offers a "restart as admin to clean up" button instead of the
+// old surprise mid-startup UAC prompt (which raced the auto-connect and was
+// routinely dismissed, leaving a stale default route that caused false
+// kill-switch trips).
+type LeftoverReport struct {
+	Proxy          bool `json:"proxy"`
+	DNS            bool `json:"dns"`
+	Tun            bool `json:"tun"`
+	Firewall       bool `json:"firewall"`
+	NeedsElevation bool `json:"needsElevation"`
+}
+
+// Any reports whether any leftover was detected.
+func (r LeftoverReport) Any() bool { return r.Proxy || r.DNS || r.Tun || r.Firewall }
+
+// recoverLeftovers reverts OS-level network state stranded by a prior unclean
+// exit (crash / force-kill): a leftover sing-tun adapter still holding the
+// default route (the dominant tunnel-mode "no internet" cause), an un-restored
+// DNS override, a stale system proxy, and kill-switch firewall rules. It runs
+// in Go at startup with NO UI dependency.
+//
+// Cleanup that fits the current privileges runs immediately (system proxy never
+// needs admin; everything runs directly when elevated). Leftovers that need
+// admin while we are NOT elevated are no longer cleaned via a surprise UAC —
+// they are reported with NeedsElevation=true and the frontend asks the user to
+// restart elevated (RestartAsAdmin); the elevated instance then cleans them on
+// ITS startup pass and shows the normal notice.
+func (a *App) recoverLeftovers() {
+	rep := LeftoverReport{}
+
+	var scan proxy.LeftoverScan
+	if a.proxy != nil {
+		scan = a.proxy.RecoverSystemLeftovers()
+	}
+	rep.Proxy, rep.DNS, rep.Tun = scan.Proxy, scan.DNS, scan.Tun
+	rep.NeedsElevation = scan.NeedsElevation
+
+	if a.killSwitch != nil && a.killSwitch.HasLeftoverRules() {
+		rep.Firewall = true
+		if system.IsAdmin() {
+			if err := a.killSwitch.RemoveLeftoverRules(); err != nil {
+				a.log.Warning(fmt.Sprintf("[KILL SWITCH] Ошибка снятия остаточных правил фаервола: %v", err))
+			}
+		} else {
+			// Leftover WFP rules block traffic and need admin to delete. Same
+			// policy as DNS/tun: ask for an explicit elevated restart instead of
+			// auto-firing UAC.
+			rep.NeedsElevation = true
+		}
+	}
+
+	if !rep.Any() {
+		return
+	}
+	if rep.NeedsElevation {
+		a.log.Warning(fmt.Sprintf("[СИСТЕМА] Обнаружены остатки прошлого сеанса, для очистки нужны права администратора: proxy=%v dns=%v tun=%v firewall=%v — перезапустите приложение от имени администратора",
+			rep.Proxy, rep.DNS, rep.Tun, rep.Firewall))
+	} else {
+		a.log.Warning(fmt.Sprintf("[СИСТЕМА] Сняты остатки прошлого сеанса (некорректное завершение): proxy=%v dns=%v tun=%v firewall=%v",
+			rep.Proxy, rep.DNS, rep.Tun, rep.Firewall))
+	}
+	a.leftoverMu.Lock()
+	a.leftoverReport = rep
+	a.leftoverMu.Unlock()
+	if a.ctx != nil {
+		wailsRuntime.EventsEmit(a.ctx, "leftovers:recovered", rep)
+	}
+}
+
+// GetLeftoverRecoveryReport returns the report of leftovers that
+// startup recovery cleaned. The frontend pulls this on mount to show a one-time
+// notice; the "leftovers:recovered" event covers the case where recovery
+// finishes after the frontend has already mounted.
+func (a *App) GetLeftoverRecoveryReport() map[string]bool {
+	a.leftoverMu.Lock()
+	defer a.leftoverMu.Unlock()
+	return map[string]bool{
+		"proxy":          a.leftoverReport.Proxy,
+		"dns":            a.leftoverReport.DNS,
+		"tun":            a.leftoverReport.Tun,
+		"firewall":       a.leftoverReport.Firewall,
+		"needsElevation": a.leftoverReport.NeedsElevation,
+	}
+}
+
+// ResetLeftoverReport clears the report of leftovers that
+// startup recovery cleaned. Called by the frontend once the notice is displayed.
+func (a *App) ResetLeftoverReport() string {
+	a.leftoverMu.Lock()
+	defer a.leftoverMu.Unlock()
+	a.leftoverReport = LeftoverReport{}
+	return "ok"
 }
 
 func (a *App) SetMode(mode string) error {
@@ -2324,10 +2459,28 @@ func (a *App) markQuitRequested() {
 	a.stateMu.Lock()
 	a.quitRequested = true
 	a.stateMu.Unlock()
+	// Release the single-instance lock the moment we commit to quitting (tray
+	// "Выход", or the elevation restart for tunnel mode). Otherwise the
+	// successor process — the elevated copy, or a user relaunch during our slow
+	// shutdown — finds the mutex still held, bounces itself as a "second
+	// instance" and exits with no window. Freeing it here lets that process
+	// acquire the lock and show a real window.
+	system.ReleaseSingletonLock()
 }
 
 func (a *App) restoreMainWindow() {
 	if a.ctx == nil {
+		return
+	}
+	// If we're already quitting, the window is being torn down on purpose. A
+	// late activation (e.g. a second instance pinging us mid-shutdown) must not
+	// fight that teardown — and must not reach verifyWindowOrExit, whose
+	// os.Exit(0) would abort the in-flight network cleanup in shutdown() and
+	// strand the system proxy / DNS / tun.
+	a.stateMu.Lock()
+	quitting := a.quitRequested
+	a.stateMu.Unlock()
+	if quitting {
 		return
 	}
 	a.trayHidden.Store(0)

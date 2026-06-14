@@ -13,35 +13,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-//go:build !windows && !darwin && !linux
+//go:build !windows
 
 package proxy
 
-import "fmt"
-
-
-func newSystemProxy(router *Router) SystemProxy {
-	return NewStubSystemProxy()
+// establishedServerIP is Windows-only (it reads the OS TCP table via the IP
+// Helper API). On other platforms the live-socket pin is unavailable and we
+// fall back to the existing domain behaviour.
+func establishedServerIP(serverPort int) string {
+	return ""
 }
-
-
-
-type StubSystemProxy struct{}
-
-func NewStubSystemProxy() *StubSystemProxy { return &StubSystemProxy{} }
-
-func (s *StubSystemProxy) Set(addr string, bypass []string) error {
-	return fmt.Errorf("system proxy not implemented on this platform")
-}
-
-func (s *StubSystemProxy) Disable() error {
-	return nil
-}
-
-func (s *StubSystemProxy) DisableSync() {}
-
-func (s *StubSystemProxy) ApplyKillSwitch() error {
-	return fmt.Errorf("kill switch not implemented on this platform")
-}
-
-func (s *StubSystemProxy) LeftoverActive() bool { return false }

@@ -13,35 +13,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-//go:build !windows && !darwin && !linux
-
 package proxy
 
-import "fmt"
-
-
-func newSystemProxy(router *Router) SystemProxy {
-	return NewStubSystemProxy()
-}
-
-
-
-type StubSystemProxy struct{}
-
-func NewStubSystemProxy() *StubSystemProxy { return &StubSystemProxy{} }
-
-func (s *StubSystemProxy) Set(addr string, bypass []string) error {
-	return fmt.Errorf("system proxy not implemented on this platform")
-}
-
-func (s *StubSystemProxy) Disable() error {
-	return nil
-}
-
-func (s *StubSystemProxy) DisableSync() {}
-
-func (s *StubSystemProxy) ApplyKillSwitch() error {
-	return fmt.Errorf("kill switch not implemented on this platform")
-}
-
-func (s *StubSystemProxy) LeftoverActive() bool { return false }
+// hasLeftoverTunFn / clearLeftoverTunFn indirect through package vars so the
+// Manager's recovery path can be unit-tested without a real sing-tun adapter or
+// touching the OS routing table. Production wiring points at the per-platform
+// implementations (systun_windows.go / systun_other.go).
+var (
+	hasLeftoverTunFn   = hasLeftoverTun
+	clearLeftoverTunFn = clearLeftoverTun
+)

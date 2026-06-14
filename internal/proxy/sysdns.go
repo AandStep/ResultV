@@ -39,6 +39,24 @@ var ErrDNSRequiresAdmin = errors.New("system dns: administrator privileges requi
 type SystemDNS interface {
 	Override(servers []string) error
 	Restore() error
+
+	// OverrideTunnelAdapter points the tunnel adapter's resolver at dnsIP — an
+	// address inside the TUN subnet, answered by sing-box's hijack-dns rule
+	// through the tunnel. The adapter is located by its interface address
+	// (adapterIP). Deliberately NOT snapshotted: the adapter is destroyed on
+	// disconnect, so there is nothing to restore.
+	OverrideTunnelAdapter(adapterIP, dnsIP string) error
+
+	// SnapshotExists reports whether a DNS snapshot is present on disk — i.e.
+	// a previous run applied an override and did not cleanly restore it
+	// (crash / force-kill). It is the detection anchor for startup leftover
+	// cleanup; non-Windows platforms return false.
+	SnapshotExists() bool
+
+	// RestoreCommands returns the list of CLI commands (netsh) to restore DNS.
+	RestoreCommands() ([]string, error)
+	// DeleteSnapshot deletes the on-disk snapshot.
+	DeleteSnapshot() error
 }
 
 // NewSystemDNS returns the platform implementation. On non-Windows it's

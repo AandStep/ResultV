@@ -94,6 +94,30 @@ func (k *DarwinKillSwitch) IsEnabled() bool {
 	return k.enabled
 }
 
+// HasLeftoverRules detects a stranded ruleset by the on-disk pf rules file,
+// which Enable writes and Disable removes. /tmp is cleared on reboot and pf is
+// off by default after boot, so a present file reliably means "this session
+// engaged pf and didn't tear it down".
+func (k *DarwinKillSwitch) HasLeftoverRules() bool {
+	_, err := os.Stat(pfRulesPath)
+	return err == nil
+}
+
+// RemoveLeftoverRules disables pf and removes the ruleset file regardless of
+// in-memory state. pfctl needs root, so this prompts via the privileged helper.
+func (k *DarwinKillSwitch) RemoveLeftoverRules() error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	_, _ = runPrivileged([]string{"pfctl", "-d"})
+	_ = os.Remove(pfRulesPath)
+	k.enabled = false
+	return nil
+}
+
+func (k *DarwinKillSwitch) RestoreCommands() []string {
+	return nil
+}
+
 // DetectGPOConflict has no analogue on macOS; group-policy proxy lockdown is
 // a Windows-specific concept.
 func DetectGPOConflict() bool { return false }

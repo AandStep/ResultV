@@ -194,7 +194,7 @@ func TestProbeProxyAlive_TunnelUsesLANProbeForTCPTransports(t *testing.T) {
 		return 12, true, ""
 	}
 
-	alive := m.probeProxyAlive(proxy, ProxyModeTunnel)
+	alive, _ := m.probeProxyAlive(proxy, ProxyModeTunnel)
 	if !alive {
 		t.Fatal("expected alive via LAN probe")
 	}
@@ -225,7 +225,7 @@ func TestProbeProxyAlive_TunnelUsesLANProbeForWireGuard(t *testing.T) {
 		return -1, true, ""
 	}
 
-	alive := m.probeProxyAlive(proxy, ProxyModeTunnel)
+	alive, _ := m.probeProxyAlive(proxy, ProxyModeTunnel)
 	if !alive {
 		t.Fatal("expected alive via wireguard LAN probe")
 	}
@@ -234,7 +234,12 @@ func TestProbeProxyAlive_TunnelUsesLANProbeForWireGuard(t *testing.T) {
 	}
 }
 
-func TestProbeHealthy_TunnelWithEngineUsesHTTPProbe(t *testing.T) {
+// TestProbeHealthy_TunnelWithEngineUsesLoopbackProbe pins the 2026-06 fix for
+// false kill-switch trips: the tunnel watchdog probe must go through the local
+// probe inbound (127.0.0.1:localPort), where sing-box resolves the hostname
+// remotely — NOT through the TUN default route, whose getaddrinfo dies once
+// the session's own DNS override + strict_route degrade the OS resolver.
+func TestProbeHealthy_TunnelWithEngineUsesLoopbackProbe(t *testing.T) {
 	m := NewManager(nil)
 	m.engine = &stubEngine{running: true}
 
@@ -247,21 +252,59 @@ func TestProbeHealthy_TunnelWithEngineUsesHTTPProbe(t *testing.T) {
 
 	tunnelCalled := 0
 	proxyCalled := 0
-	probeTunnelHealthProbe = func() bool {
+	gotPort := 0
+	probeTunnelHealthProbe = func() (bool, string) {
 		tunnelCalled++
-		return true
+		return false, "must not be used"
 	}
-	probeProxyHealthProbe = func(_ int) bool {
+	probeProxyHealthProbe = func(port int) (bool, string) {
 		proxyCalled++
-		return false
+		gotPort = port
+		return true, ""
 	}
 
-	alive := m.probeHealthy(ProxyConfig{IP: "1.2.3.4", Port: 443, Type: "hysteria2"}, ProxyModeTunnel, 0, true)
+	alive, _ := m.probeHealthy(ProxyConfig{IP: "1.2.3.4", Port: 443, Type: "hysteria2"}, ProxyModeTunnel, 14081, true)
 	if !alive {
-		t.Fatal("expected alive via tunnel HTTP probe")
+		t.Fatal("expected alive via loopback probe")
+	}
+	if proxyCalled != 1 || tunnelCalled != 0 {
+		t.Fatalf("unexpected calls loopback=%d tunnel=%d", proxyCalled, tunnelCalled)
+	}
+	if gotPort != 14081 {
+		t.Fatalf("expected probe on local port 14081, got %d", gotPort)
+	}
+}
+
+// Without a known local port the watchdog falls back to the legacy
+// default-route probe rather than probing nothing at all.
+func TestProbeHealthy_TunnelWithoutLocalPortFallsBackToTunnelProbe(t *testing.T) {
+	m := NewManager(nil)
+	m.engine = &stubEngine{running: true}
+
+	oldTunnel := probeTunnelHealthProbe
+	oldProxy := probeProxyHealthProbe
+	defer func() {
+		probeTunnelHealthProbe = oldTunnel
+		probeProxyHealthProbe = oldProxy
+	}()
+
+	tunnelCalled := 0
+	proxyCalled := 0
+	probeTunnelHealthProbe = func() (bool, string) {
+		tunnelCalled++
+		return true, ""
+	}
+	probeProxyHealthProbe = func(_ int) (bool, string) {
+		proxyCalled++
+		return false, "must not be used"
+	}
+
+	alive, _ := m.probeHealthy(ProxyConfig{IP: "1.2.3.4", Port: 443, Type: "hysteria2"}, ProxyModeTunnel, 0, true)
+	if !alive {
+		t.Fatal("expected alive via tunnel HTTP probe fallback")
 	}
 	if tunnelCalled != 1 || proxyCalled != 0 {
-		t.Fatalf("unexpected calls tunnel=%d proxy=%d", tunnelCalled, proxyCalled)
+		t.Fatalf("unexpected calls tunnel=%d loopback=%d", tunnelCalled, proxyCalled)
 	}
 }
 
@@ -276,15 +319,15 @@ func TestProbeHealthy_TunnelEngineNotRunningFallsBackToDirectProbe(t *testing.T)
 	}()
 
 	tunnelCalled := 0
-	probeTunnelHealthProbe = func() bool {
+	probeTunnelHealthProbe = func() (bool, string) {
 		tunnelCalled++
-		return true
+		return true, ""
 	}
 	pingHysteria2LANProbe = func(_ string, _ int) (int64, bool, string, string) {
 		return -1, true, "", "udp_lan_bind"
 	}
 
-	alive := m.probeHealthy(ProxyConfig{IP: "1.2.3.4", Port: 443, Type: "hysteria2"}, ProxyModeTunnel, 0, false)
+	alive, _ := m.probeHealthy(ProxyConfig{IP: "1.2.3.4", Port: 443, Type: "hysteria2"}, ProxyModeTunnel, 0, false)
 	if !alive {
 		t.Fatal("expected alive via direct probe fallback")
 	}
@@ -293,25 +336,25 @@ func TestProbeHealthy_TunnelEngineNotRunningFallsBackToDirectProbe(t *testing.T)
 	}
 }
 
-func TestProbeHealthy_TunnelHTTPProbeCalledForAllProtocols(t *testing.T) {
+func TestProbeHealthy_TunnelLoopbackProbeCalledForAllProtocols(t *testing.T) {
 	protocols := []string{"hysteria2", "wireguard", "amneziawg", "http", "vmess", "vless"}
 	for _, proto := range protocols {
 		t.Run(proto, func(t *testing.T) {
 			m := NewManager(nil)
 			m.engine = &stubEngine{running: true}
 
-			oldTunnel := probeTunnelHealthProbe
-			defer func() { probeTunnelHealthProbe = oldTunnel }()
+			oldProxy := probeProxyHealthProbe
+			defer func() { probeProxyHealthProbe = oldProxy }()
 
 			called := 0
-			probeTunnelHealthProbe = func() bool {
+			probeProxyHealthProbe = func(_ int) (bool, string) {
 				called++
-				return true
+				return true, ""
 			}
 
-			alive := m.probeHealthy(ProxyConfig{IP: "1.2.3.4", Port: 443, Type: proto}, ProxyModeTunnel, 0, true)
+			alive, _ := m.probeHealthy(ProxyConfig{IP: "1.2.3.4", Port: 443, Type: proto}, ProxyModeTunnel, 14081, true)
 			if !alive || called != 1 {
-				t.Fatalf("proto=%s: expected HTTP probe, called=%d alive=%v", proto, called, alive)
+				t.Fatalf("proto=%s: expected loopback probe, called=%d alive=%v", proto, called, alive)
 			}
 		})
 	}
@@ -339,7 +382,7 @@ func TestProbeProxyAlive_TunnelUsesLANProbeForHysteria2(t *testing.T) {
 		return -1, true, "", "udp_lan_bind"
 	}
 
-	alive := m.probeProxyAlive(proxy, ProxyModeTunnel)
+	alive, _ := m.probeProxyAlive(proxy, ProxyModeTunnel)
 	if !alive {
 		t.Fatal("expected alive via hysteria2 LAN probe")
 	}
