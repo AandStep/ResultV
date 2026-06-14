@@ -309,13 +309,14 @@ jobs:
           const ruTitle = pickLang(update.releaseTitle, 'ru').trim() || 'Bug Fixes & Improvements';
           const enTitle = pickLang(update.releaseTitle, 'en').trim() || ruTitle;
           const host = new URL(update.downloadUrl).hostname;
+          const telegramUrl = 'https://t.me/resultvpn';
 
           const sections = [];
           if (ruNotes) {
-            sections.push(`Что нового в версии ${version}?\n\n${ruNotes}\n\n🌐 Официальный сайт: ${host}`);
+            sections.push(`Что нового в версии ${version}?\n\n${ruNotes}\n\n🌐 Официальный сайт: ${host}\n📣 Наш телеграм-канал с новостями и инсайдами: ${telegramUrl}`);
           }
           if (enNotes && enNotes !== ruNotes) {
-            sections.push(`What's new in version ${version}?\n\n${enNotes}\n\n🌐 Official website: ${host}`);
+            sections.push(`What's new in version ${version}?\n\n${enNotes}\n\n🌐 Official website: ${host}\n📣 Our Telegram channel with news and insights: ${telegramUrl}`);
           }
           const releaseBody = sections.join('\n\n---\n\n');
           fs.writeFileSync('RELEASE_BODY.txt', releaseBody);

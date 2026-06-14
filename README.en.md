@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-3.2.3-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-3.2.4-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/desktop-Wails-27272f.svg" alt="Wails">
   <img src="https://img.shields.io/badge/backend-Go-00ADD8.svg" alt="Go">
   <img src="https://img.shields.io/badge/frontend-React_18-61dafb.svg" alt="React">
@@ -37,9 +37,56 @@
 
 ## Overview
 
-ResultV **3.2.3** is a native desktop application built with **[Wails v2](https://wails.io/)**. The UI is **React 18** with **Vite** and **Tailwind CSS**; traffic is handled by a **Go** backend and **[sing-box](https://github.com/SagerNet/sing-box)** (with project-specific build tags in `wails.json`). The interface is localized with **i18next** (English and Russian).
+ResultV **3.2.4** is a native desktop application built with **[Wails v2](https://wails.io/)**. The UI is **React 18** with **Vite** and **Tailwind CSS**; traffic is handled by a **Go** backend and **[sing-box](https://github.com/SagerNet/sing-box)** (with project-specific build tags in `wails.json`). The interface is localized with **i18next** (English and Russian).
 
 **Prebuilt releases:** GitHub Actions publishes **Windows amd64** artifacts (portable `.exe` and NSIS installer), **macOS** (`.dmg`) and **Linux** (`.AppImage`, `.deb`, `.rpm`) when a `v*` tag is pushed.
+
+---
+
+## Installation
+
+Prebuilt binaries live on the **[Releases](https://github.com/AandStep/ResultV/releases/latest)** page — you do **not** need to build from source with Wails.
+
+### Windows
+
+Download the `*-installer.exe` (or the portable `.exe`) and run it.
+
+### macOS
+
+Download `ResultV.dmg`, open it and drag the app into `Applications`.
+
+### Linux
+
+The universal option for every distro is the **AppImage** — no installation required:
+
+```bash
+chmod +x ResultV*.AppImage
+./ResultV*.AppImage
+```
+
+If the AppImage doesn't start, install FUSE (`fuse2`): on Debian/Ubuntu — `sudo apt install libfuse2`, on Fedora — `sudo dnf install fuse`, on Arch/CachyOS — `sudo pacman -S fuse2`.
+
+**Arch / CachyOS (and other Arch-based):** the AppImage runs natively (just needs `fuse2`, see above). The `.deb`/`.rpm` packages do not install directly — use the AppImage.
+
+**NixOS:** the AppImage **does not run directly** — the system has no standard FHS loader. Run it through a wrapper:
+
+```bash
+nix-shell -p appimage-run --run "appimage-run ./ResultV*.AppImage"
+```
+
+Or enable automatic AppImage execution in `configuration.nix` and rebuild:
+
+```nix
+programs.appimage.enable = true;
+programs.appimage.binfmt = true;
+```
+
+After that the AppImage launches with a plain `./ResultV*.AppImage`.
+
+**Debian / Ubuntu** — `.deb`: `sudo apt install ./ResultV*.deb`
+**Fedora / RHEL / openSUSE** — `.rpm`: `sudo dnf install ./ResultV*.rpm` (or `sudo zypper install`).
+
+> Current builds target `linux/amd64` (x86_64).
 
 ---
 

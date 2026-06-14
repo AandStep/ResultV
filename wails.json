@@ -5,7 +5,7 @@
   "build:tags": "with_gvisor,with_utls,with_clash_api,with_quic,with_wireguard,with_naive_outbound,with_purego",
   "info": {
     "productString": "ResultV",
-    "productVersion": "3.2.3",
+    "productVersion": "3.2.4",
     "companyName": "ResultV",
     "productDescription": "ResultV Application",
     "protocols": [
