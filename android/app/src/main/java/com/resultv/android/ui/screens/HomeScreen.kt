@@ -47,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -64,6 +65,7 @@ import com.resultv.android.ui.components.SubscriptionLogo
 import com.resultv.android.ui.components.flagFromCountry
 import com.resultv.android.ui.components.sortProfiles
 import com.resultv.android.ui.components.subscriptionUsesImpLogo
+import com.resultv.android.vpn.CountryRepository
 import com.resultv.android.vpn.PingRepository
 import com.resultv.android.vpn.Profile
 import com.resultv.android.vpn.ProfileRepository
@@ -84,6 +86,12 @@ fun HomeScreen(
     val subsState by SubscriptionRepository.state.collectAsStateWithLifecycle()
     val pings by PingRepository.results.collectAsStateWithLifecycle()
     val pingInflight by PingRepository.inflight.collectAsStateWithLifecycle()
+    val countries by CountryRepository.results.collectAsStateWithLifecycle()
+    val ctx = LocalContext.current
+    val dataDir = remember(ctx) { ctx.filesDir.absolutePath }
+    LaunchedEffect(profilesState.profiles) {
+        CountryRepository.resolve(profilesState.profiles, dataDir)
+    }
     // Persisted across tab switches so reopening Home doesn't snap shut.
     var dropdownOpen by rememberSaveable { mutableStateOf(false) }
     var sortMode by rememberSaveable { mutableStateOf(ProfileSortMode.Default) }
@@ -98,6 +106,7 @@ fun HomeScreen(
         else profilesState.profiles.filter { it.subscriptionId !in hiddenSubIds }
     }
     var editingProfileId by remember { mutableStateOf<String?>(null) }
+    var fullEditProfileId by remember { mutableStateOf<String?>(null) }
     var pendingDeleteProfile by remember { mutableStateOf<Profile?>(null) }
 
     val active = profilesState.active
@@ -169,6 +178,7 @@ fun HomeScreen(
         ) {
             ActiveProfileRow(
                 active = active,
+                activeCountry = active?.let { it.country ?: countries[it.id] },
                 connected = status is VpnStatus.Connected,
                 expanded = dropdownOpen,
                 onToggle = { dropdownOpen = !dropdownOpen },
@@ -181,6 +191,7 @@ fun HomeScreen(
                     activeId = profilesState.activeId,
                     pings = pings,
                     pingInflight = pingInflight,
+                    countries = countries,
                     sortMode = sortMode,
                     onSelect = {
                         ProfileRepository.setActive(it.id)
@@ -207,6 +218,7 @@ fun HomeScreen(
             editingProfileId = null
             return@let
         }
+        val canEditFull = target.subscriptionId.isBlank() && canFullEdit(target.uri)
         ProfileEditSheet(
             profile = target,
             onProbeLatency = { PingRepository.refresh(target) },
@@ -214,6 +226,21 @@ fun HomeScreen(
             onToggleFavorite = { ProfileRepository.toggleFavorite(id) },
             onDelete = { pendingDeleteProfile = target },
             onDismiss = { editingProfileId = null },
+            onEditFull = if (canEditFull) {
+                { editingProfileId = null; fullEditProfileId = id }
+            } else null,
+        )
+    }
+
+    fullEditProfileId?.let { id ->
+        val target = profilesState.profiles.firstOrNull { it.id == id }
+        if (target == null || target.isSection) {
+            fullEditProfileId = null
+            return@let
+        }
+        ProfileFullEditSheet(
+            profile = target,
+            onDismiss = { fullEditProfileId = null },
         )
     }
 
@@ -366,6 +393,7 @@ private fun formatBps(bps: Long): String {
 @Composable
 private fun ActiveProfileRow(
     active: Profile?,
+    activeCountry: String?,
     connected: Boolean,
     expanded: Boolean,
     onToggle: () -> Unit,
@@ -388,7 +416,7 @@ private fun ActiveProfileRow(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            val country = active?.let { profileCountry(it) }
+            val country = activeCountry
             val isAuto = active?.let { profileIsAuto(it) } ?: false
             when {
                 active == null -> Icon(
@@ -442,6 +470,7 @@ private fun ProfileDropdown(
     activeId: String?,
     pings: Map<String, PingRepository.Sample>,
     pingInflight: Set<String>,
+    countries: Map<String, String>,
     sortMode: ProfileSortMode,
     onSelect: (Profile) -> Unit,
     onLongPress: (Profile) -> Unit,
@@ -482,7 +511,7 @@ private fun ProfileDropdown(
                     ServerRow(
                         name = p.name,
                         subtitle = p.subtitle,
-                        countryCode = p.country,
+                        countryCode = p.country ?: countries[p.id],
                         isAuto = p.isAuto,
                         isActive = p.id == activeId,
                         isFavorite = p.isFavorite,
@@ -646,7 +675,6 @@ private fun AddProfileShortcut(onClick: () -> Unit) {
 // sites read uniformly across screens — and to keep the existing function
 // shape that consumers were already using.
 
-internal fun profileCountry(p: Profile): String? = p.country
 internal fun profileIsAuto(p: Profile): Boolean = p.isAuto
 internal fun profileSubtitle(p: Profile): String = p.subtitle
 internal fun profileProtocol(p: Profile): String = p.protocol

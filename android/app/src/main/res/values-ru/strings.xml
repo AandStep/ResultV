@@ -53,7 +53,9 @@
     <string name="settings_kill_switch">Kill Switch</string>
     <string name="settings_kill_switch_subtitle">Блокировать интернет при обрыве VPN (скоро)</string>
     <string name="settings_adblock">Блокировка рекламы</string>
-    <string name="settings_adblock_subtitle">Блокировать рекламу через DNS (скоро)</string>
+    <string name="settings_adblock_subtitle">Блокировать рекламу и трекеры через DNS и маршрутизацию</string>
+    <string name="settings_youtube">YouTube без рекламы</string>
+    <string name="settings_youtube_subtitle">Видео через VPN, рекламные запросы — через ваш российский IP. Работает только в РФ.</string>
     <string name="settings_ipv6">IPv6</string>
     <string name="settings_ipv6_subtitle">Маршрутизировать IPv6-трафик через туннель</string>
     <string name="settings_bypass_lan">Прямой LAN</string>
@@ -70,6 +72,12 @@
     <string name="settings_back">Назад к настройкам</string>
     <string name="settings_group_advanced">Дополнительные настройки</string>
     <string name="settings_group_advanced_desc">Параметры запуска, TUN и фильтрации трафика.</string>
+    <string name="settings_data_usage_title">Статистика трафика</string>
+    <string name="settings_data_usage_desc">Накопленный VPN-трафик с момента установки</string>
+    <string name="settings_data_usage_download">Получено</string>
+    <string name="settings_data_usage_upload">Отправлено</string>
+    <string name="settings_data_usage_reset">Сбросить</string>
+    <string name="settings_data_usage_reset_confirm">Сбросить статистику трафика?</string>
     <string name="settings_group_subscriptions">Подписки</string>
     <string name="settings_group_subscriptions_desc">Автообновление и данные, которые приложение отправляет провайдеру подписки.</string>
     <string name="settings_group_security">Безопасность</string>
@@ -183,6 +191,7 @@
 
     <!-- Sort menu -->
     <string name="ping_refresh_cd">Обновить пинг</string>
+    <string name="ping_online">В сети</string>
     <string name="sort_cd">Сортировка</string>
     <string name="sort_default">По умолчанию</string>
     <string name="sort_ping">Пинг</string>
@@ -202,6 +211,8 @@
     <string name="proxies_edit_name_label">Название</string>
     <string name="proxies_action_probe_latency">Проверить задержку</string>
     <string name="proxies_action_rename">Переименовать</string>
+    <string name="proxies_action_edit">Изменить</string>
+    <string name="proxies_edit_unsupported">Этот сервер нельзя изменить через форму. Добавьте его заново, чтобы поменять поля.</string>
     <string name="proxies_action_favorite">Добавить в избранное</string>
     <string name="proxies_action_unfavorite">Убрать из избранного</string>
 

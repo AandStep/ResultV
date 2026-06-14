@@ -22,7 +22,6 @@ release
 *.ntvs*
 *.njsproj
 *.sln
-.agent
 .cursor
 .claude
 CLAUDE.md
@@ -57,3 +56,7 @@ build/windows/installer/tmp/*
 tools/encrypt-sub/
 build-release.bat
 build-release.sh
+
+.agents
+.agent-skills
+

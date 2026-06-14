@@ -58,7 +58,9 @@
     <string name="settings_kill_switch">Kill Switch</string>
     <string name="settings_kill_switch_subtitle">Block internet if VPN drops (coming soon)</string>
     <string name="settings_adblock">Ad blocking</string>
-    <string name="settings_adblock_subtitle">Block ads via DNS rewrites (coming soon)</string>
+    <string name="settings_adblock_subtitle">Block ads &amp; trackers via DNS and routing rules</string>
+    <string name="settings_youtube">YouTube without ads</string>
+    <string name="settings_youtube_subtitle">Video via VPN, ad requests via your Russian IP — no ads. Works in Russia only.</string>
     <string name="settings_ipv6">IPv6</string>
     <string name="settings_ipv6_subtitle">Route IPv6 traffic through the tunnel (dual-stack)</string>
     <string name="settings_bypass_lan">Bypass LAN</string>
@@ -75,6 +77,12 @@
     <string name="settings_back">Back to settings</string>
     <string name="settings_group_advanced">Advanced settings</string>
     <string name="settings_group_advanced_desc">Startup, TUN and traffic filtering options.</string>
+    <string name="settings_data_usage_title">Data usage</string>
+    <string name="settings_data_usage_desc">Accumulated VPN traffic since install</string>
+    <string name="settings_data_usage_download">Downloaded</string>
+    <string name="settings_data_usage_upload">Uploaded</string>
+    <string name="settings_data_usage_reset">Reset</string>
+    <string name="settings_data_usage_reset_confirm">Reset data usage statistics?</string>
     <string name="settings_group_subscriptions">Subscriptions</string>
     <string name="settings_group_subscriptions_desc">Auto-refresh and the data the app sends to the subscription provider.</string>
     <string name="settings_group_security">Security</string>
@@ -212,6 +220,8 @@
 
     <!-- Sort menu (Home dropdown + Proxies list) -->
     <string name="ping_refresh_cd">Refresh ping</string>
+    <!-- Shown for reachable servers whose RTT can't be measured (WireGuard/AmneziaWG UDP). -->
+    <string name="ping_online">Online</string>
     <string name="sort_cd">Sort</string>
     <string name="sort_default">Default</string>
     <string name="sort_ping">Ping</string>
@@ -231,6 +241,8 @@
     <string name="proxies_edit_name_label">Name</string>
     <string name="proxies_action_probe_latency">Check latency</string>
     <string name="proxies_action_rename">Rename</string>
+    <string name="proxies_action_edit">Edit</string>
+    <string name="proxies_edit_unsupported">This server can\'t be edited as a form. Re-add it to change its fields.</string>
     <string name="proxies_action_favorite">Add to favourites</string>
     <string name="proxies_action_unfavorite">Remove from favourites</string>
 

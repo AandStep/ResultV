@@ -37,6 +37,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -69,6 +70,7 @@ import com.resultv.android.ui.components.SubscriptionEditSheet
 import com.resultv.android.ui.components.SubscriptionLogo
 import com.resultv.android.ui.components.sortProfiles
 import com.resultv.android.ui.components.subscriptionUsesImpLogo
+import com.resultv.android.vpn.CountryRepository
 import com.resultv.android.vpn.PingRepository
 import com.resultv.android.vpn.Profile
 import com.resultv.android.vpn.ProfileRepository
@@ -88,11 +90,13 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
     val subscriptions by SubscriptionRepository.state.collectAsStateWithLifecycle()
     val pings by PingRepository.results.collectAsStateWithLifecycle()
     val pingInflight by PingRepository.inflight.collectAsStateWithLifecycle()
+    val countries by CountryRepository.results.collectAsStateWithLifecycle()
     // Transient — these are dialogs/sheets that should always start dismissed.
     var pendingDeleteProfile by remember { mutableStateOf<Profile?>(null) }
     var pendingDeleteSub by remember { mutableStateOf<Subscription?>(null) }
     var refreshingSubId by remember { mutableStateOf<String?>(null) }
     var editingProfileId by remember { mutableStateOf<String?>(null) }
+    var fullEditProfileId by remember { mutableStateOf<String?>(null) }
     var editingSubId by remember { mutableStateOf<String?>(null) }
     // Persisted across tab switches via the SaveableStateHolder in AppShell.
     var sortMode by rememberSaveable { mutableStateOf(ProfileSortMode.Default) }
@@ -106,6 +110,13 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val dataDir = remember(ctx) { ctx.filesDir.absolutePath }
+
+    // Resolve flags by GeoIP for any server whose name carries no country
+    // hint. Re-runs when the profile set changes (import / refresh); the
+    // repository skips already-resolved and in-flight entries.
+    LaunchedEffect(state.profiles) {
+        CountryRepository.resolve(state.profiles, dataDir)
+    }
 
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
         if (state.profiles.isEmpty() && subscriptions.subs.isEmpty()) {
@@ -207,6 +218,7 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
                             profile = p,
                             activeId = state.activeId,
                             sample = pings[p.id],
+                            country = p.country ?: countries[p.id],
                             isLoading = p.id in pingInflight,
                             onClick = { ProfileRepository.setActive(p.id) },
                             onLongClick = { editingProfileId = p.id },
@@ -259,6 +271,7 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
                                 profile = p,
                                 activeId = state.activeId,
                                 sample = pings[p.id],
+                                country = p.country ?: countries[p.id],
                                 isLoading = p.id in pingInflight,
                                 onClick = { ProfileRepository.setActive(p.id) },
                                 onLongClick = { editingProfileId = p.id },
@@ -296,6 +309,7 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
             editingProfileId = null
             return@let
         }
+        val canEditFull = target.subscriptionId.isBlank() && canFullEdit(target.uri)
         ProfileEditSheet(
             profile = target,
             onProbeLatency = { PingRepository.refresh(target) },
@@ -303,6 +317,21 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
             onToggleFavorite = { ProfileRepository.toggleFavorite(id) },
             onDelete = { pendingDeleteProfile = target },
             onDismiss = { editingProfileId = null },
+            onEditFull = if (canEditFull) {
+                { editingProfileId = null; fullEditProfileId = id }
+            } else null,
+        )
+    }
+
+    fullEditProfileId?.let { id ->
+        val target = state.profiles.firstOrNull { it.id == id }
+        if (target == null || target.isSection) {
+            fullEditProfileId = null
+            return@let
+        }
+        ProfileFullEditSheet(
+            profile = target,
+            onDismiss = { fullEditProfileId = null },
         )
     }
 
@@ -385,6 +414,7 @@ private fun ProfileCard(
     profile: Profile,
     activeId: String?,
     sample: PingRepository.Sample?,
+    country: String?,
     isLoading: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
@@ -392,7 +422,7 @@ private fun ProfileCard(
     ServerRow(
         name = profile.name,
         subtitle = profile.subtitle,
-        countryCode = profile.country,
+        countryCode = country,
         isAuto = profile.isAuto,
         isActive = profile.id == activeId,
         isFavorite = profile.isFavorite,
@@ -509,6 +539,7 @@ private fun SubscriptionServerRowBlock(
     profile: Profile,
     activeId: String?,
     sample: PingRepository.Sample?,
+    country: String?,
     isLoading: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
@@ -522,7 +553,7 @@ private fun SubscriptionServerRowBlock(
         ServerRow(
             name = profile.name,
             subtitle = profile.subtitle,
-            countryCode = profile.country,
+            countryCode = country,
             isAuto = profile.isAuto,
             isActive = profile.id == activeId,
             isFavorite = profile.isFavorite,

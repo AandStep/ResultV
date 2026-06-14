@@ -41,10 +41,19 @@ type HTTPBlockedListProvider struct {
 	ListURLTemplate string
 }
 
+// DefaultCountryAPIURL is the project-controlled geo endpoint. It replaces
+// the previous third-party services (geojs.io, ipapi.co, ip-api.com over
+// plain HTTP) that leaked the user's real IP to outside providers.
+const DefaultCountryAPIURL = "https://result-proxy.ru/countryAPI/api.php"
+
 func NewHTTPBlockedListProvider() *HTTPBlockedListProvider {
+	apiURL := strings.TrimSpace(os.Getenv("RESULTPROXY_COUNTRY_API_URL"))
+	if apiURL == "" {
+		apiURL = DefaultCountryAPIURL
+	}
 	return &HTTPBlockedListProvider{
 		Client:          &http.Client{Timeout: 10 * time.Second},
-		CountryURL:      "https://get.geojs.io/v1/ip/country.json",
+		CountryURL:      apiURL,
 		ListURLTemplate: strings.TrimSpace(os.Getenv("RESULTPROXY_BLOCKED_LIST_URL_TEMPLATE")),
 	}
 }
@@ -341,25 +350,23 @@ func (p *HTTPBlockedListProvider) countryEndpoints() []string {
 			return out
 		}
 	}
-	if strings.TrimSpace(p.CountryURL) != "" {
-		return []string{
-			p.CountryURL,
-			"https://ipapi.co/json/",
-			"http://ip-api.com/json/?fields=countryCode",
-		}
+	apiURL := strings.TrimSpace(p.CountryURL)
+	if apiURL == "" {
+		apiURL = DefaultCountryAPIURL
 	}
-	return []string{
-		"https://get.geojs.io/v1/ip/country.json",
-		"https://ipapi.co/json/",
-		"http://ip-api.com/json/?fields=countryCode",
-	}
+	return []string{apiURL}
 }
 
 func (p *HTTPBlockedListProvider) resolveCountryFromEndpoint(ctx context.Context, endpoint string) (string, error) {
+	// Enforce HTTPS — no plaintext IP traffic to country detection endpoints.
+	if u, err := url.Parse(endpoint); err == nil && u.Scheme != "https" {
+		return "", fmt.Errorf("country API must use https, got %q", endpoint)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return "", err
 	}
+	req.Header.Set("User-Agent", "ResultV")
 	resp, err := p.client().Do(req)
 	if err != nil {
 		return "", err

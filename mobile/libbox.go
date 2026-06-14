@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -139,6 +140,42 @@ func Ping(ip string, port int, proxyType string) (string, error) {
 		return "", fmt.Errorf("marshaling ping result: %w", err)
 	}
 	return string(b), nil
+}
+
+// DetectCountry resolves a proxy server host (IP literal or hostname) to its
+// lowercase ISO-3166 alpha-2 country code via the project-controlled GeoIP
+// API, caching results on disk under dataDir (country.cache.json). Mirrors
+// the desktop App.DetectCountry flow so the Android UI can show server flags
+// for entries whose name/host carries no country hint.
+//
+// Returns an error for private/loopback hosts (caller should skip those) and
+// when the API is unreachable; callers treat an error as "no flag".
+func DetectCountry(host, dataDir string) (string, error) {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return "", fmt.Errorf("detect country: host is empty")
+	}
+	if isPrivateOrLoopbackHost(host) {
+		return "", fmt.Errorf("detect country: %q is private/loopback", host)
+	}
+	cc := proxy.NewCountryClient(dataDir)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	return cc.LookupCountryByIP(ctx, host)
+}
+
+// isPrivateOrLoopbackHost reports whether a host is a non-routable address
+// the country API can't resolve (RFC1918, loopback, link-local, localhost).
+// Hostnames that aren't IP literals are treated as routable.
+func isPrivateOrLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()
 }
 
 // ParseProxyURI parses a single proxy URI (vless://, vmess://, ss://,
@@ -533,6 +570,15 @@ type BuildOptions struct {
 	// (gomobile can't bind []string across JNI cleanly).
 	SmartMode               bool   `json:"smartMode"`
 	SmartBlockedDomainsList string `json:"smartBlockedDomainsList,omitempty"`
+	// AdBlock enables DNS+route reject of ad/tracker domains via sing-box
+	// rule_set (see internal/proxy/adblock_rules.go). Lists are cached by
+	// FetchAdBlockLists; a missing list falls back to remote download and
+	// degrades to "no blocking" rather than breaking the connection.
+	AdBlock bool `json:"adblock,omitempty"`
+	// YouTubeUnblock enables the YouTube geo-split (see
+	// internal/proxy/youtube_rules.go): video via proxy, player/API direct so
+	// Google sees the user's Russian IP and serves no ads.
+	YouTubeUnblock bool `json:"youtubeUnblock,omitempty"`
 }
 
 // BuildSingBoxConfig converts a proxy URI directly into a sing-box JSON
@@ -715,6 +761,40 @@ func FetchSmartList(country string, dataDir string) (string, error) {
 	return string(data), nil
 }
 
+// FetchAdBlockLists downloads the ad-blocking rule-set SRS files into
+// dataDir/adblock so the engine can reference them locally (offline, instant)
+// on the next connect instead of having sing-box fetch them remotely. Returns
+// JSON the Kotlin side can render:
+//
+//	{ "ready": 2, "total": 2, "error": "" }
+//
+// Safe to call repeatedly: writes are atomic, a failed download leaves any
+// previously cached list intact, and the engine falls back to a remote
+// rule_set for whatever isn't cached — so ad-block never blocks a connection
+// from coming up.
+func FetchAdBlockLists(dataDir string) (string, error) {
+	if strings.TrimSpace(dataDir) == "" {
+		return "", fmt.Errorf("dataDir is required for adblock cache")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	res := proxy.DownloadAdBlockRuleSets(ctx, dataDir)
+	out := map[string]interface{}{
+		"ready": res.Ready,
+		"total": res.Total,
+		"error": "",
+	}
+	if res.Err != nil {
+		out["error"] = res.Err.Error()
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("marshaling adblock result: %w", err)
+	}
+	return string(data), nil
+}
+
 // splitDomainPatterns parses a comma-separated list of host patterns into
 // sing-box `domain` (exact) and `domain_suffix` (substring suffix) buckets.
 //
@@ -779,6 +859,8 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 		LogLevel:            opts.LogLevel,
 		SmartMode:           opts.SmartMode,
 		SmartBlockedDomains: splitSmartList(opts.SmartBlockedDomainsList),
+		AdBlock:             opts.AdBlock,
+		YouTubeUnblock:      opts.YouTubeUnblock,
 		// Desktop's DNSLeakProtection (toggles strict_route) is forced off
 		// on Android — VpnService can't manipulate routes outside its TUN,
 		// and AutoRoute already catches all egress traffic, so DNS bypass

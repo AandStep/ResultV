@@ -72,7 +72,9 @@ data class Profile(
             return rawType.ifBlank { protocolFromUri(uri).orEmpty() }
         }
         if (uri.isNotBlank()) {
-            return uri.substringBefore("?").take(64)
+            // Show only the protocol (e.g. "VLESS", "AWG"), mirroring how
+            // subscription rows display their type rather than the full URI.
+            return rawType.ifBlank { protocolFromUri(uri).orEmpty() }
         }
         val entry = parsedEntry ?: return ""
         val type = entry.optString("type")
@@ -230,6 +232,22 @@ object ProfileRepository {
         val trimmed = newName.trim().ifBlank { return@mutate s }
         val list = s.profiles.map {
             if (it.id == id) it.copy(name = trimmed) else it
+        }
+        s.copy(profiles = list)
+    }
+
+    /**
+     * Replace a standalone profile's name + share-URI in place (used by the
+     * full "Edit" sheet). Keeps id / favourite / subscription so the row's
+     * identity, ordering and active-selection survive the edit. entryJson is
+     * cleared because the new URI is the source of truth for these profiles.
+     */
+    @Synchronized
+    fun updateUri(id: String, newName: String, newUri: String) = mutate { s ->
+        val name = newName.trim().ifBlank { return@mutate s }
+        val uri = newUri.trim().ifBlank { return@mutate s }
+        val list = s.profiles.map {
+            if (it.id == id) it.copy(name = name, uri = uri, entryJson = "") else it
         }
         s.copy(profiles = list)
     }

@@ -64,6 +64,10 @@ object TrafficWatcher {
     fun stop() {
         val c = client ?: return
         client = null
+        // Persist session totals before dropping the connection so they
+        // survive service restarts and show correct cumulative usage in Settings.
+        val snap = TrafficStats.snapshot.value
+        DataUsageRepository.addSession(snap.downloadBytes, snap.uploadBytes)
         try {
             c.disconnect()
         } catch (t: Throwable) {

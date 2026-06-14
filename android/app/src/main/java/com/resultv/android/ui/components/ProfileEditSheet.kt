@@ -66,6 +66,12 @@ fun ProfileEditSheet(
     onToggleFavorite: () -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit,
+    /**
+     * When non-null, the sheet shows a full "Изменить" action (all fields)
+     * instead of inline rename. Provided only for standalone servers — a
+     * subscription server's fields are owned by the panel.
+     */
+    onEditFull: (() -> Unit)? = null,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var renameOpen by remember(profile.id) { mutableStateOf(false) }
@@ -103,32 +109,42 @@ fun ProfileEditSheet(
                 label = stringResource(R.string.proxies_action_probe_latency),
                 onClick = { onProbeLatency(); onDismiss() },
             )
-            ActionRow(
-                icon = Icons.Outlined.Edit,
-                label = stringResource(R.string.proxies_action_rename),
-                onClick = { renameOpen = true },
-            )
-            if (renameOpen) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    OutlinedTextField(
-                        value = name,
-                        onValueChange = { name = it },
-                        label = { Text(stringResource(R.string.proxies_edit_name_label)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { save() }),
-                    )
-                    Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                        FilledTonalButton(onClick = save, enabled = saveEnabled) {
-                            Icon(Icons.Outlined.Check, contentDescription = null)
-                            Spacer(Modifier.width(6.dp))
-                            Text(stringResource(R.string.action_save))
+            if (onEditFull != null) {
+                // Standalone server — full form edit (includes renaming).
+                ActionRow(
+                    icon = Icons.Outlined.Edit,
+                    label = stringResource(R.string.proxies_action_edit),
+                    onClick = { onEditFull(); onDismiss() },
+                )
+            } else {
+                // Subscription server — only the display name can be changed.
+                ActionRow(
+                    icon = Icons.Outlined.Edit,
+                    label = stringResource(R.string.proxies_action_rename),
+                    onClick = { renameOpen = true },
+                )
+                if (renameOpen) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedTextField(
+                            value = name,
+                            onValueChange = { name = it },
+                            label = { Text(stringResource(R.string.proxies_edit_name_label)) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(onDone = { save() }),
+                        )
+                        Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                            FilledTonalButton(onClick = save, enabled = saveEnabled) {
+                                Icon(Icons.Outlined.Check, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text(stringResource(R.string.action_save))
+                            }
                         }
                     }
                 }

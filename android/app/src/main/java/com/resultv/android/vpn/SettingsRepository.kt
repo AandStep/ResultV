@@ -13,9 +13,10 @@ import kotlinx.coroutines.flow.asStateFlow
  * because these flags are app chrome (theme, language, DNS pick) rather
  * than per-profile or per-rule data.
  *
- * The placeholder toggles (`Kill Switch`, `Ad blocking`, `IPv6`) live here
- * too even though they aren't wired to the engine yet — that way when the
- * engine path lands we don't have to re-thread state plumbing.
+ * The placeholder `Kill Switch` toggle lives here too even though it isn't
+ * wired to the engine yet — that way when its engine path lands we don't have
+ * to re-thread state plumbing. (`Ad blocking` / `YouTube` ARE wired — see
+ * [BuildOptionsBuilder] and the Go `adblock` / `youtubeUnblock` options.)
  */
 data class SettingsState(
     /** "Auto" / "Google" / "Cloudflare" / "Quad9" / "Custom". */
@@ -24,6 +25,13 @@ data class SettingsState(
     val dnsCustom: String = "",
     val killSwitch: Boolean = false,
     val adblock: Boolean = false,
+    /**
+     * YouTube geo-split: video routes through the proxy (dodges RKN
+     * throttling) while the player/API routes direct so Google sees the user's
+     * Russian IP and serves no ads. Only effective for users physically in
+     * Russia. See [BuildOptionsBuilder] + Go `youtube_rules.go`.
+     */
+    val youtubeUnblock: Boolean = false,
     val ipv6: Boolean = false,
     /** RFC1918 / link-local / multicast traffic bypasses the proxy. */
     val bypassLan: Boolean = true,
@@ -52,6 +60,7 @@ object SettingsRepository {
     private const val K_DNS_CUSTOM = "dns_custom"
     private const val K_KILL_SWITCH = "kill_switch"
     private const val K_ADBLOCK = "adblock"
+    private const val K_YOUTUBE = "youtube_unblock"
     private const val K_IPV6 = "ipv6"
     private const val K_BYPASS_LAN = "bypass_lan"
     private const val K_LOG_LEVEL = "log_level"
@@ -91,6 +100,7 @@ object SettingsRepository {
             dnsCustom = prefs.getString(K_DNS_CUSTOM, "") ?: "",
             killSwitch = prefs.getBoolean(K_KILL_SWITCH, false),
             adblock = prefs.getBoolean(K_ADBLOCK, false),
+            youtubeUnblock = prefs.getBoolean(K_YOUTUBE, false),
             ipv6 = prefs.getBoolean(K_IPV6, false),
             bypassLan = prefs.getBoolean(K_BYPASS_LAN, true),
             logLevel = prefs.getString(K_LOG_LEVEL, "info") ?: "info",
@@ -117,6 +127,11 @@ object SettingsRepository {
     fun setAdblock(enabled: Boolean) = mutate {
         prefs.edit().putBoolean(K_ADBLOCK, enabled).apply()
         it.copy(adblock = enabled)
+    }
+
+    fun setYoutubeUnblock(enabled: Boolean) = mutate {
+        prefs.edit().putBoolean(K_YOUTUBE, enabled).apply()
+        it.copy(youtubeUnblock = enabled)
     }
 
     fun setIpv6(enabled: Boolean) = mutate {

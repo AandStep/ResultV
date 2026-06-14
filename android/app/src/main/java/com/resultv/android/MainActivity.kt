@@ -138,6 +138,13 @@ class MainActivity : ComponentActivity() {
         AppRoutingRepository.init(applicationContext)
         com.resultv.android.vpn.RoutingRulesRepository.init(applicationContext)
         com.resultv.android.vpn.SettingsRepository.init(applicationContext)
+        com.resultv.android.vpn.AdBlockRepository.init(applicationContext)
+        // Keep the ad-block SRS cache warm (24h TTL) when blocking is on, so
+        // connects reference local lists instead of waiting on a remote fetch.
+        if (com.resultv.android.vpn.SettingsRepository.state.value.adblock) {
+            com.resultv.android.vpn.AdBlockRepository.ensureLoadedAsync()
+        }
+        com.resultv.android.vpn.DataUsageRepository.init(applicationContext)
         // Periodic subscription auto-refresh — runs while the Activity is
         // alive (matches the desktop's React hook). The refresher self-
         // arms based on SettingsRepository.subscriptionAutoUpdate / interval.

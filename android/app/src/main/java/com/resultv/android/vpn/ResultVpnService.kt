@@ -197,7 +197,13 @@ class ResultVpnService : VpnService() {
                 RoutingRulesRepository.state,
                 AppRoutingRepository.state,
                 ProfileRepository.state,
-            ) { rules, app, profiles -> Triple(rules, app, profiles.activeId) }
+                SettingsRepository.state,
+            ) { rules, app, profiles, settings ->
+                // Key on the active profile + everything that changes routing.
+                // From settings we only watch ad-block / YouTube (they rebuild
+                // the route rules); other settings keep applying on reconnect.
+                listOf(rules, app, profiles.activeId, settings.adblock, settings.youtubeUnblock)
+            }
                 .distinctUntilChanged()
                 .drop(1)
                 .debounce(300)

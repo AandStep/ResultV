@@ -28,6 +28,13 @@ internal object BuildOptionsBuilder {
             // — engine treats empty list as "no domains, behave like Global
             // → direct" which is the safe fallback while a fetch is pending.
             .put("smartBlockedDomainsList", if (smartMode) SmartListRepository.toEngineList() else "")
+            // Ad-block (DNS+route reject via rule_set) and the YouTube
+            // geo-split. The engine references locally cached SRS lists when
+            // present (AdBlockRepository downloads them) and falls back to
+            // remote, so an un-fetched list degrades to "no blocking" rather
+            // than breaking the connection.
+            .put("adblock", settings.adblock)
+            .put("youtubeUnblock", settings.youtubeUnblock)
             .toString()
     }
 

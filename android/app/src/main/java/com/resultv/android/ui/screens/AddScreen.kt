@@ -78,6 +78,7 @@ import com.resultv.android.vpn.Profile
 import com.resultv.android.vpn.ProfileRepository
 import com.resultv.android.vpn.Subscription
 import com.resultv.android.vpn.SubscriptionRepository
+import com.resultv.android.vpn.WireGuardConfParser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -119,6 +120,9 @@ fun AddScreen(
             val text = readTextFromUri(ctx, uri)
             if (text.isNullOrBlank()) {
                 importMessage = msgFileEmpty
+            } else if (WireGuardConfParser.isWireGuardConf(text)) {
+                importMessage = importWireGuardConf(text, defaultName)
+                    ?: msgNoUrisFile
             } else {
                 val added = importLines(text, defaultName)
                 importMessage = if (added > 0)
@@ -557,6 +561,21 @@ private data class FetchedSubscription(
 // ──────────────────────────── Helpers ──────────────────────────
 
 /**
+ * Parse a WireGuard/AmneziaWG .conf file, add one Profile, and return a
+ * human-readable success message, or null on parse failure.
+ */
+private fun importWireGuardConf(text: String, defaultName: String): String? {
+    val uri = WireGuardConfParser.toUri(text, defaultName) ?: return null
+    return runCatching {
+        val parsed = org.json.JSONObject(Mobile.parseProxyURI(uri))
+        val name = parsed.optString("name").ifBlank { parsed.optString("type").ifBlank { defaultName } }
+        val protocol = parsed.optString("type").uppercase()
+        ProfileRepository.add(Profile.fromUri(name, uri))
+        "Imported $protocol: $name"
+    }.getOrNull()
+}
+
+/**
  * Parse a chunk of text (clipboard or file) as a list of share-links, one
  * per line, importing each as a profile. Returns the count of successful
  * imports.
@@ -742,6 +761,12 @@ private fun smartClipboardImport(
                 onMessage(msgFetchFailed)
             }
         }
+        return
+    }
+
+    if (WireGuardConfParser.isWireGuardConf(trimmed)) {
+        val msg = importWireGuardConf(trimmed, defaultName)
+        onMessage(msg ?: msgNoUrisClipboard)
         return
     }
 

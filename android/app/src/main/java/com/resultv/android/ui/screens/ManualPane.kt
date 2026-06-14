@@ -3,6 +3,8 @@ package com.resultv.android.ui.screens
 import android.util.Base64
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,9 +33,11 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -57,6 +61,7 @@ import com.resultv.android.vpn.Profile
 import com.resultv.android.vpn.ProfileRepository
 import mobile.Mobile
 import org.json.JSONObject
+import java.net.URLDecoder
 import java.net.URLEncoder
 
 /**
@@ -616,3 +621,263 @@ private val Protocols: List<ProtocolSpec> = listOf(
         },
     ),
 )
+
+// ───────────────────────────── Full edit ─────────────────────────────
+//
+// Long-press → "Изменить" on a standalone (non-subscription) server opens
+// the same protocol form, prefilled from the stored share-URI. Save rebuilds
+// the URI and replaces the profile in place. Subscription servers don't get
+// this — their fields are owned by the panel and overwritten on refresh.
+
+/** True when [uri]'s scheme maps to a known protocol form we can prefill. */
+internal fun canFullEdit(uri: String): Boolean =
+    uri.isNotBlank() && specForUri(uri) != null
+
+private fun specForUri(uri: String): ProtocolSpec? {
+    val scheme = uri.substringBefore("://", "").lowercase()
+    val id = when (scheme) {
+        "vless" -> "vless"
+        "vmess" -> "vmess"
+        "trojan" -> "trojan"
+        "ss" -> "ss"
+        "hy2", "hysteria2" -> "hy2"
+        "wg", "wireguard" -> "wg"
+        "awg", "amneziawg", "amnezia-wg" -> "awg"
+        "naive+https", "naive" -> "naive"
+        else -> return null
+    }
+    return Protocols.firstOrNull { it.id == id }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun ProfileFullEditSheet(
+    profile: Profile,
+    onDismiss: () -> Unit,
+) {
+    val ctx = LocalContext.current
+    val spec = remember(profile.id) { specForUri(profile.uri) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    // No matching form (unknown scheme) — show a short note instead of a
+    // broken empty form. Shouldn't normally happen: callers gate on
+    // canFullEdit, but guard anyway.
+    if (spec == null) {
+        ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = Brand.Surface) {
+            Text(
+                text = stringResource(R.string.proxies_edit_unsupported),
+                style = MaterialTheme.typography.bodyMedium,
+                color = Brand.SecondaryText,
+                modifier = Modifier.padding(24.dp),
+            )
+        }
+        return
+    }
+
+    val values = remember(profile.id) {
+        mutableStateMapOf<String, String>().apply {
+            putAll(decodeUriToValues(spec, profile.uri))
+            // The profile's display name is authoritative — it may have been
+            // renamed since import, diverging from the URI fragment.
+            put("name", profile.name)
+        }
+    }
+    var error by remember(profile.id) { mutableStateOf<String?>(null) }
+    val errBuild = stringResource(R.string.manual_err_build)
+    val errInvalid = stringResource(R.string.manual_err_invalid)
+
+    val submit = submit@{
+        val missing = spec.fields.firstOrNull {
+            it.required && values[it.key].orEmpty().isBlank()
+        }
+        if (missing != null) {
+            error = ctx.getString(R.string.manual_err_required, ctx.getString(missing.labelRes))
+            return@submit
+        }
+        val uri = try {
+            spec.build(values)
+        } catch (t: Throwable) {
+            error = t.message ?: errBuild
+            return@submit
+        }
+        try {
+            Mobile.parseProxyURI(uri)
+        } catch (t: Throwable) {
+            error = t.message ?: errInvalid
+            return@submit
+        }
+        val name = values["name"].orEmpty().ifBlank { spec.title }
+        ProfileRepository.updateUri(profile.id, name, uri)
+        onDismiss()
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = Brand.Surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = spec.title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(bottom = 2.dp),
+            )
+
+            spec.fields.forEach { f ->
+                FieldRow(
+                    field = f,
+                    value = values[f.key].orEmpty(),
+                    onValue = { values[f.key] = it; error = null },
+                )
+            }
+
+            error?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(bottom = 12.dp),
+            ) {
+                FilledTonalButton(onClick = submit) {
+                    Icon(Icons.Outlined.Check, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.action_save))
+                }
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+            }
+        }
+    }
+}
+
+private fun dec(s: String): String =
+    runCatching { URLDecoder.decode(s, "UTF-8") }.getOrDefault(s)
+
+/** Reverse of each ProtocolSpec.build — fills form values from a share-URI. */
+private fun decodeUriToValues(spec: ProtocolSpec, uri: String): Map<String, String> {
+    val values = mutableMapOf<String, String>()
+    spec.fields.forEach { values[it.key] = it.default }
+    runCatching {
+        when (spec.id) {
+            "vmess" -> decodeVmess(uri, values)
+            "ss" -> decodeSs(uri, values)
+            else -> decodeGeneric(spec, uri, values)
+        }
+    }
+    return values
+}
+
+/** scheme://cred@host:port?query#name protocols (vless/trojan/hy2/wg/awg/naive). */
+private fun decodeGeneric(spec: ProtocolSpec, uri: String, values: MutableMap<String, String>) {
+    val afterScheme = uri.substringAfter("://", "")
+    val beforeFrag = afterScheme.substringBefore('#')
+    val frag = afterScheme.substringAfter('#', "")
+    if (frag.isNotEmpty()) values["name"] = dec(frag)
+
+    val authority = beforeFrag.substringBefore('?')
+    val query = parseQuery(beforeFrag.substringAfter('?', ""))
+    val hasAt = authority.contains('@')
+    val userinfo = if (hasAt) authority.substringBeforeLast('@') else ""
+    val hostport = if (hasAt) authority.substringAfterLast('@') else authority
+    val host = hostport.substringBeforeLast(':', hostport)
+    val port = hostport.substringAfterLast(':', "")
+    if (host.isNotEmpty()) values["host"] = host
+    if (port.isNotEmpty() && port != hostport) values["port"] = port
+
+    when (spec.id) {
+        "vless" -> values["uuid"] = dec(userinfo)
+        "trojan", "hy2" -> values["password"] = dec(userinfo)
+        "wg", "awg" -> values["private_key"] = dec(userinfo)
+        "naive" -> {
+            val up = userinfo.split(":", limit = 2)
+            values["username"] = dec(up.getOrElse(0) { "" })
+            values["password"] = dec(up.getOrElse(1) { "" })
+        }
+    }
+
+    // Remaining fields come straight from the query string. The credential
+    // and host/port keys are already set above, so skip them here.
+    spec.fields.forEach { f ->
+        when (f.key) {
+            "name", "host", "port", "uuid", "password", "private_key", "username" -> Unit
+            // vless/trojan put the WS/H2 Host header in the "host" query param.
+            "host_header" -> query["host"]?.let { values["host_header"] = it }
+            else -> query[f.key]?.let { values[f.key] = it }
+        }
+    }
+}
+
+private fun decodeVmess(uri: String, values: MutableMap<String, String>) {
+    val b64 = uri.substringAfter("://", "").substringBefore('#')
+    val json = String(Base64.decode(b64, Base64.DEFAULT), Charsets.UTF_8)
+    val o = JSONObject(json)
+    o.optString("ps").takeIf { it.isNotBlank() }?.let { values["name"] = it }
+    values["host"] = o.optString("add")
+    values["port"] = o.optString("port")
+    values["uuid"] = o.optString("id")
+    values["aid"] = o.optString("aid", "0")
+    values["net"] = o.optString("net").ifBlank { "tcp" }
+    values["path"] = o.optString("path")
+    values["host_header"] = o.optString("host")
+    values["tls"] = o.optString("tls")
+    values["sni"] = o.optString("sni")
+}
+
+private fun decodeSs(uri: String, values: MutableMap<String, String>) {
+    val afterScheme = uri.substringAfter("://", "")
+    val beforeFrag = afterScheme.substringBefore('#')
+    val frag = afterScheme.substringAfter('#', "")
+    if (frag.isNotEmpty()) values["name"] = dec(frag)
+    val authority = beforeFrag.substringBefore('?')
+
+    if (authority.contains('@')) {
+        // ss://base64(method:password)@host:port  (the form our builder emits)
+        val userinfo = authority.substringBeforeLast('@')
+        val hostport = authority.substringAfterLast('@')
+        values["host"] = hostport.substringBeforeLast(':', hostport)
+        hostport.substringAfterLast(':', "").takeIf { it.isNotEmpty() }?.let { values["port"] = it }
+        val creds = b64Decode(userinfo)
+        val mp = creds.split(":", limit = 2)
+        values["method"] = mp.getOrElse(0) { "" }
+        values["password"] = mp.getOrElse(1) { "" }
+    } else {
+        // ss://base64(method:password@host:port)  (legacy single-blob form)
+        val decoded = b64Decode(authority)
+        val credPart = decoded.substringBeforeLast('@', "")
+        val hostport = decoded.substringAfterLast('@', "")
+        val mp = credPart.split(":", limit = 2)
+        values["method"] = mp.getOrElse(0) { "" }
+        values["password"] = mp.getOrElse(1) { "" }
+        if (hostport.isNotEmpty()) {
+            values["host"] = hostport.substringBeforeLast(':', hostport)
+            hostport.substringAfterLast(':', "").takeIf { it.isNotEmpty() }?.let { values["port"] = it }
+        }
+    }
+}
+
+/** Tolerant base64 decode — tries URL-safe then standard, padded or not. */
+private fun b64Decode(s: String): String {
+    val flags = Base64.NO_WRAP or Base64.NO_PADDING
+    return runCatching { String(Base64.decode(s, flags or Base64.URL_SAFE), Charsets.UTF_8) }
+        .recoverCatching { String(Base64.decode(s, flags), Charsets.UTF_8) }
+        .getOrDefault("")
+}
+
+private fun parseQuery(query: String): Map<String, String> {
+    if (query.isBlank()) return emptyMap()
+    return query.split('&').mapNotNull { pair ->
+        val i = pair.indexOf('=')
+        if (i <= 0) null else dec(pair.substring(0, i)) to dec(pair.substring(i + 1))
+    }.toMap()
+}

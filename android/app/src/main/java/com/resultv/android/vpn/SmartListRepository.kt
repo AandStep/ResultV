@@ -30,9 +30,9 @@ private const val REFRESH_INTERVAL_MS = 24L * 60 * 60 * 1000
  * the connect path can hand the engine `\n`-separated domains via
  * [BuildOptionsBuilder] without re-reading the cache file on every call.
  *
- * Country is currently pinned to "ru" — Smart mode is Antizapret-style and
- * makes no sense outside that context until the Settings UI adds a region
- * picker. Override via [setCountry] for testing.
+ * Country is auto-detected via [mobile.Mobile.fetchSmartList] (empty string
+ * triggers server-side geo-detection). The detected country is cached in
+ * [META_FILE] and reused on subsequent fetches, matching desktop behaviour.
  */
 object SmartListRepository {
 
@@ -51,7 +51,10 @@ object SmartListRepository {
     private val _state = MutableStateFlow(Snapshot())
     val state: StateFlow<Snapshot> = _state.asStateFlow()
 
-    @Volatile private var country: String = "ru"
+    // Empty string = auto-detect via FetchSmartList server-side geo-detection.
+    // Gets populated from the cached meta file on init, or from the first
+    // successful fetch result.
+    @Volatile private var country: String = ""
     @Volatile private var dataDir: String = ""
     @Volatile private var metaFile: File? = null
 
@@ -109,6 +112,9 @@ object SmartListRepository {
             _state.value = next
             return@withLock next
         }
+        // Sync the volatile field so subsequent refresh() calls pass the
+        // detected country directly (skipping geo-detection on every call).
+        if (parsed.country.isNotBlank()) country = parsed.country
         _state.value = parsed
         saveMeta()
         parsed

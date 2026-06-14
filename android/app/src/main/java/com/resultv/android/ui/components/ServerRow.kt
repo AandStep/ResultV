@@ -62,6 +62,8 @@ fun ServerRow(
     val bg = if (isActive) Brand.Green.copy(alpha = 0.10f) else Color.White.copy(alpha = 0.03f)
     val titleColor = if (isActive) Brand.GreenLight else MaterialTheme.colorScheme.onBackground
     // Latency is colour-coded: green <80ms, amber 80–200ms, rose >200ms.
+    // latencyMs <= 0 means "reachable but RTT not measurable" (UDP probe for
+    // WireGuard/AmneziaWG, which don't answer the probe byte) — treat as online.
     val latencyColor = when {
         latencyMs == null -> Brand.MutedText
         latencyMs <= 200 -> Brand.GreenLight
@@ -161,7 +163,8 @@ fun ServerRow(
             )
         } else {
             Text(
-                text = "$latencyMs ms",
+                text = if (latencyMs <= 0) stringResource(R.string.ping_online)
+                else "$latencyMs ms",
                 style = MaterialTheme.typography.labelMedium,
                 color = latencyColor,
             )

@@ -118,6 +118,13 @@ Material 3) that calls into Go via a `gomobile bind` AAR.
       `ManualPane.kt`, pure Kotlin — no AAR rebuild.
       HTTP/HTTPS skipped (engine has no top-level handler); SOCKS5 deferred
       to a separate slice that requires `Profile.fromEntryJson` plumbing.
+- [x] **WireGuard / AmneziaWG `.conf` import** — `WireGuardConfParser.kt`
+      parses INI-format `.conf` files (case-insensitive keys, inline comments
+      stripped). Detected by `[Interface]` section; Amnezia is auto-detected
+      by presence of obfuscation fields (Jc/Jmin/S1/H1…). Builds `wg://` or
+      `awg://` URI via the same pattern as ManualPane, validates through
+      `Mobile.parseProxyURI`. Wired into AddScreen file picker and clipboard
+      quick-import; pure Kotlin, no AAR rebuild.
 - [x] Deep-link import — `resultv://import/<base64>`, `rvsub/`, `crypt4/`,
       `i/`, opaque `resultv:import/...`. Manifest intent-filter on
       `resultv` scheme; `MainActivity.handleDeepLinkIntent` delegates to
@@ -296,7 +303,11 @@ Material 3) that calls into Go via a `gomobile bind` AAR.
       reads `TrafficStats.snapshot` for live speeds. The existing
       DOWNLOAD/UPLOAD cards stay — banner is a glanceable summary, the
       cards are the detailed view.
-- [ ] Battery / data usage stats from libbox `CommandClient`.
+- [x] **Data usage stats** — `DataUsageRepository` (SharedPreferences-backed)
+      accumulates session byte totals across service restarts. `TrafficWatcher.stop()`
+      saves the libbox cumulative counters (`uplinkTotal`/`downlinkTotal`) on
+      each disconnect. Settings screen shows a "Data usage" card with Down / Up
+      totals and a Reset button (confirmation dialog). Pure Kotlin, no AAR rebuild.
 - [ ] Material You dynamic color — **dropped** at user request.
 
 ## Phase 7 — Release engineering — ⚠️ ONE ITEM LEFT (distribution)
@@ -328,18 +339,15 @@ Material 3) that calls into Go via a `gomobile bind` AAR.
 
 | Protocol | Emulator (AVD) | Real device | Notes |
 |---|---|---|---|
-| VLESS + REALITY + XHTTP (packet-up) | ✅ | ⏳ untested | First PoC |
-| VLESS + REALITY + XHTTP (stream-up) | ✅ | ⏳ untested | impVPN subscription |
-| Trojan + REALITY + gRPC | ✅ | ⏳ untested | impVPN subscription |
-| VMess | ⏳ untested | ⏳ untested | Parser & build supports it |
-| Shadowsocks | ⏳ untested | ⏳ untested | Same |
-| Hysteria2 | ❌ AVD UDP/QUIC NAT issues | ⏳ untested | Tunnel up, QUIC handshake times out — emulator-only fault expected |
-| WireGuard | 🔒 blocked on UI | 🔒 blocked on UI | `.conf` file import not implemented yet |
-| AmneziaWG | 🔒 blocked on UI | 🔒 blocked on UI | Same |
-
-A full QA pass on a real device is the next milestone — Phase 5 wiring
-and real traffic stats are in, but everything in the matrix is still
-emulator-only.
+| VLESS + REALITY + XHTTP (packet-up) | ✅ | ✅ | First PoC |
+| VLESS + REALITY + XHTTP (stream-up) | ✅ | ✅ | impVPN subscription |
+| Trojan + REALITY + gRPC | ✅ | ✅ | impVPN subscription |
+| VMess | ⏳ untested | ✅ | |
+| Shadowsocks | ⏳ untested | ✅ | |
+| Hysteria2 | ❌ AVD UDP/QUIC NAT issues | ✅ | Emulator-only QUIC/NAT issue confirmed |
+| WireGuard | ⏳ untested | ⏳ untested | `.conf` import done; untested on device |
+| AmneziaWG | ⏳ untested | ⏳ untested | `.conf` import done; untested on device |
+| NaiveProxy | 🔒 blocked on AAR | 🔒 blocked on AAR | NDK 27.x linker issue (B1) |
 
 ---
 
@@ -586,10 +594,11 @@ audit; this section is the user-facing UI parity that depends on them.
   first connect for up to 10s before timing out → engine starts with
   an empty domain list (effectively Global → direct). The 24h cache in
   `dataDir/smart-blocked.json` saves subsequent launches.
-- Smart-mode country picker is missing. `SmartListRepository.country`
-  is hardcoded to `"ru"`; users outside RU get a Russia-flavoured
-  blocked list that won't match their needs. Trivial to expose in
-  Settings once we know how to UX the country list.
+- Smart-mode country is now **auto-detected** via `FetchSmartList("", dataDir)` —
+  empty string triggers server-side geo-detection (geojs.io currently;
+  needs AAR rebuild to switch to project-controlled `result-proxy.ru/countryAPI/api.php`,
+  see B-Go batch). Detected country persisted to `smart-list.meta.json`
+  and reused on subsequent fetches.
 - LSP errors visible on Windows host for `resultProxyDataDir` and
   `tunnelProbeDomains` — both are `//go:build mobile` symbols in
   `mobile_stubs.go`. gomobile compiles for `GOOS=android` where the

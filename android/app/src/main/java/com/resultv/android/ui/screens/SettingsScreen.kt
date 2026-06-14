@@ -34,6 +34,7 @@ import com.resultv.android.R
 import com.resultv.android.locale.LocaleManager
 import com.resultv.android.theme.Brand
 import com.resultv.android.ui.components.SettingIcon
+import com.resultv.android.vpn.AdBlockRepository
 import com.resultv.android.vpn.SettingsRepository
 
 private data class DnsPreset(val key: String, val label: String, val servers: String)
@@ -108,7 +109,9 @@ fun SettingsScreen() {
             HorizontalDivider(color = Brand.SurfaceHigh)
             SubcategoryRow(SettingsSubcategory.Advanced) { activeSheet = SettingsSubcategory.Advanced }
         }
-        
+
+        AppInfoCard()
+
         Spacer(modifier = Modifier.height(32.dp))
     }
 
@@ -225,8 +228,23 @@ private fun AdvancedGroup(settings: com.resultv.android.vpn.SettingsState) {
         iconBg = Color(0xFFef4444).copy(alpha = 0.18f),
         iconTint = Color(0xFFf87171),
         checked = settings.adblock,
-        onCheckedChange = { SettingsRepository.setAdblock(it) },
-        enabled = false,
+        onCheckedChange = {
+            SettingsRepository.setAdblock(it)
+            // Warm the SRS cache so the next connect references local lists
+            // instead of waiting on sing-box's remote fetch. Safe no-op when
+            // already fresh (24h TTL).
+            if (it) AdBlockRepository.refreshAsync()
+        },
+    )
+    HorizontalDivider(color = Brand.SurfaceHigh)
+    ToggleRow(
+        title = stringResource(R.string.settings_youtube),
+        subtitle = stringResource(R.string.settings_youtube_subtitle),
+        icon = Icons.Outlined.OndemandVideo,
+        iconBg = Color(0xFFff0000).copy(alpha = 0.16f),
+        iconTint = Color(0xFFff4d4d),
+        checked = settings.youtubeUnblock,
+        onCheckedChange = { SettingsRepository.setYoutubeUnblock(it) },
     )
 }
 
@@ -530,5 +548,41 @@ private fun TextFieldRow(
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
         )
         Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Brand.SecondaryText, modifier = Modifier.padding(start = 50.dp))
+    }
+}
+
+// ─────────────────────────── App Info card ──────────────────────────────────
+
+@Composable
+private fun AppInfoCard() {
+    val ctx = LocalContext.current
+    val versionName = remember(ctx) {
+        runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrDefault("—")
+    }
+
+    SettingsCard {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            SettingIcon(
+                icon = Icons.Outlined.Info,
+                bg = Color(0xFF8b5cf6).copy(alpha = 0.18f),
+                tint = Color(0xFFa78bfa),
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    stringResource(R.string.app_name),
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    "v$versionName",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Brand.SecondaryText,
+                )
+            }
+        }
     }
 }
