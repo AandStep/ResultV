@@ -1,5 +1,5 @@
 {
-  "version": "3.2.4",
+  "version": "3.2.3",
   "releaseTitle": {
     "ru": "Улучшение туннель режима, ускорение подключения и баг фиксы",
     "en": "Tunnel mode improvements, connection speedup and bug fixes"
