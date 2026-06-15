@@ -56,8 +56,15 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            if (hasReleaseKeystore) {
-                signingConfig = signingConfigs.getByName("release")
+            // With a real keystore, sign for production. Without one
+            // (fresh clone / CI without secrets) fall back to debug signing
+            // so assembleRelease still emits an *installable* APK — it just
+            // won't be production-signed. Leaving signingConfig unset here
+            // produces "-unsigned.apk" that adb refuses to install.
+            signingConfig = if (hasReleaseKeystore) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
             }
             // Release APKs target real devices only — arm64-v8a covers
             // 99%+ of active Android devices; armeabi-v7a is the fallback
@@ -129,6 +136,11 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.activity:activity-compose:1.9.3")
+    // play-services-code-scanner drags in androidx.fragment:fragment:1.0.0
+    // transitively, which trips the InvalidFragmentVersionForActivityResult
+    // lint check (it can't tell our ComponentActivity registerForActivityResult
+    // usage is safe). Force a current fragment (>= 1.3.0) to clear it.
+    implementation("androidx.fragment:fragment:1.8.5")
 
     val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
     implementation(composeBom)

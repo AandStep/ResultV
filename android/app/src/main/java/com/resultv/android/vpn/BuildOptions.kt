@@ -33,8 +33,8 @@ internal object BuildOptionsBuilder {
             // present (AdBlockRepository downloads them) and falls back to
             // remote, so an un-fetched list degrades to "no blocking" rather
             // than breaking the connection.
-            .put("adblock", settings.adblock)
-            .put("youtubeUnblock", settings.youtubeUnblock)
+            .put("adblock", false)
+            .put("youtubeUnblock", false)
             .toString()
     }
 

@@ -11,6 +11,12 @@ jobs:
     permissions:
       contents: read
       actions: write
+    # Hoisted to job level so the keystore steps' `if:` can read it reliably
+    # (step-level env is not exposed to that same step's own `if`). Without a
+    # keystore the build falls back to debug signing — fine for local dev,
+    # NOT for a published release, so signing must trigger here.
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
 
     steps:
       - name: Check out Git repository
@@ -63,15 +69,12 @@ jobs:
 
       - name: Decode release keystore
         if: env.ANDROID_KEYSTORE_BASE64 != ''
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/release.keystore
 
       - name: Create keystore.properties
         if: env.ANDROID_KEYSTORE_BASE64 != ''
         env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}

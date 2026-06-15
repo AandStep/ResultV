@@ -1,6 +1,7 @@
 package com.resultv.android.ui.screens
 
 import android.util.Base64
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
@@ -186,6 +187,10 @@ private fun ProtocolForm(
         }
         val name = values["name"].orEmpty().ifBlank { spec.title }
         ProfileRepository.add(Profile.fromUri(name, uri))
+        // Confirm the add with a toast — mirrors the subscription import
+        // feedback. submit() calls onDone() right after, so an inline
+        // message wouldn't survive the navigation away from this pane.
+        Toast.makeText(ctx, ctx.getString(R.string.manual_added, name), Toast.LENGTH_LONG).show()
         onDone()
     }
 

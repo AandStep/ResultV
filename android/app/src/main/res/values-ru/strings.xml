@@ -53,7 +53,7 @@
     <string name="settings_kill_switch">Kill Switch</string>
     <string name="settings_kill_switch_subtitle">Блокировать интернет при обрыве VPN (скоро)</string>
     <string name="settings_adblock">Блокировка рекламы</string>
-    <string name="settings_adblock_subtitle">Блокировать рекламу и трекеры через DNS и маршрутизацию</string>
+    <string name="settings_adblock_subtitle">Блокировать рекламу и трекеры через DNS и маршрутизацию (скоро доступно)</string>
     <string name="settings_youtube">YouTube без рекламы</string>
     <string name="settings_youtube_subtitle">Видео через VPN, рекламные запросы — через ваш российский IP. Работает только в РФ.</string>
     <string name="settings_ipv6">IPv6</string>
@@ -88,7 +88,7 @@
     <string name="settings_group_appearance_desc">Язык интерфейса.</string>
 
     <string name="settings_killswitch_title">Включить Kill Switch</string>
-    <string name="settings_killswitch_desc">Моментально прервать интернет соединение при падении прокси.</string>
+    <string name="settings_killswitch_desc">Моментально прервать интернет соединение при падении прокси (скоро доступно).</string>
 
     <string name="settings_sub_auto_update_title">Автоматическое обновление</string>
     <string name="settings_sub_auto_update_desc">Периодически обновлять все добавленные подписки.</string>
@@ -155,6 +155,7 @@
     <string name="manual_err_build">Не удалось собрать ссылку</string>
     <string name="manual_err_invalid">Некорректная конфигурация</string>
     <string name="manual_choice_none">(нет)</string>
+    <string name="manual_added">Сервер добавлен: %1$s</string>
 
     <string name="manual_field_name">Имя</string>
     <string name="manual_field_name_placeholder">Мой сервер</string>

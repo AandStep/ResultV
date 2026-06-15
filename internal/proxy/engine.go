@@ -17,7 +17,6 @@ package proxy
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,8 +29,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/quic-go/quic-go"
 )
 
 type ProxyMode string
@@ -937,9 +934,11 @@ func splitHostPort(addr, defaultHost string, defaultPort int) (string, int) {
 	return host, port
 }
 
+var pingTCPProbe = PingProxy
+
 func PingProxy(ip string, port int) (latencyMs int64, reachable bool, reason string) {
 	start := time.Now()
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", ip, port), 2*time.Second)
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", ip, port), 5*time.Second)
 	elapsed := time.Since(start)
 	if err != nil {
 		return 0, false, pingReasonFromError(err)
@@ -949,53 +948,30 @@ func PingProxy(ip string, port int) (latencyMs int64, reachable bool, reason str
 }
 
 func PingHysteria2QUIC(ip string, port int) (latencyMs int64, reachable bool, reason, checkType string) {
-	addr := fmt.Sprintf("%s:%d", ip, port)
-	start := time.Now()
-
-	tlsConf := &tls.Config{
-		InsecureSkipVerify: true,
-		NextProtos:         []string{"h3", "hysteria"},
+	latency, ok, r := quicHandshakeProbe(ip, port)
+	if ok {
+		return latency, true, "", "quic_handshake"
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
-	defer cancel()
-
-	conn, err := quic.DialAddr(ctx, addr, tlsConf, &quic.Config{
-		HandshakeIdleTimeout: 1500 * time.Millisecond,
-	})
-	elapsed := time.Since(start)
-
-	if err != nil {
-		msg := strings.ToLower(err.Error())
-		if strings.Contains(msg, "timeout") {
-			// Fallback to TCP ping just in case Hysteria is masquerading on TCP
-			tcpLat, tcpOK, _ := PingProxy(ip, port)
-			if tcpOK {
-				return tcpLat, true, "", "tcp_fallback"
-			}
-			return 0, false, "timeout", "quic"
-		}
-		// Connection refused or other network errors
-		if strings.Contains(msg, "refused") || strings.Contains(msg, "unreachable") {
-			return 0, false, "connection_refused", "quic"
-		}
-		// If it's an ALPN, certificate or application error, the server IS reachable and responded to QUIC!
-		return elapsed.Milliseconds(), true, "", "quic"
+	tcpLat, tcpOK, tcpR := pingTCPProbe(ip, port)
+	if tcpOK {
+		return tcpLat, true, "", "tcp_fallback"
 	}
-
-	conn.CloseWithError(0, "")
-	return elapsed.Milliseconds(), true, "", "quic"
+	if r == "" {
+		r = tcpR
+	}
+	return 0, false, r, "quic_handshake"
 }
 
 func PingProxyUDP(ip string, port int) (latencyMs int64, reachable bool, reason string) {
 	addr := net.JoinHostPort(ip, fmt.Sprintf("%d", port))
-	conn, err := net.DialTimeout("udp", addr, 1500*time.Millisecond)
+	conn, err := net.DialTimeout("udp", addr, 3*time.Second)
 	if err != nil {
 		return 0, false, pingReasonFromError(err)
 	}
 	defer conn.Close()
 
-	_ = conn.SetDeadline(time.Now().Add(1500 * time.Millisecond))
+	_ = conn.SetDeadline(time.Now().Add(1 * time.Second))
 	start := time.Now()
 	_, _ = conn.Write([]byte{0x00})
 	buf := make([]byte, 1)
@@ -1003,18 +979,30 @@ func PingProxyUDP(ip string, port int) (latencyMs int64, reachable bool, reason 
 	elapsed := time.Since(start)
 	if readErr != nil {
 		if ne, ok := readErr.(net.Error); ok && ne.Timeout() {
-
 			return -1, true, ""
 		}
 		msg := strings.ToLower(readErr.Error())
 		if strings.Contains(msg, "refused") {
 			return 0, false, "connection_refused"
 		}
-
 		return -1, true, ""
 	}
 
 	return elapsed.Milliseconds(), true, ""
+}
+
+// PingWireGuard probes a WireGuard / AmneziaWG endpoint for latency. Those
+// transports are UDP-only and silently drop any packet that isn't a valid
+// handshake, so neither a TCP connect nor a raw UDP byte yields an RTT (the UDP
+// probe can only confirm the host didn't actively refuse). An ICMP echo to the
+// host measures the real network round-trip independent of the VPN transport;
+// only when ICMP is blocked do we fall back to the UDP liveness probe (which
+// returns -1ms → shown as "—").
+func PingWireGuard(ip string, port int) (latencyMs int64, reachable bool, reason string) {
+	if ms, ok := pingICMPHost(ip, ""); ok {
+		return ms, true, ""
+	}
+	return PingProxyUDP(ip, port)
 }
 
 func pingReasonFromError(err error) string {
@@ -1053,3 +1041,4 @@ func pingReasonFromError(err error) string {
 	}
 	return "probe_error"
 }
+

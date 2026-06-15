@@ -3,6 +3,7 @@ package com.resultv.android.ui.screens
 import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -118,16 +119,32 @@ fun AddScreen(
     ) { uri ->
         if (uri != null) {
             val text = readTextFromUri(ctx, uri)
-            if (text.isNullOrBlank()) {
-                importMessage = msgFileEmpty
-            } else if (WireGuardConfParser.isWireGuardConf(text)) {
-                importMessage = importWireGuardConf(text, defaultName)
-                    ?: msgNoUrisFile
-            } else {
-                val added = importLines(text, defaultName)
-                importMessage = if (added > 0)
-                    ctx.getString(R.string.add_msg_imported_file, added)
-                else msgNoUrisFile
+            // Success surfaces as a toast (like subscription imports); errors
+            // stay as the persistent inline message so the user can read them.
+            when {
+                text.isNullOrBlank() -> importMessage = msgFileEmpty
+                WireGuardConfParser.isWireGuardConf(text) -> {
+                    val msg = importWireGuardConf(text, defaultName)
+                    if (msg != null) {
+                        importMessage = null
+                        Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
+                    } else {
+                        importMessage = msgNoUrisFile
+                    }
+                }
+                else -> {
+                    val added = importLines(text, defaultName)
+                    if (added > 0) {
+                        importMessage = null
+                        Toast.makeText(
+                            ctx,
+                            ctx.getString(R.string.add_msg_imported_file, added),
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    } else {
+                        importMessage = msgNoUrisFile
+                    }
+                }
             }
         }
     }

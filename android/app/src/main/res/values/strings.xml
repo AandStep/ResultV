@@ -58,7 +58,7 @@
     <string name="settings_kill_switch">Kill Switch</string>
     <string name="settings_kill_switch_subtitle">Block internet if VPN drops (coming soon)</string>
     <string name="settings_adblock">Ad blocking</string>
-    <string name="settings_adblock_subtitle">Block ads &amp; trackers via DNS and routing rules</string>
+    <string name="settings_adblock_subtitle">Block ads &amp; trackers via DNS and routing rules (coming soon)</string>
     <string name="settings_youtube">YouTube without ads</string>
     <string name="settings_youtube_subtitle">Video via VPN, ad requests via your Russian IP — no ads. Works in Russia only.</string>
     <string name="settings_ipv6">IPv6</string>
@@ -93,7 +93,7 @@
     <string name="settings_group_appearance_desc">Interface language.</string>
 
     <string name="settings_killswitch_title">Enable Kill Switch</string>
-    <string name="settings_killswitch_desc">Instantly cut internet if the proxy drops.</string>
+    <string name="settings_killswitch_desc">Instantly cut internet if the proxy drops (coming soon).</string>
 
     <string name="settings_sub_auto_update_title">Automatic update</string>
     <string name="settings_sub_auto_update_desc">Periodically refresh every added subscription.</string>
@@ -163,6 +163,7 @@
     <string name="manual_err_build">Cannot build URI</string>
     <string name="manual_err_invalid">Invalid configuration</string>
     <string name="manual_choice_none">(none)</string>
+    <string name="manual_added">Server added: %1$s</string>
 
     <string name="manual_field_name">Name</string>
     <string name="manual_field_name_placeholder">My server</string>

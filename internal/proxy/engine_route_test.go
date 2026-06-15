@@ -102,7 +102,12 @@ func TestBuildRoute_TunnelMode_IncludesSelfDirectRule(t *testing.T) {
 	}
 }
 
-func TestBuildRoute_TunnelMode_ProbeDomainsRoutedThroughProxyBeforeSelfDirect(t *testing.T) {
+// On mobile, tunnelProbeDomains is empty by design (see mobile_stubs.go):
+// Android's VpnService reports connectivity through the OS, so the desktop's
+// post-start HTTP probe — and the probe-domain → proxy rule that protects it —
+// is intentionally absent. The self-direct rule for non-endpoint protocols (ss)
+// must still be emitted so the app's own traffic bypasses the tunnel.
+func TestBuildRoute_TunnelMode_NonEndpointHasSelfDirectAndNoProbeRule(t *testing.T) {
 	cfg := EngineConfig{
 		Mode:  ProxyModeTunnel,
 		Proxy: ProxyConfig{Type: "ss"},
@@ -112,14 +117,12 @@ func TestBuildRoute_TunnelMode_ProbeDomainsRoutedThroughProxyBeforeSelfDirect(t 
 		t.Fatal("expected non-nil route")
 	}
 
-	probeIdx := -1
 	selfDirectIdx := -1
 	for i, r := range route.Rules {
 		if r.Outbound == "proxy" && len(r.Domain) > 0 {
 			for _, d := range r.Domain {
 				if d == "connectivitycheck.gstatic.com" {
-					probeIdx = i
-					break
+					t.Fatalf("mobile build must not emit a probe-domain proxy rule, rules=%+v", route.Rules)
 				}
 			}
 		}
@@ -127,14 +130,8 @@ func TestBuildRoute_TunnelMode_ProbeDomainsRoutedThroughProxyBeforeSelfDirect(t 
 			selfDirectIdx = i
 		}
 	}
-	if probeIdx < 0 {
-		t.Fatalf("expected probe-domain → proxy rule, rules=%+v", route.Rules)
-	}
 	if selfDirectIdx < 0 {
-		t.Fatalf("expected self-direct rule for non-endpoint protocol")
-	}
-	if probeIdx > selfDirectIdx {
-		t.Fatalf("probe-domain rule (idx=%d) must precede self-direct rule (idx=%d)", probeIdx, selfDirectIdx)
+		t.Fatalf("expected self-direct rule for non-endpoint protocol, rules=%+v", route.Rules)
 	}
 }
 

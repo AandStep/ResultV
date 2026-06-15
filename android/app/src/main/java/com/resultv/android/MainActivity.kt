@@ -150,8 +150,7 @@ class MainActivity : ComponentActivity() {
         // arms based on SettingsRepository.subscriptionAutoUpdate / interval.
         com.resultv.android.vpn.SubscriptionRefresher.start(lifecycleScope, applicationContext)
 
-        // Auto-ping servers on startup and periodically
-        com.resultv.android.vpn.PingRepository.startPolling { ProfileRepository.state.value.profiles }
+
         
         setContent {
             ResultVTheme {

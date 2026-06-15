@@ -227,24 +227,9 @@ private fun AdvancedGroup(settings: com.resultv.android.vpn.SettingsState) {
         icon = Icons.Outlined.Block,
         iconBg = Color(0xFFef4444).copy(alpha = 0.18f),
         iconTint = Color(0xFFf87171),
-        checked = settings.adblock,
-        onCheckedChange = {
-            SettingsRepository.setAdblock(it)
-            // Warm the SRS cache so the next connect references local lists
-            // instead of waiting on sing-box's remote fetch. Safe no-op when
-            // already fresh (24h TTL).
-            if (it) AdBlockRepository.refreshAsync()
-        },
-    )
-    HorizontalDivider(color = Brand.SurfaceHigh)
-    ToggleRow(
-        title = stringResource(R.string.settings_youtube),
-        subtitle = stringResource(R.string.settings_youtube_subtitle),
-        icon = Icons.Outlined.OndemandVideo,
-        iconBg = Color(0xFFff0000).copy(alpha = 0.16f),
-        iconTint = Color(0xFFff4d4d),
-        checked = settings.youtubeUnblock,
-        onCheckedChange = { SettingsRepository.setYoutubeUnblock(it) },
+        checked = false,
+        onCheckedChange = {},
+        enabled = false,
     )
 }
 
@@ -302,8 +287,8 @@ private fun SecurityGroup(settings: com.resultv.android.vpn.SettingsState) {
         icon = Icons.Outlined.GppBad,
         iconBg = Color(0xFFef4444).copy(alpha = 0.18f),
         iconTint = Color(0xFFf87171),
-        checked = settings.killSwitch,
-        onCheckedChange = { SettingsRepository.setKillSwitch(it) },
+        checked = false,
+        onCheckedChange = {},
         enabled = false,
     )
 }
