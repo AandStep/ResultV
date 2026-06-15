@@ -1,0 +1,79 @@
+diff --git a/stack_system_nat.go b/stack_system_nat.go
+index 636b561..6fcdb36 100644
+--- a/stack_system_nat.go
++++ b/stack_system_nat.go
+@@ -6,6 +6,7 @@ import (
+ 	"sync"
+ 	"time"
+ 
++	E "github.com/sagernet/sing/common/exceptions"
+ 	M "github.com/sagernet/sing/common/metadata"
+ 	N "github.com/sagernet/sing/common/network"
+ )
+@@ -91,22 +92,59 @@ func (n *TCPNat) Lookup(source netip.AddrPort, destination netip.AddrPort, handl
+ 	if pErr != nil {
+ 		return 0, pErr
+ 	}
++	// Allocate a NAT port that is NOT currently held by a live session.
++	//
++	// The previous implementation handed out n.portIndex and incremented it
++	// monotonically (10000..65535, wrapping back to 10000 on uint16 overflow),
++	// overwriting n.portMap[nextPort] unconditionally. Under high connection
++	// churn the counter wraps after ~55k flows and starts reusing the NAT ports
++	// of still-alive long-lived connections (streaming / websocket / push),
++	// corrupting their reverse mapping (LookupBack) and tearing every one of
++	// them down at the same instant — the "all connections drop at once,
++	// WSAECONNABORTED" storm seen under agentic/go-test load.
++	//
++	// Scan forward from the rolling cursor for a slot no live session occupies.
++	// Closed sessions are reaped within the NAT timeout, so in practice far
++	// fewer than the ~55k available ports are held at any moment and this
++	// resolves on the first probe. Genuine simultaneous-flow exhaustion now
++	// fails loudly instead of silently killing an established connection.
++	//
++	// Lock order (portAccess then addrAccess) matches checkTimeout to avoid a
++	// lock-ordering deadlock.
++	n.portAccess.Lock()
++	defer n.portAccess.Unlock()
+ 	n.addrAccess.Lock()
++	defer n.addrAccess.Unlock()
++	const minNatPort = 10000
+ 	nextPort := n.portIndex
+-	if nextPort == 0 {
+-		nextPort = 10000
+-		n.portIndex = 10001
++	if nextPort < minNatPort {
++		nextPort = minNatPort
++	}
++	var allocated bool
++	for i := 0; i < 65535-minNatPort+1; i++ {
++		if _, used := n.portMap[nextPort]; !used {
++			allocated = true
++			break
++		}
++		if nextPort == 65535 {
++			nextPort = minNatPort
++		} else {
++			nextPort++
++		}
++	}
++	if !allocated {
++		return 0, E.New("system: tcp nat port space exhausted")
++	}
++	if nextPort == 65535 {
++		n.portIndex = minNatPort
+ 	} else {
+-		n.portIndex++
++		n.portIndex = nextPort + 1
+ 	}
+ 	n.addrMap[source] = nextPort
+-	n.addrAccess.Unlock()
+-	n.portAccess.Lock()
+ 	n.portMap[nextPort] = &TCPSession{
+ 		Source:      source,
+ 		Destination: destination,
+ 		LastActive:  time.Now(),
+ 	}
+-	n.portAccess.Unlock()
+ 	return nextPort, nil
+ }
