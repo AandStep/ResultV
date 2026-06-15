@@ -141,6 +141,58 @@ func TestClearLeftoverTun_NoAdapterIsNoOp(t *testing.T) {
 	}
 }
 
+func TestStaleTunRemovalScript_TargetsOnlyOurAdapter(t *testing.T) {
+	s := staleTunRemovalScript()
+	// Must select by the EXACT sing-tun description so a user's other tunnels
+	// (Tailscale, WireGuard, OpenVPN TAP, …) are never removed.
+	if !strings.Contains(s, "-InterfaceDescription '"+singTunAdapterDescription+"'") {
+		t.Fatalf("removal must match the exact sing-tun description: %s", s)
+	}
+	if !strings.Contains(s, "pnputil /remove-device") {
+		t.Fatalf("removal must delete the PnP device, got: %s", s)
+	}
+	// A broad "tun" substring match here would risk nuking unrelated adapters.
+	if strings.Contains(s, "-InterfaceDescription '*tun*'") || strings.Contains(s, "Where-Object") {
+		t.Fatalf("removal must not use a broad match: %s", s)
+	}
+}
+
+func TestRemoveStaleTunAdapter_AdminRunsDirectly(t *testing.T) {
+	ran, elevated := withTunStubs(t, true, "3\n")
+	if err := removeStaleTunAdapter(); err != nil {
+		t.Fatalf("removeStaleTunAdapter: %v", err)
+	}
+	if *elevated != "" {
+		t.Fatalf("admin path must not elevate, got: %q", *elevated)
+	}
+	if !strings.Contains(*ran, "pnputil /remove-device") {
+		t.Fatalf("admin path must run the removal directly, got: %q", *ran)
+	}
+}
+
+func TestRemoveStaleTunAdapter_NonAdminElevates(t *testing.T) {
+	ran, elevated := withTunStubs(t, false, "5\n")
+	if err := removeStaleTunAdapter(); err != nil {
+		t.Fatalf("removeStaleTunAdapter: %v", err)
+	}
+	if *ran != "" {
+		t.Fatalf("non-admin path must not run removal directly, got: %q", *ran)
+	}
+	if !strings.Contains(*elevated, "pnputil /remove-device") {
+		t.Fatalf("non-admin path must elevate the removal, got: %q", *elevated)
+	}
+}
+
+func TestRemoveStaleTunAdapter_NoAdapterIsNoOp(t *testing.T) {
+	ran, elevated := withTunStubs(t, true, "\n")
+	if err := removeStaleTunAdapter(); err != nil {
+		t.Fatalf("removeStaleTunAdapter: %v", err)
+	}
+	if *ran != "" || *elevated != "" {
+		t.Fatalf("no adapter detected → no removal; ran=%q elevated=%q", *ran, *elevated)
+	}
+}
+
 func TestBuildTunCleanupCommands(t *testing.T) {
 	cmds := buildTunCleanupCommands([]int{3, 7})
 	expected := []string{

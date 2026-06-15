@@ -60,42 +60,57 @@ type KillSwitch interface {
 // destination as the previous open udp/53 rule allowed.
 var fallbackDNS = []string{"1.1.1.1", "8.8.8.8"}
 
-// resolveProxyIPs accepts a "host:port" string and returns the IP literals
-// the kill switch should allow. Pure-IP hosts are returned as-is. Hostnames
-// are resolved through the system resolver; we return ALL addresses (both
-// v4 and v6) so CDN-fronted proxies with multiple A records still connect.
-// Resolution uses the current OS DNS — this must happen BEFORE the kill
-// switch arms, otherwise the very DNS query needed to bootstrap the firewall
-// rules would be blocked.
+// resolveProxyIPs returns the IP literals the kill switch should allow. The
+// input is one or more comma-separated "host:port" (or bare host) entries: the
+// connect-time path pre-pins every backend IP of a CDN/multi-IP server and
+// passes them all here as literals (e.g. "1.2.3.4:443,5.6.7.8:443"), so the
+// firewall allows every backend sing-box may fail over to — otherwise a
+// failover to an un-allowed IP would be blocked, the health probe through it
+// would fail, and the kill switch could never disengage. A bare IP host is
+// returned as-is; a hostname is resolved through the system resolver (ALL v4+v6
+// addresses). Resolution must happen BEFORE the kill switch arms, otherwise the
+// very DNS query needed to bootstrap the rules would itself be blocked.
 func resolveProxyIPs(addr string) []string {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		host = strings.TrimSpace(addr)
-	}
-	host = strings.Trim(host, "[]")
-	if host == "" {
-		return nil
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return []string{ip.String()}
-	}
-	// Hostname path: cap at 2 seconds so a flaky resolver can't stall the
-	// connect flow. Anything longer should be treated as a transient
-	// network problem and surfaced — we don't want to silently fall back
-	// to "no allow rule for the proxy".
-	resolved, err := net.DefaultResolver.LookupIPAddr(context.Background(), host)
-	if err != nil {
-		return nil
-	}
-	out := make([]string, 0, len(resolved))
-	seen := make(map[string]struct{}, len(resolved))
-	for _, a := range resolved {
-		s := a.IP.String()
+	out := make([]string, 0, 4)
+	seen := make(map[string]struct{}, 4)
+	add := func(s string) {
+		if s == "" {
+			return
+		}
 		if _, dup := seen[s]; dup {
-			continue
+			return
 		}
 		seen[s] = struct{}{}
 		out = append(out, s)
+	}
+	for _, part := range strings.Split(addr, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		host, _, err := net.SplitHostPort(part)
+		if err != nil {
+			host = part
+		}
+		host = strings.Trim(strings.TrimSpace(host), "[]")
+		if host == "" {
+			continue
+		}
+		if ip := net.ParseIP(host); ip != nil {
+			add(ip.String())
+			continue
+		}
+		// Hostname path: cap at 2 seconds so a flaky resolver can't stall the
+		// connect flow. Anything longer should be treated as a transient
+		// network problem and surfaced — we don't want to silently fall back
+		// to "no allow rule for the proxy".
+		resolved, err := net.DefaultResolver.LookupIPAddr(context.Background(), host)
+		if err != nil {
+			continue
+		}
+		for _, a := range resolved {
+			add(a.IP.String())
+		}
 	}
 	return out
 }

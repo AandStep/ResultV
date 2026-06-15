@@ -451,10 +451,11 @@ func (m *Manager) CancelConnect() {
 }
 
 // tunRetryDelay is the settle pause between a failed tunnel-mode engine start and
-// the single automatic retry. The failed start releases the partially-created
-// Wintun adapter / WFP filters (see SingBoxEngine.bootLocked); this brief pause
-// lets Windows finish tearing them down before the retry recreates the adapter.
-// A var, not a const, so tests can zero it out.
+// the single automatic retry. Between the two we delete the wedged Wintun adapter
+// device (removeStaleTunAdapterFn) on top of the failed start releasing its
+// partially-created adapter / WFP filters (see SingBoxEngine.bootLocked); this
+// brief pause lets Windows finish tearing the device down before the retry
+// recreates a fresh adapter. A var, not a const, so tests can zero it out.
 var tunRetryDelay = 700 * time.Millisecond
 
 // isTransientTunError reports whether a tunnel-mode engine-start failure is the
@@ -475,16 +476,21 @@ func isTransientTunError(err error) bool {
 
 // startEngine starts the engine for a connect attempt and returns the DTO fields
 // a caller needs on failure. In tunnel mode it transparently retries once when
-// the first attempt fails with a transient TUN-setup error (the failed start
-// having released the залипший adapter/filters first), which recovers the common
-// "launch again and it works" case the field reports describe. On permanent
-// failure the error code is downgraded from tun_privileges to engine_start
-// whenever we are actually elevated — popping a "restart as admin" prompt at an
-// already-admin user is the bug being fixed, not the cure.
+// the first attempt fails with a transient TUN-setup error: before retrying it
+// deletes the wedged Wintun adapter device (removeStaleTunAdapterFn) so the
+// retry's CreateAdapter gets a clean slate instead of reopening the dead husk —
+// the latter is what made the failure stick until a reboot. This recovers the
+// common "launch again and it works" case the field reports describe. On
+// permanent failure the error code is downgraded from tun_privileges to
+// engine_start whenever we are actually elevated — popping a "restart as admin"
+// prompt at an already-admin user is the bug being fixed, not the cure.
 func (m *Manager) startEngine(ctx context.Context, cfg EngineConfig) (err error, tunnelFailed bool, reason, errorCode string) {
 	err = m.engine.Start(ctx, cfg)
 	if err != nil && cfg.Mode == ProxyModeTunnel && isTransientTunError(err) {
-		m.log.Warning(fmt.Sprintf("[PROXY] TUN не сконфигурировался (%s) — очистка залипшего адаптера и повтор", extractErrorReason(err.Error())))
+		m.log.Warning(fmt.Sprintf("[PROXY] TUN не сконфигурировался (%s) — удаление залипшего адаптера и повтор", extractErrorReason(err.Error())))
+		if rmErr := removeStaleTunAdapterFn(); rmErr != nil {
+			m.log.Warning(fmt.Sprintf("[PROXY] Не удалось удалить залипший TUN-адаптер: %v", rmErr))
+		}
 		time.Sleep(tunRetryDelay)
 		if err = m.engine.Start(ctx, cfg); err == nil {
 			m.log.Success("[PROXY] TUN поднялся со второй попытки")
@@ -625,6 +631,13 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		if resolved := resolvePinnedServerIP(proxy.IP); resolved != "" {
 			proxy.ResolvedIP = resolved
 		}
+	}
+	// Resolve the full backend set for the hosts-pin (see ProxyConfig.ResolvedIPs)
+	// so a CDN/multi-IP server can fail over across backends mid-session. Empty for
+	// literal IPs or a censored resolver — buildDNS then falls back to the single
+	// pin / local rule, never worse than the pre-fix single-IP behaviour.
+	if len(proxy.ResolvedIPs) == 0 {
+		proxy.ResolvedIPs = resolveAllServerIPs(proxy.IP)
 	}
 	resolveDur = time.Since(tResolve)
 	m.mu.Lock()
@@ -1025,6 +1038,42 @@ func resolvePinnedServerIP(host string) string {
 	return addrs[0].IP.String()
 }
 
+// resolveAllServerIPs resolves a domain server to ALL of its IPv4 addresses at
+// connect time, while the OS resolver still works. The set seeds the static
+// `hosts` DNS record (see buildDNS + ProxyConfig.ResolvedIPs) so sing-box can
+// fail over across a CDN's backends within a live session instead of dying when
+// the single pinned IP's transport resets. IPv4 only — the tunnel DNS strategy
+// is ipv4_only and the outbound dials v4. Returns nil for empty hosts, literal
+// IPs, or a censored/failed resolver (callers then fall back to the single pin
+// or the `local` rule, never worse than before).
+func resolveAllServerIPs(host string) []string {
+	host = strings.TrimSpace(host)
+	if host == "" || net.ParseIP(host) != nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), pinnedResolveTimeout)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil || len(addrs) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(addrs))
+	var out []string
+	for _, a := range addrs {
+		v4 := a.IP.To4()
+		if v4 == nil {
+			continue
+		}
+		s := v4.String()
+		if _, dup := seen[s]; dup {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
 // captureLiveServerIP fills proxy.ResolvedIP from the live OS socket when the
 // connect-time pin (resolvePinnedServerIP) came back empty for a domain server.
 // That is the censored-DNS case: the OS resolver cannot resolve the server
@@ -1184,6 +1233,15 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 		if resolved := resolvePinnedServerIP(proxy.IP); resolved != "" {
 			proxy.ResolvedIP = resolved
 			engineCfg.Proxy.ResolvedIP = resolved
+		}
+	}
+	// Full backend set for the hosts-pin (see ProxyConfig.ResolvedIPs) — lets a
+	// CDN/multi-IP server fail over across backends mid-session instead of dying
+	// with one. Empty for literals / censored resolver → falls back to the pin.
+	if len(proxy.ResolvedIPs) == 0 {
+		if all := resolveAllServerIPs(proxy.IP); len(all) > 0 {
+			proxy.ResolvedIPs = all
+			engineCfg.Proxy.ResolvedIPs = all
 		}
 	}
 
@@ -2149,6 +2207,9 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy Proxy
 		}
 		if proxy.ResolvedIP != "" && m.proxy != nil && m.proxy.ResolvedIP == "" {
 			m.proxy.ResolvedIP = proxy.ResolvedIP
+		}
+		if len(proxy.ResolvedIPs) > 0 && m.proxy != nil && len(m.proxy.ResolvedIPs) == 0 {
+			m.proxy.ResolvedIPs = proxy.ResolvedIPs
 		}
 		wasDead := m.proxyDead
 		if alive {

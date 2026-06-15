@@ -61,6 +61,18 @@ func fakeAdmin(t *testing.T, admin bool) {
 	t.Cleanup(func() { isAdminCheck = prev })
 }
 
+// stubRemoveStaleTunAdapter swaps the wedged-adapter removal with a counter so
+// tests can assert the retry path tears the dead device down before re-Starting,
+// without touching real PnP devices.
+func stubRemoveStaleTunAdapter(t *testing.T) *int {
+	t.Helper()
+	calls := new(int)
+	prev := removeStaleTunAdapterFn
+	removeStaleTunAdapterFn = func() error { *calls++; return nil }
+	t.Cleanup(func() { removeStaleTunAdapterFn = prev })
+	return calls
+}
+
 // A stale Wintun adapter / leftover WFP filters from an unclean prior exit make
 // the first TUN start fail with "configure tun interface / access denied". The
 // failed start releases those handles, so a single automatic retry must bring
@@ -68,6 +80,7 @@ func fakeAdmin(t *testing.T, admin bool) {
 func TestStartEngine_RetriesTransientTunErrorThenSucceeds(t *testing.T) {
 	fastTunRetry(t)
 	fakeAdmin(t, true)
+	removed := stubRemoveStaleTunAdapter(t)
 
 	eng := &seqEngine{errs: []error{
 		errors.New("start inbound/tun[tun-in]: configure tun interface: Access is denied."),
@@ -81,6 +94,28 @@ func TestStartEngine_RetriesTransientTunErrorThenSucceeds(t *testing.T) {
 	}
 	if eng.calls != 2 {
 		t.Fatalf("expected exactly 2 start attempts (fail + retry), got %d", eng.calls)
+	}
+	// The wedged adapter must be torn down before the retry — reopening the dead
+	// husk is exactly what kept the failure stuck until a reboot.
+	if *removed != 1 {
+		t.Fatalf("expected stale TUN adapter removal once before retry, got %d", *removed)
+	}
+}
+
+// The wedged-adapter removal is reserved for transient TUN failures. A
+// non-transient error (DNS, handshake) must not touch the adapter device.
+func TestStartEngine_NoAdapterRemovalForNonTransientError(t *testing.T) {
+	fastTunRetry(t)
+	fakeAdmin(t, true)
+	removed := stubRemoveStaleTunAdapter(t)
+
+	eng := &seqEngine{errs: []error{errors.New("dns: server misbehaving")}}
+	m := NewManager(logger.New())
+	m.engine = eng
+
+	_, _, _, _ = m.startEngine(context.Background(), EngineConfig{Mode: ProxyModeTunnel})
+	if *removed != 0 {
+		t.Fatalf("non-transient error must not remove the TUN adapter, got %d", *removed)
 	}
 }
 
