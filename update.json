@@ -1,12 +1,12 @@
 {
-  "version": "3.2.3",
+  "version": "3.2.4",
   "releaseTitle": {
     "ru": "Улучшение туннель режима, ускорение подключения и баг фиксы",
     "en": "Tunnel mode improvements, connection speedup and bug fixes"
   },
   "releaseNotes": {
-    "ru": "Улучшен режим туннеля, теперь работает стабильнее учитывая новые волны блокировок. Ускорено подключение к серверам. Пофикшены некоторые баги. Добавлен счетчик времени на главной странице, а также иконки сайта и телеграм канала. Улучшена очистка хвостов приложения при принудительном завершении, теперь выход через трей корректно очищает систему, а при аварийном выходе и запуске приложения оно автоматически очищает систему от хвостов.",
-    "en": "The tunneling mode has been improved and is now more stable, featuring new mechanisms to bypass blocking. Server connection speeds have been increased. Some bugs have been fixed. A timer has been added to the main page, along with icons for the website and Telegram channel. Application cleanup upon exit has been improved; exiting via the system tray now correctly cleans up the system, and the application automatically clears out any leftover traces upon startup following an unexpected shutdown."
+    "ru": "Улучшен режим туннеля, теперь работает стабильнее учитывая новые волны блокировок. Ускорено подключение к серверам. Пофикшены некоторые баги. Добавлен счетчик времени на главной странице, а также иконки сайта и телеграм канала. Улучшена очистка хвостов приложения при принудительном завершении, теперь выход через трей корректно очищает систему, а при аварийном выходе и запуске приложения оно автоматически очищает систему от хвостов. Патч для system стека приложения улучшающий его стабильность.",
+    "en": "The tunneling mode has been improved and is now more stable, featuring new mechanisms to bypass blocking. Server connection speeds have been increased. Some bugs have been fixed. A timer has been added to the main page, along with icons for the website and Telegram channel. Application cleanup upon exit has been improved; exiting via the system tray now correctly cleans up the system, and the application automatically clears out any leftover traces upon startup following an unexpected shutdown. Patch for system stack improving its stability."
   },
   "downloadUrl": "https://result-proxy.ru/",
   "platforms": {

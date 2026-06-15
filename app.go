@@ -351,15 +351,38 @@ func (a *App) startup(ctx context.Context) {
 	// bundled into the single startup UAC prompt when admin rights are needed.
 
 	a.proxy.KillSwitchFirewallEngage = func(p proxy.ProxyConfig, dns []string) {
-		// Use the IP resolved at connect time, not the raw domain: the kill
-		// switch fires precisely when DNS is failing, so resolving the host now
-		// would return nothing and the firewall ("no proxy IP to allow") would
+		// Allow EVERY backend IP pinned at connect time, not the raw domain: the
+		// kill switch fires precisely when DNS is failing, so resolving the host
+		// now would return nothing and the firewall ("no proxy IP to allow") would
 		// never actually block — leaving the user unprotected on a real outage.
-		host := p.IP
-		if p.ResolvedIP != "" {
-			host = p.ResolvedIP
+		// Allowing all backends (not just one) is required so that when sing-box
+		// re-resolves the server domain and fails over to another CDN backend, the
+		// firewall doesn't block it — otherwise the health probe through the new
+		// backend fails and the kill switch can never disengage.
+		seen := map[string]struct{}{}
+		var hosts []string
+		addHost := func(h string) {
+			h = strings.TrimSpace(h)
+			if h == "" || net.ParseIP(h) == nil {
+				return
+			}
+			if _, dup := seen[h]; dup {
+				return
+			}
+			seen[h] = struct{}{}
+			hosts = append(hosts, fmt.Sprintf("%s:%d", h, p.Port))
 		}
-		addr := fmt.Sprintf("%s:%d", host, p.Port)
+		for _, ip := range p.ResolvedIPs {
+			addHost(ip)
+		}
+		addHost(p.ResolvedIP)
+		addHost(p.IP) // no-op unless IP is already a literal
+		addr := strings.Join(hosts, ",")
+		if addr == "" {
+			// No pinned literal (domain server, censored resolver) — fall back to
+			// the raw host:port so the firewall layer can try to resolve it.
+			addr = fmt.Sprintf("%s:%d", p.IP, p.Port)
+		}
 		if err := a.enableKillSwitchFirewall(addr, dns); err != nil {
 			a.log.Warning(fmt.Sprintf("[KILL SWITCH] Не удалось включить фаервол при недоступности узла: %v", err))
 		}

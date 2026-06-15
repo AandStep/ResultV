@@ -20,23 +20,95 @@ import (
 	"testing"
 )
 
-// When a domain server is pinned to an IP at connect time, the sing-box outbound
-// must dial the IP while keeping the original domain as the TLS SNI — otherwise
-// the cert check would fail. This is the core of the false-kill-switch fix:
-// sing-box never re-resolves the server domain mid-session.
-func TestBuildProxyOutbound_PinnedResolvedIPKeepsDomainSNI(t *testing.T) {
+// The outbound must keep the server DOMAIN (not a single pinned IP): sing-box
+// re-resolves it against the static hosts record (see buildDNS) and fails over
+// across the CDN's backends. Pinning the outbound to one IP was the regression
+// that collapsed the whole session when that backend reset. The TLS SNI is the
+// domain regardless, so the cert still validates.
+func TestBuildProxyOutbound_KeepsServerDomainForFailover(t *testing.T) {
 	out := buildProxyOutbound(ProxyConfig{
-		IP:         "k.example.com",
-		ResolvedIP: "203.0.113.7",
-		Port:       3443,
-		Type:       "hysteria2",
-		Password:   "pw",
+		IP:          "k.example.com",
+		ResolvedIP:  "203.0.113.7",
+		ResolvedIPs: []string{"203.0.113.7", "203.0.113.8"},
+		Port:        3443,
+		Type:        "hysteria2",
+		Password:    "pw",
 	})
-	if out.Server != "203.0.113.7" {
-		t.Fatalf("expected outbound to dial the pinned IP, got %q", out.Server)
+	if out.Server != "k.example.com" {
+		t.Fatalf("outbound must keep the domain so sing-box can fail over, got %q", out.Server)
 	}
 	if out.TLS == nil || out.TLS.ServerName != "k.example.com" {
 		t.Fatalf("expected SNI to stay the original domain, got %+v", out.TLS)
+	}
+}
+
+// The server domain resolves from a static `hosts` record seeded with EVERY
+// connect-time backend IP, routed there by a dedicated DNS rule — never the
+// fragile redirected OS `local` resolver. This is what restores pre-regression
+// CDN failover without reintroducing false kill-switch trips.
+func TestBuildDNS_PinsServerDomainToAllBackendsViaHosts(t *testing.T) {
+	dns := buildDNS(EngineConfig{
+		Mode: ProxyModeTunnel,
+		Proxy: ProxyConfig{
+			IP:          "k.example.com",
+			ResolvedIPs: []string{"203.0.113.7", "203.0.113.8"},
+			Type:        "hysteria2",
+		},
+	})
+	var hosts *SBDNSServer
+	for i := range dns.Servers {
+		if dns.Servers[i].Tag == "server-pin" {
+			hosts = &dns.Servers[i]
+		}
+	}
+	if hosts == nil {
+		t.Fatalf("expected a hosts server-pin DNS server, got %+v", dns.Servers)
+	}
+	if hosts.Type != "hosts" {
+		t.Fatalf("server-pin must be a hosts server, got type %q", hosts.Type)
+	}
+	got := hosts.Predefined["k.example.com"]
+	if len(got) != 2 || got[0] != "203.0.113.7" || got[1] != "203.0.113.8" {
+		t.Fatalf("hosts record must hold every backend IP, got %v", got)
+	}
+	routed := false
+	for _, r := range dns.Rules {
+		if len(r.Domain) == 1 && r.Domain[0] == "k.example.com" {
+			if r.Server != "server-pin" {
+				t.Fatalf("server domain must route to server-pin, not %q (the fragile local resolver)", r.Server)
+			}
+			routed = true
+		}
+	}
+	if !routed {
+		t.Fatal("expected a DNS rule routing the server domain to server-pin")
+	}
+}
+
+// Without any resolved IPs (literal-IP server, or a censored resolver) there is
+// nothing to pin: the server domain falls back to the `local` resolver rule and
+// no hosts server is emitted — never worse than the pre-fix behaviour.
+func TestBuildDNS_NoPinFallsBackToLocal(t *testing.T) {
+	dns := buildDNS(EngineConfig{
+		Mode:  ProxyModeTunnel,
+		Proxy: ProxyConfig{IP: "k.example.com", Type: "hysteria2"},
+	})
+	for _, s := range dns.Servers {
+		if s.Tag == "server-pin" {
+			t.Fatal("no resolved IPs → no hosts pin should be emitted")
+		}
+	}
+	found := false
+	for _, r := range dns.Rules {
+		if len(r.Domain) == 1 && r.Domain[0] == "k.example.com" {
+			found = true
+			if r.Server != "local" {
+				t.Fatalf("unpinned server domain must fall back to local, got %q", r.Server)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected the server domain DNS rule")
 	}
 }
 
@@ -63,20 +135,51 @@ func TestResolvePinnedServerIP_LiteralIPReturnsEmpty(t *testing.T) {
 	}
 }
 
-// Subscription servers must never leak the provider backend address into logs.
+// Subscription servers must never leak the provider backend address into logs —
+// including every failover backend in ResolvedIPs, not just the primary one.
 func TestSingBoxLogWriter_RedactsSubscriptionServer(t *testing.T) {
 	w := newSingBoxLogWriter(nil, ProxyConfig{
 		IP:              "k.example.com",
 		ResolvedIP:      "203.0.113.7",
+		ResolvedIPs:     []string{"203.0.113.7", "203.0.113.8"},
 		SubscriptionURL: "https://sub.example/abc",
 	})
-	in := "connection: open connection ... using outbound/hysteria2[proxy]: lookup k.example.com: context deadline exceeded (203.0.113.7)"
+	in := "connection upload closed: raw-read tcp4 ...->203.0.113.8: forcibly closed (lookup k.example.com) [203.0.113.7]"
 	got := w.redactServer(in)
-	if strings.Contains(got, "k.example.com") || strings.Contains(got, "203.0.113.7") {
-		t.Fatalf("server identifiers leaked after redaction: %q", got)
+	for _, leak := range []string{"k.example.com", "203.0.113.7", "203.0.113.8"} {
+		if strings.Contains(got, leak) {
+			t.Fatalf("server identifier %q leaked after redaction: %q", leak, got)
+		}
 	}
 	if !strings.Contains(got, "<сервер>") {
 		t.Fatalf("expected placeholder in redacted message: %q", got)
+	}
+}
+
+// Every pinned backend IP of a CDN domain server must get a route-exclude CIDR
+// so none of the server's own traffic loops back into the TUN.
+func TestBuildTunnelConfig_RouteExcludesAllBackends(t *testing.T) {
+	cfg, err := BuildTunnelModeConfig(EngineConfig{
+		Mode: ProxyModeTunnel,
+		Proxy: ProxyConfig{
+			IP:          "k.example.com",
+			ResolvedIPs: []string{"203.0.113.7", "203.0.113.8"},
+			Port:        443,
+			Type:        "hysteria2",
+			Password:    "pw",
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildTunnelModeConfig: %v", err)
+	}
+	if len(cfg.Inbounds) == 0 || cfg.Inbounds[0].Type != "tun" {
+		t.Fatalf("expected tun inbound first, got %+v", cfg.Inbounds)
+	}
+	excl := strings.Join(cfg.Inbounds[0].RouteExcludeAddress, ",")
+	for _, want := range []string{"203.0.113.7/32", "203.0.113.8/32"} {
+		if !strings.Contains(excl, want) {
+			t.Fatalf("route-exclude must cover every backend, missing %q in %q", want, excl)
+		}
 	}
 }
 

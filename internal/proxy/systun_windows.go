@@ -178,3 +178,39 @@ func buildTunCleanupScript(idxs []int) string {
 	}
 	return b.String()
 }
+
+// staleTunRemovalScript returns the PowerShell that deletes the sing-tun Wintun
+// *device* (not just its routes) from Windows. It selects the adapter by the
+// exact "sing-tun Tunnel" description — never a broad "tun" match — so it can
+// only ever remove OUR adapter, then hands the device's PnP instance id to
+// pnputil. ErrorAction/2>$null keep it silent when no such adapter exists, so
+// the script is a safe no-op on a clean machine.
+func staleTunRemovalScript() string {
+	return fmt.Sprintf(
+		"Get-NetAdapter -InterfaceDescription '%s' -ErrorAction SilentlyContinue | "+
+			"ForEach-Object { & pnputil /remove-device $_.PnpDeviceID 2>$null }",
+		singTunAdapterDescription,
+	)
+}
+
+// removeStaleTunAdapter deletes a wedged sing-tun adapter device so the next
+// CreateAdapter builds a fresh one. clearLeftoverTun only strips routes/DNS and
+// leaves the adapter for sing-box to reclaim — but when the adapter's backing
+// Wintun session is dead (the device lingers in the stack yet its handle is
+// gone), reopening it is what fails with "open interface take too much time" →
+// "cannot find the file specified". Reusing that husk on every retry is why the
+// tunnel used to come back only after a reboot; removing the device breaks that
+// loop. No-op when no such adapter is present. Admin removes it directly;
+// without admin we go through the elevated (UAC) PowerShell, mirroring
+// clearLeftoverTun — though tunnel mode is admin-gated up front, so the direct
+// path is the one that runs in practice.
+func removeStaleTunAdapter() error {
+	if len(leftoverTunIfIndexes()) == 0 {
+		return nil
+	}
+	script := staleTunRemovalScript()
+	if tunIsAdmin() {
+		return runCmdFn("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+	}
+	return tunPSRunElevated(script)
+}

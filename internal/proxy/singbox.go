@@ -127,7 +127,9 @@ func newSingBoxLogWriter(log *logger.Logger, proxy ProxyConfig) *singBoxLogWrite
 	if proxy.SubscriptionURL == "" {
 		return w
 	}
-	for _, tok := range []string{proxy.IP, proxy.ResolvedIP} {
+	toks := []string{proxy.IP, proxy.ResolvedIP}
+	toks = append(toks, proxy.ResolvedIPs...)
+	for _, tok := range toks {
 		tok = strings.TrimSpace(tok)
 		if tok != "" {
 			w.redact = append(w.redact, tok)

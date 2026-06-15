@@ -68,3 +68,23 @@ func TestExtractDNSIPs(t *testing.T) {
 		})
 	}
 }
+
+// resolveProxyIPs must accept a comma-separated list of literal "host:port"
+// entries and return EVERY IP — this is how the kill switch allows all of a CDN
+// server's pinned backends so a mid-session failover isn't blocked. Pure
+// literals must not trigger any DNS resolution.
+func TestResolveProxyIPs_CommaSeparatedLiterals(t *testing.T) {
+	got := resolveProxyIPs("203.0.113.7:443,203.0.113.8:443,203.0.113.7:443")
+	want := []string{"203.0.113.7", "203.0.113.8"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("resolveProxyIPs(list) = %v, want %v (deduped, order-stable)", got, want)
+	}
+
+	if got := resolveProxyIPs("198.51.100.10:8443"); !reflect.DeepEqual(got, []string{"198.51.100.10"}) {
+		t.Fatalf("single literal host:port = %v, want [198.51.100.10]", got)
+	}
+
+	if got := resolveProxyIPs("[2606:4700::1111]:443,198.51.100.10:443"); !reflect.DeepEqual(got, []string{"2606:4700::1111", "198.51.100.10"}) {
+		t.Fatalf("mixed v6/v4 list = %v", got)
+	}
+}

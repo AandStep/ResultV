@@ -123,6 +123,55 @@ func TestTunInboundUDPTimeoutShapeSmoke(t *testing.T) {
 	}
 }
 
+// TestServerPinHostsDNSShapeSmoke verifies that a domain-addressed server with
+// connect-time-resolved backends emits a `hosts` DNS server carrying the
+// predefined IP set, the outbound KEEPS the domain (so sing-box can fail over),
+// AND that sing-box's strict option decoder accepts the `hosts`/`predefined`
+// shape. Without this, a typo or a fork version drop in the hosts-pin would
+// silently break VPN startup for every domain/CDN server (strict decoder
+// rejects unknown fields) — the very regression-fix path could become a worse
+// regression.
+func TestServerPinHostsDNSShapeSmoke(t *testing.T) {
+	extra := map[string]interface{}{"password": "p", "sni": "k.example.com"}
+	raw, _ := json.Marshal(extra)
+	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
+		Proxy: ProxyConfig{
+			IP:          "k.example.com",
+			ResolvedIP:  "203.0.113.7",
+			ResolvedIPs: []string{"203.0.113.7", "203.0.113.8"},
+			Port:        443,
+			Type:        "HYSTERIA2",
+			Extra:       raw,
+		},
+		Mode:     ProxyModeTunnel,
+		TunStack: "system",
+	})
+	j, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(j)
+	for _, want := range []string{
+		`"type":"hosts"`,
+		`"tag":"server-pin"`,
+		`"predefined":{"k.example.com":["203.0.113.7","203.0.113.8"]}`,
+		`"server":"server-pin"`,
+	} {
+		if !strings.Contains(js, want) {
+			t.Fatalf("missing %q in pinned tunnel config: %s", want, js)
+		}
+	}
+	// The outbound must dial the domain, not a single pinned IP.
+	if !strings.Contains(js, `"server":"k.example.com"`) {
+		t.Fatalf("outbound must keep the server domain for failover: %s", js)
+	}
+	ctx := include.Context(context.Background())
+	var opt option.Options
+	if err := singjson.UnmarshalContext(ctx, j, &opt); err != nil {
+		t.Fatalf("strict decode rejected the hosts server-pin DNS shape: %v", err)
+	}
+}
+
 // TestVMessUDPShapeSmoke verifies that VMess outbound also gets xudp by
 // default and that global_padding / authenticated_length round-trip.
 func TestVMessUDPShapeSmoke(t *testing.T) {

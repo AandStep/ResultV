@@ -20,6 +20,7 @@ package proxy
 // touching the OS routing table. Production wiring points at the per-platform
 // implementations (systun_windows.go / systun_other.go).
 var (
-	hasLeftoverTunFn   = hasLeftoverTun
-	clearLeftoverTunFn = clearLeftoverTun
+	hasLeftoverTunFn        = hasLeftoverTun
+	clearLeftoverTunFn      = clearLeftoverTun
+	removeStaleTunAdapterFn = removeStaleTunAdapter
 )

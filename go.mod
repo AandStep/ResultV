@@ -227,6 +227,12 @@ replace github.com/sagernet/sing-box v1.13.12 => github.com/shtorm-7/sing-box-ex
 
 replace github.com/sagernet/sing => github.com/shtorm-7/sing v0.8.10-extended-1.1.0
 
+// Patched sing-tun fork: fixes the system-stack TCPNat uint16 port-wrap that
+// dropped all tunnel connections at once under high connection churn.
+// MUST stay on a v0.8.9 base — sing-box-extended requires v0.8.9; v0.8.10 renamed
+// InterfaceMonitor.MyInterface() -> MyInterfaces() and breaks the build.
+replace github.com/sagernet/sing-tun => github.com/AandStep/sing-tun v0.8.9-extended-1.0.0
+
 replace github.com/sagernet/wireguard-go => github.com/shtorm-7/wireguard-go v0.0.2-beta.1-extended-1.4.3
 
 replace github.com/sagernet/tailscale => github.com/shtorm-7/tailscale v1.92.4-sing-box-1.13-mod.7-extended-1.0.2

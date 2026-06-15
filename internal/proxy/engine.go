@@ -49,15 +49,24 @@ type ProxyConfig struct {
 	Extra           json.RawMessage `json:"extra,omitempty"`
 	SubscriptionURL string          `json:"subscriptionUrl,omitempty"`
 
-	// ResolvedIP is the server address resolved once at connect time, while the
-	// host OS resolver still works (before we redirect system DNS). When IP is a
-	// domain, sing-box would otherwise re-resolve it for every new connection via
-	// the `local` DNS server — which is fragile in tunnel mode (the OS resolver we
-	// ourselves redirect can time out). A single transient failure there collapsed
-	// every new connection and tripped a false kill switch (see buildProxyOutbound,
-	// buildRoute, and the kill-switch engage callback). Empty when IP is already a
-	// literal address. Not serialized — it is an internal connect-time cache.
+	// ResolvedIP is a single server IP learned at connect time (or recovered from
+	// the live socket / server-pin cache when the OS resolver is censored). It is
+	// the kill-switch's guaranteed-good allow target and the redaction/log anchor.
+	// Empty when IP is already a literal address. Not serialized — connect-time
+	// cache only. See ResolvedIPs for the full failover set.
 	ResolvedIP string `json:"-"`
+
+	// ResolvedIPs is the FULL set of IPs the server domain resolved to at connect
+	// time (while the OS resolver still works, before we redirect system DNS).
+	// It seeds a static `hosts` DNS record (see buildDNS) so sing-box re-resolves
+	// the server domain against these IPs — NOT the fragile redirected OS resolver
+	// — and can fail over across a CDN's backends within the live session. Pinning
+	// the outbound to a single IP (the pre-fix behaviour) instead nailed the whole
+	// session to one backend: when that backend reset, every multiplexed
+	// connection died at once and sing-box kept redialling the dead IP. Also feeds
+	// route-exclude and the kill-switch allow-set so every backend is covered.
+	// Empty when IP is a literal. Not serialized.
+	ResolvedIPs []string `json:"-"`
 }
 
 type EngineConfig struct {
@@ -191,6 +200,10 @@ type SBDNSServer struct {
 	ServerPort      int    `json:"server_port,omitempty"`
 	Detour          string `json:"detour,omitempty"`
 	AddressStrategy string `json:"address_strategy,omitempty"`
+	// Predefined seeds a static "hosts" DNS server: domain → fixed IP list.
+	// Used to pin the proxy server's own domain to its connect-time IPs so
+	// re-resolution never touches the redirected OS resolver (see buildDNS).
+	Predefined map[string][]string `json:"predefined,omitempty"`
 }
 
 type SBDNSRule struct {
@@ -535,19 +548,19 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 
 	var routeExclude []string
 	if pt != "WIREGUARD" && pt != "AMNEZIAWG" {
-		// Prefer the IP pinned at connect time so domain-addressed servers also
-		// get a route-exclude CIDR (previously skipped — net.ParseIP fails on a
-		// hostname — which let the server's own traffic loop back into the TUN).
-		serverHost := cfg.Proxy.IP
-		if cfg.Proxy.ResolvedIP != "" {
-			serverHost = cfg.Proxy.ResolvedIP
-		}
-		if serverIP := net.ParseIP(serverHost); serverIP != nil {
-			cidr := serverHost + "/32"
-			if serverIP.To4() == nil {
-				cidr = serverHost + "/128"
+		// Exclude EVERY backend IP the server resolved to (a CDN domain has
+		// several, and sing-box may fail over among them mid-session) so none of
+		// the server's own traffic loops back into the TUN. Domains alone yield
+		// nothing here (net.ParseIP fails on a hostname) — the pinned IP set is
+		// what gives domain-addressed servers their exclude CIDRs.
+		for _, host := range serverPinnedIPs(cfg.Proxy) {
+			if serverIP := net.ParseIP(host); serverIP != nil {
+				cidr := host + "/32"
+				if serverIP.To4() == nil {
+					cidr = host + "/128"
+				}
+				routeExclude = append(routeExclude, cidr)
 			}
-			routeExclude = append(routeExclude, cidr)
 		}
 	}
 
@@ -648,6 +661,33 @@ func buildOutbounds(proxy ProxyConfig) []SBOutbound {
 	return outbounds
 }
 
+// serverPinnedIPs returns every literal IP associated with the proxy server,
+// deduped and order-stable: the IP field when it is already a literal, then the
+// full connect-time resolved set (ResolvedIPs), then the single learned/cached
+// ResolvedIP. Used for the static hosts DNS record, route-exclude, and the
+// kill-switch allow-set so a CDN server's every backend is covered.
+func serverPinnedIPs(proxy ProxyConfig) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" || net.ParseIP(s) == nil {
+			return
+		}
+		if _, dup := seen[s]; dup {
+			return
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	add(proxy.IP) // no-op unless IP is already a literal
+	for _, ip := range proxy.ResolvedIPs {
+		add(ip)
+	}
+	add(proxy.ResolvedIP)
+	return out
+}
+
 func buildDNS(cfg EngineConfig) *SBDNS {
 	if cfg.Mode == ProxyModeTunnel {
 		// All DNS servers route through the proxy/endpoint outbound (tag
@@ -695,14 +735,30 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 
 		dns.Strategy = "ipv4_only"
 
-		// If the user gave a hostname for the proxy/endpoint server (not a
-		// literal IP), resolve it via the local OS resolver — the proxy
-		// detour can't be used to resolve its own server's hostname.
+		// Resolve the server's own hostname. When we pinned its IPs at connect
+		// time (CDN/multi-IP domain), serve them from a static `hosts` record so
+		// sing-box re-resolves the domain instantly and locally — rotating across
+		// every backend on a session reset — instead of hitting the redirected OS
+		// `local` resolver, which times out mid-session (the false-kill-switch
+		// fragility) and, when pinned to a single IP, took the whole session down
+		// with one dead backend. Fall back to `local` only when nothing resolved.
 		if cfg.Proxy.IP != "" && net.ParseIP(cfg.Proxy.IP) == nil {
-			dns.Rules = append(dns.Rules, SBDNSRule{
-				Domain: []string{cfg.Proxy.IP},
-				Server: "local",
-			})
+			if pinned := serverPinnedIPs(cfg.Proxy); len(pinned) > 0 {
+				dns.Servers = append(dns.Servers, SBDNSServer{
+					Type:       "hosts",
+					Tag:        "server-pin",
+					Predefined: map[string][]string{cfg.Proxy.IP: pinned},
+				})
+				dns.Rules = append(dns.Rules, SBDNSRule{
+					Domain: []string{cfg.Proxy.IP},
+					Server: "server-pin",
+				})
+			} else {
+				dns.Rules = append(dns.Rules, SBDNSRule{
+					Domain: []string{cfg.Proxy.IP},
+					Server: "local",
+				})
+			}
 		}
 
 		// Whitelisted apps (split-tunnel direct) must resolve via the local
