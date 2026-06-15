@@ -16,7 +16,7 @@
 #
 # Prerequisites:
 #   - Go toolchain (go.mod-compatible version)
-#   - gomobile (sagernet fork): go install github.com/nicedayzhu/nicedayzhu-gomobile/cmd/gomobile@v0.1.12
+#   - gomobile (sagernet fork): go install github.com/sagernet/gomobile/cmd/gomobile@v0.1.12
 #   - Android SDK with NDK installed (ANDROID_HOME set)
 #   - gomobile init (run once per machine)
 #
