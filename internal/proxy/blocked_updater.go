@@ -97,6 +97,58 @@ func ResolveBlockedDomains(ctx context.Context, provider BlockedListProvider, ca
 	}
 }
 
+// CIDRFetcher fetches the Telegram MTProto subnet list. Narrow interface
+// (satisfied by *HTTPBlockedListProvider) so callers and tests don't depend on
+// the full BlockedListProvider.
+type CIDRFetcher interface {
+	FetchTelegramCIDRs(ctx context.Context) ([]string, error)
+}
+
+type BlockedCIDRsResolveResult struct {
+	CIDRs  []string
+	Source string
+	Err    error
+}
+
+// ResolveBlockedCIDRs resolves the IP-subnet block-list with the same
+// remote → cache → builtin precedence as ResolveBlockedDomains, minus the
+// country dimension (Telegram ranges are global). Always returns a usable set:
+// the static defaultBlockedCIDRs() fallback guarantees Telegram works offline.
+func ResolveBlockedCIDRs(ctx context.Context, fetcher CIDRFetcher, cachePath string) BlockedCIDRsResolveResult {
+	var lastErr error
+	if fetcher != nil {
+		cidrs, err := fetcher.FetchTelegramCIDRs(ctx)
+		if err == nil && len(cidrs) > 0 {
+			cache := BlockedCIDRsCache{
+				UpdatedAt: time.Now().Unix(),
+				Source:    "remote",
+				CIDRs:     cidrs,
+			}
+			if saveErr := SaveBlockedCIDRsCache(cachePath, cache); saveErr != nil {
+				lastErr = fmt.Errorf("save cidr cache: %w", saveErr)
+			}
+			return BlockedCIDRsResolveResult{CIDRs: normalizeCIDRs(cidrs), Source: "remote", Err: lastErr}
+		}
+		lastErr = err
+	}
+
+	if cachePath != "" {
+		cache, err := LoadBlockedCIDRsCache(cachePath)
+		if err == nil && len(cache.CIDRs) > 0 {
+			return BlockedCIDRsResolveResult{CIDRs: cache.CIDRs, Source: "cache", Err: lastErr}
+		}
+		if err != nil {
+			lastErr = err
+		}
+	}
+
+	return BlockedCIDRsResolveResult{
+		CIDRs:  normalizeCIDRs(defaultBlockedCIDRs()),
+		Source: "builtin",
+		Err:    lastErr,
+	}
+}
+
 func RefreshRemoteBlockedDomains(ctx context.Context, provider BlockedListProvider, cachePath string) BlockedDomainsResolveResult {
 	if provider == nil {
 		return BlockedDomainsResolveResult{Err: fmt.Errorf("provider is nil")}

@@ -44,6 +44,61 @@ func (f fakeBlockedProvider) FetchBlockedDomains(ctx context.Context, country st
 	return f.domains, nil
 }
 
+type fakeCIDRFetcher struct {
+	cidrs []string
+	err   error
+}
+
+func (f fakeCIDRFetcher) FetchTelegramCIDRs(ctx context.Context) ([]string, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.cidrs, nil
+}
+
+func TestResolveBlockedCIDRs_RemoteSuccess(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cidr.json")
+	res := ResolveBlockedCIDRs(context.Background(), fakeCIDRFetcher{cidrs: []string{"149.154.160.0/20"}}, cachePath)
+	if res.Source != "remote" {
+		t.Fatalf("expected remote source, got %s (err=%v)", res.Source, res.Err)
+	}
+	loaded, err := LoadBlockedCIDRsCache(cachePath)
+	if err != nil {
+		t.Fatalf("load cidr cache after remote: %v", err)
+	}
+	if len(loaded.CIDRs) != 1 || loaded.CIDRs[0] != "149.154.160.0/20" {
+		t.Fatalf("unexpected persisted cidrs: %v", loaded.CIDRs)
+	}
+}
+
+func TestResolveBlockedCIDRs_FallbackToCache(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cidr.json")
+	if err := SaveBlockedCIDRsCache(cachePath, BlockedCIDRsCache{
+		Source: "remote",
+		CIDRs:  []string{"91.108.4.0/22"},
+	}); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+	res := ResolveBlockedCIDRs(context.Background(), fakeCIDRFetcher{err: errors.New("offline")}, cachePath)
+	if res.Source != "cache" {
+		t.Fatalf("expected cache source, got %s", res.Source)
+	}
+	if len(res.CIDRs) != 1 || res.CIDRs[0] != "91.108.4.0/22" {
+		t.Fatalf("unexpected cached cidrs: %v", res.CIDRs)
+	}
+}
+
+func TestResolveBlockedCIDRs_StaticFallback(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cidr.json") // no file → no cache
+	res := ResolveBlockedCIDRs(context.Background(), fakeCIDRFetcher{err: errors.New("offline")}, cachePath)
+	if res.Source != "builtin" {
+		t.Fatalf("expected builtin fallback, got %s", res.Source)
+	}
+	if len(res.CIDRs) == 0 {
+		t.Fatal("builtin fallback must be non-empty so Telegram works offline")
+	}
+}
+
 func TestResolveBlockedDomains_FallbackToCache(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	if err := SaveBlockedDomainsCache(cachePath, BlockedDomainsCache{

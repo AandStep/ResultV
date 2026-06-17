@@ -104,7 +104,7 @@ type App struct {
 
 	trayHidden    atomic.Uint32
 	taskbarUnhook func()
-	smartProvider proxy.BlockedListProvider
+	smartProvider *proxy.HTTPBlockedListProvider
 
 	startInTray bool
 
@@ -1482,7 +1482,7 @@ func (a *App) SyncProxies(proxies []config.ProxyEntry) error {
 // hundreds of subscription servers triggers at most one network call per
 // unique IP per day.
 func (a *App) DetectCountry(ip string) (string, error) {
-	if a.smartProvider == nil || a.smartProvider.(*proxy.HTTPBlockedListProvider).Country == nil {
+	if a.smartProvider == nil || a.smartProvider.Country == nil {
 		// Fallback path: smart provider isn't initialised yet (e.g. before
 		// engine boot). Build a one-off client; result still goes through
 		// the project API, never third-party.
@@ -1497,7 +1497,7 @@ func (a *App) DetectCountry(ip string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	country, err := a.smartProvider.(*proxy.HTTPBlockedListProvider).Country.LookupCountryByIP(ctx, ip)
+	country, err := a.smartProvider.Country.LookupCountryByIP(ctx, ip)
 	if err != nil {
 		return "Unknown", err
 	}
@@ -2969,10 +2969,24 @@ func (a *App) initSmartBlockedDomains(userDataPath, rootDir string) {
 	if result.Err != nil {
 		a.log.Warning(fmt.Sprintf("[SMART] Fallback: %v", result.Err))
 	}
-	a.startSmartBlockedRefresh(cachePath)
+
+	// IP-subnet block-list (Telegram MTProto): native Telegram dials its data
+	// centers by IP with no domain/SNI, so domain rules can't catch it — Smart
+	// mode needs these ranges. Always resolves to a usable set (static fallback).
+	cidrCachePath := filepath.Join(userDataPath, "blocked_cidr_cache.json")
+	cidrRes := proxy.ResolveBlockedCIDRs(a.ctx, a.smartProvider, cidrCachePath)
+	if router != nil && len(cidrRes.CIDRs) > 0 {
+		router.SetBlockedCIDRs(cidrRes.CIDRs)
+	}
+	a.log.Info(fmt.Sprintf("[SMART] IP-подсети (Telegram): источник %s, записей: %d", cidrRes.Source, len(cidrRes.CIDRs)))
+	if cidrRes.Err != nil {
+		a.log.Warning(fmt.Sprintf("[SMART] IP-подсети fallback: %v", cidrRes.Err))
+	}
+
+	a.startSmartBlockedRefresh(cachePath, cidrCachePath)
 }
 
-func (a *App) startSmartBlockedRefresh(cachePath string) {
+func (a *App) startSmartBlockedRefresh(cachePath, cidrCachePath string) {
 	if a.ctx == nil || a.proxy == nil || a.smartProvider == nil {
 		return
 	}
@@ -2987,16 +3001,27 @@ func (a *App) startSmartBlockedRefresh(cachePath string) {
 				res := proxy.RefreshRemoteBlockedDomains(a.ctx, a.smartProvider, cachePath)
 				if res.Err != nil {
 					a.log.Warning(fmt.Sprintf("[SMART] Не удалось обновить списки: %v", res.Err))
-					continue
-				}
-				router := a.proxy.GetRouter()
-				if router != nil && len(res.Domains) > 0 {
-					router.SetBlockedDomains(res.Domains)
-				}
-				if res.Country != "" {
-					a.log.Info(fmt.Sprintf("[SMART] Списки обновлены (%s), записей: %d", strings.ToUpper(res.Country), len(res.Domains)))
 				} else {
-					a.log.Info(fmt.Sprintf("[SMART] Списки обновлены, записей: %d", len(res.Domains)))
+					router := a.proxy.GetRouter()
+					if router != nil && len(res.Domains) > 0 {
+						router.SetBlockedDomains(res.Domains)
+					}
+					if res.Country != "" {
+						a.log.Info(fmt.Sprintf("[SMART] Списки обновлены (%s), записей: %d", strings.ToUpper(res.Country), len(res.Domains)))
+					} else {
+						a.log.Info(fmt.Sprintf("[SMART] Списки обновлены, записей: %d", len(res.Domains)))
+					}
+				}
+
+				cidrRes := proxy.ResolveBlockedCIDRs(a.ctx, a.smartProvider, cidrCachePath)
+				if cidrRes.Source == "remote" {
+					router := a.proxy.GetRouter()
+					if router != nil && len(cidrRes.CIDRs) > 0 {
+						router.SetBlockedCIDRs(cidrRes.CIDRs)
+					}
+					a.log.Info(fmt.Sprintf("[SMART] IP-подсети обновлены, записей: %d", len(cidrRes.CIDRs)))
+				} else if cidrRes.Err != nil {
+					a.log.Warning(fmt.Sprintf("[SMART] Не удалось обновить IP-подсети: %v", cidrRes.Err))
 				}
 			}
 		}

@@ -240,6 +240,70 @@ func TestLoadBlockedLists(t *testing.T) {
 	}
 }
 
+func TestNormalizeCIDRs(t *testing.T) {
+	in := []string{
+		"149.154.160.0/20",
+		"149.154.160.0/20", // duplicate
+		"91.108.4.0/22",
+		"1.2.3.4",     // bare IPv4 → /32
+		"2a0a:f280::/32",
+		"::1",         // bare IPv6 → /128
+		"  ",          // blank
+		"# comment",   // comment
+		"not-a-cidr",  // invalid
+		"10.0.0.0/33", // invalid prefix
+	}
+	got := normalizeCIDRs(in)
+	want := map[string]bool{
+		"149.154.160.0/20": true,
+		"91.108.4.0/22":    true,
+		"1.2.3.4/32":       true,
+		"2a0a:f280::/32":   true,
+		"::1/128":          true,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("normalizeCIDRs len = %d (%v), want %d", len(got), got, len(want))
+	}
+	for _, c := range got {
+		if !want[c] {
+			t.Errorf("unexpected cidr %q in %v", c, got)
+		}
+	}
+}
+
+func TestDefaultBlockedCIDRs_ValidAndContainsTelegram(t *testing.T) {
+	raw := defaultBlockedCIDRs()
+	got := normalizeCIDRs(raw)
+	if len(got) != len(raw) {
+		t.Fatalf("all default CIDRs must be valid: raw=%d normalized=%d (%v)", len(raw), len(got), got)
+	}
+	var found bool
+	for _, c := range got {
+		if c == "149.154.160.0/20" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected core Telegram subnet 149.154.160.0/20 in defaults, got %v", got)
+	}
+}
+
+func TestNewRouter_SeedsBlockedCIDRs(t *testing.T) {
+	r := NewRouter()
+	if len(r.GetBlockedCIDRs()) == 0 {
+		t.Fatal("NewRouter must seed default blocked CIDRs (Telegram)")
+	}
+}
+
+func TestSetGetBlockedCIDRs(t *testing.T) {
+	r := NewRouter()
+	r.SetBlockedCIDRs([]string{"91.108.4.0/22", "bad", "5.6.7.8"})
+	got := r.GetBlockedCIDRs()
+	if len(got) != 2 {
+		t.Fatalf("expected 2 valid cidrs (subnet + widened host), got %v", got)
+	}
+}
+
 func TestSetBlockedDomains(t *testing.T) {
 	r := NewRouter()
 	r.SetBlockedDomains([]string{"Example.com", "example.com", "*.Test.org", "  "})

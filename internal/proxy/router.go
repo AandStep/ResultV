@@ -17,6 +17,7 @@ package proxy
 
 import (
 	"bufio"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -42,12 +43,14 @@ type WhitelistResult struct {
 type Router struct {
 	mu             sync.RWMutex
 	blockedDomains []string
+	blockedCIDRs   []string
 }
 
 
 func NewRouter() *Router {
 	return &Router{
 		blockedDomains: defaultBlockedDomains(),
+		blockedCIDRs:   defaultBlockedCIDRs(),
 	}
 }
 
@@ -70,6 +73,26 @@ func (r *Router) SetBlockedDomains(domains []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.blockedDomains = normalizeDomains(domains)
+}
+
+// SetBlockedCIDRs replaces the IP-subnet block-list (Telegram MTProto
+// data-center ranges and any other IP-only blocked services). Invalid entries
+// are dropped; bare IPs are widened to host CIDRs.
+func (r *Router) SetBlockedCIDRs(cidrs []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.blockedCIDRs = normalizeCIDRs(cidrs)
+}
+
+// GetBlockedCIDRs returns a copy of the IP-subnet block-list. Consumed by the
+// engine in Smart mode to route those ranges through the proxy (domain rules
+// can't catch IP-only protocols like Telegram's MTProto).
+func (r *Router) GetBlockedCIDRs() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]string, len(r.blockedCIDRs))
+	copy(out, r.blockedCIDRs)
+	return out
 }
 
 
@@ -266,6 +289,71 @@ func (r *Router) containsBlocked(domain string) bool {
 		}
 	}
 	return false
+}
+
+// normalizeCIDRs validates and de-duplicates a list of CIDR strings. Bare IPs
+// are widened to host CIDRs (/32 or /128); blanks, comments and unparseable
+// entries are dropped. Output is canonicalised via net.IPNet.String().
+func normalizeCIDRs(in []string) []string {
+	if len(in) == 0 {
+		return []string{}
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, raw := range in {
+		s := strings.TrimSpace(raw)
+		if s == "" || strings.HasPrefix(s, "#") {
+			continue
+		}
+		if !strings.Contains(s, "/") {
+			ip := net.ParseIP(s)
+			if ip == nil {
+				continue
+			}
+			if ip.To4() != nil {
+				s += "/32"
+			} else {
+				s += "/128"
+			}
+		}
+		_, ipNet, err := net.ParseCIDR(s)
+		if err != nil {
+			continue
+		}
+		n := ipNet.String()
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		out = append(out, n)
+	}
+	return out
+}
+
+// defaultBlockedCIDRs are the Telegram MTProto data-center subnets. Telegram's
+// native clients dial these IPs directly — no domain, no TLS SNI — so the
+// domain-suffix block-list can never catch them; Smart mode needs an ip_cidr
+// rule. Sourced from itdoginfo/allow-domains (Subnets/IPv4+IPv6/telegram.lst);
+// kept as a static fallback for when the remote list and cache are unavailable.
+func defaultBlockedCIDRs() []string {
+	return []string{
+		// IPv4
+		"5.28.192.0/18",
+		"91.105.192.0/23",
+		"91.108.4.0/22",
+		"91.108.8.0/21",
+		"91.108.16.0/21",
+		"91.108.56.0/22",
+		"95.161.64.0/20",
+		"149.154.160.0/20",
+		"185.76.151.0/24",
+		"194.221.0.0/16",
+		// IPv6
+		"2001:67c:4e8::/48",
+		"2001:b28:f23c::/47",
+		"2001:b28:f23f::/48",
+		"2a0a:f280::/32",
+	}
 }
 
 func defaultBlockedDomains() []string {

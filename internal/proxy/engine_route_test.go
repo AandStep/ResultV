@@ -75,6 +75,196 @@ func TestBuildRoute_NestedDomainException_ProducesProxyOverride(t *testing.T) {
 	}
 }
 
+// TestBuildRoute_SmartMode_FinalDirect pins the core of the Smart-mode wiring:
+// in Smart mode the catch-all is direct, so any domain not explicitly tunneled
+// (i.e. not on the block-list) leaves on the real IP. This is what stops a
+// non-blocked site from seeing the datacenter IP (the BLOCK_403 symptom) and
+// lets a video CDN load without a manual exception.
+func TestBuildRoute_SmartMode_FinalDirect(t *testing.T) {
+	cfg := EngineConfig{
+		Mode:        ProxyModeTunnel,
+		RoutingMode: ModeSmart,
+		Proxy:       ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+	}
+	route := buildRoute(cfg)
+	if route == nil {
+		t.Fatal("expected non-nil route")
+	}
+	if route.Final != "direct" {
+		t.Fatalf("smart mode must default to direct, got Final=%q", route.Final)
+	}
+}
+
+// TestBuildRoute_GlobalMode_FinalProxy guards the regression boundary: Global
+// (and Whitelist) keep proxy as the catch-all, and the block-list must not
+// leak route rules into non-Smart modes.
+func TestBuildRoute_GlobalMode_FinalProxy(t *testing.T) {
+	cfg := EngineConfig{
+		Mode:           ProxyModeTunnel,
+		RoutingMode:    ModeGlobal,
+		Proxy:          ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		BlockedDomains: []string{"instagram.com"},
+	}
+	route := buildRoute(cfg)
+	if route.Final != "proxy" {
+		t.Fatalf("global mode must default to proxy, got Final=%q", route.Final)
+	}
+	for _, r := range route.Rules {
+		for _, d := range r.DomainSuffix {
+			if d == "instagram.com" {
+				t.Fatalf("block-list must not produce route rules outside smart mode, rules=%+v", route.Rules)
+			}
+		}
+	}
+}
+
+// TestBuildRoute_SmartMode_BlockedDomainsTunneled verifies the block-list is
+// routed through the proxy outbound in Smart mode.
+func TestBuildRoute_SmartMode_BlockedDomainsTunneled(t *testing.T) {
+	cfg := EngineConfig{
+		Mode:           ProxyModeTunnel,
+		RoutingMode:    ModeSmart,
+		Proxy:          ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		BlockedDomains: []string{"instagram.com", "discord.com"},
+	}
+	route := buildRoute(cfg)
+	var found bool
+	for _, r := range route.Rules {
+		if r.Outbound != "proxy" || len(r.DomainSuffix) == 0 {
+			continue
+		}
+		has := map[string]bool{}
+		for _, d := range r.DomainSuffix {
+			has[d] = true
+		}
+		if has["instagram.com"] && has["discord.com"] {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("smart mode must route blocked domains through proxy, rules=%+v", route.Rules)
+	}
+}
+
+// TestBuildRoute_SmartMode_NestedExceptionTunneled mirrors
+// router_test.go TestShouldProxy_SmartMode_NestedExceptions: with whitelist
+// [.ru, avito.ru] the even (double) match makes avito.ru a nested exception
+// that must tunnel, while the catch-all stays direct.
+func TestBuildRoute_SmartMode_NestedExceptionTunneled(t *testing.T) {
+	cfg := EngineConfig{
+		Mode:        ProxyModeTunnel,
+		RoutingMode: ModeSmart,
+		Proxy:       ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		Whitelist:   []string{".ru", "avito.ru"},
+	}
+	route := buildRoute(cfg)
+	var avitoProxy bool
+	for _, r := range route.Rules {
+		if r.Outbound == "proxy" && len(r.DomainSuffix) == 1 && r.DomainSuffix[0] == "avito.ru" {
+			avitoProxy = true
+		}
+	}
+	if !avitoProxy {
+		t.Fatalf("smart mode nested exception avito.ru must tunnel, rules=%+v", route.Rules)
+	}
+	if route.Final != "direct" {
+		t.Fatalf("smart mode must keep Final=direct, got %q", route.Final)
+	}
+}
+
+// TestBuildRoute_SmartMode_BlockedWinsOverWhitelist encodes Router.ShouldProxy's
+// precedence: a blocked domain under an odd (single) whitelist match still
+// tunnels. In first-match routing that means the blocked rule must precede the
+// whitelist direct rule.
+func TestBuildRoute_SmartMode_BlockedWinsOverWhitelist(t *testing.T) {
+	cfg := EngineConfig{
+		Mode:           ProxyModeTunnel,
+		RoutingMode:    ModeSmart,
+		Proxy:          ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		Whitelist:      []string{".com"},
+		BlockedDomains: []string{"instagram.com"},
+	}
+	route := buildRoute(cfg)
+	blockedIdx, comDirectIdx := -1, -1
+	for i, r := range route.Rules {
+		if r.Outbound == "proxy" {
+			for _, d := range r.DomainSuffix {
+				if d == "instagram.com" {
+					blockedIdx = i
+				}
+			}
+		}
+		if r.Outbound == "direct" {
+			for _, d := range r.DomainSuffix {
+				if d == "com" {
+					comDirectIdx = i
+				}
+			}
+		}
+	}
+	if blockedIdx == -1 {
+		t.Fatalf("expected blocked instagram.com → proxy rule, rules=%+v", route.Rules)
+	}
+	if comDirectIdx == -1 {
+		t.Fatalf("expected whitelist com → direct rule, rules=%+v", route.Rules)
+	}
+	if blockedIdx > comDirectIdx {
+		t.Fatalf("blocked rule (idx=%d) must precede whitelist direct rule (idx=%d) so blocked wins, rules=%+v",
+			blockedIdx, comDirectIdx, route.Rules)
+	}
+}
+
+// TestBuildRoute_SmartMode_BlockedCIDRsTunneled verifies IP-only blocked ranges
+// (Telegram MTProto) get an ip_cidr → proxy rule in Smart mode. Telegram's
+// native client has no domain/SNI, so this rule is the only thing that pulls it
+// through the tunnel.
+func TestBuildRoute_SmartMode_BlockedCIDRsTunneled(t *testing.T) {
+	cfg := EngineConfig{
+		Mode:         ProxyModeTunnel,
+		RoutingMode:  ModeSmart,
+		Proxy:        ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		BlockedCIDRs: []string{"149.154.160.0/20", "91.108.4.0/22"},
+	}
+	route := buildRoute(cfg)
+	var found bool
+	for _, r := range route.Rules {
+		if r.Outbound != "proxy" || len(r.IPCidr) == 0 {
+			continue
+		}
+		has := map[string]bool{}
+		for _, c := range r.IPCidr {
+			has[c] = true
+		}
+		if has["149.154.160.0/20"] && has["91.108.4.0/22"] {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("smart mode must route blocked CIDRs through proxy, rules=%+v", route.Rules)
+	}
+}
+
+// TestBuildRoute_GlobalMode_NoBlockedCIDRRule guards that the IP block-list
+// stays inert outside Smart mode.
+func TestBuildRoute_GlobalMode_NoBlockedCIDRRule(t *testing.T) {
+	cfg := EngineConfig{
+		Mode:         ProxyModeTunnel,
+		RoutingMode:  ModeGlobal,
+		Proxy:        ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		BlockedCIDRs: []string{"149.154.160.0/20"},
+	}
+	route := buildRoute(cfg)
+	for _, r := range route.Rules {
+		for _, c := range r.IPCidr {
+			if c == "149.154.160.0/20" {
+				t.Fatalf("global mode must not emit blocked-CIDR rule, rules=%+v", route.Rules)
+			}
+		}
+	}
+}
+
 func TestBuildRoute_TunnelMode_IncludesSelfDirectRule(t *testing.T) {
 	cfg := EngineConfig{Mode: ProxyModeTunnel}
 	route := buildRoute(cfg)
@@ -770,6 +960,37 @@ func TestBuildRoute_ProxyMode_AppWhitelistGetsDirectRule(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected process_path_regex direct rule with both entries, rules=%+v", route.Rules)
+	}
+}
+
+// TestBuildRoute_ExplicitBrowserExclusionGetsDirectRule guards the other half
+// of the browser fix: descendant auto-capture filters browsers out (so a
+// launcher can't drag the user's browser out of the VPN), but a browser the
+// user EXPLICITLY lists as an excluded app must still route direct. The
+// process-tree filter only touches discovered descendants, never user roots,
+// so the root flows straight into the direct process_path_regex rule.
+func TestBuildRoute_ExplicitBrowserExclusionGetsDirectRule(t *testing.T) {
+	cfg := EngineConfig{
+		Mode:         ProxyModeProxy,
+		AppWhitelist: []string{"chrome.exe"},
+	}
+	route := buildRoute(cfg)
+	if route == nil {
+		t.Fatal("route missing")
+	}
+	var found bool
+	for _, r := range route.Rules {
+		if r.Outbound != "direct" || len(r.ProcessPathRegex) == 0 {
+			continue
+		}
+		for _, rx := range r.ProcessPathRegex {
+			if strings.Contains(strings.ToLower(rx), "chrome") {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("explicit chrome.exe exclusion must produce a direct process rule, rules=%+v", route.Rules)
 	}
 }
 

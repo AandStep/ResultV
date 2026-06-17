@@ -676,6 +676,13 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		DNSLeakProtection: dnsLeakProtection,
 		DataDir:           resultProxyDataDir(),
 	}
+	// Smart mode needs the censored block-list in the engine config so
+	// buildRoute can tunnel those domains/ranges while everything else goes
+	// direct. Only populated for Smart — Global/Whitelist ignore it.
+	if routingMode == ModeSmart && m.router != nil {
+		engineCfg.BlockedDomains = m.router.GetBlockedDomains()
+		engineCfg.BlockedCIDRs = m.router.GetBlockedCIDRs()
+	}
 	if err := m.prepareAdBlock(&engineCfg, adBlock, actualLocalPort); err != nil {
 		m.mu.Unlock()
 		return ConnectResultDTO{
@@ -1205,6 +1212,13 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 		TunStack:          m.tunStack,
 		DNSLeakProtection: dnsLeakProtection,
 		DataDir:           resultProxyDataDir(),
+	}
+	// Smart mode needs the censored block-list in the engine config so
+	// buildRoute can tunnel those domains/ranges while everything else goes
+	// direct. Only populated for Smart — Global/Whitelist ignore it.
+	if routingMode == ModeSmart && m.router != nil {
+		engineCfg.BlockedDomains = m.router.GetBlockedDomains()
+		engineCfg.BlockedCIDRs = m.router.GetBlockedCIDRs()
 	}
 	if err := m.prepareAdBlock(&engineCfg, adBlock, actualLocalPort); err != nil {
 		return ConnectResultDTO{

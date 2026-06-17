@@ -76,6 +76,16 @@ type EngineConfig struct {
 	RoutingMode  RoutingMode
 	Whitelist    []string
 	AppWhitelist []string
+	// BlockedDomains is the censored/blocked block-list (already normalized
+	// suffixes from Router.GetBlockedDomains). Consumed only in Smart mode:
+	// buildRoute routes these through the proxy while everything else goes
+	// direct (Final="direct"). Ignored in Global/Whitelist modes.
+	BlockedDomains []string
+	// BlockedCIDRs is the IP-subnet block-list (Telegram MTProto data-center
+	// ranges, from Router.GetBlockedCIDRs). Telegram's native clients dial
+	// these IPs directly without a domain/SNI, so domain rules can't catch
+	// them — Smart mode adds an ip_cidr → proxy rule. Smart-only.
+	BlockedCIDRs []string
 	AdBlock      bool
 	MITMPort     int // local HTTPS MITM proxy port; 0 disables MITM layer
 	KillSwitch   bool
@@ -858,8 +868,15 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	if cfg.AdBlock && cfg.MITMPort > 0 {
 		findProcess = true
 	}
+	// Smart mode inverts the default: everything goes direct and only the
+	// censored block-list is tunneled (see the blocked-domain rule below).
+	// Global/Whitelist keep proxy as the catch-all.
+	final := "proxy"
+	if cfg.RoutingMode == ModeSmart {
+		final = "direct"
+	}
 	route := &SBRoute{
-		Final:       "proxy",
+		Final:       final,
 		AutoDetect:  true,
 		FindProcess: findProcess,
 	}
@@ -939,6 +956,36 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 			Action:           "route",
 			ProcessPathRegex: rx,
 			Outbound:         "direct",
+		})
+	}
+
+	// Smart mode: tunnel the censored block-list, leave everything else direct
+	// (Final="direct"). Placed BEFORE the whitelist block so a blocked domain
+	// that also sits under a whitelisted suffix still tunnels — matching
+	// Router.ShouldProxy, where a blocked resource wins over an odd (single)
+	// whitelist match. The block-list domains are already normalized suffixes
+	// (Router.GetBlockedDomains). App-whitelist (process) direct rules above
+	// keep priority, so an excluded app's traffic stays direct even for blocked
+	// domains.
+	if cfg.RoutingMode == ModeSmart && len(cfg.BlockedDomains) > 0 {
+		rules = append(rules, SBRouteRule{
+			Action:       "route",
+			DomainSuffix: append([]string(nil), cfg.BlockedDomains...),
+			Outbound:     "proxy",
+		})
+	}
+
+	// Smart mode: tunnel IP-only blocked ranges (Telegram MTProto data centers).
+	// These have no domain/SNI, so the domain-suffix rule above can't match
+	// them; an ip_cidr rule on the destination address is the only way to pull
+	// the native Telegram client through the proxy. The server-IP bypass added
+	// at the top of buildRoute still wins, so the tunnel's own endpoint stays
+	// direct even if it ever shared a range.
+	if cfg.RoutingMode == ModeSmart && len(cfg.BlockedCIDRs) > 0 {
+		rules = append(rules, SBRouteRule{
+			Action:   "route",
+			IPCidr:   append([]string(nil), cfg.BlockedCIDRs...),
+			Outbound: "proxy",
 		})
 	}
 
