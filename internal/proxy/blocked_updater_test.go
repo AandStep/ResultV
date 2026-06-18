@@ -137,6 +137,72 @@ func TestResolveBlockedDomains_RemoteSuccess(t *testing.T) {
 	}
 }
 
+func TestLoadCachedBlockedDomains_PrefersCache(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	if err := SaveBlockedDomainsCache(cachePath, BlockedDomainsCache{
+		Country: "ru",
+		Source:  "remote",
+		Domains: []string{"youtube.com"},
+	}); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+	res := LoadCachedBlockedDomains(cachePath)
+	if res.Source != "cache" {
+		t.Fatalf("expected cache source, got %s", res.Source)
+	}
+	if len(res.Domains) != 1 || res.Domains[0] != "youtube.com" {
+		t.Fatalf("unexpected domains: %v", res.Domains)
+	}
+	if res.Country != "ru" {
+		t.Fatalf("expected country ru, got %q", res.Country)
+	}
+}
+
+func TestLoadCachedBlockedDomains_FallsBackToLocalThenBuiltin(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "missing.json") // no cache file
+	localFile := filepath.Join(t.TempDir(), "list.txt")
+	if err := os.WriteFile(localFile, []byte("local.com\n"), 0o600); err != nil {
+		t.Fatalf("write local list: %v", err)
+	}
+	res := LoadCachedBlockedDomains(cachePath, localFile)
+	if res.Source != "local" {
+		t.Fatalf("expected local source, got %s", res.Source)
+	}
+
+	resBuiltin := LoadCachedBlockedDomains(cachePath)
+	if resBuiltin.Source != "builtin" {
+		t.Fatalf("expected builtin source, got %s", resBuiltin.Source)
+	}
+	if len(resBuiltin.Domains) == 0 {
+		t.Fatal("builtin fallback must be non-empty")
+	}
+}
+
+func TestLoadCachedBlockedCIDRs_PrefersCacheThenBuiltin(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cidr.json")
+	if err := SaveBlockedCIDRsCache(cachePath, BlockedCIDRsCache{
+		Source: "remote",
+		CIDRs:  []string{"91.108.4.0/22"},
+	}); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+	res := LoadCachedBlockedCIDRs(cachePath)
+	if res.Source != "cache" {
+		t.Fatalf("expected cache source, got %s", res.Source)
+	}
+	if len(res.CIDRs) != 1 || res.CIDRs[0] != "91.108.4.0/22" {
+		t.Fatalf("unexpected cidrs: %v", res.CIDRs)
+	}
+
+	resBuiltin := LoadCachedBlockedCIDRs(filepath.Join(t.TempDir(), "missing.json"))
+	if resBuiltin.Source != "builtin" {
+		t.Fatalf("expected builtin source, got %s", resBuiltin.Source)
+	}
+	if len(resBuiltin.CIDRs) == 0 {
+		t.Fatal("builtin fallback must be non-empty so Telegram works offline")
+	}
+}
+
 func TestRefreshRemoteBlockedDomains_Error(t *testing.T) {
 	res := RefreshRemoteBlockedDomains(context.Background(), fakeBlockedProvider{
 		countryErr: errors.New("offline"),

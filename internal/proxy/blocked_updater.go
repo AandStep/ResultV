@@ -97,6 +97,49 @@ func ResolveBlockedDomains(ctx context.Context, provider BlockedListProvider, ca
 	}
 }
 
+// LoadCachedBlockedDomains resolves the block-list WITHOUT any network call:
+// cache → local files → builtin. Used at startup so Smart mode applies
+// last-session's lists instantly, before auto-connect snapshots them into the
+// live route. The remote refresh runs separately and in the background
+// (RefreshRemoteBlockedDomains) once leftover cleanup has restored DNS — see
+// app.startSmartBlockedRefresh. This is what stops a post-crash restart from
+// routing blocked domains direct while a slow remote fetch is still in flight.
+func LoadCachedBlockedDomains(cachePath string, localPaths ...string) BlockedDomainsResolveResult {
+	if cachePath != "" {
+		cache, err := LoadBlockedDomainsCache(cachePath)
+		if err == nil && len(cache.Domains) > 0 {
+			return BlockedDomainsResolveResult{
+				Domains: cache.Domains,
+				Source:  "cache",
+				Country: strings.ToLower(strings.TrimSpace(cache.Country)),
+			}
+		}
+	}
+	if localDomains := LoadBlockedDomainsFromFiles(localPaths...); len(localDomains) > 0 {
+		return BlockedDomainsResolveResult{Domains: localDomains, Source: "local"}
+	}
+	return BlockedDomainsResolveResult{
+		Domains: normalizeDomains(defaultBlockedDomains()),
+		Source:  "builtin",
+	}
+}
+
+// LoadCachedBlockedCIDRs is the network-free counterpart for the IP-subnet
+// block-list: cache → builtin. Telegram's static defaultBlockedCIDRs() always
+// guarantees a usable set so MTProto works offline and at first launch.
+func LoadCachedBlockedCIDRs(cachePath string) BlockedCIDRsResolveResult {
+	if cachePath != "" {
+		cache, err := LoadBlockedCIDRsCache(cachePath)
+		if err == nil && len(cache.CIDRs) > 0 {
+			return BlockedCIDRsResolveResult{CIDRs: cache.CIDRs, Source: "cache"}
+		}
+	}
+	return BlockedCIDRsResolveResult{
+		CIDRs:  normalizeCIDRs(defaultBlockedCIDRs()),
+		Source: "builtin",
+	}
+}
+
 // CIDRFetcher fetches the Telegram MTProto subnet list. Narrow interface
 // (satisfied by *HTTPBlockedListProvider) so callers and tests don't depend on
 // the full BlockedListProvider.

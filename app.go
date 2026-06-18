@@ -119,6 +119,13 @@ type App struct {
 	// notice. Guarded by leftoverMu.
 	leftoverMu     sync.Mutex
 	leftoverReport LeftoverReport
+
+	// leftoverDone is closed by recoverLeftovers when startup leftover cleanup
+	// finishes (DNS override reverted etc.). The background Smart-list refresh
+	// waits on it (bounded) so it only hits the network AFTER a post-crash stale
+	// DNS override is gone — otherwise the remote fetch times out and the user
+	// silently falls back to direct routing. nil until startup wires it.
+	leftoverDone chan struct{}
 }
 
 func NewApp() *App {
@@ -332,6 +339,7 @@ func (a *App) startup(ctx context.Context) {
 	// detected. The frontend shows an informational notice via
 	// GetLeftoverRecoveryReport + the "leftovers:recovered" event.
 	a.killSwitch = system.NewKillSwitch()
+	a.leftoverDone = make(chan struct{})
 	go a.recoverLeftovers()
 
 	rootDir := a.getAppRootDir()
@@ -770,6 +778,13 @@ func (r LeftoverReport) Any() bool { return r.Proxy || r.DNS || r.Tun || r.Firew
 // restart elevated (RestartAsAdmin); the elevated instance then cleans them on
 // ITS startup pass and shows the normal notice.
 func (a *App) recoverLeftovers() {
+	// Signal the background Smart-list refresh that OS network state (notably the
+	// DNS override) has been restored, on every return path. Closed even when
+	// nothing needed cleaning — the refresh just stops waiting and proceeds.
+	if a.leftoverDone != nil {
+		defer close(a.leftoverDone)
+	}
+
 	rep := LeftoverReport{}
 
 	var scan proxy.LeftoverScan
@@ -2951,39 +2966,59 @@ func (a *App) initSmartBlockedDomains(userDataPath, rootDir string) {
 		return
 	}
 	cachePath := filepath.Join(userDataPath, "blocked_cache.json")
+	cidrCachePath := filepath.Join(userDataPath, "blocked_cidr_cache.json")
 	localPaths := []string{
 		filepath.Join(rootDir, "list-general.txt"),
 		filepath.Join(rootDir, "list-google.txt"),
 	}
 	a.smartProvider = proxy.NewHTTPBlockedListProvider(userDataPath)
-	result := proxy.ResolveBlockedDomains(a.ctx, a.smartProvider, cachePath, localPaths...)
 	router := a.proxy.GetRouter()
-	if router != nil && len(result.Domains) > 0 {
-		router.SetBlockedDomains(result.Domains)
+
+	// Apply last-session's lists from cache INSTANTLY — no network, so the user
+	// waits nothing and Smart mode has its block-list populated before the
+	// frontend auto-connect snapshots it into the live route. Loading remotely
+	// here (the old behaviour) blocked startup for ~40s on a post-crash restart
+	// while a stale DNS override starved the fetch, and connect meanwhile baked in
+	// an empty list — sending YouTube & co. direct. The remote refresh now runs
+	// in the background, after leftover cleanup, via startSmartBlockedRefresh.
+	domRes := proxy.LoadCachedBlockedDomains(cachePath, localPaths...)
+	if router != nil && len(domRes.Domains) > 0 {
+		router.SetBlockedDomains(domRes.Domains)
 	}
-	if result.Country != "" {
-		a.log.Info(fmt.Sprintf("[SMART] Источник списков: %s (%s), записей: %d", result.Source, strings.ToUpper(result.Country), len(result.Domains)))
+	if domRes.Country != "" {
+		a.log.Info(fmt.Sprintf("[SMART] Источник списков: %s (%s), записей: %d", domRes.Source, strings.ToUpper(domRes.Country), len(domRes.Domains)))
 	} else {
-		a.log.Info(fmt.Sprintf("[SMART] Источник списков: %s, записей: %d", result.Source, len(result.Domains)))
-	}
-	if result.Err != nil {
-		a.log.Warning(fmt.Sprintf("[SMART] Fallback: %v", result.Err))
+		a.log.Info(fmt.Sprintf("[SMART] Источник списков: %s, записей: %d", domRes.Source, len(domRes.Domains)))
 	}
 
 	// IP-subnet block-list (Telegram MTProto): native Telegram dials its data
 	// centers by IP with no domain/SNI, so domain rules can't catch it — Smart
-	// mode needs these ranges. Always resolves to a usable set (static fallback).
-	cidrCachePath := filepath.Join(userDataPath, "blocked_cidr_cache.json")
-	cidrRes := proxy.ResolveBlockedCIDRs(a.ctx, a.smartProvider, cidrCachePath)
+	// mode needs these ranges. Cache-first, always resolves (static fallback).
+	cidrRes := proxy.LoadCachedBlockedCIDRs(cidrCachePath)
 	if router != nil && len(cidrRes.CIDRs) > 0 {
 		router.SetBlockedCIDRs(cidrRes.CIDRs)
 	}
 	a.log.Info(fmt.Sprintf("[SMART] IP-подсети (Telegram): источник %s, записей: %d", cidrRes.Source, len(cidrRes.CIDRs)))
-	if cidrRes.Err != nil {
-		a.log.Warning(fmt.Sprintf("[SMART] IP-подсети fallback: %v", cidrRes.Err))
-	}
 
 	a.startSmartBlockedRefresh(cachePath, cidrCachePath)
+}
+
+// waitForLeftoverCleanup blocks until startup leftover recovery has restored OS
+// network state (so the DNS override from a prior crash is gone) or the cap
+// elapses — whichever first. Bounded so a stuck/elevation-blocked cleanup never
+// strands the refresh; the cache is already applied, so a missed refresh is
+// harmless.
+func (a *App) waitForLeftoverCleanup(max time.Duration) {
+	if a.leftoverDone == nil {
+		return
+	}
+	timer := time.NewTimer(max)
+	defer timer.Stop()
+	select {
+	case <-a.leftoverDone:
+	case <-timer.C:
+	case <-a.ctx.Done():
+	}
 }
 
 func (a *App) startSmartBlockedRefresh(cachePath, cidrCachePath string) {
@@ -2991,6 +3026,15 @@ func (a *App) startSmartBlockedRefresh(cachePath, cidrCachePath string) {
 		return
 	}
 	go func() {
+		// Initial refresh: wait (bounded) for leftover cleanup so the network
+		// fetch runs only after a post-crash DNS override is reverted — otherwise
+		// every source times out and we needlessly burn ~40s. Updates the router
+		// for the NEXT connect (sing-box has no in-place route reload, so the live
+		// session keeps its snapshot; a rare upstream list change applies on the
+		// user's next reconnect).
+		a.waitForLeftoverCleanup(15 * time.Second)
+		a.refreshSmartBlockedOnce(cachePath, cidrCachePath)
+
 		ticker := time.NewTicker(12 * time.Hour)
 		defer ticker.Stop()
 		for {
@@ -2998,34 +3042,44 @@ func (a *App) startSmartBlockedRefresh(cachePath, cidrCachePath string) {
 			case <-a.ctx.Done():
 				return
 			case <-ticker.C:
-				res := proxy.RefreshRemoteBlockedDomains(a.ctx, a.smartProvider, cachePath)
-				if res.Err != nil {
-					a.log.Warning(fmt.Sprintf("[SMART] Не удалось обновить списки: %v", res.Err))
-				} else {
-					router := a.proxy.GetRouter()
-					if router != nil && len(res.Domains) > 0 {
-						router.SetBlockedDomains(res.Domains)
-					}
-					if res.Country != "" {
-						a.log.Info(fmt.Sprintf("[SMART] Списки обновлены (%s), записей: %d", strings.ToUpper(res.Country), len(res.Domains)))
-					} else {
-						a.log.Info(fmt.Sprintf("[SMART] Списки обновлены, записей: %d", len(res.Domains)))
-					}
-				}
-
-				cidrRes := proxy.ResolveBlockedCIDRs(a.ctx, a.smartProvider, cidrCachePath)
-				if cidrRes.Source == "remote" {
-					router := a.proxy.GetRouter()
-					if router != nil && len(cidrRes.CIDRs) > 0 {
-						router.SetBlockedCIDRs(cidrRes.CIDRs)
-					}
-					a.log.Info(fmt.Sprintf("[SMART] IP-подсети обновлены, записей: %d", len(cidrRes.CIDRs)))
-				} else if cidrRes.Err != nil {
-					a.log.Warning(fmt.Sprintf("[SMART] Не удалось обновить IP-подсети: %v", cidrRes.Err))
-				}
+				a.refreshSmartBlockedOnce(cachePath, cidrCachePath)
 			}
 		}
 	}()
+}
+
+// refreshSmartBlockedOnce fetches the block-lists remotely and, on success,
+// applies them to the router (for the next connect) and re-persists the cache.
+// Bounded by its own deadline so a slow/hung source can't run unbounded.
+func (a *App) refreshSmartBlockedOnce(cachePath, cidrCachePath string) {
+	ctx, cancel := context.WithTimeout(a.ctx, 60*time.Second)
+	defer cancel()
+
+	res := proxy.RefreshRemoteBlockedDomains(ctx, a.smartProvider, cachePath)
+	if res.Err != nil {
+		a.log.Warning(fmt.Sprintf("[SMART] Не удалось обновить списки: %v", res.Err))
+	} else {
+		router := a.proxy.GetRouter()
+		if router != nil && len(res.Domains) > 0 {
+			router.SetBlockedDomains(res.Domains)
+		}
+		if res.Country != "" {
+			a.log.Info(fmt.Sprintf("[SMART] Списки обновлены (%s), записей: %d", strings.ToUpper(res.Country), len(res.Domains)))
+		} else {
+			a.log.Info(fmt.Sprintf("[SMART] Списки обновлены, записей: %d", len(res.Domains)))
+		}
+	}
+
+	cidrRes := proxy.ResolveBlockedCIDRs(ctx, a.smartProvider, cidrCachePath)
+	if cidrRes.Source == "remote" {
+		router := a.proxy.GetRouter()
+		if router != nil && len(cidrRes.CIDRs) > 0 {
+			router.SetBlockedCIDRs(cidrRes.CIDRs)
+		}
+		a.log.Info(fmt.Sprintf("[SMART] IP-подсети обновлены, записей: %d", len(cidrRes.CIDRs)))
+	} else if cidrRes.Err != nil {
+		a.log.Warning(fmt.Sprintf("[SMART] Не удалось обновить IP-подсети: %v", cidrRes.Err))
+	}
 }
 
 func (a *App) prepareForUpdateInstall() error {
