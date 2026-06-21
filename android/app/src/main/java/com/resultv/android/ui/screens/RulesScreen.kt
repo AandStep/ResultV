@@ -198,22 +198,6 @@ fun RulesScreen() {
                     }
                 }
 
-                if (coveredBy != null) {
-                    Text(
-                        stringResource(R.string.rules_shadow_covered, coveredBy),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Brand.Warning,
-                    )
-                } else if (willShadow.isNotEmpty()) {
-                    Text(
-                        stringResource(
-                            R.string.rules_shadow_overrides,
-                            willShadow.joinToString(", "),
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Brand.Warning,
-                    )
-                }
 
                 if (rules.domainExclusions.isNotEmpty()) {
                     FlowRow(

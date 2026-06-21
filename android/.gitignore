@@ -17,3 +17,5 @@ libs/*-sources.jar
 keystore.properties
 *.keystore
 *.jks
+# Base64 dump of the keystore for pasting into CI secrets — never commit
+*.keystore.b64.txt

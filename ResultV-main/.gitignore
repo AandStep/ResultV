@@ -1,0 +1,65 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+release
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+.agent
+.cursor
+.claude
+CLAUDE.md
+
+
+
+# Claude Superpowers
+superpowers/
+.agent-skills/
+.agents/
+docs/plans/
+
+# Build artifacts and local cache
+build/bin/*.exe
+build/bin/cache.db
+/cache.db
+build/windows/installer/tmp/*
+# Fetched from Go modules via scripts/ensure-libcronet-*.{ps1,sh}
+build/windows/libcronet.dll
+build/darwin/libcronet.dylib
+build/linux/libcronet.so
+*.timestamp-*.mjs
+/tmp.exe
+*~
+
+# Local test artifacts
+/ResultV_test.exe
+/test.html
+
+# Secrets and private build tools
+.env
+.env.*
+!.env.example
+tools/encrypt-sub/
+build-release.bat
+build-release.sh
+docs/review
+
+# build
+build/bin/

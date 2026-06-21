@@ -1,0 +1,39 @@
+{
+  "version": "3.2.4",
+  "releaseTitle": {
+    "ru": "Улучшение туннель режима, ускорение подключения и баг фиксы",
+    "en": "Tunnel mode improvements, connection speedup and bug fixes"
+  },
+  "releaseNotes": {
+    "ru": "Улучшен режим туннеля, теперь работает стабильнее учитывая новые волны блокировок. Ускорено подключение к серверам. Пофикшены некоторые баги. Добавлен счетчик времени на главной странице, а также иконки сайта и телеграм канала. Улучшена очистка хвостов приложения при принудительном завершении, теперь выход через трей корректно очищает систему, а при аварийном выходе и запуске приложения оно автоматически очищает систему от хвостов. Патч для system стека приложения улучшающий его стабильность.",
+    "en": "The tunneling mode has been improved and is now more stable, featuring new mechanisms to bypass blocking. Server connection speeds have been increased. Some bugs have been fixed. A timer has been added to the main page, along with icons for the website and Telegram channel. Application cleanup upon exit has been improved; exiting via the system tray now correctly cleans up the system, and the application automatically clears out any leftover traces upon startup following an unexpected shutdown. Patch for system stack improving its stability."
+  },
+  "downloadUrl": "https://result-proxy.ru/",
+  "platforms": {
+    "windows-amd64-portable": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.4/ResultV.exe",
+      "sha256": "a13d572c659ab23beab5842379eeedf5612bed1c7dabb3c4db3f6f4252d72e88",
+      "size": 54350336
+    },
+    "windows-amd64-installer": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.4/ResultV-amd64-installer.exe",
+      "sha256": "8c0f554ba295c2358be80e3e4208b19d2bcc76f71bc9a3bde2b70978c651881c",
+      "size": 26486457
+    },
+    "darwin-universal": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.4/ResultV.dmg",
+      "sha256": "75866d991b65fa1bedc7da00f07d0a55e0af55a18621c4e5b44ded1273dadbda",
+      "size": 59999725
+    },
+    "linux-amd64-appimage": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.4/ResultV-3.2.4-x86_64.AppImage",
+      "sha256": "9bf18d3850fd90353da79fa0ef79f82a83d7b32e7d31cfc1bc7ffcb9023e1297",
+      "size": 93149688
+    },
+    "linux-amd64-deb": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.4/resultv_3.2.4_amd64.deb",
+      "sha256": "5c0dc7a7407e491ff77ef20b62af8c56d66cdccbb0dff13772f108ad9b8bb322",
+      "size": 25454618
+    }
+  }
+}

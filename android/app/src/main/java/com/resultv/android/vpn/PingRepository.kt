@@ -20,7 +20,6 @@ import mobile.Mobile
 import org.json.JSONObject
 
 private const val TAG = "ResultV/Ping"
-private const val POLL_INTERVAL_MS = 60_000L
 private const val RESULT_TTL_MS = 90_000L
 
 /**
@@ -81,7 +80,6 @@ object PingRepository {
     val inflight: StateFlow<Set<String>> = _inflight.asStateFlow()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var pollerJob: Job? = null
 
     /** Resolve the probe targets for [profile]. Non-AUTO → 1 element; AUTO → N. */
     fun targetsFor(profile: Profile): List<Target> {
@@ -178,34 +176,6 @@ object PingRepository {
             compareByDescending<Target> { samples[it.key]?.reachable == true }
                 .thenBy { samples[it.key]?.latencyMs ?: Int.MAX_VALUE },
         )
-    }
-
-    /** Start the 60s background ticker; idempotent. */
-    @Synchronized
-    fun startPolling(profiles: () -> List<Profile>) {
-        if (pollerJob?.isActive == true) return
-        pollerJob = scope.launch {
-            while (isActive) {
-                try {
-                    // Background sweep — don't mark inflight; the UI spinner
-                    // is for user-triggered refreshes only.
-                    val real = profiles().filterNot { it.isSection }
-                    real.chunked(24).forEach { chunk ->
-                        val jobs = chunk.map { p -> launch { refreshSuspending(p) } }
-                        jobs.forEach { it.join() }
-                    }
-                } catch (t: Throwable) {
-                    Log.w(TAG, "poll tick failed", t)
-                }
-                delay(POLL_INTERVAL_MS)
-            }
-        }
-    }
-
-    @Synchronized
-    fun stopPolling() {
-        pollerJob?.cancel()
-        pollerJob = null
     }
 
     // ──────────────────────── Internals ────────────────────────

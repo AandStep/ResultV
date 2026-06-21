@@ -91,6 +91,9 @@ fun HomeScreen(
     val dataDir = remember(ctx) { ctx.filesDir.absolutePath }
     LaunchedEffect(profilesState.profiles) {
         CountryRepository.resolve(profilesState.profiles, dataDir)
+        if (pings.isEmpty() && profilesState.profiles.isNotEmpty()) {
+            PingRepository.refreshAll(profilesState.profiles)
+        }
     }
     // Persisted across tab switches so reopening Home doesn't snap shut.
     var dropdownOpen by rememberSaveable { mutableStateOf(false) }

@@ -306,8 +306,8 @@ private fun SecurityGroup(settings: com.resultv.android.vpn.SettingsState) {
         icon = Icons.Outlined.GppBad,
         iconBg = Color(0xFFef4444).copy(alpha = 0.18f),
         iconTint = Color(0xFFf87171),
-        checked = settings.killSwitch,
-        onCheckedChange = { SettingsRepository.setKillSwitch(it) },
+        checked = false,
+        onCheckedChange = {},
         enabled = false,
     )
 }

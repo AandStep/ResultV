@@ -32,7 +32,9 @@ func TestHTTPBlockedListProvider(t *testing.T) {
 	mux.HandleFunc("/list/ru.txt", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("discord.com\nytimg.com\n"))
 	})
-	srv := httptest.NewServer(mux)
+	// resolveCountryFromEndpoint enforces HTTPS for the country API, so the
+	// test server must serve TLS; srv.Client() trusts the self-signed cert.
+	srv := httptest.NewTLSServer(mux)
 	defer srv.Close()
 
 	p := &HTTPBlockedListProvider{
@@ -65,7 +67,9 @@ func TestResolveCountry_FallbackEndpoints(t *testing.T) {
 	mux.HandleFunc("/ok", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"countryCode":"DE"}`))
 	})
-	srv := httptest.NewServer(mux)
+	// HTTPS-only country API (see resolveCountryFromEndpoint); srv.Client()
+	// carries the CA pool that trusts the httptest cert.
+	srv := httptest.NewTLSServer(mux)
 	defer srv.Close()
 
 	p := &HTTPBlockedListProvider{

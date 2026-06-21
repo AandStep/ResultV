@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -122,7 +123,7 @@ func Ping(ip string, port int, proxyType string) (string, error) {
 	case "HYSTERIA2":
 		latency, reachable, reason, checkType = proxy.PingHysteria2QUIC(ip, port)
 	case "WIREGUARD", "AMNEZIAWG":
-		latency, reachable, reason = proxy.PingProxyUDP(ip, port)
+		latency, reachable, reason = proxy.PingWireGuard(ip, port)
 		checkType = "udp"
 	default:
 		latency, reachable, reason = proxy.PingProxy(ip, port)
@@ -914,14 +915,59 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 		// domain is populated from TLS SNI / HTTP Host once `sniff` runs,
 		// after which `domain` / `domain_suffix` matchers can fire.
 		// Putting this rule before sniff means it never matches.
-		if exact, suffix := splitDomainPatterns(opts.ExcludedDomains); len(exact)+len(suffix) > 0 {
-			rule := proxy.SBRouteRule{
-				Domain:       exact,
-				DomainSuffix: suffix,
-				Outbound:     "direct",
-				Action:       "route",
+		if opts.ExcludedDomains != "" {
+			seen := make(map[string]struct{})
+			var normalized []string
+			for _, part := range strings.Split(opts.ExcludedDomains, ",") {
+				n := strings.TrimSpace(part)
+				n = strings.ToLower(n)
+				n = strings.TrimLeft(n, "*.")
+				n = strings.TrimRight(n, "*.")
+				if n == "" {
+					continue
+				}
+				if _, ok := seen[n]; !ok {
+					seen[n] = struct{}{}
+					normalized = append(normalized, n)
+				}
 			}
-			sb.Route.Rules = append(sb.Route.Rules, rule)
+
+			if len(normalized) > 0 {
+				ordered := append([]string(nil), normalized...)
+				sort.SliceStable(ordered, func(i, j int) bool {
+					di := strings.Count(ordered[i], ".")
+					dj := strings.Count(ordered[j], ".")
+					if di != dj {
+						return di > dj
+					}
+					if len(ordered[i]) != len(ordered[j]) {
+						return len(ordered[i]) > len(ordered[j])
+					}
+					return ordered[i] < ordered[j]
+				})
+
+				isExcluded := func(host string, all []string) bool {
+					matchCount := 0
+					for _, rule := range all {
+						if host == rule || strings.HasSuffix(host, "."+rule) {
+							matchCount++
+						}
+					}
+					return matchCount > 0 && matchCount%2 == 1
+				}
+
+				for _, suffix := range ordered {
+					outbound := "proxy"
+					if isExcluded(suffix, normalized) {
+						outbound = "direct"
+					}
+					sb.Route.Rules = append(sb.Route.Rules, proxy.SBRouteRule{
+						Action:       "route",
+						DomainSuffix: []string{suffix},
+						Outbound:     outbound,
+					})
+				}
+			}
 		}
 	}
 
