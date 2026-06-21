@@ -575,9 +575,7 @@ type BuildOptions struct {
 	// FetchAdBlockLists; a missing list falls back to remote download and
 	// degrades to "no blocking" rather than breaking the connection.
 	AdBlock bool `json:"adblock,omitempty"`
-	// YouTubeUnblock enables the YouTube geo-split (see
-	// internal/proxy/youtube_rules.go): video via proxy, player/API direct so
-	// Google sees the user's Russian IP and serves no ads.
+	// YouTubeUnblock enables geo-split (video via proxy, player API direct for RU IP).
 	YouTubeUnblock bool `json:"youtubeUnblock,omitempty"`
 }
 

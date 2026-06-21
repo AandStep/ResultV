@@ -244,7 +244,11 @@ private fun AdvancedGroup(settings: com.resultv.android.vpn.SettingsState) {
         iconBg = Color(0xFFff0000).copy(alpha = 0.16f),
         iconTint = Color(0xFFff4d4d),
         checked = settings.youtubeUnblock,
-        onCheckedChange = { SettingsRepository.setYoutubeUnblock(it) },
+        onCheckedChange = {
+            SettingsRepository.setYoutubeUnblock(it)
+            // Warm SRS cache for auto-enabled ad lists when YouTube mode is on.
+            if (it) AdBlockRepository.refreshAsync()
+        },
     )
 }
 

@@ -62,13 +62,13 @@ import com.resultv.android.ui.screens.SettingsScreen
 import com.resultv.android.vpn.ACTION_START
 import com.resultv.android.vpn.ACTION_STOP
 import com.resultv.android.vpn.AppRoutingRepository
+import com.resultv.android.vpn.BuildOptionsBuilder
 import com.resultv.android.vpn.DeepLinkImporter
 import com.resultv.android.vpn.EXTRA_CONFIG_JSON
 import com.resultv.android.vpn.ProfileRepository
 import com.resultv.android.vpn.ResultVpnService
 import com.resultv.android.vpn.VpnState
 import com.resultv.android.vpn.VpnStatus
-import mobile.Mobile
 
 private const val TAG = "ResultV/UI"
 
@@ -212,28 +212,11 @@ class MainActivity : ComponentActivity() {
             Log.w(TAG, "no active profile to connect to")
             return
         }
-        val dataDir = filesDir.absolutePath
-        val excludedDomains = com.resultv.android.vpn.RoutingRulesRepository
-            .state.value.domainExclusions.joinToString(",")
-        val configJson = try {
-            when {
-                active.entryJson.isNotBlank() ->
-                    Mobile.buildSingBoxConfigFromEntry(
-                        active.entryJson, dataDir, "8.8.8.8,1.1.1.1", excludedDomains,
-                    )
-                active.uri.isNotBlank() ->
-                    Mobile.buildSingBoxConfig(
-                        active.uri, dataDir, "8.8.8.8,1.1.1.1", excludedDomains,
-                    )
-                else -> {
-                    Log.e(TAG, "active profile has neither URI nor entry JSON")
-                    return
-                }
+        val configJson = BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath)
+            ?: run {
+                Log.e(TAG, "buildConfig failed or profile empty")
+                return
             }
-        } catch (t: Throwable) {
-            Log.e(TAG, "buildSingBoxConfig failed", t)
-            return
-        }
 
         val prepareIntent = VpnService.prepare(this)
         if (prepareIntent != null) {

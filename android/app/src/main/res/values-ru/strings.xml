@@ -53,14 +53,14 @@
     <string name="settings_kill_switch">Kill Switch</string>
     <string name="settings_kill_switch_subtitle">Блокировать интернет при обрыве VPN (скоро)</string>
     <string name="settings_adblock">Блокировка рекламы</string>
-    <string name="settings_adblock_subtitle">Блокировать рекламу и трекеры через DNS и маршрутизацию</string>
+    <string name="settings_adblock_subtitle">Блокировка рекламы и трекеров через DNS. На некоторых сайтах могут остаться пустые блоки — для YouTube включите «YouTube без рекламы».</string>
     <string name="settings_youtube">YouTube без рекламы</string>
-    <string name="settings_youtube_subtitle">Видео через VPN, рекламные запросы — через ваш российский IP. Работает только в РФ.</string>
+    <string name="settings_youtube_subtitle">Для пользователей в России: видео через VPN (быстро), API YouTube — напрямую с российским IP (без рекламы). Плюс блокировка рекламных трекеров. Вне России эффект слабее.</string>
     <string name="settings_ipv6">IPv6</string>
     <string name="settings_ipv6_subtitle">Маршрутизировать IPv6-трафик через туннель</string>
     <string name="settings_bypass_lan">Прямой LAN</string>
     <string name="settings_bypass_lan_subtitle">Сохранить доступ к принтерам, NAS и роутеру при включённом VPN</string>
-    <string name="settings_dns_hint">Выберите пресет или укажите свои серверы (через запятую).</string>
+    <string name="settings_dns_hint">Выберите пресет или укажите свои серверы (через запятую). Если телефон пишет «Частный DNS-сервер недоступен», отключите частный DNS в настройках сети Android.</string>
     <string name="settings_dns_custom_placeholder">Свой: 1.1.1.1, 8.8.8.8</string>
     <string name="settings_about_subtitle">Мобильная превью-сборка · Phase 5+</string>
     <string name="settings_dns_preset_auto">Авто</string>
@@ -263,7 +263,7 @@
     <string name="rules_mode_smart">Smart (Antizapret)</string>
     <string name="rules_mode_smart_subtitle">Через прокси идут только заблокированные сайты. Список доменов подгружается при первом подключении (~1 МБ).</string>
     <string name="rules_section_domains_title">Исключения по доменам</string>
-    <string name="rules_section_domains_subtitle">Эти хосты всегда идут напрямую, в обход прокси.</string>
+    <string name="rules_section_domains_subtitle">Эти хосты идут напрямую, в обход прокси. По умолчанию *.ru — на 2ip.ru IP VPN не изменится; проверяйте на ifconfig.me или 2ip.io.</string>
     <string name="rules_domain_placeholder">например, yandex.ru</string>
     <string name="rules_quick_add">Быстрое добавление</string>
     <string name="rules_recent_title">Недавно использованные</string>

@@ -58,14 +58,14 @@
     <string name="settings_kill_switch">Kill Switch</string>
     <string name="settings_kill_switch_subtitle">Block internet if VPN drops (coming soon)</string>
     <string name="settings_adblock">Ad blocking</string>
-    <string name="settings_adblock_subtitle">Block ads &amp; trackers via DNS and routing rules</string>
+    <string name="settings_adblock_subtitle">Block ads and trackers via DNS. On some sites empty ad frames may remain — enable YouTube without ads for YouTube.</string>
     <string name="settings_youtube">YouTube without ads</string>
-    <string name="settings_youtube_subtitle">Video via VPN, ad requests via your Russian IP — no ads. Works in Russia only.</string>
+    <string name="settings_youtube_subtitle">For users in Russia: video streams via VPN (fast), YouTube API goes direct with your Russian IP (no ads). Also blocks ad trackers. Less effective outside Russia.</string>
     <string name="settings_ipv6">IPv6</string>
     <string name="settings_ipv6_subtitle">Route IPv6 traffic through the tunnel (dual-stack)</string>
     <string name="settings_bypass_lan">Bypass LAN</string>
     <string name="settings_bypass_lan_subtitle">Keep printers, NAS and router admin reachable while VPN is on</string>
-    <string name="settings_dns_hint">Pick a preset or enter custom servers (comma-separated).</string>
+    <string name="settings_dns_hint">Pick a preset or enter custom servers (comma-separated). If the phone reports “Private DNS unavailable”, set Private DNS to Off in Android network settings.</string>
     <string name="settings_dns_custom_placeholder">Custom: 1.1.1.1, 8.8.8.8</string>
     <string name="settings_about_subtitle">Mobile preview · Phase 5+</string>
     <string name="settings_dns_preset_auto">Auto</string>
@@ -293,7 +293,7 @@
     <string name="rules_mode_smart">Smart (Antizapret)</string>
     <string name="rules_mode_smart_subtitle">Only blocked sites go through the proxy. Domain list downloads on first connect (~1 MB).</string>
     <string name="rules_section_domains_title">Domain exclusions</string>
-    <string name="rules_section_domains_subtitle">These hosts always connect directly, bypassing the proxy.</string>
+    <string name="rules_section_domains_subtitle">These hosts always connect directly, bypassing the proxy. Default *.ru means 2ip.ru won\'t show your VPN IP — check on ifconfig.me or 2ip.io instead.</string>
     <string name="rules_domain_placeholder">e.g. yandex.ru</string>
     <string name="rules_quick_add">Quick add</string>
     <string name="rules_recent_title">Recently used</string>

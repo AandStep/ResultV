@@ -16,8 +16,9 @@
 #
 # Prerequisites:
 #   - Go toolchain (go.mod-compatible version)
-#   - gomobile (sagernet fork): go install github.com/nicedayzhu/nicedayzhu-gomobile/cmd/gomobile@v0.1.12
-#   - Android SDK with NDK installed (ANDROID_HOME set)
+#   - gomobile (sagernet fork): go install github.com/sagernet/gomobile/cmd/gomobile@v0.1.12
+#   - Android SDK with NDK installed (ANDROID_HOME set, or android/local.properties)
+#   - JDK 17+ (JAVA_HOME, or Android Studio's bundled JBR on macOS)
 #   - gomobile init (run once per machine)
 #
 # Output: android/libs/libbox.aar
@@ -26,6 +27,60 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUTPUT="${REPO_ROOT}/android/libs/libbox.aar"
+
+# --- Auto-detect toolchain paths when not already exported -------------------
+# macOS ships /usr/bin/javac as a stub that prompts to install Java; gomobile
+# needs a real JDK. Android Studio's bundled JBR is the most common source on
+# dev Macs, so we probe it before falling back to /usr/libexec/java_home.
+if [[ -z "${JAVA_HOME:-}" ]]; then
+    as_jbr="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+    if [[ -x "${as_jbr}/bin/javac" ]]; then
+        JAVA_HOME="${as_jbr}"
+    elif command -v /usr/libexec/java_home >/dev/null 2>&1; then
+        JAVA_HOME="$(/usr/libexec/java_home 2>/dev/null || true)"
+    fi
+fi
+if [[ -z "${JAVA_HOME:-}" || ! -x "${JAVA_HOME}/bin/javac" ]]; then
+    echo "ERROR: Java (JDK) not found. Install JDK 17+ or set JAVA_HOME." >&2
+    echo "       Android Studio's bundled JBR works:" >&2
+    echo "         export JAVA_HOME=\"/Applications/Android Studio.app/Contents/jbr/Contents/Home\"" >&2
+    exit 1
+fi
+
+# Gradle writes sdk.dir into android/local.properties; reuse it for gomobile.
+if [[ -z "${ANDROID_HOME:-}" && -f "${REPO_ROOT}/android/local.properties" ]]; then
+    sdk_dir="$(grep -E '^sdk\.dir=' "${REPO_ROOT}/android/local.properties" | cut -d= -f2- | tr -d '\r')"
+    if [[ -n "${sdk_dir}" ]]; then
+        ANDROID_HOME="${sdk_dir}"
+    fi
+fi
+if [[ -z "${ANDROID_HOME:-}" ]]; then
+    for candidate in "${HOME}/Library/Android/sdk" "${HOME}/Android/Sdk"; do
+        if [[ -d "${candidate}" ]]; then
+            ANDROID_HOME="${candidate}"
+            break
+        fi
+    done
+fi
+if [[ -z "${ANDROID_HOME:-}" || ! -d "${ANDROID_HOME}" ]]; then
+    echo "ERROR: Android SDK not found. Set ANDROID_HOME or sdk.dir in android/local.properties." >&2
+    exit 1
+fi
+
+# Pick the newest NDK under the SDK when the caller didn't pin one.
+if [[ -z "${ANDROID_NDK_HOME:-}" && -d "${ANDROID_HOME}/ndk" ]]; then
+    ndk_ver="$(ls -1 "${ANDROID_HOME}/ndk" 2>/dev/null | sort -V | tail -n1)"
+    if [[ -n "${ndk_ver}" ]]; then
+        ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ndk_ver}"
+    fi
+fi
+if [[ -z "${ANDROID_NDK_HOME:-}" || ! -d "${ANDROID_NDK_HOME}" ]]; then
+    echo "ERROR: Android NDK not found under ${ANDROID_HOME}/ndk. Install via SDK Manager." >&2
+    exit 1
+fi
+
+# gomobile shells out to javac; make sure the resolved JDK is on PATH.
+PATH="${JAVA_HOME}/bin:${PATH:-}"
 
 # Base tags — always included
 TAGS="mobile,with_gvisor,with_utls,with_clash_api,with_quic,with_wireguard"

@@ -51,6 +51,23 @@ bash "${REPO_ROOT}/scripts/build-android-aar.sh"
 
 echo
 echo "==> Step 2/2: gradle assemble (${VARIANT})"
+
+# Gradle 9 auto-provisions JDK 17 via foojay when JAVA_HOME is unset; on a
+# fresh Mac that download often fails and the build dies here. Reuse Android
+# Studio's bundled JBR (same probe as the AAR script) so ./gradlew just runs.
+if [[ -z "${JAVA_HOME:-}" ]]; then
+    as_jbr="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+    if [[ -x "${as_jbr}/bin/java" ]]; then
+        JAVA_HOME="${as_jbr}"
+    elif command -v /usr/libexec/java_home >/dev/null 2>&1; then
+        JAVA_HOME="$(/usr/libexec/java_home 2>/dev/null || true)"
+    fi
+fi
+if [[ -n "${JAVA_HOME:-}" ]]; then
+    export JAVA_HOME
+    export PATH="${JAVA_HOME}/bin:${PATH:-}"
+fi
+
 cd "${REPO_ROOT}/android"
 
 case "${VARIANT}" in

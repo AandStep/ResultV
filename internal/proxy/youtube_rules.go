@@ -7,26 +7,21 @@
 
 package proxy
 
-// YouTube geo-split.
+// YouTube geo-split for Russia.
 //
-// Premise: Google suspended ad monetization in Russia in 2022, so it serves
-// NO ads to Russian IPs — while RKN throttles the heavy video CDN
-// (*.googlevideo.com). So we split YouTube traffic by destination:
+// Google suspended ad monetization for Russian IPs in 2022, so InnerTube
+// player responses carry no adPlacements when the API call leaves from a
+// Russian IP — while RKN throttles the heavy video CDN (*.googlevideo.com).
+// We split YouTube traffic by destination:
 //
-//   - video bytes (*.googlevideo.com) → proxy: the foreign exit dodges RKN
-//     throttling, so playback is fast.
+//   - video bytes (*.googlevideo.com) → proxy: foreign exit dodges RKN throttling.
 //   - player / API / ad-decision (youtubei.googleapis.com, *.youtube.com) →
-//     direct: the request leaves from the user's real Russian IP, so Google's
-//     InnerTube player response carries no `adPlacements` and the client shows
-//     no ads.
+//     direct: request leaves from the user's real Russian IP, so the client
+//     shows no ads.
 //
-// This is pure routing — no MITM, no TLS interception — so it cannot break a
-// connection the way an interception layer would. It is only meaningful when
-// the device's `direct` egress is itself a Russian IP (the user is physically
-// in Russia); elsewhere the player call leaves from a non-RU IP and ads return.
-// You cannot spoof the source IP: Google decides geo from the IP that actually
-// terminates the TCP connection, which is why the request must genuinely
-// originate from Russia (here: the user's own ISP, via `direct`).
+// Ad-delivery host suffixes are rejected as a secondary layer (banners/trackers).
+// Pure routing — no MITM. Meaningful when the device's direct egress is a
+// Russian IP; elsewhere the player call leaves from a non-RU IP and ads return.
 
 // youTubeVideoSuffixes carry the actual media; route through the proxy so RKN
 // throttling of the video CDN is bypassed.
@@ -34,18 +29,90 @@ var youTubeVideoSuffixes = []string{
 	".googlevideo.com",
 }
 
-// youTubeDirectDomains are exact apex hosts that carry the player / ad
-// decision; route direct so Google sees the user's Russian IP.
+// youTubeDirectDomains are exact apex hosts that carry the player / ad decision;
+// route direct so Google sees the user's Russian IP.
 var youTubeDirectDomains = []string{
 	"youtube.com",
 	"youtubei.googleapis.com",
 	"youtube-nocookie.com",
 }
 
-// youTubeDirectSuffixes match the subdomains of the above (www., m., s., …).
-// Leading dot keeps the match to whole-label suffixes only (".youtube.com"
-// matches "www.youtube.com" but not "notyoutube.com").
+// youTubeDirectSuffixes match subdomains of the above (www., m., s., …).
 var youTubeDirectSuffixes = []string{
 	".youtube.com",
 	".youtube-nocookie.com",
+}
+
+// youTubeCoreDomains are exact hosts in the YouTube player stack. Used for DNS
+// bypass when global ad-block SRS lists flag googlevideo.com.
+var youTubeCoreDomains = []string{
+	"youtube.com",
+	"youtubei.googleapis.com",
+	"youtube-nocookie.com",
+	"youtube.googleapis.com",
+	"youtu.be",
+	"ytimg.com",
+	"ggpht.com",
+	"googlevideo.com",
+	"accounts.google.com",
+	"gstatic.com",
+}
+
+// youTubeCoreSuffixes match YouTube / CDN subdomains for DNS bypass.
+var youTubeCoreSuffixes = []string{
+	".youtube.com",
+	".youtube-nocookie.com",
+	".ytimg.com",
+	".ggpht.com",
+	".googlevideo.com",
+	".gstatic.com",
+}
+
+// youTubeAdDeliverySuffixes are Google ad-serving hosts on the YouTube page.
+var youTubeAdDeliverySuffixes = []string{
+	".doubleclick.net",
+	".googleadservices.com",
+	".googlesyndication.com",
+	".googletagservices.com",
+	".google-analytics.com",
+	".googletagmanager.com",
+	".adservice.google.com",
+}
+
+// youTubeDNSBypassSuffixes lists core YouTube hosts that must still resolve
+// when global ad-block DNS reject is on (SRS lists often flag googlevideo.com).
+func youTubeDNSBypassSuffixes() []string {
+	out := append([]string{}, youTubeCoreSuffixes...)
+	return out
+}
+
+// appendYouTubeUnblockRouteRules applies geo-split routing and rejects
+// ad-delivery domains. Must run after the sniff rule. Order matters:
+// googlevideo.com must match before .youtube.com.
+func appendYouTubeUnblockRouteRules(rules []SBRouteRule) []SBRouteRule {
+	rules = append(rules, SBRouteRule{
+		DomainSuffix: youTubeVideoSuffixes,
+		Outbound:     "proxy",
+		Action:       "route",
+	})
+	rules = append(rules, SBRouteRule{
+		Domain:       youTubeDirectDomains,
+		DomainSuffix: youTubeDirectSuffixes,
+		Outbound:     "direct",
+		Action:       "route",
+	})
+	rules = append(rules, SBRouteRule{
+		DomainSuffix: youTubeAdDeliverySuffixes,
+		Action:       "reject",
+	})
+	return rules
+}
+
+// appendYouTubeUnblockDNSRules rejects ad-delivery lookups when YouTube
+// unblock is on without global ad-block (otherwise buildDNS handles it).
+func appendYouTubeUnblockDNSRules(rules []SBDNSRule) []SBDNSRule {
+	return append(rules, SBDNSRule{
+		DomainSuffix: youTubeAdDeliverySuffixes,
+		Action:       "reject",
+	})
 }

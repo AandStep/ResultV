@@ -89,6 +89,54 @@ func TestBuildDNS_AdBlock_AddsRejectRule(t *testing.T) {
 	}
 }
 
+func TestBuildDNS_AdBlock_BypassesConnectivityDomainsBeforeReject(t *testing.T) {
+	cfg := EngineConfig{Mode: ProxyModeTunnel, AdBlock: true, Proxy: ProxyConfig{Type: "vless"}}
+	dns := buildDNS(cfg)
+	if dns == nil {
+		t.Fatal("expected non-nil dns")
+	}
+	rejectIdx, bypassIdx := -1, -1
+	for i, r := range dns.Rules {
+		if r.Action == "reject" && sameStringSet(r.RuleSet, adBlockRuleSetTags()) {
+			rejectIdx = i
+		}
+		if len(r.Domain) > 0 && r.Domain[0] == adBlockConnectivityBypassDomains[0] && r.Server != "" {
+			bypassIdx = i
+		}
+	}
+	if rejectIdx == -1 {
+		t.Fatal("expected ad-block DNS reject rule")
+	}
+	if bypassIdx == -1 {
+		t.Fatalf("expected connectivity bypass DNS rule before reject, rules=%+v", dns.Rules)
+	}
+	if bypassIdx >= rejectIdx {
+		t.Fatalf("connectivity bypass (idx=%d) must precede reject (idx=%d)", bypassIdx, rejectIdx)
+	}
+}
+
+func TestBuildRoute_AdBlock_BypassesConnectivityDomainsBeforeReject(t *testing.T) {
+	route := buildRoute(EngineConfig{Mode: ProxyModeTunnel, AdBlock: true})
+	rejectIdx, bypassIdx := -1, -1
+	for i, r := range route.Rules {
+		if r.Action == "reject" && sameStringSet(r.RuleSet, adBlockRuleSetTags()) {
+			rejectIdx = i
+		}
+		if len(r.Domain) > 0 && r.Domain[0] == adBlockConnectivityBypassDomains[0] && r.Outbound == "direct" {
+			bypassIdx = i
+		}
+	}
+	if rejectIdx == -1 {
+		t.Fatal("expected ad-block route reject rule")
+	}
+	if bypassIdx == -1 {
+		t.Fatalf("expected connectivity bypass route rule, rules=%+v", route.Rules)
+	}
+	if bypassIdx >= rejectIdx {
+		t.Fatalf("connectivity bypass (idx=%d) must precede reject (idx=%d)", bypassIdx, rejectIdx)
+	}
+}
+
 func TestBuildAdBlockRuleSets_LocalWhenCachedElseRemoteViaDirect(t *testing.T) {
 	dir := t.TempDir()
 
@@ -136,24 +184,21 @@ func TestBuildAdBlockRuleSets_TruncatedCacheStaysRemote(t *testing.T) {
 	}
 }
 
-func TestBuildRoute_YouTubeUnblock_SplitsVideoToProxyAndApiToDirect(t *testing.T) {
-	route := buildRoute(EngineConfig{Mode: ProxyModeTunnel, YouTubeUnblock: true})
-	var videoProxy, apiDirect bool
-	for _, r := range route.Rules {
-		for _, s := range r.DomainSuffix {
-			if s == ".googlevideo.com" && r.Outbound == "proxy" {
-				videoProxy = true
-			}
-			if s == ".youtube.com" && r.Outbound == "direct" {
-				apiDirect = true
-			}
-		}
+func TestBuildRoute_SmartModeEmptyList_KeepsGlobalFinal(t *testing.T) {
+	route := buildRoute(EngineConfig{Mode: ProxyModeTunnel, SmartMode: true})
+	if route.Final != "proxy" {
+		t.Fatalf("empty smart list should fall back to Global final=proxy, got %q", route.Final)
 	}
-	if !videoProxy {
-		t.Fatalf("expected *.googlevideo.com → proxy, rules=%+v", route.Rules)
-	}
-	if !apiDirect {
-		t.Fatalf("expected *.youtube.com → direct, rules=%+v", route.Rules)
+}
+
+func TestBuildRoute_SmartModeWithList_UsesDirectFinal(t *testing.T) {
+	route := buildRoute(EngineConfig{
+		Mode:                ProxyModeTunnel,
+		SmartMode:           true,
+		SmartBlockedDomains: []string{"instagram.com"},
+	})
+	if route.Final != "direct" {
+		t.Fatalf("smart with list should use final=direct, got %q", route.Final)
 	}
 }
 

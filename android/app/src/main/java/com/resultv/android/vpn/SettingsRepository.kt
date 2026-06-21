@@ -26,10 +26,8 @@ data class SettingsState(
     val killSwitch: Boolean = false,
     val adblock: Boolean = false,
     /**
-     * YouTube geo-split: video routes through the proxy (dodges RKN
-     * throttling) while the player/API routes direct so Google sees the user's
-     * Russian IP and serves no ads. Only effective for users physically in
-     * Russia. See [BuildOptionsBuilder] + Go `youtube_rules.go`.
+     * YouTube without ads: block Google ad-delivery hosts while keeping
+     * playback on the proxy path. See youtube_rules.go.
      */
     val youtubeUnblock: Boolean = false,
     val ipv6: Boolean = false,

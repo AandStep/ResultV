@@ -47,8 +47,8 @@ jobs:
 
       - name: Install gomobile (sagernet fork)
         run: |
-          go install github.com/nicedayzhu/nicedayzhu-gomobile/cmd/gomobile@v0.1.12
-          go install github.com/nicedayzhu/nicedayzhu-gomobile/cmd/gobind@v0.1.12
+          go install github.com/sagernet/gomobile/cmd/gomobile@v0.1.12
+          go install github.com/sagernet/gomobile/cmd/gobind@v0.1.12
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Initialize gomobile

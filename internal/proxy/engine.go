@@ -96,14 +96,10 @@ type EngineConfig struct {
 	// route through the proxy when [SmartMode] is on. Each entry is a
 	// suffix-matched domain (e.g. "instagram.com" matches "x.instagram.com").
 	// Empty + SmartMode=true means the user enabled Smart but no list was
-	// fetched yet — fall back to passing everything direct.
+	// fetched yet — fall back to Global (final=proxy) until the list arrives.
 	SmartBlockedDomains []string
-	// YouTubeUnblock enables the YouTube geo-split: video (*.googlevideo.com)
-	// routes through the proxy to dodge RKN throttling, while the player/API
-	// (youtubei.googleapis.com, *.youtube.com) routes direct so Google sees the
-	// user's Russian IP and serves no ads. Pure routing, no MITM; only
-	// effective when the device's direct egress is a Russian IP. See
-	// youtube_rules.go.
+	// YouTubeUnblock enables YouTube geo-split (video CDN via proxy, player API
+	// direct for Russian IP / no ads) plus ad-domain blocking. See youtube_rules.go.
 	YouTubeUnblock bool
 }
 
@@ -166,10 +162,11 @@ type SBDNSServer struct {
 }
 
 type SBDNSRule struct {
-	Domain  []string `json:"domain,omitempty"`
-	RuleSet []string `json:"rule_set,omitempty"`
-	Server  string   `json:"server,omitempty"`
-	Action  string   `json:"action,omitempty"`
+	Domain       []string `json:"domain,omitempty"`
+	DomainSuffix []string `json:"domain_suffix,omitempty"`
+	RuleSet      []string `json:"rule_set,omitempty"`
+	Server       string   `json:"server,omitempty"`
+	Action       string   `json:"action,omitempty"`
 }
 
 type SBInbound struct {
@@ -593,7 +590,24 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		// Ad-block: refuse DNS for ad/tracker domains so the app never even
 		// opens the connection. References the rule_set tags defined on the
 		// route (buildRoute). Non-fatal if a list fails to load.
-		if cfg.AdBlock {
+		// Android connectivity / Private-DNS validation hosts are exempt —
+		// blocking them makes the OS mark the VPN as "no internet".
+		// YouTube / video CDN / ad-delivery hosts must resolve even when ad lists
+		// flag them — route rules pick proxy vs direct.
+		if cfg.AdBlock || cfg.YouTubeUnblock {
+			if tag := firstUpstreamDNSTag(servers); tag != "" {
+				dns.Rules = append(dns.Rules, SBDNSRule{
+					Domain: adBlockConnectivityBypassDomains,
+					Server: tag,
+				})
+				// YouTube / video CDN hosts often appear in ad SRS lists.
+				// Always let them resolve — route rules pick proxy vs direct.
+				dns.Rules = append(dns.Rules, SBDNSRule{
+					Domain:       youTubeCoreDomains,
+					DomainSuffix: youTubeDNSBypassSuffixes(),
+					Server:       tag,
+				})
+			}
 			dns.Rules = append(dns.Rules, SBDNSRule{
 				RuleSet: adBlockRuleSetTags(),
 				Action:  "reject",
@@ -658,6 +672,58 @@ func splitDNSServer(raw string) (string, int) {
 	return s, 0
 }
 
+// firstUpstreamDNSTag returns the tag of the first non-local resolver in a
+// tunnel-mode DNS server list. Used to route ad-block bypass domains through
+// a real upstream before the reject rule fires.
+func firstUpstreamDNSTag(servers []SBDNSServer) string {
+	for _, s := range servers {
+		if s.Type != "local" && s.Tag != "" {
+			return s.Tag
+		}
+	}
+	return ""
+}
+
+// lanBypassCIDRs returns RFC1918/link-local/multicast ranges for the BypassLAN
+// route rule, with 172.19.0.0/16 carved out of 172.16.0.0/12. The engine TUN
+// interface uses 172.19.0.1/30 and libbox hands Android 172.19.0.2 as the
+// in-tunnel DNS address — if that /16 were treated as LAN bypass, DNS hijack
+// breaks and the VPN shows zero traffic.
+func lanBypassCIDRs() []string {
+	return []string{
+		"10.0.0.0/8",
+		// 172.16.0.0/12 minus 172.19.0.0/16
+		"172.16.0.0/15",
+		"172.18.0.0/16",
+		"172.20.0.0/14",
+		"172.24.0.0/13",
+		"192.168.0.0/16",
+		"169.254.0.0/16", // link-local v4
+		"224.0.0.0/4",    // multicast v4
+		"255.255.255.255/32",
+		"fc00::/7",  // ULA
+		"fe80::/10", // link-local v6
+		"ff00::/8",  // multicast v6
+	}
+}
+
+// lanBypassContainsIP reports whether ip falls into any lanBypassCIDRs range.
+func lanBypassContainsIP(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	for _, cidr := range lanBypassCIDRs() {
+		_, n, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
 // splitSmartDomains turns a normalised blocked-list (entries from
 // blocked_provider.normalizeDomains: lowercase, no scheme, no wildcards)
 // into sing-box `domain` (exact) + `domain_suffix` (subdomain match)
@@ -696,8 +762,10 @@ func splitSmartDomains(domains []string) (exact []string, suffix []string) {
 func buildRoute(cfg EngineConfig) *SBRoute {
 	final := "proxy"
 	// Smart mode flips the default: only listed domains hit the proxy,
-	// the rest goes direct. Default → direct, domain match → proxy.
-	if cfg.SmartMode {
+	// the rest goes direct. When Smart is on but the blocked list is still
+	// empty (first connect / fetch pending), keep Global behaviour so the
+	// tunnel isn't a no-op.
+	if cfg.SmartMode && len(cfg.SmartBlockedDomains) > 0 {
 		final = "direct"
 	}
 	route := &SBRoute{
@@ -707,8 +775,9 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 
 	// Ad-block rule-sets (binary SRS): cached-local if present, else remote
 	// (sing-box downloads them via the direct outbound). Referenced by tag from
-	// the reject rules below and in buildDNS.
-	if cfg.AdBlock {
+	// the reject rules below and in buildDNS. YouTubeUnblock auto-enables SRS
+	// lists for broader ad/tracker coverage alongside geo-split routing.
+	if cfg.AdBlock || cfg.YouTubeUnblock {
 		route.RuleSet = append(route.RuleSet, buildAdBlockRuleSets(effectiveDataDir(cfg))...)
 	}
 
@@ -739,21 +808,11 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	// traffic straight to `direct` so the printer / NAS / router admin /
 	// mDNS still reachable while the VPN is up. Runs BEFORE sniff because
 	// it's a pure IP/CIDR rule — no Host/SNI knowledge required.
+	// The engine TUN prefix (172.19.0.0/16) is carved out — see lanBypassCIDRs.
 	if cfg.BypassLAN {
-		lanCIDRs := []string{
-			"10.0.0.0/8",
-			"172.16.0.0/12",
-			"192.168.0.0/16",
-			"169.254.0.0/16", // link-local v4
-			"224.0.0.0/4",    // multicast v4
-			"255.255.255.255/32",
-			"fc00::/7",  // ULA
-			"fe80::/10", // link-local v6
-			"ff00::/8",  // multicast v6
-		}
 		rules = append(rules, SBRouteRule{
 			Action:   "route",
-			IPCidr:   lanCIDRs,
+			IPCidr:   lanBypassCIDRs(),
 			Outbound: "direct",
 		})
 	}
@@ -767,27 +826,42 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		Action:   "hijack-dns",
 	})
 
-	// YouTube geo-split (see youtube_rules.go). Placed before the ad-block
-	// reject so YouTube's own domains keep their intended outbound. MUST come
-	// after sniff so the domain matcher sees the SNI/Host.
+	// YouTube geo-split: video CDN via proxy, player API direct (RU IP / no ads).
+	// MUST come after sniff. See youtube_rules.go.
 	if cfg.YouTubeUnblock {
-		rules = append(rules, SBRouteRule{
-			DomainSuffix: youTubeVideoSuffixes,
-			Outbound:     "proxy",
-			Action:       "route",
-		})
-		rules = append(rules, SBRouteRule{
-			Domain:       youTubeDirectDomains,
-			DomainSuffix: youTubeDirectSuffixes,
-			Outbound:     "direct",
-			Action:       "route",
-		})
+		rules = appendYouTubeUnblockRouteRules(rules)
 	}
 
 	// Ad-block: reject connections to ad/tracker domains. Backstop for the DNS
 	// reject in buildDNS — catches hardcoded IPs / DoH that skip our resolver.
 	// MUST come after sniff so the rule_set domain matcher sees the host.
+	// Android captive-portal / Private-DNS hosts bypass the reject list so the
+	// OS doesn't flag the VPN as offline (see adBlockConnectivityBypassDomains).
+	// YouTubeUnblock auto-enables SRS reject; geo-split rules above take
+	// precedence for YouTube hosts (first match wins).
 	if cfg.AdBlock {
+		// Video CDN is often in ad SRS lists; pin to proxy before reject.
+		rules = append(rules, SBRouteRule{
+			Domain:       youTubeCoreDomains,
+			DomainSuffix: youTubeCoreSuffixes,
+			Outbound:     "proxy",
+			Action:       "route",
+		})
+		rules = append(rules, SBRouteRule{
+			Domain:   adBlockConnectivityBypassDomains,
+			Outbound: "direct",
+			Action:   "route",
+		})
+		rules = append(rules, SBRouteRule{
+			RuleSet: adBlockRuleSetTags(),
+			Action:  "reject",
+		})
+	} else if cfg.YouTubeUnblock {
+		rules = append(rules, SBRouteRule{
+			Domain:   adBlockConnectivityBypassDomains,
+			Outbound: "direct",
+			Action:   "route",
+		})
 		rules = append(rules, SBRouteRule{
 			RuleSet: adBlockRuleSetTags(),
 			Action:  "reject",

@@ -107,6 +107,24 @@ func adBlockRuleSetTags() []string {
 	return tags
 }
 
+// adBlockConnectivityBypassDomains are hosts Android uses for captive-portal
+// checks and Private DNS (DoT) validation. Ad/tracker SRS lists often include
+// *.gstatic.com — blocking them makes the OS report "no internet" /
+// "Private DNS server unavailable" even when the tunnel is fine.
+var adBlockConnectivityBypassDomains = []string{
+	"connectivitycheck.gstatic.com",
+	"www.gstatic.com",
+	"clients3.google.com",
+	"play.googleapis.com",
+	"www.google.com",
+	"dns.google",
+	"dns.quad9.net",
+	"one.one.one.one",
+	"dns.cloudflare.com",
+	"cloudflare-dns.com",
+	"dnsotls-ds.metric.gstatic.com",
+}
+
 // AdBlockDownloadResult reports how many ad lists were cached locally.
 type AdBlockDownloadResult struct {
 	Ready int
