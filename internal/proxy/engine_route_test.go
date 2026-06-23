@@ -17,7 +17,9 @@ package proxy
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -590,6 +592,211 @@ func TestBuildRoute_TunnelMode_ServerIPBypassBeforeSniff(t *testing.T) {
 	if bypassIdx >= sniffIdx {
 		t.Fatalf("server IP bypass (idx=%d) must come BEFORE sniff (idx=%d) to prevent routing loops, rules=%+v",
 			bypassIdx, sniffIdx, route.Rules)
+	}
+}
+
+// TestBuildRoute_TunnelMode_DomainServerExcludesResolvedIPs covers the domain-
+// addressed-server gap behind the 2026-06 github-issue (EOF flood / x509-github on
+// a domain VLESS server in TUN, while a literal-IP server worked). When the server
+// is a domain whose backend IPs were pinned at connect (ResolvedIPs), buildRoute
+// must emit an ip_cidr → direct rule for EACH pinned IP — not only the fragile
+// domain → direct rule — so the outbound's own dial-by-IP to the server can never
+// loop back into the TUN. Mirrors TestBuildRoute_TunnelMode_ServerIPBypassBeforeSniff.
+func TestBuildRoute_TunnelMode_DomainServerExcludesResolvedIPs(t *testing.T) {
+	cfg := EngineConfig{
+		Mode: ProxyModeTunnel,
+		Proxy: ProxyConfig{
+			Type:        "vless",
+			IP:          "frankfurt.example.com",
+			Port:        443,
+			ResolvedIPs: []string{"203.0.113.7", "203.0.113.8"},
+		},
+	}
+	route := buildRoute(cfg)
+	if route == nil {
+		t.Fatal("expected non-nil route")
+	}
+
+	foundCidr := map[string]int{}
+	sniffIdx := -1
+	for i, r := range route.Rules {
+		if r.Action == "sniff" && sniffIdx == -1 {
+			sniffIdx = i
+		}
+		if r.Outbound == "direct" {
+			for _, cidr := range r.IPCidr {
+				foundCidr[cidr] = i
+			}
+		}
+	}
+	for _, cidr := range []string{"203.0.113.7/32", "203.0.113.8/32"} {
+		idx, ok := foundCidr[cidr]
+		if !ok {
+			t.Fatalf("expected ip_cidr %s → direct for domain server's resolved IP, rules=%+v", cidr, route.Rules)
+		}
+		if sniffIdx == -1 || idx >= sniffIdx {
+			t.Fatalf("server IP exclude %s (idx=%d) must precede sniff (idx=%d) to prevent routing loops", cidr, idx, sniffIdx)
+		}
+	}
+}
+
+// TestOutboundTLSDiagnostic verifies the connect-time diagnostic that exposes
+// whether the BUILT outbound carries an active Reality block. A vless+reality
+// server logging "tls" (plain TLS, no reality) is the smoking gun for the
+// x509-github failure class — the reporter's log reveals the strip without a repro.
+func TestOutboundTLSDiagnostic(t *testing.T) {
+	cases := []struct {
+		name  string
+		proxy ProxyConfig
+		want  string
+	}{
+		{
+			name:  "vless reality",
+			proxy: ProxyConfig{Type: "vless", IP: "1.2.3.4", Port: 443, Extra: json.RawMessage(`{"uuid":"u","security":"reality","pbk":"k","sid":"5678","sni":"example.com"}`)},
+			want:  "reality",
+		},
+		{
+			name:  "vless plain tls",
+			proxy: ProxyConfig{Type: "vless", IP: "1.2.3.4", Port: 443, Extra: json.RawMessage(`{"uuid":"u","security":"tls","sni":"example.com"}`)},
+			want:  "tls",
+		},
+		{
+			name:  "shadowsocks no tls",
+			proxy: ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p", Extra: json.RawMessage(`{"method":"aes-256-gcm"}`)},
+			want:  "none",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := outboundTLSDiagnostic(c.proxy); got != c.want {
+				t.Fatalf("outboundTLSDiagnostic(%s) = %q, want %q", c.name, got, c.want)
+			}
+		})
+	}
+}
+
+// TestResolvedFingerprint_UnknownFallsBackToChrome guards the engine against a
+// typo'd/truncated uTLS fingerprint (e.g. a copy-paste that clipped "chrome" to
+// "ch"): sing-box rejects an unknown fingerprint at instance creation with
+// "unknown uTLS fingerprint" and the whole connect fails. Unknown values must
+// fall back to a valid fingerprint instead of crashing the start.
+func TestResolvedFingerprint_UnknownFallsBackToChrome(t *testing.T) {
+	fp := func(v string) string { return resolvedFingerprint(map[string]interface{}{"fp": v}) }
+	cases := map[string]string{
+		"ch":       "chrome", // clipped paste — the real-world failure
+		"bogus123": "chrome",
+		"ChRoMe":   "chrome", // normalised
+		"qq":       "qq",
+		"firefox":  "firefox",
+		"randomized": "randomized",
+		"none":     "", // explicit opt-out keeps bare Go fingerprint
+	}
+	for in, want := range cases {
+		if got := fp(in); got != want {
+			t.Fatalf("resolvedFingerprint(fp=%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestParseSubscription_PreservesRealityAcrossEntries is the decisive check for
+// the issue's "reality stripped → x509" class: it runs a diverse base64
+// subscription (the real path the issue used) through ParseSubscriptionBody and
+// verifies, per server, that the BUILT outbound keeps the right TLS state AND the
+// exact reality params (pbk/sni) belong to the right host — i.e. nothing shifts
+// between entries. Two different reality key-sets + security=none across five
+// transports. If this passes, the parser is not the culprit; if it fails, we found it.
+func TestParseSubscription_PreservesRealityAcrossEntries(t *testing.T) {
+	links := []string{
+		`vless://02af3b31-2696-4b1c-a7d3-19ecf6318f64@84.75.161.19:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=auto.malina24.xyz&fp=chrome&pbk=V6FabatADtcX7aO9KMjGCadJC4LuQ_5nRViab-z-nFQ&sid=5678&type=tcp&headerType=none#dk`,
+		`vless://0c986712-ccb1-4c8f-8e25-6a209db3c466@45.138.101.53:443?encryption=none&fp=chrome&mode=auto&path=%2Fxhttp-proxy&pbk=akcAXaW7GNwXT6bTrtD6oZIY9rdEzW4TfZvYqDRzsTc&security=reality&sid=a8f3c1d7e9b4c2f6&sni=5post-gate.x5.ru&type=xhttp#ee`,
+		`vless://0c986712-ccb1-4c8f-8e25-6a209db3c466@5.39.250.173:443?encryption=none&security=reality&sni=5post-gate.x5.ru&fp=qq&pbk=akcAXaW7GNwXT6bTrtD6oZIY9rdEzW4TfZvYqDRzsTc&sid=a8f3c1d7e9b4c2f6&spx=%2F&type=xhttp&path=%2Fxhttp-proxy&mode=auto#fi`,
+		`vless://2b446337-5874-4d9c-8d27-9ce0eac2389c@185.216.71.193:10928?mode=auto&path=/&security=none&encryption=none&type=xhttp#x1`,
+		`vless://2b446337-5874-4d9c-8d27-9ce0eac2389c@185.216.71.193:26093?mode=gun&security=none&encryption=none&type=grpc#x2`,
+		`vless://2b446337-5874-4d9c-8d27-9ce0eac2389c@185.216.71.193:43144?path=/&security=none&encryption=none&type=httpupgrade#x3`,
+		`vless://2b446337-5874-4d9c-8d27-9ce0eac2389c@185.216.71.193:52526?security=none&encryption=none&headerType=none&type=tcp#x4`,
+		`vless://2b446337-5874-4d9c-8d27-9ce0eac2389c@185.216.71.193:57499?path=/&security=none&encryption=none&type=ws#x5`,
+	}
+
+	type want struct {
+		tls string // "reality" | "tls" | "none"
+		pbk string // expected reality public key (reality only)
+		sni string // expected reality server_name (reality only)
+	}
+	expected := map[string]want{
+		"84.75.161.19:443":     {tls: "reality", pbk: "V6FabatADtcX7aO9KMjGCadJC4LuQ_5nRViab-z-nFQ", sni: "auto.malina24.xyz"},
+		"45.138.101.53:443":    {tls: "reality", pbk: "akcAXaW7GNwXT6bTrtD6oZIY9rdEzW4TfZvYqDRzsTc", sni: "5post-gate.x5.ru"},
+		"5.39.250.173:443":     {tls: "reality", pbk: "akcAXaW7GNwXT6bTrtD6oZIY9rdEzW4TfZvYqDRzsTc", sni: "5post-gate.x5.ru"},
+		"185.216.71.193:10928": {tls: "none"},
+		"185.216.71.193:26093": {tls: "none"},
+		"185.216.71.193:43144": {tls: "none"},
+		"185.216.71.193:52526": {tls: "none"},
+		"185.216.71.193:57499": {tls: "none"},
+	}
+
+	body := base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n")))
+	entries, err := ParseSubscriptionBody(body)
+	if err != nil {
+		t.Fatalf("ParseSubscriptionBody: %v", err)
+	}
+
+	seen := map[string]bool{}
+	for _, e := range entries {
+		key := fmt.Sprintf("%s:%d", e.IP, e.Port)
+		exp, ok := expected[key]
+		if !ok {
+			t.Fatalf("unexpected parsed server %s (name=%q) — possible entry shift, extra=%s", key, e.Name, string(e.Extra))
+		}
+		seen[key] = true
+
+		pc := ProxyConfig{Type: e.Type, IP: e.IP, Port: e.Port, Username: e.Username, Password: e.Password, URI: e.URI, Extra: e.Extra}
+		if got := outboundTLSDiagnostic(pc); got != exp.tls {
+			t.Fatalf("%s: tls=%q, want %q (reality stripped/shifted?) extra=%s", key, got, exp.tls, string(e.Extra))
+		}
+		if exp.tls == "reality" {
+			var ex map[string]any
+			if err := json.Unmarshal(e.Extra, &ex); err != nil {
+				t.Fatalf("%s: unmarshal extra: %v", key, err)
+			}
+			if got, _ := ex["pbk"].(string); got != exp.pbk {
+				t.Fatalf("%s: pbk=%q, want %q — reality key shifted between entries", key, got, exp.pbk)
+			}
+			if got, _ := ex["sni"].(string); got != exp.sni {
+				t.Fatalf("%s: sni=%q, want %q — reality SNI shifted between entries", key, got, exp.sni)
+			}
+		}
+	}
+	for key := range expected {
+		if !seen[key] {
+			t.Fatalf("server %s was dropped by the parser, entries=%d", key, len(entries))
+		}
+	}
+}
+
+// TestServerEndpointUnresolvable guards the connect-time fail-fast: a domain
+// server in TUN with no pinned IP would force sing-box to dial it via the
+// censored OS resolver (loop → EOF, or poisoned IP → x509-github). The connect
+// path aborts up front in that case; literal-IP servers and proxy mode are never
+// gated.
+func TestServerEndpointUnresolvable(t *testing.T) {
+	cases := []struct {
+		name  string
+		proxy ProxyConfig
+		mode  ProxyMode
+		want  bool
+	}{
+		{name: "domain no pin tunnel", proxy: ProxyConfig{IP: "frankfurt.example.com"}, mode: ProxyModeTunnel, want: true},
+		{name: "domain pinned tunnel", proxy: ProxyConfig{IP: "frankfurt.example.com", ResolvedIPs: []string{"203.0.113.7"}}, mode: ProxyModeTunnel, want: false},
+		{name: "domain single-pin tunnel", proxy: ProxyConfig{IP: "frankfurt.example.com", ResolvedIP: "203.0.113.7"}, mode: ProxyModeTunnel, want: false},
+		{name: "literal ip tunnel", proxy: ProxyConfig{IP: "203.0.113.7"}, mode: ProxyModeTunnel, want: false},
+		{name: "domain no pin proxy mode", proxy: ProxyConfig{IP: "frankfurt.example.com"}, mode: ProxyModeProxy, want: false},
+		{name: "empty ip tunnel", proxy: ProxyConfig{IP: ""}, mode: ProxyModeTunnel, want: false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := serverEndpointUnresolvable(c.proxy, c.mode); got != c.want {
+				t.Fatalf("serverEndpointUnresolvable(%+v, %v) = %v, want %v", c.proxy, c.mode, got, c.want)
+			}
+		})
 	}
 }
 

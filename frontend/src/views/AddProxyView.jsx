@@ -363,6 +363,24 @@ export const AddProxyView = () => {
       return proxy;
     });
     if (proxiesToImport.length === 0) {
+      // The client-side parser only handles single links and plaintext lists.
+      // A base64-encoded subscription body or a JSON sing-box/Clash export
+      // pasted directly lands here — defer to the backend parser, which decodes
+      // base64 and JSON. Without this, the most common real subscription format
+      // (a bare base64 blob) silently reported "no proxies".
+      setIsImporting(true);
+      try {
+        const entries = await wailsAPI.parseSubscriptionText(text.trim());
+        if (entries && entries.length > 0) {
+          setPendingProxies(entries);
+          setShowSelectionModal(true);
+          return;
+        }
+      } catch (err) {
+        console.error("Subscription text parse error:", err);
+      } finally {
+        setIsImporting(false);
+      }
       showAlertDialog({
         title: t("common.notice"),
         message: t("add.noProxiesFound") || "No proxies found.",

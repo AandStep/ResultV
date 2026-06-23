@@ -25,6 +25,10 @@ const (
 	ConnectErrorInvalidConfig = "invalid_config"
 	ConnectErrorTunPrivileges = "tun_privileges"
 	ConnectErrorEngineStart   = "engine_start_failed"
+	// ConnectErrorDNSCensored is returned when a domain-addressed server can't be
+	// resolved to an IP before a TUN connect — the route-exclude/server-pin can't
+	// be built, so dialing the server would loop into the TUN or hit a poisoned IP.
+	ConnectErrorDNSCensored = "dns_censored"
 )
 
 func validateEngineConfig(cfg EngineConfig) (string, error) {
