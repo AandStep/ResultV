@@ -200,8 +200,14 @@ type SBOutbound struct {
 
 	TLS       *SBOutboundTLS       `json:"tls,omitempty"`
 	Transport *SBOutboundTransport `json:"transport,omitempty"`
-	
+
 	DomainStrategy string `json:"domain_strategy,omitempty"`
+
+	// urltest/selector group fields (mobile kill-switch only; omitempty keeps
+	// every existing outbound's JSON byte-identical).
+	Outbounds []string `json:"outbounds,omitempty"`
+	URL       string   `json:"url,omitempty"`
+	Interval  string   `json:"interval,omitempty"`
 }
 
 type SBHysteria2Obfs struct {

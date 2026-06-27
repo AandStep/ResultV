@@ -143,6 +143,54 @@ func Ping(ip string, port int, proxyType string) (string, error) {
 	return string(b), nil
 }
 
+// PingEntry probes a proxy using the full marshaled config.ProxyEntry instead
+// of bare (ip, port, type). The entry is required for WireGuard / AmneziaWG,
+// whose latency can only be measured with a real handshake (needs the private
+// and peer keys plus any obfuscation knobs in Extra) — bare ICMP/UDP yields no
+// RTT and on Android unprivileged ICMP is unavailable anyway. Other protocols
+// fall back to the same probes Ping uses, read from the entry's ip/port/type.
+//
+// Returns the same JSON-encoded PingResult as Ping. reason is always populated
+// on failure so the UI can render "Timeout"/"Refused"/… instead of an endless
+// spinner.
+func PingEntry(entryJSON string) (string, error) {
+	var entry config.ProxyEntry
+	if err := json.Unmarshal([]byte(entryJSON), &entry); err != nil {
+		return "", fmt.Errorf("ping entry: %w", err)
+	}
+
+	ptUpper := strings.ToUpper(strings.TrimSpace(entry.Type))
+	var (
+		latency   int64
+		reachable bool
+		reason    string
+		checkType string
+	)
+	switch ptUpper {
+	case "WIREGUARD", "AMNEZIAWG":
+		latency, reachable, reason = proxy.PingWireGuardHandshake(entryJSON)
+		checkType = "wg_handshake"
+	case "HYSTERIA2":
+		if entry.IP == "" || entry.Port <= 0 {
+			return "", fmt.Errorf("ping entry: missing ip/port")
+		}
+		latency, reachable, reason, checkType = proxy.PingHysteria2QUIC(entry.IP, entry.Port)
+	default:
+		if entry.IP == "" || entry.Port <= 0 {
+			return "", fmt.Errorf("ping entry: missing ip/port")
+		}
+		latency, reachable, reason = proxy.PingProxy(entry.IP, entry.Port)
+		checkType = "tcp"
+	}
+
+	res := PingResult{Reachable: reachable, LatencyMs: latency, Reason: reason, CheckType: checkType}
+	b, err := json.Marshal(res)
+	if err != nil {
+		return "", fmt.Errorf("marshaling ping result: %w", err)
+	}
+	return string(b), nil
+}
+
 // DetectCountry resolves a proxy server host (IP literal or hostname) to its
 // lowercase ISO-3166 alpha-2 country code via the project-controlled GeoIP
 // API, caching results on disk under dataDir (country.cache.json). Mirrors
@@ -578,6 +626,16 @@ type BuildOptions struct {
 	AdBlock bool `json:"adblock,omitempty"`
 	// YouTubeUnblock enables geo-split (video via proxy, player API direct for RU IP).
 	YouTubeUnblock bool `json:"youtubeUnblock,omitempty"`
+	// KillSwitchArmed wraps the proxy outbound in a single-member urltest
+	// group ("ks-test") and points route.final at it so the Android
+	// KillSwitchWatchdog can health-probe the proxy from inside the engine.
+	// Pure monitoring — split/exclusion routing is preserved.
+	KillSwitchArmed bool `json:"killSwitchArmed,omitempty"`
+	// KillSwitchPanic (implies armed) is the engaged state: route.final and
+	// every user rule route to "block" so no app traffic escapes while the
+	// proxy is down. The urltest group still probes the proxy (its dial is a
+	// protected socket, unaffected by route.final), so recovery is detectable.
+	KillSwitchPanic bool `json:"killSwitchPanic,omitempty"`
 }
 
 // BuildSingBoxConfig converts a proxy URI directly into a sing-box JSON
@@ -834,6 +892,49 @@ func decodeAutoMembers(extra json.RawMessage) ([]config.ProxyEntry, error) {
 	return wrap.Members, nil
 }
 
+// applyKillSwitch mutates the mobile tunnel config for the kill switch.
+// armed: wrap "proxy" in a urltest group "ks-test" and point route.final at
+// it (monitoring only). panic: additionally force route.final to "block" and
+// route every user rule to block so no app traffic escapes while the proxy is
+// down. The urltest group is kept in BOTH states so the watchdog can keep
+// probing the proxy (the group's dial is a protected socket, independent of
+// route.final) to detect recovery.
+func applyKillSwitch(sb *proxy.SingBoxConfig, armed, panicMode bool) {
+	if !armed && !panicMode {
+		return
+	}
+	// Insert the urltest group wrapping the primary "proxy" outbound.
+	sb.Outbounds = append(sb.Outbounds, proxy.SBOutbound{
+		Type:      "urltest",
+		Tag:       "ks-test",
+		Outbounds: []string{"proxy"},
+		URL:       "https://www.gstatic.com/generate_204",
+		Interval:  "10s",
+	})
+	if sb.Route == nil {
+		sb.Route = &proxy.SBRoute{}
+	}
+	if panicMode {
+		// Engaged: blackhole everything. Existing rules that send traffic to
+		// "direct"/"proxy" are rewritten to block; LAN bypass is preserved by
+		// buildRoute's own LAN handling (sing-box treats RFC1918 via the tun
+		// stack, not these rules). final=block catches the rest.
+		for i := range sb.Route.Rules {
+			r := &sb.Route.Rules[i]
+			// Leave sniff/dns infrastructure rules (no Outbound, action-based)
+			// untouched; only redirect rules that select an outbound.
+			if r.Outbound == "proxy" || r.Outbound == "direct" {
+				r.Outbound = ""
+				r.Action = "reject"
+			}
+		}
+		sb.Route.Final = "block"
+		return
+	}
+	// Armed but not engaged: monitor via the group, preserve split routing.
+	sb.Route.Final = "ks-test"
+}
+
 func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts BuildOptions) (string, error) {
 	if dataDir == "" {
 		return "", fmt.Errorf("dataDir is required on mobile (pass context.filesDir)")
@@ -1000,6 +1101,8 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 	// Log level is set by EngineConfig.LogLevel above — callers may pass
 	// "debug" while iterating on a new protocol; default is "error" so
 	// release builds don't spam logcat.
+
+	applyKillSwitch(&sb, opts.KillSwitchArmed, opts.KillSwitchPanic)
 
 	out, err := json.MarshalIndent(sb, "", "  ")
 	if err != nil {
