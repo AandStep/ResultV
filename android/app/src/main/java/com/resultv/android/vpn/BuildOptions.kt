@@ -12,7 +12,7 @@ import org.json.JSONObject
  */
 internal object BuildOptionsBuilder {
 
-    fun currentOptionsJson(): String {
+    fun currentOptionsJson(panic: Boolean = false): String {
         val settings = SettingsRepository.state.value
         val rules = RoutingRulesRepository.state.value
         val smartMode = rules.mode == RoutingMode.Smart
@@ -23,21 +23,19 @@ internal object BuildOptionsBuilder {
             .put("bypassLAN", settings.bypassLan)
             .put("logLevel", settings.logLevel)
             .put("smartMode", smartMode)
-            // Hand the engine the resolved blocked-domain list. Empty when
-            // Smart is off OR when the first download hasn't completed yet
-            // — engine keeps Global routing (final=proxy) until the list arrives.
             .put("smartBlockedDomainsList", if (smartMode) SmartListRepository.toEngineList() else "")
-            // Ad-block (DNS+route reject via rule_set) and YouTube geo-split.
-            // YouTubeUnblock auto-enables SRS ad lists; AdBlockRepository caches
-            // them locally when present and falls back to remote.
             .put("adblock", settings.adblock)
             .put("youtubeUnblock", settings.youtubeUnblock)
+            // Kill switch: armed whenever the user enabled it; panic only while
+            // the watchdog has engaged (proxy down).
+            .put("killSwitchArmed", settings.killSwitch)
+            .put("killSwitchPanic", panic)
             .toString()
     }
 
     /** Build a sing-box config for the given profile using the live settings. */
-    fun buildConfig(active: Profile, dataDir: String): String? {
-        val opts = currentOptionsJson()
+    fun buildConfig(active: Profile, dataDir: String, panic: Boolean = false): String? {
+        val opts = currentOptionsJson(panic)
         return try {
             when {
                 active.entryJson.isNotBlank() ->
