@@ -23,7 +23,13 @@ internal object BuildOptionsBuilder {
             .put("bypassLAN", settings.bypassLan)
             .put("logLevel", settings.logLevel)
             .put("smartMode", smartMode)
+            // Hand the engine the resolved blocked-domain list. Empty when
+            // Smart is off OR when the first download hasn't completed yet
+            // — engine keeps Global routing (final=proxy) until the list arrives.
             .put("smartBlockedDomainsList", if (smartMode) SmartListRepository.toEngineList() else "")
+            // Ad-block (DNS+route reject via rule_set) and YouTube geo-split.
+            // YouTubeUnblock auto-enables SRS ad lists; AdBlockRepository caches
+            // them locally when present and falls back to remote.
             .put("adblock", settings.adblock)
             .put("youtubeUnblock", settings.youtubeUnblock)
             // Kill switch: armed whenever the user enabled it; panic only while
