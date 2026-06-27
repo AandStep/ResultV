@@ -42,6 +42,7 @@ const val ACTION_START = "com.resultv.android.START"
 const val ACTION_STOP = "com.resultv.android.STOP"
 const val EXTRA_CONFIG_JSON = "configJson"
 const val EXTRA_RECONNECT_AFTER_REVOKE = "reconnectAfterRevoke"
+const val EXTRA_IS_RELOAD = "isReload"
 
 /**
  * VpnService host. The actual sing-box engine runs inside libbox via
@@ -66,6 +67,7 @@ class ResultVpnService : VpnService() {
     // Lifetime-scoped coroutine for live config reloads.
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var reloadWatcher: Job? = null
+    private var killSwitchWatchdog: KillSwitchWatchdog? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // Always-on VPN starts the service directly via the
@@ -77,7 +79,9 @@ class ResultVpnService : VpnService() {
         when (intent?.action) {
             ACTION_STOP -> {
                 Log.i(TAG, "received STOP")
+                AppLog.info(getString(R.string.log_disconnecting))
                 reloadWatcher?.cancel(); reloadWatcher = null
+                stopKillSwitchWatchdog()
                 TrafficWatcher.stop()
                 // Close the tun fd up front — this drops the system VPN
                 // lock icon immediately. libbox.closeService() takes a
@@ -86,7 +90,13 @@ class ResultVpnService : VpnService() {
                 closeTun()
                 VpnState.set(VpnStatus.Idle)
                 stopForeground(STOP_FOREGROUND_REMOVE)
-                worker.execute { BoxModule.stop() }
+                // Resolve the string before the service is torn down, then log
+                // once the engine has actually drained on the worker thread.
+                val disconnectedMsg = getString(R.string.log_disconnected)
+                worker.execute {
+                    BoxModule.stop()
+                    AppLog.info(disconnectedMsg)
+                }
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -103,21 +113,36 @@ class ResultVpnService : VpnService() {
                 }
                 VpnState.set(VpnStatus.Connecting)
                 startForeground(NOTIFICATION_ID, buildNotification(VpnStatus.Connecting))
+                // A reload is an internal stop+start of a fresh service
+                // instance — triggerReload already logged "Applying changes…",
+                // so suppress the duplicate connect/connected pair here. The
+                // flag rides on the restart intent because the new instance
+                // can't see the old instance's fields.
+                val isReload = intent?.getBooleanExtra(EXTRA_IS_RELOAD, false) ?: false
+                if (!isReload) {
+                    val serverName = ProfileRepository.state.value.active?.name ?: ""
+                    AppLog.info(getString(R.string.log_connecting, serverName))
+                }
+                val connectedMsg = getString(R.string.log_connected)
                 worker.execute {
                     try {
                         BoxModule.start(this, config)
                         val connectedAt = System.currentTimeMillis()
                         val connected = VpnStatus.Connected(connectedAt)
                         VpnState.set(connected)
+                        if (!isReload) AppLog.success(connectedMsg)
                         renotify(buildNotification(connected))
                         startReloadWatcher()
+                        startKillSwitchWatchdog()
                         // Subscribe to libbox status stream so HomeScreen's
                         // traffic cards show real uplink/downlink instead of
                         // the placeholder zeros.
                         TrafficWatcher.start()
                     } catch (t: Throwable) {
                         Log.e(TAG, "BoxModule.start failed", t)
-                        VpnState.set(VpnStatus.Error(t.message ?: t.javaClass.simpleName))
+                        val msg = t.message ?: t.javaClass.simpleName
+                        VpnState.set(VpnStatus.Error(msg))
+                        AppLog.error(getString(R.string.log_conn_failed, msg))
                         closeTun()
                         stopForeground(STOP_FOREGROUND_REMOVE)
                         stopSelf()
@@ -157,7 +182,9 @@ class ResultVpnService : VpnService() {
         // of disappearing silently, post a Reconnect prompt so the user
         // can re-establish — addresses the Phase-3 plan tail.
         Log.i(TAG, "VPN permission revoked")
+        AppLog.warning(getString(R.string.log_revoked), getString(R.string.log_source_system))
         reloadWatcher?.cancel(); reloadWatcher = null
+        stopKillSwitchWatchdog()
         TrafficWatcher.stop()
         closeTun()
         VpnState.set(VpnStatus.Idle)
@@ -169,6 +196,7 @@ class ResultVpnService : VpnService() {
 
     override fun onDestroy() {
         reloadWatcher?.cancel(); reloadWatcher = null
+        stopKillSwitchWatchdog()
         TrafficWatcher.stop()
         scope.cancel()
         closeTun()
@@ -212,6 +240,40 @@ class ResultVpnService : VpnService() {
         }
     }
 
+    private fun startKillSwitchWatchdog() {
+        if (!SettingsRepository.state.value.killSwitch) return
+        killSwitchWatchdog?.stop()
+        killSwitchWatchdog = KillSwitchWatchdog(
+            onEngage = { reloadKillSwitch(panic = true) },
+            onDisengage = { reloadKillSwitch(panic = false) },
+        ).also { it.start() }
+    }
+
+    private fun stopKillSwitchWatchdog() {
+        killSwitchWatchdog?.stop()
+        killSwitchWatchdog = null
+        VpnState.setKillSwitchEngaged(false)
+    }
+
+    /**
+     * Engage/disengage via an IN-PLACE BoxModule.reload (keeps the tun up — no
+     * leak window). MUST NOT use triggerReload, which closes the tun and
+     * restarts the service.
+     */
+    private fun reloadKillSwitch(panic: Boolean) {
+        val active = ProfileRepository.state.value.active ?: return
+        val cfg = BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath, panic = panic)
+        if (cfg == null) {
+            Log.w(TAG, "kill switch reload skipped — config build failed")
+            return
+        }
+        worker.execute {
+            BoxModule.reload(cfg)
+            VpnState.setKillSwitchEngaged(panic)
+            Log.i(TAG, "kill switch ${if (panic) "ENGAGED (block)" else "released (normal)"}")
+        }
+    }
+
     private fun triggerReload() {
         val active = ProfileRepository.state.value.active ?: return
         val configJson = BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath)
@@ -233,11 +295,13 @@ class ResultVpnService : VpnService() {
         // seconds"), give Android more time to tear down ConnectivityService
         // state, then start a brand-new service instance with the new config.
         Log.i(TAG, "triggerReload: full service restart for config change")
+        AppLog.info(getString(R.string.log_reapplying), getString(R.string.log_source_system))
 
         reloadInProgress = true
         TrafficStats.reset()
         TrafficWatcher.stop()
         reloadWatcher?.cancel(); reloadWatcher = null
+        stopKillSwitchWatchdog()
 
         // Keep UI/notification in Connecting through the gap so the user
         // doesn't see a flash of Idle.
@@ -248,6 +312,7 @@ class ResultVpnService : VpnService() {
         val restartIntent = Intent(ctx, ResultVpnService::class.java).apply {
             action = ACTION_START
             putExtra(EXTRA_CONFIG_JSON, configJson)
+            putExtra(EXTRA_IS_RELOAD, true)
         }
 
         // Tear down on the worker so we can SYNCHRONOUSLY wait for libbox's
