@@ -36,7 +36,7 @@ class KillSwitchWatchdog(
     private val onEngage: () -> Unit,
     private val onDisengage: () -> Unit,
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val decider = KillSwitchDecider()
     private var client: CommandClient? = null
     private var tickJob: Job? = null
@@ -45,6 +45,8 @@ class KillSwitchWatchdog(
     private var lastTrafficTotal = 0L
 
     fun start() {
+        if (client != null) return
+        if (!scope.isActive) scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val opts = CommandClientOptions().apply {
             statusInterval = 1_000_000_000L // 1s, ns (Go time.Duration)
             addCommand(Libbox.CommandGroup)
