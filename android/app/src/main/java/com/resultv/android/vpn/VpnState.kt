@@ -17,4 +17,10 @@ object VpnState {
     val status: StateFlow<VpnStatus> = _status.asStateFlow()
 
     internal fun set(s: VpnStatus) { _status.value = s }
+
+    private val _killSwitchEngaged = MutableStateFlow(false)
+    /** True while the kill switch has blocked all traffic (proxy down). */
+    val killSwitchEngaged: StateFlow<Boolean> = _killSwitchEngaged.asStateFlow()
+
+    internal fun setKillSwitchEngaged(v: Boolean) { _killSwitchEngaged.value = v }
 }
