@@ -639,7 +639,50 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	if len(proxy.ResolvedIPs) == 0 {
 		proxy.ResolvedIPs = resolveAllServerIPs(proxy.IP)
 	}
+	// DoH fallback: when the OS resolver returns nothing for a domain server (the
+	// censored UDP/53 case), resolve the server's own domain via DoH-over-IP on
+	// the physical interface — before the system-DNS override / TUN is up — so the
+	// route-exclude + server-pin can still be built instead of looping into the
+	// TUN. Runs only when the cheap OS path already failed, so a healthy network
+	// never pays its latency. Best-effort: empty leaves behaviour unchanged.
+	if len(proxy.ResolvedIPs) == 0 && proxy.IP != "" && net.ParseIP(proxy.IP) == nil {
+		if doh := resolveServerIPsViaDoH(proxy.IP); len(doh) > 0 {
+			proxy.ResolvedIPs = doh
+			if proxy.ResolvedIP == "" {
+				proxy.ResolvedIP = doh[0]
+			}
+			m.log.Info("[PROXY] Адрес сервера получен через DoH (OS-резолвер не ответил)")
+		}
+	}
 	resolveDur = time.Since(tResolve)
+
+	// Connect-time diagnostics for the domain-server-in-TUN failure class
+	// (github-issue 2026-06): record how the server endpoint resolved so a
+	// reporter's logs reveal whether the route-exclude/server-pin could be built.
+	if mode == ProxyModeTunnel {
+		endpointKind := "ip"
+		if net.ParseIP(proxy.IP) == nil {
+			endpointKind = "domain"
+		}
+		m.log.Info(fmt.Sprintf("[PROXY] Эндпоинт сервера: тип=%s пинов=%d tls=%s", endpointKind, len(serverPinnedIPs(proxy)), outboundTLSDiagnostic(proxy)))
+	}
+
+	// Fail fast on an unresolvable domain server in TUN: without a pinned IP the
+	// route-exclude is empty and sing-box must dial the server via the censored OS
+	// resolver — which loops the server's packets back into the TUN (EOF flood) or
+	// resolves to a poisoned/CDN-fronted IP (x509-github). Aborting here with a
+	// clear reason beats an unrecoverable connection that floods the log and falsely
+	// trips the kill switch. mu is unlocked at this point — return directly.
+	if serverEndpointUnresolvable(proxy, mode) {
+		m.log.Error("[PROXY] Не удалось определить IP сервера (домен, DNS вероятно цензурируется) — подключение отменено")
+		return ConnectResultDTO{
+			Success:   false,
+			Message:   "Не удалось определить IP-адрес сервера. Возможно, DNS блокируется провайдером — попробуйте другой сервер.",
+			Reason:    "server domain unresolved (DNS likely censored)",
+			ErrorCode: ConnectErrorDNSCensored,
+		}
+	}
+
 	m.mu.Lock()
 
 	actualLocalPort := localPort
@@ -675,6 +718,13 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		TunStack:          m.tunStack,
 		DNSLeakProtection: dnsLeakProtection,
 		DataDir:           resultProxyDataDir(),
+	}
+	// Smart mode needs the censored block-list in the engine config so
+	// buildRoute can tunnel those domains/ranges while everything else goes
+	// direct. Only populated for Smart — Global/Whitelist ignore it.
+	if routingMode == ModeSmart && m.router != nil {
+		engineCfg.BlockedDomains = m.router.GetBlockedDomains()
+		engineCfg.BlockedCIDRs = m.router.GetBlockedCIDRs()
 	}
 	if err := m.prepareAdBlock(&engineCfg, adBlock, actualLocalPort); err != nil {
 		m.mu.Unlock()
@@ -1205,6 +1255,13 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 		TunStack:          m.tunStack,
 		DNSLeakProtection: dnsLeakProtection,
 		DataDir:           resultProxyDataDir(),
+	}
+	// Smart mode needs the censored block-list in the engine config so
+	// buildRoute can tunnel those domains/ranges while everything else goes
+	// direct. Only populated for Smart — Global/Whitelist ignore it.
+	if routingMode == ModeSmart && m.router != nil {
+		engineCfg.BlockedDomains = m.router.GetBlockedDomains()
+		engineCfg.BlockedCIDRs = m.router.GetBlockedCIDRs()
 	}
 	if err := m.prepareAdBlock(&engineCfg, adBlock, actualLocalPort); err != nil {
 		return ConnectResultDTO{

@@ -126,6 +126,143 @@ func (p *HTTPBlockedListProvider) client() *http.Client {
 	return &http.Client{Timeout: 10 * time.Second}
 }
 
+// FetchTelegramCIDRs downloads the Telegram MTProto data-center subnets (IPv4 +
+// IPv6) and returns them as normalized CIDR strings. Unlike the domain list
+// this is country-independent. Sources are overridable via
+// RESULTPROXY_TELEGRAM_CIDR_SOURCES (comma-separated).
+func (p *HTTPBlockedListProvider) FetchTelegramCIDRs(ctx context.Context) ([]string, error) {
+	sources := p.telegramCIDRSources()
+	if len(sources) == 0 {
+		return nil, fmt.Errorf("telegram cidr sources are empty")
+	}
+	merged := make([]string, 0, 32)
+	var lastErr error
+	for _, u := range sources {
+		u = strings.TrimSpace(u)
+		if u == "" {
+			continue
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		resp, err := p.client().Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("cidr service http %d: %s", resp.StatusCode, u)
+			resp.Body.Close()
+			continue
+		}
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 1*1024*1024))
+		resp.Body.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		merged = append(merged, parseCIDRPayload(body)...)
+	}
+	merged = normalizeCIDRs(merged)
+	if len(merged) == 0 {
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, fmt.Errorf("empty cidr list")
+	}
+	return merged, nil
+}
+
+func (p *HTTPBlockedListProvider) telegramCIDRSources() []string {
+	override := strings.TrimSpace(os.Getenv("RESULTPROXY_TELEGRAM_CIDR_SOURCES"))
+	if override != "" {
+		parts := strings.Split(override, ",")
+		out := make([]string, 0, len(parts))
+		for _, part := range parts {
+			if s := strings.TrimSpace(part); s != "" {
+				out = append(out, s)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return defaultTelegramCIDRSources()
+}
+
+func defaultTelegramCIDRSources() []string {
+	const base = "https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Subnets/"
+	return []string{
+		base + "IPv4/telegram.lst",
+		base + "IPv6/telegram.lst",
+	}
+}
+
+// parseCIDRPayload extracts CIDR/IP entries from a newline-delimited list,
+// tolerating blank lines, comments and trailing inline comments.
+func parseCIDRPayload(raw []byte) []string {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(trimmed, "\n") {
+		s := strings.TrimSpace(line)
+		if s == "" || strings.HasPrefix(s, "#") || strings.HasPrefix(s, ";") || strings.HasPrefix(s, "//") {
+			continue
+		}
+		if idx := strings.IndexAny(s, " \t#"); idx >= 0 {
+			s = strings.TrimSpace(s[:idx])
+		}
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	return normalizeCIDRs(out)
+}
+
+type BlockedCIDRsCache struct {
+	UpdatedAt int64    `json:"updatedAt"`
+	Source    string   `json:"source"`
+	CIDRs     []string `json:"cidrs"`
+}
+
+func LoadBlockedCIDRsCache(path string) (BlockedCIDRsCache, error) {
+	var out BlockedCIDRsCache
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return out, err
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return out, err
+	}
+	out.CIDRs = normalizeCIDRs(out.CIDRs)
+	if len(out.CIDRs) == 0 {
+		return out, fmt.Errorf("cidr cache is empty")
+	}
+	return out, nil
+}
+
+func SaveBlockedCIDRsCache(path string, cache BlockedCIDRsCache) error {
+	cache.CIDRs = normalizeCIDRs(cache.CIDRs)
+	if len(cache.CIDRs) == 0 {
+		return fmt.Errorf("cidrs are empty")
+	}
+	if cache.UpdatedAt == 0 {
+		cache.UpdatedAt = time.Now().Unix()
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	payload, err := json.Marshal(cache)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, payload, 0o600)
+}
+
 type BlockedDomainsCache struct {
 	Country   string   `json:"country"`
 	UpdatedAt int64    `json:"updatedAt"`

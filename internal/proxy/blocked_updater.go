@@ -97,6 +97,101 @@ func ResolveBlockedDomains(ctx context.Context, provider BlockedListProvider, ca
 	}
 }
 
+// LoadCachedBlockedDomains resolves the block-list WITHOUT any network call:
+// cache → local files → builtin. Used at startup so Smart mode applies
+// last-session's lists instantly, before auto-connect snapshots them into the
+// live route. The remote refresh runs separately and in the background
+// (RefreshRemoteBlockedDomains) once leftover cleanup has restored DNS — see
+// app.startSmartBlockedRefresh. This is what stops a post-crash restart from
+// routing blocked domains direct while a slow remote fetch is still in flight.
+func LoadCachedBlockedDomains(cachePath string, localPaths ...string) BlockedDomainsResolveResult {
+	if cachePath != "" {
+		cache, err := LoadBlockedDomainsCache(cachePath)
+		if err == nil && len(cache.Domains) > 0 {
+			return BlockedDomainsResolveResult{
+				Domains: cache.Domains,
+				Source:  "cache",
+				Country: strings.ToLower(strings.TrimSpace(cache.Country)),
+			}
+		}
+	}
+	if localDomains := LoadBlockedDomainsFromFiles(localPaths...); len(localDomains) > 0 {
+		return BlockedDomainsResolveResult{Domains: localDomains, Source: "local"}
+	}
+	return BlockedDomainsResolveResult{
+		Domains: normalizeDomains(defaultBlockedDomains()),
+		Source:  "builtin",
+	}
+}
+
+// LoadCachedBlockedCIDRs is the network-free counterpart for the IP-subnet
+// block-list: cache → builtin. Telegram's static defaultBlockedCIDRs() always
+// guarantees a usable set so MTProto works offline and at first launch.
+func LoadCachedBlockedCIDRs(cachePath string) BlockedCIDRsResolveResult {
+	if cachePath != "" {
+		cache, err := LoadBlockedCIDRsCache(cachePath)
+		if err == nil && len(cache.CIDRs) > 0 {
+			return BlockedCIDRsResolveResult{CIDRs: cache.CIDRs, Source: "cache"}
+		}
+	}
+	return BlockedCIDRsResolveResult{
+		CIDRs:  normalizeCIDRs(defaultBlockedCIDRs()),
+		Source: "builtin",
+	}
+}
+
+// CIDRFetcher fetches the Telegram MTProto subnet list. Narrow interface
+// (satisfied by *HTTPBlockedListProvider) so callers and tests don't depend on
+// the full BlockedListProvider.
+type CIDRFetcher interface {
+	FetchTelegramCIDRs(ctx context.Context) ([]string, error)
+}
+
+type BlockedCIDRsResolveResult struct {
+	CIDRs  []string
+	Source string
+	Err    error
+}
+
+// ResolveBlockedCIDRs resolves the IP-subnet block-list with the same
+// remote → cache → builtin precedence as ResolveBlockedDomains, minus the
+// country dimension (Telegram ranges are global). Always returns a usable set:
+// the static defaultBlockedCIDRs() fallback guarantees Telegram works offline.
+func ResolveBlockedCIDRs(ctx context.Context, fetcher CIDRFetcher, cachePath string) BlockedCIDRsResolveResult {
+	var lastErr error
+	if fetcher != nil {
+		cidrs, err := fetcher.FetchTelegramCIDRs(ctx)
+		if err == nil && len(cidrs) > 0 {
+			cache := BlockedCIDRsCache{
+				UpdatedAt: time.Now().Unix(),
+				Source:    "remote",
+				CIDRs:     cidrs,
+			}
+			if saveErr := SaveBlockedCIDRsCache(cachePath, cache); saveErr != nil {
+				lastErr = fmt.Errorf("save cidr cache: %w", saveErr)
+			}
+			return BlockedCIDRsResolveResult{CIDRs: normalizeCIDRs(cidrs), Source: "remote", Err: lastErr}
+		}
+		lastErr = err
+	}
+
+	if cachePath != "" {
+		cache, err := LoadBlockedCIDRsCache(cachePath)
+		if err == nil && len(cache.CIDRs) > 0 {
+			return BlockedCIDRsResolveResult{CIDRs: cache.CIDRs, Source: "cache", Err: lastErr}
+		}
+		if err != nil {
+			lastErr = err
+		}
+	}
+
+	return BlockedCIDRsResolveResult{
+		CIDRs:  normalizeCIDRs(defaultBlockedCIDRs()),
+		Source: "builtin",
+		Err:    lastErr,
+	}
+}
+
 func RefreshRemoteBlockedDomains(ctx context.Context, provider BlockedListProvider, cachePath string) BlockedDomainsResolveResult {
 	if provider == nil {
 		return BlockedDomainsResolveResult{Err: fmt.Errorf("provider is nil")}

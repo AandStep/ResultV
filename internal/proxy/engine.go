@@ -76,6 +76,16 @@ type EngineConfig struct {
 	RoutingMode  RoutingMode
 	Whitelist    []string
 	AppWhitelist []string
+	// BlockedDomains is the censored/blocked block-list (already normalized
+	// suffixes from Router.GetBlockedDomains). Consumed only in Smart mode:
+	// buildRoute routes these through the proxy while everything else goes
+	// direct (Final="direct"). Ignored in Global/Whitelist modes.
+	BlockedDomains []string
+	// BlockedCIDRs is the IP-subnet block-list (Telegram MTProto data-center
+	// ranges, from Router.GetBlockedCIDRs). Telegram's native clients dial
+	// these IPs directly without a domain/SNI, so domain rules can't catch
+	// them — Smart mode adds an ip_cidr → proxy rule. Smart-only.
+	BlockedCIDRs []string
 	AdBlock      bool
 	MITMPort     int // local HTTPS MITM proxy port; 0 disables MITM layer
 	KillSwitch   bool
@@ -688,6 +698,39 @@ func serverPinnedIPs(proxy ProxyConfig) []string {
 	return out
 }
 
+// serverEndpointUnresolvable reports whether a TUN connect should be aborted up
+// front: the server is addressed by a domain but no IP could be pinned at connect
+// time, so sing-box would have to dial it through the censored OS `local` resolver
+// (the custom DNS servers route detour=proxy, which isn't up yet during connect).
+// That path either loops the server's own packets back into the TUN (EOF flood) or
+// resolves to a poisoned/CDN-fronted IP (x509-github). A literal-IP server needs no
+// resolution, and proxy mode never builds the TUN route-exclude, so neither is gated.
+func serverEndpointUnresolvable(proxy ProxyConfig, mode ProxyMode) bool {
+	if mode != ProxyModeTunnel {
+		return false
+	}
+	if proxy.IP == "" || net.ParseIP(proxy.IP) != nil {
+		return false
+	}
+	return len(serverPinnedIPs(proxy)) == 0
+}
+
+// outboundTLSDiagnostic reports the TLS state of the BUILT proxy outbound:
+// "reality" (Reality active), "tls" (plain TLS, no Reality), or "none" (no TLS
+// layer, e.g. Shadowsocks). A vless+reality server reporting "tls" is the
+// signature of a stripped Reality block — the cause of the x509-github failures
+// — so logging this at connect surfaces the bug from a reporter's log alone.
+func outboundTLSDiagnostic(proxy ProxyConfig) string {
+	out := buildProxyOutbound(proxy)
+	if out.TLS == nil || !out.TLS.Enabled {
+		return "none"
+	}
+	if out.TLS.Reality != nil && out.TLS.Reality.Enabled {
+		return "reality"
+	}
+	return "tls"
+}
+
 func buildDNS(cfg EngineConfig) *SBDNS {
 	if cfg.Mode == ProxyModeTunnel {
 		// All DNS servers route through the proxy/endpoint outbound (tag
@@ -858,8 +901,15 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	if cfg.AdBlock && cfg.MITMPort > 0 {
 		findProcess = true
 	}
+	// Smart mode inverts the default: everything goes direct and only the
+	// censored block-list is tunneled (see the blocked-domain rule below).
+	// Global/Whitelist keep proxy as the catch-all.
+	final := "proxy"
+	if cfg.RoutingMode == ModeSmart {
+		final = "direct"
+	}
 	route := &SBRoute{
-		Final:       "proxy",
+		Final:       final,
 		AutoDetect:  true,
 		FindProcess: findProcess,
 	}
@@ -870,18 +920,32 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	var rules []SBRouteRule
 
 	if cfg.Mode == ProxyModeTunnel {
-		if serverIP := net.ParseIP(cfg.Proxy.IP); serverIP != nil {
-			cidr := cfg.Proxy.IP + "/32"
-			if serverIP.To4() == nil {
-				cidr = cfg.Proxy.IP + "/128"
+		// Every literal IP the server is known by (the IP field when literal, plus
+		// the connect-time resolved set for a domain server) → direct, by ip_cidr.
+		// This keeps the outbound's own dial to the server off the TUN at L3. A
+		// domain server used to get ONLY the fragile domain → direct rule below,
+		// which doesn't catch the outbound's dial-by-resolved-IP — so the server
+		// connection could loop back into the TUN (EOF flood, github-issue 2026-06).
+		var serverCIDRs []string
+		for _, ip := range serverPinnedIPs(cfg.Proxy) {
+			cidr := ip + "/32"
+			if parsed := net.ParseIP(ip); parsed != nil && parsed.To4() == nil {
+				cidr = ip + "/128"
 			}
+			serverCIDRs = append(serverCIDRs, cidr)
+		}
+		if len(serverCIDRs) > 0 {
 			rules = append(rules, SBRouteRule{
 				Action:   "route",
-				IPCidr:   []string{cidr},
+				IPCidr:   serverCIDRs,
 				Outbound: "direct",
 			})
-		} else if cfg.Proxy.IP != "" {
-
+		}
+		// Domain-addressed server keeps a domain → direct fallback in addition to
+		// the ip_cidr rules above: the pin set can be empty if connect-time
+		// resolution failed (the connect path now fails fast in that case, but the
+		// fallback also helps sniff-tagged connections match the right outbound).
+		if cfg.Proxy.IP != "" && net.ParseIP(cfg.Proxy.IP) == nil {
 			rules = append(rules, SBRouteRule{
 				Action:   "route",
 				Domain:   []string{cfg.Proxy.IP},
@@ -939,6 +1003,36 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 			Action:           "route",
 			ProcessPathRegex: rx,
 			Outbound:         "direct",
+		})
+	}
+
+	// Smart mode: tunnel the censored block-list, leave everything else direct
+	// (Final="direct"). Placed BEFORE the whitelist block so a blocked domain
+	// that also sits under a whitelisted suffix still tunnels — matching
+	// Router.ShouldProxy, where a blocked resource wins over an odd (single)
+	// whitelist match. The block-list domains are already normalized suffixes
+	// (Router.GetBlockedDomains). App-whitelist (process) direct rules above
+	// keep priority, so an excluded app's traffic stays direct even for blocked
+	// domains.
+	if cfg.RoutingMode == ModeSmart && len(cfg.BlockedDomains) > 0 {
+		rules = append(rules, SBRouteRule{
+			Action:       "route",
+			DomainSuffix: append([]string(nil), cfg.BlockedDomains...),
+			Outbound:     "proxy",
+		})
+	}
+
+	// Smart mode: tunnel IP-only blocked ranges (Telegram MTProto data centers).
+	// These have no domain/SNI, so the domain-suffix rule above can't match
+	// them; an ip_cidr rule on the destination address is the only way to pull
+	// the native Telegram client through the proxy. The server-IP bypass added
+	// at the top of buildRoute still wins, so the tunnel's own endpoint stays
+	// direct even if it ever shared a range.
+	if cfg.RoutingMode == ModeSmart && len(cfg.BlockedCIDRs) > 0 {
+		rules = append(rules, SBRouteRule{
+			Action:   "route",
+			IPCidr:   append([]string(nil), cfg.BlockedCIDRs...),
+			Outbound: "proxy",
 		})
 	}
 

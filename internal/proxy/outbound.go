@@ -95,6 +95,15 @@ func fingerprintFromExtra(extra map[string]interface{}) string {
 // / ...) → system-derived default (Edge WebView2 version on Windows, Safari on
 // macOS/Linux). Pass "none" / "off" / "disable" / "-" in the URI to keep TLS
 // without uTLS — useful for debugging when you want the bare Go fingerprint.
+// knownUTLSFingerprints is the set sing-box's uTLS layer accepts. An unknown
+// value crashes instance creation with "unknown uTLS fingerprint", so anything
+// outside this set (a typo or a clipped paste like "ch") is coerced to "chrome".
+var knownUTLSFingerprints = map[string]bool{
+	"chrome": true, "firefox": true, "edge": true, "safari": true,
+	"ios": true, "android": true, "360": true, "qq": true,
+	"random": true, "randomized": true,
+}
+
 func resolvedFingerprint(extra map[string]interface{}) string {
 	raw := strings.TrimSpace(strings.ToLower(fingerprintFromExtra(extra)))
 	switch raw {
@@ -103,7 +112,13 @@ func resolvedFingerprint(extra map[string]interface{}) string {
 	case "":
 		return system.WebViewFingerprint()
 	default:
-		return raw
+		// Unknown/typo'd fingerprint would abort engine start; fall back to a
+		// valid one instead of taking the whole connection down. "randomized*"
+		// variants (e.g. randomizedalpn) are accepted by sing-box, so allow the prefix.
+		if knownUTLSFingerprints[raw] || strings.HasPrefix(raw, "random") {
+			return raw
+		}
+		return "chrome"
 	}
 }
 

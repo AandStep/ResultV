@@ -136,6 +136,7 @@ func Scan(roots []string) Snapshot {
 		return Snapshot{}
 	}
 	snap := platformScan(normalized)
+	snap.Descendants = filterAutoCaptured(snap.Descendants)
 	sort.Strings(snap.Descendants)
 	return snap
 }
@@ -168,6 +169,7 @@ func (m *Monitor) tick() {
 	}
 
 	snap := scanFn(roots)
+	snap.Descendants = filterAutoCaptured(snap.Descendants)
 	sort.Strings(snap.Descendants)
 
 	if snap.Equal(prev) {
@@ -206,6 +208,50 @@ func normalizeRoots(in []string) []string {
 		}
 		seen[s] = struct{}{}
 		out = append(out, s)
+	}
+	return out
+}
+
+// autoCaptureBlockedBrowsers are desktop-browser executables that must never be
+// auto-added to the app-exclusion set through descendant capture. A browser
+// launched — even indirectly — by an excluded app (a game launcher or Electron
+// app opening a link in the default browser) becomes a descendant in the OS
+// process tree; without this guard the scan would pull the user's ENTIRE web
+// traffic out of the VPN silently, because a browser is a single-instance
+// process family. Users who genuinely want a browser bypassed must add it as an
+// explicit root, which flows through a separate, unfiltered path.
+//
+// Mirrors the desktop-browser set in internal/proxy/adblock_rules.go
+// (browserProcessPathRegexes); keep the two lists in sync.
+var autoCaptureBlockedBrowsers = map[string]struct{}{
+	"chrome.exe":        {},
+	"chromium.exe":      {},
+	"msedge.exe":        {},
+	"brave.exe":         {},
+	"firefox.exe":       {},
+	"opera.exe":         {},
+	"vivaldi.exe":       {},
+	"browser.exe":       {},
+	"waterfox.exe":      {},
+	"librewolf.exe":     {},
+	"yandex.exe":        {},
+	"yandexbrowser.exe": {},
+}
+
+// filterAutoCaptured drops browser executables from a discovered descendant set.
+// See autoCaptureBlockedBrowsers for the rationale. Platform scans already
+// lowercase basenames; we normalize defensively for injected scanners (tests)
+// and any non-Windows caller.
+func filterAutoCaptured(descendants []string) []string {
+	if len(descendants) == 0 {
+		return descendants
+	}
+	out := make([]string, 0, len(descendants))
+	for _, d := range descendants {
+		if _, blocked := autoCaptureBlockedBrowsers[strings.ToLower(strings.TrimSpace(d))]; blocked {
+			continue
+		}
+		out = append(out, d)
 	}
 	return out
 }

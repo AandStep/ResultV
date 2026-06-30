@@ -142,6 +142,55 @@ func TestMonitorEmptyRootsEmitsEmptyDescendants(t *testing.T) {
 	}
 }
 
+func TestFilterAutoCapturedDropsBrowsers(t *testing.T) {
+	in := []string{"chrome.exe", "steamwebhelper.exe", "MSEDGE.EXE", "helper.exe", "firefox.exe", "browser.exe"}
+	got := filterAutoCaptured(in)
+	want := []string{"steamwebhelper.exe", "helper.exe"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("filterAutoCaptured: got %v, want %v", got, want)
+	}
+}
+
+func TestFilterAutoCapturedKeepsNonBrowsers(t *testing.T) {
+	in := []string{"a.exe", "b.exe", "steamwebhelper.exe"}
+	got := filterAutoCaptured(in)
+	if !reflect.DeepEqual(got, in) {
+		t.Fatalf("filterAutoCaptured altered non-browser set: got %v, want %v", got, in)
+	}
+}
+
+// TestMonitorFiltersBrowserDescendants is the regression for the silent
+// VPN-bypass bug: an excluded launcher (e.g. a game launcher) spawns chrome.exe,
+// which the tree scan reports as a descendant. Without filtering, the whole
+// browser would be auto-excluded and all web traffic would leave the VPN.
+func TestMonitorFiltersBrowserDescendants(t *testing.T) {
+	m := New(nil)
+	var lastSnap Snapshot
+	var mu sync.Mutex
+	var got atomic.Bool
+	m.OnChange(func(s Snapshot) {
+		mu.Lock()
+		lastSnap = s
+		mu.Unlock()
+		got.Store(true)
+	})
+	m.scan = func(roots []string) Snapshot {
+		return Snapshot{Roots: roots, Descendants: []string{"chrome.exe", "steamwebhelper.exe"}}
+	}
+	m.SetRoots([]string{"majestic launcher.exe"})
+	m.Trigger()
+
+	if !got.Load() {
+		t.Fatal("expected an emit for the non-browser descendant")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"steamwebhelper.exe"}
+	if !reflect.DeepEqual(lastSnap.Descendants, want) {
+		t.Fatalf("browser descendant not filtered: got %v, want %v", lastSnap.Descendants, want)
+	}
+}
+
 func TestScanIntervalIsReasonable(t *testing.T) {
 	if scanInterval <= 0 || scanInterval > 2*time.Second {
 		t.Fatalf("scanInterval out of expected range: %v", scanInterval)
