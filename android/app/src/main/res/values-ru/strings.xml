@@ -51,7 +51,7 @@
     <string name="settings_section_dns">DNS-СЕРВЕРЫ</string>
     <string name="settings_section_about">О ПРИЛОЖЕНИИ</string>
     <string name="settings_kill_switch">Kill Switch</string>
-    <string name="settings_kill_switch_subtitle">Блокировать интернет при обрыве VPN (скоро)</string>
+    <string name="settings_kill_switch_subtitle">Блокировать интернет при обрыве прокси</string>
     <string name="settings_adblock">Блокировка рекламы</string>
     <string name="settings_adblock_subtitle">Блокировка рекламы и трекеров через DNS. На некоторых сайтах могут остаться пустые блоки — для YouTube включите «YouTube без рекламы».</string>
     <string name="settings_youtube">YouTube без рекламы</string>
@@ -88,7 +88,7 @@
     <string name="settings_group_appearance_desc">Язык интерфейса.</string>
 
     <string name="settings_killswitch_title">Включить Kill Switch</string>
-    <string name="settings_killswitch_desc">Моментально прервать интернет соединение при падении прокси (скоро доступно).</string>
+    <string name="settings_killswitch_desc">Моментально прервать интернет при падении прокси.</string>
 
     <string name="settings_sub_auto_update_title">Автоматическое обновление</string>
     <string name="settings_sub_auto_update_desc">Периодически обновлять все добавленные подписки.</string>
@@ -102,6 +102,7 @@
     <string name="settings_appearance_language_title">Язык</string>
     <string name="settings_appearance_language_desc">Язык интерфейса во всём приложении.</string>
 
+    <string name="vpn_status_killswitch">Kill switch активен — трафик заблокирован</string>
     <string name="vpn_status_connecting">Подключение…</string>
     <string name="vpn_status_connected">Подключено</string>
     <string name="vpn_status_idle">Не активен</string>
@@ -193,6 +194,13 @@
     <!-- Sort menu -->
     <string name="ping_refresh_cd">Обновить пинг</string>
     <string name="ping_online">В сети</string>
+    <!-- Offline labels shown for a probed-but-unreachable server. -->
+    <string name="ping_timeout">Таймаут</string>
+    <string name="ping_refused">Отказ</string>
+    <string name="ping_unreachable">Недоступен</string>
+    <string name="ping_closed">Закрыт</string>
+    <string name="ping_error">Ошибка</string>
+    <string name="ping_unavailable">Недоступен</string>
     <string name="sort_cd">Сортировка</string>
     <string name="sort_default">По умолчанию</string>
     <string name="sort_ping">Пинг</string>
@@ -279,4 +287,27 @@
     <string name="rules_app_search">Поиск приложений</string>
     <string name="rules_app_selected_count">Выбрано: %1$d</string>
     <string name="rules_app_system_tag">система</string>
+
+    <!-- Logs -->
+    <string name="settings_group_logs">Логи</string>
+    <string name="settings_group_logs_desc">История событий подключения и приложения.</string>
+    <string name="logs_title">Логи</string>
+    <string name="logs_empty">Событий пока нет.</string>
+    <string name="logs_save_cd">Сохранить логи</string>
+    <string name="logs_clear_cd">Очистить логи</string>
+    <string name="logs_saved">Логи сохранены</string>
+    <string name="logs_save_failed">Не удалось сохранить логи</string>
+    <string name="log_source_system">СИСТЕМА</string>
+
+    <!-- Curated log event messages (mirror the desktop logger) -->
+    <string name="log_connecting">Подключение к %1$s…</string>
+    <string name="log_connected">Соединение установлено.</string>
+    <string name="log_conn_failed">Сбой подключения: %1$s</string>
+    <string name="log_disconnecting">Отключение…</string>
+    <string name="log_disconnected">Отключено успешно.</string>
+    <string name="log_reapplying">Применение изменений конфигурации…</string>
+    <string name="log_revoked">VPN отключён системой.</string>
+    <string name="log_no_server">Сервер не выбран.</string>
+    <string name="log_build_failed">Не удалось сформировать конфигурацию.</string>
+    <string name="log_permission_denied">Разрешение на VPN отклонено.</string>
 </resources>

@@ -67,7 +67,7 @@ class ResultVpnService : VpnService() {
     // Lifetime-scoped coroutine for live config reloads.
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var reloadWatcher: Job? = null
-    private var killSwitchWatchdog: KillSwitchWatchdog? = null
+    @Volatile private var killSwitchWatchdog: KillSwitchWatchdog? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // Always-on VPN starts the service directly via the
@@ -271,6 +271,9 @@ class ResultVpnService : VpnService() {
             BoxModule.reload(cfg)
             VpnState.setKillSwitchEngaged(panic)
             Log.i(TAG, "kill switch ${if (panic) "ENGAGED (block)" else "released (normal)"}")
+            Handler(Looper.getMainLooper()).post {
+                renotify(buildNotification(VpnState.status.value))
+            }
         }
     }
 
@@ -417,7 +420,10 @@ class ResultVpnService : VpnService() {
         )
         val text = when (status) {
             VpnStatus.Connecting -> getString(R.string.vpn_status_connecting)
-            is VpnStatus.Connected -> getString(R.string.vpn_status_connected)
+            is VpnStatus.Connected ->
+                if (VpnState.killSwitchEngaged.value)
+                    getString(R.string.vpn_status_killswitch)
+                else getString(R.string.vpn_status_connected)
             VpnStatus.Idle -> getString(R.string.vpn_status_idle)
             is VpnStatus.Error -> getString(R.string.vpn_status_error, status.message)
         }

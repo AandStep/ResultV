@@ -70,7 +70,7 @@ private enum class SettingsSubcategory(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(onOpenLogs: () -> Unit = {}) {
     val settings by SettingsRepository.state.collectAsStateWithLifecycle()
     var activeSheet by rememberSaveable { mutableStateOf<SettingsSubcategory?>(null) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -108,6 +108,14 @@ fun SettingsScreen() {
             SubcategoryRow(SettingsSubcategory.Subscriptions) { activeSheet = SettingsSubcategory.Subscriptions }
             HorizontalDivider(color = Brand.SurfaceHigh)
             SubcategoryRow(SettingsSubcategory.Advanced) { activeSheet = SettingsSubcategory.Advanced }
+            HorizontalDivider(color = Brand.SurfaceHigh)
+            NavRow(
+                label = stringResource(R.string.settings_group_logs),
+                icon = Icons.Outlined.Article,
+                iconBg = Color(0xFF06b6d4).copy(alpha = 0.18f),
+                iconTint = Color(0xFF22d3ee),
+                onClick = onOpenLogs,
+            )
         }
 
         AppInfoCard()
@@ -196,6 +204,38 @@ private fun SubcategoryRow(subcategory: SettingsSubcategory, onClick: () -> Unit
         SettingIcon(subcategory.icon, subcategory.iconBg, subcategory.iconTint)
         Text(
             stringResource(subcategory.labelRes),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+            contentDescription = null,
+            tint = Brand.MutedText,
+        )
+    }
+}
+
+/** A settings row that navigates elsewhere (full screen) instead of opening a sheet. */
+@Composable
+private fun NavRow(
+    label: String,
+    icon: ImageVector,
+    iconBg: Color,
+    iconTint: Color,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        SettingIcon(icon, iconBg, iconTint)
+        Text(
+            label,
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Medium,
             modifier = Modifier.weight(1f),
@@ -306,9 +346,8 @@ private fun SecurityGroup(settings: com.resultv.android.vpn.SettingsState) {
         icon = Icons.Outlined.GppBad,
         iconBg = Color(0xFFef4444).copy(alpha = 0.18f),
         iconTint = Color(0xFFf87171),
-        checked = false,
-        onCheckedChange = {},
-        enabled = false,
+        checked = settings.killSwitch,
+        onCheckedChange = { SettingsRepository.setKillSwitch(it) },
     )
 }
 
