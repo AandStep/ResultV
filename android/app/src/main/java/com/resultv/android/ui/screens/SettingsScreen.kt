@@ -2,6 +2,7 @@ package com.resultv.android.ui.screens
 
 import android.app.Activity
 import android.content.Context
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -308,12 +309,23 @@ private fun BrowserAdBlockRow(settings: com.resultv.android.vpn.SettingsState) {
                 scope.launch(Dispatchers.IO) {
                     mobile.Mobile.fetchFilterLists(context.filesDir.absolutePath)
                 }
-                val intent = com.resultv.android.vpn.CertInstaller.buildInstallIntent(
-                    context, context.filesDir.absolutePath,
-                )
-                installCertLauncher.launch(intent)
+                try {
+                    val intent = com.resultv.android.vpn.CertInstaller.buildInstallIntent(
+                        context, context.filesDir.absolutePath,
+                    )
+                    installCertLauncher.launch(intent)
+                    SettingsRepository.setBrowserAdBlock(true)
+                } catch (e: Exception) {
+                    android.util.Log.w("SettingsScreen", "Failed to prepare ad-block cert install intent", e)
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.settings_browser_adblock_cert_error),
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            } else {
+                SettingsRepository.setBrowserAdBlock(false)
             }
-            SettingsRepository.setBrowserAdBlock(enabled)
         },
     )
 }
