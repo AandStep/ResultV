@@ -56,6 +56,7 @@
     <string name="settings_adblock_subtitle">Блокировка рекламы и трекеров через DNS, включая рекламные домены YouTube. На некоторых сайтах могут остаться пустые блоки.</string>
     <string name="settings_browser_adblock">Блокировать баннеры в браузере</string>
     <string name="settings_browser_adblock_subtitle">Требует установки локального сертификата (Android покажет предупреждение — это касается только трафика на этом устройстве через это приложение). Убирает баннеры в Chrome полностью, без пустых блоков. На YouTube не влияет.</string>
+    <string name="log_browser_adblock_disabled">Блокировка рекламы в браузере перестала работать и была автоматически отключена</string>
     <string name="settings_browser_adblock_cert_error">Не удалось подготовить сертификат блокировки рекламы. Попробуйте ещё раз.</string>
     <string name="settings_ipv6">IPv6</string>
     <string name="settings_ipv6_subtitle">Маршрутизировать IPv6-трафик через туннель</string>

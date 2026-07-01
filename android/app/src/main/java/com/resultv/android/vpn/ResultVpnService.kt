@@ -68,6 +68,7 @@ class ResultVpnService : VpnService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var reloadWatcher: Job? = null
     @Volatile private var killSwitchWatchdog: KillSwitchWatchdog? = null
+    @Volatile private var filterProxyWatchdog: FilterProxyWatchdog? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // Always-on VPN starts the service directly via the
@@ -82,6 +83,7 @@ class ResultVpnService : VpnService() {
                 AppLog.info(getString(R.string.log_disconnecting))
                 reloadWatcher?.cancel(); reloadWatcher = null
                 stopKillSwitchWatchdog()
+                stopFilterProxyWatchdog()
                 TrafficWatcher.stop()
                 // Close the tun fd up front — this drops the system VPN
                 // lock icon immediately. libbox.closeService() takes a
@@ -193,9 +195,36 @@ class ResultVpnService : VpnService() {
         try {
             mobile.Mobile.startFilterProxy(filesDir.absolutePath, BROWSER_ADBLOCK_PORT.toLong())
             BoxModule.filterProxyRunning = true
+            filterProxyWatchdog?.stop()
+            filterProxyWatchdog = FilterProxyWatchdog(filesDir.absolutePath) {
+                onFilterProxyUnhealthy()
+            }.also { it.start() }
         } catch (t: Throwable) {
             Log.w(TAG, "browser ad-block proxy failed to start; Chrome will use normal routing", t)
         }
+    }
+
+    private fun stopFilterProxyWatchdog() {
+        filterProxyWatchdog?.stop()
+        filterProxyWatchdog = null
+    }
+
+    /**
+     * Called from the watchdog's coroutine when the proxy dies mid-session.
+     * Turns the feature off (so it doesn't silently keep failing on every
+     * future reconnect) and forces a lightweight in-place reload — the same
+     * technique reloadKillSwitch uses — so openTun() re-runs, re-reads
+     * BoxModule.filterProxyRunning (now false), and drops setHttpProxy from
+     * the live Builder. The sing-box config itself doesn't change; this is
+     * purely to force a fresh TUN handover.
+     */
+    private fun onFilterProxyUnhealthy() {
+        BoxModule.filterProxyRunning = false
+        SettingsRepository.setBrowserAdBlock(false)
+        AppLog.warning(getString(R.string.log_browser_adblock_disabled))
+        val active = ProfileRepository.state.value.active ?: return
+        val cfg = BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath) ?: return
+        worker.execute { BoxModule.reload(cfg) }
     }
 
     override fun onRevoke() {
@@ -220,6 +249,7 @@ class ResultVpnService : VpnService() {
     override fun onDestroy() {
         reloadWatcher?.cancel(); reloadWatcher = null
         stopKillSwitchWatchdog()
+        stopFilterProxyWatchdog()
         TrafficWatcher.stop()
         scope.cancel()
         closeTun()

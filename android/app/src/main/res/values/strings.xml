@@ -61,6 +61,7 @@
     <string name="settings_adblock_subtitle">Block ads and trackers via DNS, including YouTube ad-delivery domains. On some sites empty ad frames may remain.</string>
     <string name="settings_browser_adblock">Block banner ads in browser</string>
     <string name="settings_browser_adblock_subtitle">Requires installing a local certificate (Android will show a warning — this only affects traffic on this device, going through this app). Removes banners in Chrome cleanly instead of leaving empty boxes. Does not affect YouTube.</string>
+    <string name="log_browser_adblock_disabled">Browser ad-block stopped working and was turned off automatically</string>
     <string name="settings_browser_adblock_cert_error">Couldn\'t prepare the ad-block certificate. Please try again.</string>
     <string name="settings_ipv6">IPv6</string>
     <string name="settings_ipv6_subtitle">Route IPv6 traffic through the tunnel (dual-stack)</string>
