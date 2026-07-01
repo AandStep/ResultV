@@ -194,12 +194,29 @@ class ResultVpnService : VpnService() {
         if (!SettingsRepository.state.value.browserAdBlock) return
         try {
             mobile.Mobile.startFilterProxy(filesDir.absolutePath, BROWSER_ADBLOCK_PORT.toLong())
-            BoxModule.filterProxyRunning = true
-            filterProxyWatchdog?.stop()
-            filterProxyWatchdog = FilterProxyWatchdog(filesDir.absolutePath) {
-                onFilterProxyUnhealthy()
-            }.also { it.start() }
+            when (CertSelfTest.run(BROWSER_ADBLOCK_PORT)) {
+                CertSelfTest.Result.PASS -> {
+                    BoxModule.filterProxyRunning = true
+                    filterProxyWatchdog?.stop()
+                    filterProxyWatchdog = FilterProxyWatchdog(filesDir.absolutePath) {
+                        onFilterProxyUnhealthy()
+                    }.also { it.start() }
+                }
+                CertSelfTest.Result.CERT_UNTRUSTED -> {
+                    // Tear down; leave filterProxyRunning=false so setHttpProxy is NOT applied.
+                    mobile.Mobile.stopFilterProxy()
+                    SettingsRepository.setBrowserAdBlock(false)
+                    AppLog.warning(getString(R.string.log_browser_adblock_cert_untrusted))
+                }
+                CertSelfTest.Result.INCONCLUSIVE -> {
+                    // Don't leave an unused proxy running; keep the toggle for next time.
+                    mobile.Mobile.stopFilterProxy()
+                    AppLog.warning(getString(R.string.log_browser_adblock_selftest_inconclusive))
+                }
+            }
         } catch (t: Throwable) {
+            BoxModule.filterProxyRunning = false
+            try { mobile.Mobile.stopFilterProxy() } catch (_: Throwable) {}
             Log.w(TAG, "browser ad-block proxy failed to start; Chrome will use normal routing", t)
         }
     }

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Scoped exception: trust user-installed CAs ONLY for the ad-block
+         CA-trust self-test probe host, so the app can detect whether the
+         user actually trusted the MITM root CA before routing Chrome through
+         the proxy. All other domains keep the platform default (system CAs
+         only) — this does NOT widen the app's trust generally. -->
+    <domain-config>
+        <domain includeSubdomains="false">example.com</domain>
+        <trust-anchors>
+            <certificates src="system"/>
+            <certificates src="user"/>
+        </trust-anchors>
+    </domain-config>
+</network-security-config>
