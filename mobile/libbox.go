@@ -624,8 +624,6 @@ type BuildOptions struct {
 	// FetchAdBlockLists; a missing list falls back to remote download and
 	// degrades to "no blocking" rather than breaking the connection.
 	AdBlock bool `json:"adblock,omitempty"`
-	// YouTubeUnblock enables geo-split (video via proxy, player API direct for RU IP).
-	YouTubeUnblock bool `json:"youtubeUnblock,omitempty"`
 	// KillSwitchArmed wraps the proxy outbound in a single-member urltest
 	// group ("ks-test") and points route.final at it so the Android
 	// KillSwitchWatchdog can health-probe the proxy from inside the engine.
@@ -893,21 +891,30 @@ func decodeAutoMembers(extra json.RawMessage) ([]config.ProxyEntry, error) {
 }
 
 // applyKillSwitch mutates the mobile tunnel config for the kill switch.
-// armed: wrap "proxy" in a urltest group "ks-test" and point route.final at
-// it (monitoring only). panic: additionally force route.final to "block" and
-// route every user rule to block so no app traffic escapes while the proxy is
-// down. The urltest group is kept in BOTH states so the watchdog can keep
-// probing the proxy (the group's dial is a protected socket, independent of
-// route.final) to detect recovery.
+// armed: add a MONITORING-ONLY urltest group "ks-test" so the
+// KillSwitchWatchdog can read the proxy's health (URLTestDelay) over the
+// libbox group command — the group is never route.final, so it has zero
+// effect on routing/split-tunnel. panic: force route.final to "block" and
+// reject user traffic so nothing escapes while the proxy is down. The group
+// is kept in BOTH states so the watchdog can keep probing the proxy (the
+// group's health-check dial is a protected socket, independent of route.final)
+// to detect recovery.
 func applyKillSwitch(sb *proxy.SingBoxConfig, armed, panicMode bool) {
 	if !armed && !panicMode {
 		return
 	}
-	// Insert the urltest group wrapping the primary "proxy" outbound.
+	// urltest monitoring group. It has TWO members ON PURPOSE: sing-box's group
+	// command server hides any group with fewer than 2 items
+	// (experimental/libbox/command_group.go: `len(ItemList) < 2 => continue`),
+	// so a single-member group would NEVER be reported over the group command
+	// and the watchdog would read the proxy as permanently dead → a false,
+	// self-perpetuating kill-switch engage. "block" is a no-traffic filler
+	// member: its health probe fails instantly (block dial → error), it carries
+	// nothing, and the watchdog only ever reads the "proxy" item's delay.
 	sb.Outbounds = append(sb.Outbounds, proxy.SBOutbound{
 		Type:      "urltest",
 		Tag:       "ks-test",
-		Outbounds: []string{"proxy"},
+		Outbounds: []string{"proxy", "block"},
 		URL:       "https://www.gstatic.com/generate_204",
 		Interval:  "10s",
 	})
@@ -936,15 +943,11 @@ func applyKillSwitch(sb *proxy.SingBoxConfig, armed, panicMode bool) {
 		sb.Route.Final = "block"
 		return
 	}
-	// Armed but not engaged: monitor via the group, preserve split routing.
-	// Only take over route.final when it was the global "proxy" default; in
-	// Smart mode final is "direct" and MUST stay that way or split tunneling
-	// breaks. The watchdog probes ks-test explicitly via urlTest() every tick
-	// (and the group runs its own interval health check), so it is monitored
-	// whether or not it is route.final.
-	if sb.Route.Final == "proxy" {
-		sb.Route.Final = "ks-test"
-	}
+	// Armed but not engaged: the group is monitoring-only, so routing is left
+	// exactly as buildRoute produced it (global final=proxy, Smart final=direct
+	// with split tunneling intact). The watchdog reads the proxy's health from
+	// the group and forces fresh checks via urlTest("ks-test"); it never needs
+	// the group to be route.final.
 }
 
 func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts BuildOptions) (string, error) {
@@ -972,7 +975,6 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 		SmartMode:           opts.SmartMode,
 		SmartBlockedDomains: splitSmartList(opts.SmartBlockedDomainsList),
 		AdBlock:             opts.AdBlock,
-		YouTubeUnblock:      opts.YouTubeUnblock,
 		// Desktop's DNSLeakProtection (toggles strict_route) is forced off
 		// on Android — VpnService can't manipulate routes outside its TUN,
 		// and AutoRoute already catches all egress traffic, so DNS bypass

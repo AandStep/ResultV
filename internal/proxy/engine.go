@@ -95,9 +95,6 @@ type EngineConfig struct {
 	// Empty + SmartMode=true means the user enabled Smart but no list was
 	// fetched yet — fall back to Global (final=proxy) until the list arrives.
 	SmartBlockedDomains []string
-	// YouTubeUnblock enables YouTube geo-split (video CDN via proxy, player API
-	// direct for Russian IP / no ads) plus ad-domain blocking. See youtube_rules.go.
-	YouTubeUnblock bool
 }
 
 type Engine interface {
@@ -597,7 +594,7 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		// blocking them makes the OS mark the VPN as "no internet".
 		// YouTube / video CDN / ad-delivery hosts must resolve even when ad lists
 		// flag them — route rules pick proxy vs direct.
-		if cfg.AdBlock || cfg.YouTubeUnblock {
+		if cfg.AdBlock {
 			if tag := firstUpstreamDNSTag(servers); tag != "" {
 				dns.Rules = append(dns.Rules, SBDNSRule{
 					Domain: adBlockConnectivityBypassDomains,
@@ -778,9 +775,8 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 
 	// Ad-block rule-sets (binary SRS): cached-local if present, else remote
 	// (sing-box downloads them via the direct outbound). Referenced by tag from
-	// the reject rules below and in buildDNS. YouTubeUnblock auto-enables SRS
-	// lists for broader ad/tracker coverage alongside geo-split routing.
-	if cfg.AdBlock || cfg.YouTubeUnblock {
+	// the reject rules below and in buildDNS.
+	if cfg.AdBlock {
 		route.RuleSet = append(route.RuleSet, buildAdBlockRuleSets(effectiveDataDir(cfg))...)
 	}
 
@@ -829,19 +825,11 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		Action:   "hijack-dns",
 	})
 
-	// YouTube geo-split: video CDN via proxy, player API direct (RU IP / no ads).
-	// MUST come after sniff. See youtube_rules.go.
-	if cfg.YouTubeUnblock {
-		rules = appendYouTubeUnblockRouteRules(rules)
-	}
-
 	// Ad-block: reject connections to ad/tracker domains. Backstop for the DNS
 	// reject in buildDNS — catches hardcoded IPs / DoH that skip our resolver.
 	// MUST come after sniff so the rule_set domain matcher sees the host.
 	// Android captive-portal / Private-DNS hosts bypass the reject list so the
 	// OS doesn't flag the VPN as offline (see adBlockConnectivityBypassDomains).
-	// YouTubeUnblock auto-enables SRS reject; geo-split rules above take
-	// precedence for YouTube hosts (first match wins).
 	if cfg.AdBlock {
 		// Video CDN is often in ad SRS lists; pin to proxy before reject.
 		rules = append(rules, SBRouteRule{
@@ -850,16 +838,6 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 			Outbound:     "proxy",
 			Action:       "route",
 		})
-		rules = append(rules, SBRouteRule{
-			Domain:   adBlockConnectivityBypassDomains,
-			Outbound: "direct",
-			Action:   "route",
-		})
-		rules = append(rules, SBRouteRule{
-			RuleSet: adBlockRuleSetTags(),
-			Action:  "reject",
-		})
-	} else if cfg.YouTubeUnblock {
 		rules = append(rules, SBRouteRule{
 			Domain:   adBlockConnectivityBypassDomains,
 			Outbound: "direct",
