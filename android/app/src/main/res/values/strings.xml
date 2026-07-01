@@ -58,9 +58,7 @@
     <string name="settings_kill_switch">Kill Switch</string>
     <string name="settings_kill_switch_subtitle">Block internet if the proxy drops</string>
     <string name="settings_adblock">Ad blocking</string>
-    <string name="settings_adblock_subtitle">Block ads and trackers via DNS. On some sites empty ad frames may remain — enable YouTube without ads for YouTube.</string>
-    <string name="settings_youtube">YouTube without ads</string>
-    <string name="settings_youtube_subtitle">For users in Russia: video streams via VPN (fast), YouTube API goes direct with your Russian IP (no ads). Also blocks ad trackers. Less effective outside Russia.</string>
+    <string name="settings_adblock_subtitle">Block ads and trackers via DNS, including YouTube ad-delivery domains. On some sites empty ad frames may remain.</string>
     <string name="settings_ipv6">IPv6</string>
     <string name="settings_ipv6_subtitle">Route IPv6 traffic through the tunnel (dual-stack)</string>
     <string name="settings_bypass_lan">Bypass LAN</string>
@@ -337,6 +335,8 @@
     <string name="log_disconnected">Disconnected.</string>
     <string name="log_reapplying">Applying configuration changes…</string>
     <string name="log_revoked">VPN disabled by the system.</string>
+    <string name="log_killswitch_engaged">Kill switch engaged — proxy unreachable, all traffic blocked.</string>
+    <string name="log_killswitch_released">Kill switch released — proxy reachable again, traffic restored.</string>
     <string name="log_no_server">No server selected.</string>
     <string name="log_build_failed">Failed to build configuration.</string>
     <string name="log_permission_denied">VPN permission denied.</string>

@@ -27,11 +27,10 @@ internal object BuildOptionsBuilder {
             // Smart is off OR when the first download hasn't completed yet
             // — engine keeps Global routing (final=proxy) until the list arrives.
             .put("smartBlockedDomainsList", if (smartMode) SmartListRepository.toEngineList() else "")
-            // Ad-block (DNS+route reject via rule_set) and YouTube geo-split.
-            // YouTubeUnblock auto-enables SRS ad lists; AdBlockRepository caches
-            // them locally when present and falls back to remote.
+            // Ad-block (DNS+route reject via rule_set). AdBlockRepository
+            // caches the SRS lists locally when present and falls back to
+            // remote otherwise.
             .put("adblock", settings.adblock)
-            .put("youtubeUnblock", settings.youtubeUnblock)
             // Kill switch: armed whenever the user enabled it; panic only while
             // the watchdog has engaged (proxy down).
             .put("killSwitchArmed", settings.killSwitch)

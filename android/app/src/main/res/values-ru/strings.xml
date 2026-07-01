@@ -53,9 +53,7 @@
     <string name="settings_kill_switch">Kill Switch</string>
     <string name="settings_kill_switch_subtitle">Блокировать интернет при обрыве прокси</string>
     <string name="settings_adblock">Блокировка рекламы</string>
-    <string name="settings_adblock_subtitle">Блокировка рекламы и трекеров через DNS. На некоторых сайтах могут остаться пустые блоки — для YouTube включите «YouTube без рекламы».</string>
-    <string name="settings_youtube">YouTube без рекламы</string>
-    <string name="settings_youtube_subtitle">Для пользователей в России: видео через VPN (быстро), API YouTube — напрямую с российским IP (без рекламы). Плюс блокировка рекламных трекеров. Вне России эффект слабее.</string>
+    <string name="settings_adblock_subtitle">Блокировка рекламы и трекеров через DNS, включая рекламные домены YouTube. На некоторых сайтах могут остаться пустые блоки.</string>
     <string name="settings_ipv6">IPv6</string>
     <string name="settings_ipv6_subtitle">Маршрутизировать IPv6-трафик через туннель</string>
     <string name="settings_bypass_lan">Прямой LAN</string>
@@ -307,6 +305,8 @@
     <string name="log_disconnected">Отключено успешно.</string>
     <string name="log_reapplying">Применение изменений конфигурации…</string>
     <string name="log_revoked">VPN отключён системой.</string>
+    <string name="log_killswitch_engaged">Kill switch сработал — узел недоступен, весь трафик заблокирован.</string>
+    <string name="log_killswitch_released">Kill switch снят — узел снова доступен, трафик восстановлен.</string>
     <string name="log_no_server">Сервер не выбран.</string>
     <string name="log_build_failed">Не удалось сформировать конфигурацию.</string>
     <string name="log_permission_denied">Разрешение на VPN отклонено.</string>

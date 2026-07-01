@@ -228,9 +228,9 @@ class ResultVpnService : VpnService() {
                 SettingsRepository.state,
             ) { rules, app, profiles, settings ->
                 // Key on the active profile + everything that changes routing.
-                // From settings we only watch ad-block / YouTube (they rebuild
-                // the route rules); other settings keep applying on reconnect.
-                listOf(rules, app, profiles.activeId, settings.adblock, settings.youtubeUnblock)
+                // From settings we only watch ad-block (it rebuilds the route
+                // rules); other settings keep applying on reconnect.
+                listOf(rules, app, profiles.activeId, settings.adblock)
             }
                 .distinctUntilChanged()
                 .drop(1)
@@ -267,9 +267,17 @@ class ResultVpnService : VpnService() {
             Log.w(TAG, "kill switch reload skipped — config build failed")
             return
         }
+        // Resolve the localized log line before hopping to the worker (getString
+        // needs the Context, which is cleaner to touch on the calling thread).
+        val logMsg =
+            if (panic) getString(R.string.log_killswitch_engaged)
+            else getString(R.string.log_killswitch_released)
         worker.execute {
             BoxModule.reload(cfg)
             VpnState.setKillSwitchEngaged(panic)
+            // Surface it in the in-app log — the user must see WHY traffic
+            // stopped, not just that it did.
+            if (panic) AppLog.warning(logMsg) else AppLog.success(logMsg)
             Log.i(TAG, "kill switch ${if (panic) "ENGAGED (block)" else "released (normal)"}")
             Handler(Looper.getMainLooper()).post {
                 renotify(buildNotification(VpnState.status.value))
