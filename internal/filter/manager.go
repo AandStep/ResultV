@@ -234,6 +234,13 @@ func (m *Manager) StartMITM(listenPort int) error {
 	if len(paths) == 0 {
 		return fmt.Errorf("no cached filters; call Update first")
 	}
+	// Stop any already-running proxy before starting the new one so a
+	// repeat call (e.g. Task 7's watchdog restarting on the fixed port
+	// 8130) rebinds cleanly instead of leaking the previous server's
+	// listening socket and goroutines. StopMITM self-locks m.mu and safely
+	// no-ops when nothing is running, so it must be called outside any m.mu
+	// critical section here.
+	m.StopMITM()
 	root, err := ca.EnsureRoot(m.FilterDir())
 	if err != nil {
 		return err
