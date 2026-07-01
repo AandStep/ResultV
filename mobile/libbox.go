@@ -915,14 +915,19 @@ func applyKillSwitch(sb *proxy.SingBoxConfig, armed, panicMode bool) {
 		sb.Route = &proxy.SBRoute{}
 	}
 	if panicMode {
-		// Engaged: blackhole everything. Existing rules that send traffic to
-		// "direct"/"proxy" are rewritten to block; LAN bypass is preserved by
-		// buildRoute's own LAN handling (sing-box treats RFC1918 via the tun
-		// stack, not these rules). final=block catches the rest.
+		// Engaged: blackhole app traffic. Rules routing to proxy/direct are
+		// rewritten to reject, EXCEPT IP/CIDR-based direct routes: the bypass-LAN
+		// rule (RFC1918 etc.) and the proxy-server-IP bypass. The spec keeps LAN
+		// reachable in panic (same as the desktop firewall, which allows RFC1918),
+		// and the proxy endpoint must stay reachable so the watchdog can detect
+		// recovery. Domain/rule_set-based proxy/direct rules (excluded domains,
+		// smart-list, etc.) ARE rejected. Sniff/dns infrastructure rules (no
+		// Outbound) are untouched. final=block catches everything else.
 		for i := range sb.Route.Rules {
 			r := &sb.Route.Rules[i]
-			// Leave sniff/dns infrastructure rules (no Outbound, action-based)
-			// untouched; only redirect rules that select an outbound.
+			if r.Outbound == "direct" && len(r.IPCidr) > 0 {
+				continue // preserve LAN + server-IP bypass
+			}
 			if r.Outbound == "proxy" || r.Outbound == "direct" {
 				r.Outbound = ""
 				r.Action = "reject"
@@ -932,7 +937,14 @@ func applyKillSwitch(sb *proxy.SingBoxConfig, armed, panicMode bool) {
 		return
 	}
 	// Armed but not engaged: monitor via the group, preserve split routing.
-	sb.Route.Final = "ks-test"
+	// Only take over route.final when it was the global "proxy" default; in
+	// Smart mode final is "direct" and MUST stay that way or split tunneling
+	// breaks. The watchdog probes ks-test explicitly via urlTest() every tick
+	// (and the group runs its own interval health check), so it is monitored
+	// whether or not it is route.final.
+	if sb.Route.Final == "proxy" {
+		sb.Route.Final = "ks-test"
+	}
 }
 
 func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts BuildOptions) (string, error) {
