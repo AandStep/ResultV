@@ -91,8 +91,13 @@ fun HomeScreen(
     val dataDir = remember(ctx) { ctx.filesDir.absolutePath }
     LaunchedEffect(profilesState.profiles) {
         CountryRepository.resolve(profilesState.profiles, dataDir)
-        if (pings.isEmpty() && profilesState.profiles.isNotEmpty()) {
-            PingRepository.refreshAll(profilesState.profiles)
+        // Only the profiles missing a sample — covers first mount (nothing
+        // pinged yet) *and* a subscription refresh landing new/replaced
+        // profiles, without re-sweeping servers that already have a fresh
+        // reading.
+        val unpinged = profilesState.profiles.filterNot { it.isSection || it.id in pings }
+        if (unpinged.isNotEmpty()) {
+            PingRepository.refreshAll(unpinged)
         }
     }
     // Persisted across tab switches so reopening Home doesn't snap shut.
@@ -511,18 +516,23 @@ private fun ProfileDropdown(
             }
             group.profiles.forEach { p ->
                 key(p.id) {
-                    ServerRow(
-                        name = p.name,
-                        subtitle = p.subtitle,
-                        countryCode = p.country ?: countries[p.id],
-                        isAuto = p.isAuto,
-                        isActive = p.id == activeId,
-                        isFavorite = p.isFavorite,
-                        onClick = { onSelect(p) },
-                        onLongClick = { onLongPress(p) },
-                        latencyMs = pings[p.id]?.takeIf { it.reachable }?.latencyMs,
-                        isLoading = p.id in pingInflight,
-                    )
+                    if (p.isSection) {
+                        SectionLabel(p.name)
+                    } else {
+                        ServerRow(
+                            name = p.name,
+                            subtitle = p.subtitle,
+                            countryCode = p.country ?: countries[p.id],
+                            isAuto = p.isAuto,
+                            isActive = p.id == activeId,
+                            isFavorite = p.isFavorite,
+                            onClick = { onSelect(p) },
+                            onLongClick = { onLongPress(p) },
+                            latencyMs = pings[p.id]?.takeIf { it.reachable }?.latencyMs,
+                            offlineReason = pings[p.id]?.takeUnless { it.reachable }?.reason,
+                            isLoading = p.id in pingInflight,
+                        )
+                    }
                 }
             }
         }
@@ -544,10 +554,16 @@ private data class HomeGroup(
 /**
  * Partition the visible Home profiles into Favourites → per-subscription →
  * standalone, sorting within each bucket via [sortProfiles]. Favourites are
- * pulled out of their groups so they aren't shown twice. SECTION rows are
- * dropped (they're list labels, never selectable). Empty buckets are
+ * pulled out of their groups so they aren't shown twice. Empty buckets are
  * omitted, so callers can decide whether to draw headers based on the
  * resulting group count.
+ *
+ * Subscription buckets keep their SECTION rows (e.g. impVPN's "Когда
+ * глушат" dividers) in place, chunk-sorted around them via
+ * [reorderForDisplay] — same treatment the Proxies screen gives them —
+ * so the picker on Home shows the same dividers. Favourites/standalone
+ * never contain SECTION rows since those buckets don't preserve
+ * subscription order.
  */
 private fun buildHomeGroups(
     profiles: List<Profile>,
@@ -559,19 +575,21 @@ private fun buildHomeGroups(
     if (selectable.isEmpty()) return emptyList()
 
     val favorites = selectable.filter { it.isFavorite }
-    val rest = selectable.filterNot { it.isFavorite }
+    val favoriteIds = favorites.mapTo(mutableSetOf()) { it.id }
 
     val groups = mutableListOf<HomeGroup>()
     if (favorites.isNotEmpty()) {
         groups += HomeGroup(HomeGroupKind.Favorites, null, sortProfiles(favorites, sortMode, pings))
     }
     subscriptions.forEach { sub ->
-        val bucket = rest.filter { it.subscriptionId == sub.id }
-        if (bucket.isNotEmpty()) {
-            groups += HomeGroup(HomeGroupKind.Subscription, sub, sortProfiles(bucket, sortMode, pings))
+        val bucket = profiles.filter {
+            it.subscriptionId == sub.id && (it.isSection || it.id !in favoriteIds)
+        }
+        if (bucket.any { !it.isSection }) {
+            groups += HomeGroup(HomeGroupKind.Subscription, sub, reorderForDisplay(bucket, sortMode, pings))
         }
     }
-    val standalone = rest.filter { it.subscriptionId.isBlank() }
+    val standalone = selectable.filterNot { it.isFavorite }.filter { it.subscriptionId.isBlank() }
     if (standalone.isNotEmpty()) {
         groups += HomeGroup(HomeGroupKind.Standalone, null, sortProfiles(standalone, sortMode, pings))
     }

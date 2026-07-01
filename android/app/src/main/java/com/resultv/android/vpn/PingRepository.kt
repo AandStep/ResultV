@@ -23,6 +23,14 @@ private const val TAG = "ResultV/Ping"
 private const val RESULT_TTL_MS = 90_000L
 
 /**
+ * Max simultaneous in-flight probes during a full sweep. Probes are network-
+ * bound (each can sit on a timeout up to ~5s), so a bounded pool keeps the
+ * wall-clock sweep at roughly targets/PING_CONCURRENCY × timeout without
+ * opening hundreds of sockets at once. Mirrors the desktop's pool size.
+ */
+private const val PING_CONCURRENCY = 16
+
+/**
  * Per-profile latency cache backed by `Mobile.ping`. For non-AUTO profiles
  * we probe a single (ip, port, type); for AUTO profiles we probe every
  * member and surface the best reachable one for sorting / display while
@@ -38,6 +46,15 @@ object PingRepository {
     data class Sample(
         val latencyMs: Int,
         val reachable: Boolean,
+        /**
+         * Failure kind when [reachable] is false — "timeout",
+         * "connection_refused", "network_unreachable", "no_route_to_host",
+         * "connection_closed", "probe_error", … mirrored from the Go probe.
+         * Empty when reachable. Drives the per-row offline label so an
+         * unreachable server shows "Timeout"/"Refused" instead of an endless
+         * spinner.
+         */
+        val reason: String = "",
         val timestamp: Long = System.currentTimeMillis(),
     )
 
@@ -128,15 +145,25 @@ object PingRepository {
         if (real.isEmpty()) return
         markInflight(real.map { it.id })
         scope.launch {
-            real.chunked(24).forEach { chunk ->
-                val jobs = chunk.map { p ->
-                    launch {
+            // Continuous worker pool (vs. sequential chunks): a handful of
+            // dead servers each costing the full probe timeout no longer
+            // stall the whole sweep behind them — fast servers keep streaming
+            // their result the moment they finish. AtomicInteger hand-off
+            // guarantees no profile is probed twice.
+            val cursor = java.util.concurrent.atomic.AtomicInteger(0)
+            val workers = minOf(PING_CONCURRENCY, real.size)
+            val pool = (0 until workers).map {
+                launch {
+                    while (true) {
+                        val i = cursor.getAndIncrement()
+                        if (i >= real.size) break
+                        val p = real[i]
                         try { refreshSuspending(p) }
                         finally { clearInflight(listOf(p.id)) }
                     }
                 }
-                jobs.forEach { it.join() }
             }
+            pool.forEach { it.join() }
         }
     }
 
@@ -202,15 +229,19 @@ object PingRepository {
             return@withContext cached
         }
         val raw = try {
-            Mobile.ping(t.ip, t.port.toLong(), t.type)
+            // pingEntry carries the full ProxyEntry JSON, which WireGuard /
+            // AmneziaWG need for a real handshake-RTT probe; other protocols
+            // fall back to ip/port internally.
+            Mobile.pingEntry(t.entryJson)
         } catch (e: Throwable) {
             Log.w(TAG, "ping ${t.ip}:${t.port} (${t.type}) failed: ${e.message}")
-            return@withContext Sample(latencyMs = 0, reachable = false)
+            return@withContext Sample(latencyMs = 0, reachable = false, reason = "probe_error")
         }
         val o = runCatching { JSONObject(raw) }.getOrNull()
         Sample(
             latencyMs = o?.optLong("latencyMs", 0L)?.toInt() ?: 0,
             reachable = o?.optBoolean("reachable", false) ?: false,
+            reason = o?.optString("reason", "") ?: "",
         )
     }
 

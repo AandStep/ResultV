@@ -21,6 +21,7 @@ import libbox.StringIterator
 
 private const val TAG = "ResultV/KillSwitch"
 private const val GROUP_TAG = "ks-test"
+private const val PROXY_TAG = "proxy"
 private const val TICK_MS = 5_000L
 
 /**
@@ -91,8 +92,13 @@ class KillSwitchWatchdog(
             }
             KsAction.NONE -> {}
         }
-        // Reset the reading so a missing writeGroups next tick counts as a fail.
-        lastDelayMs = -1
+        // Do NOT reset lastDelayMs here. The group command pushes ~every second
+        // (server ticks on statusInterval plus urlTestUpdate), and on a real
+        // outage sing-box DELETES the failed member's urltest history so the
+        // pushed proxy delay drops to 0 on its own. Resetting to -1 each tick
+        // would instead manufacture failures whenever a push simply hadn't
+        // landed in a given 5 s window — the original false-engage bug. A dead
+        // stream is handled by GroupHandler.disconnected → onDelay(0).
     }
 
     fun stop() {
@@ -106,26 +112,31 @@ class KillSwitchWatchdog(
     val isEngaged: Boolean get() = decider.isEngaged
 }
 
-/** Reads the ks-test group's selected item delay out of writeGroups. */
+/** Reads the ks-test group's "proxy" member delay out of writeGroups. */
 private class GroupHandler(private val onDelay: (Int) -> Unit) : CommandClientHandler {
     override fun writeGroups(message: OutboundGroupIterator?) {
         if (message == null) return
         while (message.hasNext()) {
             val g = message.next()
             if (g.tag != GROUP_TAG) continue
+            // ks-test has two members (proxy + a block filler that only exists
+            // so sing-box reports the group at all). Read the "proxy" item
+            // specifically — the block item's delay is always 0 and taking the
+            // last item would read it, masking a healthy proxy.
             val items = g.items
-            var delay = 0
+            var proxyDelay = 0
             while (items.hasNext()) {
                 val item = items.next()
-                // Single-member group; take the (only) member's delay.
-                delay = item.urlTestDelay
+                if (item.tag == PROXY_TAG) proxyDelay = item.urlTestDelay
             }
-            onDelay(delay)
+            onDelay(proxyDelay)
         }
     }
 
     override fun connected() {}
-    override fun disconnected(message: String?) {}
+    // Stream died: treat as a failed probe so a broken command channel can't
+    // leave a stale positive delay wedged in and mask a real outage.
+    override fun disconnected(message: String?) { onDelay(0) }
     override fun clearLogs() {}
     override fun initializeClashMode(modeList: StringIterator?, currentMode: String?) {}
     override fun setDefaultLogLevel(level: Int) {}

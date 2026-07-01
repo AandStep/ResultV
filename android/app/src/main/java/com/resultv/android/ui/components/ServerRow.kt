@@ -47,8 +47,15 @@ fun ServerRow(
     isFavorite: Boolean,
     onClick: () -> Unit,
     trailing: @Composable (() -> Unit)? = null,
-    /** Latest ping in milliseconds, or null if not yet probed. */
+    /** Latest ping in milliseconds when reachable, or null otherwise. */
     latencyMs: Int? = null,
+    /**
+     * Failure kind ("timeout", "connection_refused", …) when the server was
+     * probed but is unreachable; null when it has a latency or hasn't been
+     * probed yet. Renders as a text label ("Timeout"/"Refused"/…) instead of
+     * leaving an endless spinner.
+     */
+    offlineReason: String? = null,
     /**
      * True while a user-triggered ping refresh for this row is in flight.
      * Forces the spinner even when [latencyMs] is non-null, so re-pinging
@@ -152,27 +159,54 @@ fun ServerRow(
             )
         }
 
-        // Latency reading — single number, colour reflects health, or loading spinner.
-        // Spinner wins while a user-triggered refresh is in flight, so re-pinging
-        // already-pinged servers still shows the loading state.
-        if (isLoading || latencyMs == null) {
-            androidx.compose.material3.CircularProgressIndicator(
+        // Latency reading. Precedence:
+        //  1. in-flight refresh → spinner (visible feedback on re-ping)
+        //  2. reachable → "N ms" (or "Online" for an RTT-less UDP probe)
+        //  3. probed but unreachable → text reason ("Timeout"/"Refused"/…)
+        //  4. not yet probed → spinner
+        when {
+            isLoading -> androidx.compose.material3.CircularProgressIndicator(
                 modifier = Modifier.size(14.dp),
                 color = Brand.MutedText,
-                strokeWidth = 2.dp
+                strokeWidth = 2.dp,
             )
-        } else {
-            Text(
+            latencyMs != null -> Text(
                 text = if (latencyMs <= 0) stringResource(R.string.ping_online)
                 else "$latencyMs ms",
                 style = MaterialTheme.typography.labelMedium,
                 color = latencyColor,
+            )
+            offlineReason != null -> Text(
+                text = offlineLabel(offlineReason),
+                style = MaterialTheme.typography.labelMedium,
+                color = Brand.Danger,
+            )
+            else -> androidx.compose.material3.CircularProgressIndicator(
+                modifier = Modifier.size(14.dp),
+                color = Brand.MutedText,
+                strokeWidth = 2.dp,
             )
         }
 
         if (trailing != null) trailing()
     }
 }
+
+/**
+ * Map a probe failure [reason] to a short localized label. Mirrors the
+ * desktop's pingResultToLabel vocabulary so both clients read the same.
+ */
+@Composable
+private fun offlineLabel(reason: String): String = stringResource(
+    when (reason) {
+        "timeout" -> R.string.ping_timeout
+        "connection_refused" -> R.string.ping_refused
+        "network_unreachable", "no_route_to_host" -> R.string.ping_unreachable
+        "connection_closed" -> R.string.ping_closed
+        "error", "probe_error" -> R.string.ping_error
+        else -> R.string.ping_unavailable
+    }
+)
 
 /** Convert a 2-letter ISO country code to the corresponding flag emoji. */
 fun flagFromCountry(code: String): String {

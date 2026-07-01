@@ -168,6 +168,10 @@ object SubscriptionRefresher {
             }
         }
         ProfileRepository.replaceForSubscription(sub.id, fresh)
+        // Ping only the servers that just changed, not the whole app's
+        // profile list — keeps this as fast/streaming as a manual per-row
+        // ping instead of getting diluted into a full-app sweep.
+        PingRepository.refreshAll(fresh)
         // Re-apply panel metadata. supportUrl tracks the Support-Url header
         // verbatim — empty in the response clears any stale value, so the
         // edit sheet's Links section stays in sync with what the panel

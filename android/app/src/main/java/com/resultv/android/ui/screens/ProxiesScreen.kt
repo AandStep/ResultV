@@ -429,6 +429,7 @@ private fun ProfileCard(
         onClick = onClick,
         onLongClick = onLongClick,
         latencyMs = sample?.takeIf { it.reachable }?.latencyMs,
+        offlineReason = sample?.takeUnless { it.reachable }?.reason,
         isLoading = isLoading,
     )
 }
@@ -560,6 +561,7 @@ private fun SubscriptionServerRowBlock(
             onClick = onClick,
             onLongClick = onLongClick,
             latencyMs = sample?.takeIf { it.reachable }?.latencyMs,
+            offlineReason = sample?.takeUnless { it.reachable }?.reason,
             isLoading = isLoading,
         )
     }
@@ -593,7 +595,7 @@ private fun SubscriptionTrailingCap() {
     )
 }
 
-private fun reorderForDisplay(
+internal fun reorderForDisplay(
     profiles: List<Profile>,
     sortMode: ProfileSortMode,
     pings: Map<String, PingRepository.Sample>,
@@ -829,7 +831,7 @@ private fun SubscriptionFooter(lastFetchedAt: Long, profileCount: Int) {
 }
 
 @Composable
-private fun SectionLabel(text: String) {
+internal fun SectionLabel(text: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()

@@ -6,6 +6,7 @@ import android.net.VpnService
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -56,6 +57,7 @@ import com.resultv.android.theme.Brand
 import com.resultv.android.theme.ResultVTheme
 import com.resultv.android.ui.screens.AddScreen
 import com.resultv.android.ui.screens.HomeScreen
+import com.resultv.android.ui.screens.LogsScreen
 import com.resultv.android.ui.screens.ProxiesScreen
 import com.resultv.android.ui.screens.RulesScreen
 import com.resultv.android.ui.screens.SettingsScreen
@@ -119,6 +121,10 @@ class MainActivity : ComponentActivity() {
             if (cfg != null) startService(cfg)
         } else {
             Log.w(TAG, "VPN permission denied (resultCode=${result.resultCode})")
+            com.resultv.android.vpn.AppLog.warning(
+                getString(R.string.log_permission_denied),
+                getString(R.string.log_source_system),
+            )
         }
     }
 
@@ -209,11 +215,13 @@ class MainActivity : ComponentActivity() {
     private fun connect() {
         val active = ProfileRepository.state.value.active ?: run {
             Log.w(TAG, "no active profile to connect to")
+            com.resultv.android.vpn.AppLog.warning(getString(R.string.log_no_server))
             return
         }
         val configJson = BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath)
             ?: run {
                 Log.e(TAG, "buildConfig failed or profile empty")
+                com.resultv.android.vpn.AppLog.error(getString(R.string.log_build_failed))
                 return
             }
 
@@ -295,6 +303,10 @@ private fun AppShell(
     onPower: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableStateOf(Tab.Home) }
+    // Full-screen Logs route layered above the tab Scaffold (covers the bottom
+    // nav). There's no NavController in this app, so a simple overlay flag is
+    // the lightest way to push a detail screen from a settings row.
+    var showLogs by rememberSaveable { mutableStateOf(false) }
     // SaveableStateHolder retains each tab's `rememberSaveable` state across
     // tab switches, so returning to Proxies keeps the user's scroll position,
     // expanded subscriptions, sort mode and protocol filter instead of
@@ -346,9 +358,14 @@ private fun AppShell(
                         dataDir = dataDir,
                         onDone = { tab = Tab.Proxies },
                     )
-                    Tab.Settings -> SettingsScreen()
+                    Tab.Settings -> SettingsScreen(onOpenLogs = { showLogs = true })
                 }
             }
         }
+    }
+
+    if (showLogs) {
+        BackHandler { showLogs = false }
+        LogsScreen(onBack = { showLogs = false })
     }
 }

@@ -201,12 +201,28 @@ object ProfileRepository {
             .map { it.name }
             .toSet()
 
-    /** Replace all profiles for one subscription with a fresh set (used on refresh). */
+    /**
+     * Replace all profiles for one subscription with a fresh set (used on refresh).
+     *
+     * Refreshed entries always get new random ids (see [SubscriptionRefresher]),
+     * so an active profile that belonged to this subscription is guaranteed to
+     * fall out of [s.activeId]'s match here. Re-pick it by name within the
+     * fresh set (same convention as favourite carry-over) instead of falling
+     * back to the first profile of the whole app — losing an active connection
+     * to a subscription refresh should not reroute it to an unrelated server.
+     */
     @Synchronized
     fun replaceForSubscription(subscriptionId: String, fresh: List<Profile>) = mutate { s ->
+        val oldActive = s.profiles.firstOrNull { it.id == s.activeId }
         val kept = s.profiles.filterNot { it.subscriptionId == subscriptionId }
         val list = kept + fresh
-        val active = if (list.any { it.id == s.activeId }) s.activeId else list.firstOrNull()?.id
+        val active = when {
+            oldActive == null -> list.firstOrNull()?.id
+            oldActive.subscriptionId != subscriptionId -> s.activeId
+            else -> fresh.firstOrNull { !it.isSection && it.name == oldActive.name }?.id
+                ?: fresh.firstOrNull { !it.isSection }?.id
+                ?: s.activeId
+        }
         s.copy(profiles = list, activeId = active)
     }
 

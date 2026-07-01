@@ -31,23 +31,51 @@ func routeFinal(m map[string]any) string {
 }
 
 func hasUrltestGroup(m map[string]any) bool {
+	return urltestGroupMembers(m) != nil
+}
+
+// urltestGroupMembers returns the ks-test urltest group's member tags, or nil
+// if the group is absent.
+func urltestGroupMembers(m map[string]any) []string {
 	obs, _ := m["outbounds"].([]any)
 	for _, o := range obs {
 		ob, _ := o.(map[string]any)
 		if ob["type"] == "urltest" && ob["tag"] == "ks-test" {
-			return true
+			raw, _ := ob["outbounds"].([]any)
+			out := make([]string, 0, len(raw))
+			for _, v := range raw {
+				if s, ok := v.(string); ok {
+					out = append(out, s)
+				}
+			}
+			return out
 		}
 	}
-	return false
+	return nil
 }
 
-func TestKillSwitchArmed_AddsGroupAndFinal(t *testing.T) {
+// TestKillSwitchArmed_MonitoringGroup verifies the armed-but-not-engaged state:
+// a ks-test urltest group is added purely for health monitoring. It MUST have
+// two members ("proxy" + a "block" filler) because sing-box's group command
+// server hides groups with fewer than 2 items (command_group.go:
+// len(ItemList) < 2 => continue) — a single-member group is never reported to
+// the watchdog, which then reads the proxy as permanently dead and engages the
+// kill switch for no reason. The group is monitoring-only: route.final stays
+// the global "proxy" default, NOT "ks-test".
+func TestKillSwitchArmed_MonitoringGroup(t *testing.T) {
 	m := buildKS(t, true, false)
-	if !hasUrltestGroup(m) {
+	members := urltestGroupMembers(m)
+	if members == nil {
 		t.Fatal("armed: expected ks-test urltest group")
 	}
-	if got := routeFinal(m); got != "ks-test" {
-		t.Fatalf("armed: route.final = %q, want ks-test", got)
+	if len(members) < 2 {
+		t.Fatalf("armed: ks-test must have >=2 members (sing-box hides <2-item groups), got %v", members)
+	}
+	if members[0] != "proxy" {
+		t.Fatalf("armed: ks-test first member = %q, want proxy", members[0])
+	}
+	if got := routeFinal(m); got != "proxy" {
+		t.Fatalf("armed: route.final = %q, want proxy (group is monitoring-only, not route.final)", got)
 	}
 }
 
