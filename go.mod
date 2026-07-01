@@ -3,18 +3,20 @@ module resultproxy-wails
 go 1.26.4
 
 require (
+	github.com/AdguardTeam/urlfilter v0.23.2
 	github.com/google/uuid v1.6.0
 	github.com/prometheus-community/pro-bing v0.4.0
 	github.com/quic-go/quic-go v0.59.0
 	github.com/sagernet/gomobile v0.1.12
 	github.com/sagernet/sing v0.8.10
 	github.com/sagernet/sing-box v1.13.12
-	golang.org/x/sys v0.43.0
+	github.com/sagernet/wireguard-go v0.0.2-beta.1.0.20260224074747-506b7631853c
+	golang.org/x/sys v0.46.0
 )
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
-	github.com/AdguardTeam/golibs v0.32.7 // indirect
+	github.com/AdguardTeam/golibs v0.35.13 // indirect
 	github.com/AliRizaAynaci/gorl/v2 v2.2.0 // indirect
 	github.com/Diniboy1123/connect-ip-go v0.0.0-20260409225322-8d7bb0a858a2 // indirect
 	github.com/OneOfOne/xxhash v1.2.8 // indirect
@@ -24,9 +26,10 @@ require (
 	github.com/ameshkov/dnscrypt/v2 v2.4.0 // indirect
 	github.com/ameshkov/dnsstamps v1.0.3 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
-	github.com/anthropics/anthropic-sdk-go v1.26.0 // indirect
+	github.com/anthropics/anthropic-sdk-go v1.50.1 // indirect
 	github.com/anytls/sing-anytls v0.0.11 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
+	github.com/buger/jsonparser v1.2.0 // indirect
 	github.com/caddyserver/certmagic v0.25.2 // indirect
 	github.com/caddyserver/zerossl v0.1.5 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -44,7 +47,7 @@ require (
 	github.com/enfein/mieru/v3 v3.33.0 // indirect
 	github.com/florianl/go-nfqueue/v2 v2.0.2 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
-	github.com/fxamacker/cbor/v2 v2.7.0 // indirect
+	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.12 // indirect
 	github.com/gaissmai/bart v0.18.0 // indirect
 	github.com/go-chi/chi/v5 v5.2.5 // indirect
@@ -70,6 +73,7 @@ require (
 	github.com/huandu/go-sqlbuilder v1.39.1 // indirect
 	github.com/huandu/xstrings v1.4.0 // indirect
 	github.com/insomniacslk/dhcp v0.0.0-20260220084031-5adc3eb26f91 // indirect
+	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/pgx/v5 v5.8.0 // indirect
@@ -93,8 +97,9 @@ require (
 	github.com/miekg/dns v1.1.72 // indirect
 	github.com/mitchellh/go-ps v1.0.0 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
-	github.com/openai/openai-go/v3 v3.26.0 // indirect
+	github.com/openai/openai-go/v3 v3.39.0 // indirect
 	github.com/panjf2000/ants/v2 v2.12.0 // indirect
+	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/pierrec/lz4/v4 v4.1.25 // indirect
 	github.com/pires/go-proxyproto v0.11.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
@@ -148,10 +153,10 @@ require (
 	github.com/sagernet/sing-vmess v0.2.8-0.20250909125414-3aed155119a1 // indirect
 	github.com/sagernet/smux v1.5.50-sing-box-mod.1 // indirect
 	github.com/sagernet/tailscale v1.92.4-sing-box-1.13-mod.7 // indirect
-	github.com/sagernet/wireguard-go v0.0.2-beta.1.0.20260224074747-506b7631853c // indirect
 	github.com/sagernet/ws v0.0.0-20231204124109-acfe8907c854 // indirect
 	github.com/shtorm-7/go-cache/v2 v2.1.0-extended-1.1.0 // indirect
 	github.com/shtorm-7/workerpool v0.5.0 // indirect
+	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/tailscale/certstore v0.1.1-0.20231202035212-d3fa0460f47e // indirect
 	github.com/tailscale/go-winio v0.0.0-20231025203758-c4f33415bf55 // indirect
 	github.com/tailscale/goupnp v1.0.1-0.20210804011211-c64d0f06ea05 // indirect
@@ -159,8 +164,8 @@ require (
 	github.com/tailscale/netlink v1.1.1-0.20240822203006-4d49adab4de7 // indirect
 	github.com/tailscale/peercred v0.0.0-20250107143737-35a0c7bd7edc // indirect
 	github.com/tailscale/web-client-prebuilt v0.0.0-20250124233751-d4cd19a26976 // indirect
-	github.com/tidwall/gjson v1.18.0 // indirect
-	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/gjson v1.19.0 // indirect
+	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/tylertreat/BoomFilters v0.0.0-20251117164519-53813c36cc1b // indirect
@@ -169,27 +174,30 @@ require (
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect
+	go.opentelemetry.io/otel v1.44.0 // indirect
+	go.opentelemetry.io/otel/sdk/metric v1.44.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.1 // indirect
 	go.uber.org/zap/exp v0.3.0 // indirect
+	go.yaml.in/yaml/v4 v4.0.0-rc.5 // indirect
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745 // indirect
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba // indirect
-	golang.org/x/crypto v0.50.0 // indirect
-	golang.org/x/exp v0.0.0-20260312153236-7ab1446f8b90 // indirect
+	golang.org/x/crypto v0.53.0 // indirect
+	golang.org/x/exp v0.0.0-20260611194520-c48552f49976 // indirect
 	golang.org/x/image v0.39.0 // indirect
-	golang.org/x/mod v0.35.0 // indirect
-	golang.org/x/net v0.53.0 // indirect
-	golang.org/x/oauth2 v0.34.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/term v0.42.0 // indirect
-	golang.org/x/text v0.36.0 // indirect
+	golang.org/x/mod v0.37.0 // indirect
+	golang.org/x/net v0.56.0 // indirect
+	golang.org/x/oauth2 v0.36.0 // indirect
+	golang.org/x/sync v0.21.0 // indirect
+	golang.org/x/term v0.44.0 // indirect
+	golang.org/x/text v0.38.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
-	golang.org/x/tools v0.44.0 // indirect
+	golang.org/x/tools v0.46.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10 // indirect
 	golang.zx2c4.com/wireguard/windows v0.5.3 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217 // indirect
-	google.golang.org/grpc v1.79.1 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260610212136-7ab31c22f7ad // indirect
+	google.golang.org/grpc v1.81.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
