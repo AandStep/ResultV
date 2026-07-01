@@ -2,6 +2,8 @@ package com.resultv.android.ui.screens
 
 import android.app.Activity
 import android.content.Context
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -30,6 +32,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.content.ContextWrapper
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import com.resultv.android.R
 import com.resultv.android.locale.LocaleManager
 import com.resultv.android.theme.Brand
@@ -274,6 +278,42 @@ private fun AdvancedGroup(settings: com.resultv.android.vpn.SettingsState) {
             // instead of waiting on sing-box's remote fetch. Safe no-op when
             // already fresh (24h TTL).
             if (it) AdBlockRepository.refreshAsync()
+        },
+    )
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+        HorizontalDivider(color = Brand.SurfaceHigh)
+        BrowserAdBlockRow(settings)
+    }
+}
+
+@Composable
+private fun BrowserAdBlockRow(settings: com.resultv.android.vpn.SettingsState) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
+    val installCertLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { /* KeyChain doesn't report success/failure to the caller; the user
+           either trusted it or didn't. The toggle's own self-test (Task 7,
+           future work) is what actually confirms it works. */ }
+
+    ToggleRow(
+        title = stringResource(R.string.settings_browser_adblock),
+        subtitle = stringResource(R.string.settings_browser_adblock_subtitle),
+        icon = Icons.Outlined.Shield,
+        iconBg = Color(0xFF22c55e).copy(alpha = 0.18f),
+        iconTint = Color(0xFF4ade80),
+        checked = settings.browserAdBlock,
+        onCheckedChange = { enabled ->
+            if (enabled) {
+                scope.launch(Dispatchers.IO) {
+                    mobile.Mobile.fetchFilterLists(context.filesDir.absolutePath)
+                }
+                val intent = com.resultv.android.vpn.CertInstaller.buildInstallIntent(
+                    context, context.filesDir.absolutePath,
+                )
+                installCertLauncher.launch(intent)
+            }
+            SettingsRepository.setBrowserAdBlock(enabled)
         },
     )
 }

@@ -94,6 +94,8 @@ class ResultVpnService : VpnService() {
                 // once the engine has actually drained on the worker thread.
                 val disconnectedMsg = getString(R.string.log_disconnected)
                 worker.execute {
+                    BoxModule.filterProxyRunning = false
+                    mobile.Mobile.stopFilterProxy()
                     BoxModule.stop()
                     AppLog.info(disconnectedMsg)
                 }
@@ -126,6 +128,7 @@ class ResultVpnService : VpnService() {
                 val connectedMsg = getString(R.string.log_connected)
                 worker.execute {
                     try {
+                        startBrowserAdBlockIfEnabled()
                         BoxModule.start(this, config)
                         val connectedAt = System.currentTimeMillis()
                         val connected = VpnStatus.Connected(connectedAt)
@@ -175,6 +178,26 @@ class ResultVpnService : VpnService() {
         return BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath)
     }
 
+    /**
+     * Best-effort: browser ad-block is a bonus feature layered on top of
+     * the VPN tunnel, never a reason to fail the whole connect. MUST run
+     * before BoxModule.start() — see the comment on this call site above —
+     * and MUST leave BoxModule.filterProxyRunning=false on any failure (no
+     * lists downloaded yet, port in use, etc.) so openTun() never applies
+     * setHttpProxy to a dead proxy and breaks Chrome's HTTPS traffic.
+     */
+    private fun startBrowserAdBlockIfEnabled() {
+        BoxModule.filterProxyRunning = false
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) return
+        if (!SettingsRepository.state.value.browserAdBlock) return
+        try {
+            mobile.Mobile.startFilterProxy(filesDir.absolutePath, BROWSER_ADBLOCK_PORT.toLong())
+            BoxModule.filterProxyRunning = true
+        } catch (t: Throwable) {
+            Log.w(TAG, "browser ad-block proxy failed to start; Chrome will use normal routing", t)
+        }
+    }
+
     override fun onRevoke() {
         // OS-initiated revoke: another VPN app took over, or the user
         // toggled VPN off in system settings. We MUST stop the tunnel
@@ -203,7 +226,11 @@ class ResultVpnService : VpnService() {
         if (!reloadInProgress) {
             VpnState.set(VpnStatus.Idle)
         }
-        worker.execute { BoxModule.stop() }
+        worker.execute {
+            BoxModule.filterProxyRunning = false
+            mobile.Mobile.stopFilterProxy()
+            BoxModule.stop()
+        }
         worker.shutdown()
         super.onDestroy()
     }
