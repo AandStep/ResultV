@@ -209,6 +209,9 @@ func TestBuildRoute_YouTubeOff_NoYouTubeRules(t *testing.T) {
 			if s == ".googlevideo.com" {
 				t.Fatalf("did not expect a YouTube split rule when off, rules=%+v", route.Rules)
 			}
+			if s == ".doubleclick.net" {
+				t.Fatalf("did not expect a YouTube ad-delivery reject rule when AdBlock is off, rules=%+v", route.Rules)
+			}
 		}
 	}
 }

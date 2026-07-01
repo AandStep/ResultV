@@ -45,6 +45,9 @@ var youTubeAdDeliverySuffixes = []string{
 	".google-analytics.com",
 	".googletagmanager.com",
 	".adservice.google.com",
+	".doubleclick.com", // distinct domain from doubleclick.net, same operator
+	".doubleclick.de",  // regional DoubleClick
+	".2mdn.net",        // DoubleClick rich-media/creative CDN
 }
 
 // youTubeDNSBypassSuffixes lists core YouTube hosts that must still resolve

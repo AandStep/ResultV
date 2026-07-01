@@ -609,6 +609,10 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 				})
 			}
 			dns.Rules = append(dns.Rules, SBDNSRule{
+				DomainSuffix: youTubeAdDeliverySuffixes,
+				Action:       "reject",
+			})
+			dns.Rules = append(dns.Rules, SBDNSRule{
 				RuleSet: adBlockRuleSetTags(),
 				Action:  "reject",
 			})
@@ -842,6 +846,10 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 			Domain:   adBlockConnectivityBypassDomains,
 			Outbound: "direct",
 			Action:   "route",
+		})
+		rules = append(rules, SBRouteRule{
+			DomainSuffix: youTubeAdDeliverySuffixes,
+			Action:       "reject",
 		})
 		rules = append(rules, SBRouteRule{
 			RuleSet: adBlockRuleSetTags(),
