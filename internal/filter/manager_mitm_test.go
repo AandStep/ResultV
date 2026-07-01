@@ -1,0 +1,66 @@
+// Copyright (C) 2026 ResultV
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+
+package filter
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+func TestManager_StartMITM_FailsWithoutCachedLists(t *testing.T) {
+	m := NewManager(t.TempDir())
+	if err := m.StartMITM(0); err == nil {
+		t.Fatal("expected StartMITM to fail before any list has been downloaded")
+	}
+}
+
+func TestManager_StartStopMITM_Lifecycle(t *testing.T) {
+	list := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(strings.Repeat("! test list\n", 50)))
+	}))
+	defer list.Close()
+
+	orig := DefaultSources
+	DefaultSources = []ListSource{{ID: 1, Name: "adguard-base", URLs: []string{list.URL}}}
+	defer func() { DefaultSources = orig }()
+
+	m := NewManager(t.TempDir())
+	if err := m.Update(context.Background(), nil); err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+	// Port 0 lets the OS pick a free ephemeral port — good enough to prove
+	// the server starts and stops cleanly without a fixed-port collision
+	// risk in CI.
+	if err := m.StartMITM(0); err != nil {
+		t.Fatalf("StartMITM failed: %v", err)
+	}
+	if !m.IsMITMRunning() {
+		t.Fatal("expected IsMITMRunning() to be true after StartMITM")
+	}
+	if !m.Status().Enabled {
+		t.Fatal("expected Status().Enabled to be true after StartMITM — Task 7's Android watchdog polls this field")
+	}
+	m.StopMITM()
+	if m.IsMITMRunning() {
+		t.Fatal("expected IsMITMRunning() to be false after StopMITM")
+	}
+}
+
+func TestManager_CARootPath_ReturnsExistingFile(t *testing.T) {
+	m := NewManager(t.TempDir())
+	path, err := m.CARootPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path == "" {
+		t.Fatal("expected a non-empty certificate path")
+	}
+}

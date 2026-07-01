@@ -10,6 +10,7 @@ package filter
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -18,6 +19,9 @@ import (
 
 	"github.com/AdguardTeam/urlfilter/rules"
 	"golang.org/x/sync/errgroup"
+
+	"resultproxy-wails/internal/filter/ca"
+	"resultproxy-wails/internal/filter/mitm"
 )
 
 const metaFileName = "filters-meta.json"
@@ -34,6 +38,7 @@ type Manager struct {
 	dataDir string
 	meta    meta
 	lastErr string
+	mitm    *mitm.Server
 
 	networkBlocked  atomic.Uint64
 	cosmeticBlocked atomic.Uint64
@@ -211,6 +216,7 @@ func (m *Manager) Status() Status {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return Status{
+		Enabled:         m.mitm != nil,
 		ListsReady:      len(m.meta.Sources),
 		ListsTotal:      len(DefaultSources),
 		LastUpdatedUnix: m.meta.UpdatedAt,
@@ -218,4 +224,66 @@ func (m *Manager) Status() Status {
 		NetworkBlocked:  m.networkBlocked.Load(),
 		CosmeticBlocked: m.cosmeticBlocked.Load(),
 	}
+}
+
+// StartMITM runs the local HTTPS filtering proxy on 127.0.0.1:listenPort.
+// Fails immediately if no filter list has been downloaded yet — Android's
+// caller (Task 4/5) must call Update() at least once before this.
+func (m *Manager) StartMITM(listenPort int) error {
+	paths := m.FilterPathsMap()
+	if len(paths) == 0 {
+		return fmt.Errorf("no cached filters; call Update first")
+	}
+	root, err := ca.EnsureRoot(m.FilterDir())
+	if err != nil {
+		return err
+	}
+	srv, err := mitm.NewServer(mitm.Config{
+		ListenPort:  listenPort,
+		RootCert:    root.Certificate,
+		RootKey:     root.PrivateKey,
+		FilterPaths: paths,
+		OnBlocked: func(cosmetic bool) {
+			if cosmetic {
+				m.cosmeticBlocked.Add(1)
+			} else {
+				m.networkBlocked.Add(1)
+			}
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if err := srv.Start(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.mitm = srv
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *Manager) StopMITM() {
+	m.mu.Lock()
+	if m.mitm != nil {
+		m.mitm.Close()
+		m.mitm = nil
+	}
+	m.mu.Unlock()
+}
+
+func (m *Manager) IsMITMRunning() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.mitm != nil
+}
+
+// CARootPath returns the path to the (PEM-encoded) root CA certificate so
+// the Android side can read it and hand it to KeyChain.createInstallIntent.
+func (m *Manager) CARootPath() (string, error) {
+	root, err := ca.EnsureRoot(m.FilterDir())
+	if err != nil {
+		return "", err
+	}
+	return root.CertificatePath, nil
 }
