@@ -23,12 +23,28 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/sagernet/gomobile" // ensure sagernet's gomobile/bind stays in go.mod for AAR builds
 	"resultproxy-wails/internal/config"
+	"resultproxy-wails/internal/filter"
 	"resultproxy-wails/internal/proxy"
 )
+
+var (
+	filterMu      sync.Mutex
+	filterManager *filter.Manager
+)
+
+func getFilterManager(dataDir string) *filter.Manager {
+	filterMu.Lock()
+	defer filterMu.Unlock()
+	if filterManager == nil {
+		filterManager = filter.NewManager(dataDir)
+	}
+	return filterManager
+}
 
 // Version returns the wrapper version. Bump on every breaking change to
 // the Kotlin-facing API.
@@ -1123,4 +1139,87 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 		return "", fmt.Errorf("marshaling config: %w", err)
 	}
 	return string(out), nil
+}
+
+// FetchFilterLists downloads the EasyList/AdGuard text filter lists used by
+// the browser MITM ad blocker into dataDir/filter. Returns JSON:
+//
+//	{ "ready": 5, "total": 6, "error": "" }
+//
+// Safe to call repeatedly. Degrades to an embedded minimal fallback list if
+// every remote source fails, so this never leaves the feature completely
+// unusable — see filter.Manager.Update.
+func FetchFilterLists(dataDir string) (string, error) {
+	if strings.TrimSpace(dataDir) == "" {
+		return "", fmt.Errorf("dataDir is required for filter list cache")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	m := getFilterManager(dataDir)
+	err := m.Update(ctx, nil)
+	st := m.Status()
+	out := map[string]interface{}{
+		"ready": st.ListsReady,
+		"total": st.ListsTotal,
+		"error": "",
+	}
+	if err != nil {
+		out["error"] = err.Error()
+	}
+	data, jsonErr := json.Marshal(out)
+	if jsonErr != nil {
+		return "", fmt.Errorf("marshaling filter list result: %w", jsonErr)
+	}
+	return string(data), nil
+}
+
+// FilterCARootPath returns the absolute path to the (PEM-encoded) root CA
+// certificate used by the browser MITM ad blocker. The Android side reads
+// this file, parses it with java.security.cert.CertificateFactory, and
+// hands the DER bytes to android.security.KeyChain.createInstallIntent.
+func FilterCARootPath(dataDir string) (string, error) {
+	if strings.TrimSpace(dataDir) == "" {
+		return "", fmt.Errorf("dataDir is required")
+	}
+	return getFilterManager(dataDir).CARootPath()
+}
+
+// StartFilterProxy starts the local MITM proxy on 127.0.0.1:listenPort.
+// Fails if FetchFilterLists hasn't successfully populated at least one
+// list yet. Returns JSON { "started": true } on success so the Kotlin
+// caller has a uniform JSON-or-error contract like the rest of this file.
+func StartFilterProxy(dataDir string, listenPort int) (string, error) {
+	if strings.TrimSpace(dataDir) == "" {
+		return "", fmt.Errorf("dataDir is required")
+	}
+	if err := getFilterManager(dataDir).StartMITM(listenPort); err != nil {
+		return "", err
+	}
+	return `{"started":true}`, nil
+}
+
+// StopFilterProxy stops the local MITM proxy if running. Safe to call when
+// it isn't running.
+func StopFilterProxy() {
+	filterMu.Lock()
+	m := filterManager
+	filterMu.Unlock()
+	if m != nil {
+		m.StopMITM()
+	}
+}
+
+// FilterStatus returns the browser MITM ad blocker's current status as
+// JSON, for the Android Settings screen.
+func FilterStatus(dataDir string) (string, error) {
+	if strings.TrimSpace(dataDir) == "" {
+		return "", fmt.Errorf("dataDir is required")
+	}
+	st := getFilterManager(dataDir).Status()
+	data, err := json.Marshal(st)
+	if err != nil {
+		return "", fmt.Errorf("marshaling filter status: %w", err)
+	}
+	return string(data), nil
 }
