@@ -11,6 +11,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -32,7 +33,18 @@ func TestManager_StartStopMITM_Lifecycle(t *testing.T) {
 	DefaultSources = []ListSource{{ID: 1, Name: "adguard-base", URLs: []string{list.URL}}}
 	defer func() { DefaultSources = orig }()
 
-	m := NewManager(t.TempDir())
+	// urlfilter v0.23.2's proxy.Server.Close() doesn't synchronously release
+	// the filter-list file handle; on Windows t.TempDir's RemoveAll then
+	// fails even though the lifecycle assertions all pass. Android/POSIX
+	// unlink-open-file succeeds. Cleanup is best-effort so this OS artifact
+	// doesn't fail the lifecycle test.
+	dir, err := os.MkdirTemp("", "mitm-lifecycle-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp failed: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	m := NewManager(dir)
 	if err := m.Update(context.Background(), nil); err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
