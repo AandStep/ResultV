@@ -61,6 +61,8 @@ func (m *Manager) FilterDir() string {
 	return filepath.Join(m.dataDir, "filter")
 }
 
+// pruneMissingSources runs only during NewManager construction, before any
+// goroutine or external caller can observe m, so it needs no lock.
 func (m *Manager) pruneMissingSources() {
 	if len(m.meta.Sources) == 0 {
 		return
@@ -72,6 +74,8 @@ func (m *Manager) pruneMissingSources() {
 	}
 }
 
+// loadMeta runs only during NewManager construction, before any goroutine or
+// external caller can observe m, so it needs no lock.
 func (m *Manager) loadMeta() error {
 	path := filepath.Join(m.FilterDir(), metaFileName)
 	b, err := os.ReadFile(path)
@@ -88,7 +92,9 @@ func (m *Manager) saveMeta() error {
 	if err := os.MkdirAll(m.FilterDir(), 0o700); err != nil {
 		return err
 	}
+	m.mu.RLock()
 	b, err := json.MarshalIndent(m.meta, "", "  ")
+	m.mu.RUnlock()
 	if err != nil {
 		return err
 	}
@@ -121,13 +127,14 @@ func (m *Manager) Update(ctx context.Context, onProgress func(UpdateProgress)) e
 		return err
 	}
 	client := newFilterHTTPClient()
+	m.mu.Lock()
 	if m.meta.Sources == nil {
 		m.meta.Sources = make(map[string]string)
 	}
+	m.mu.Unlock()
 
 	total := len(DefaultSources)
 	var (
-		mu         sync.Mutex
 		errs       []string
 		downloaded int
 	)
@@ -141,8 +148,8 @@ func (m *Manager) Update(ctx context.Context, onProgress func(UpdateProgress)) e
 			}
 			dest := filepath.Join(dir, src.Name+".txt")
 			err := downloadFirstOK(gctx, client, src.URLs, dest)
-			mu.Lock()
-			defer mu.Unlock()
+			m.mu.Lock()
+			defer m.mu.Unlock()
 			if err != nil {
 				errs = append(errs, src.Name+": "+humanizeNetError(err))
 				return nil
@@ -160,7 +167,9 @@ func (m *Manager) Update(ctx context.Context, onProgress func(UpdateProgress)) e
 			m.setLastErr(err)
 			return err
 		}
+		m.mu.Lock()
 		m.meta.Sources["fallback"] = fallbackDest
+		m.mu.Unlock()
 		m.setLastErr(nil)
 	} else if len(errs) > 0 {
 		m.setLastErr(nil) // partial success is not surfaced as an error
@@ -168,7 +177,9 @@ func (m *Manager) Update(ctx context.Context, onProgress func(UpdateProgress)) e
 		m.setLastErr(nil)
 	}
 
+	m.mu.Lock()
 	m.meta.UpdatedAt = time.Now().Unix()
+	m.mu.Unlock()
 	if onProgress != nil {
 		onProgress(UpdateProgress{Phase: "done", Total: total, Current: total})
 	}
@@ -183,6 +194,8 @@ func (m *Manager) FilterPathsMap() map[rules.ListID]string {
 		"easylist": 4, "easyprivacy": 5, "fanboy-annoyance": 6,
 		"fallback": 99,
 	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	out := make(map[rules.ListID]string, len(m.meta.Sources))
 	for name, path := range m.meta.Sources {
 		id := idMap[name]

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -53,6 +54,47 @@ func TestManager_Update_AllSourcesFail_WritesEmbeddedFallback(t *testing.T) {
 	if len(paths) != 1 {
 		t.Fatalf("expected embedded fallback to populate 1 list, got %d", len(paths))
 	}
+}
+
+func TestManager_Update_ConcurrentStatusNoRace(t *testing.T) {
+	list := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(strings.Repeat("! test list\n", 50)))
+	}))
+	defer list.Close()
+
+	orig := DefaultSources
+	DefaultSources = []ListSource{{ID: 1, Name: "adguard-base", URLs: []string{list.URL}}}
+	defer func() { DefaultSources = orig }()
+
+	m := NewManager(t.TempDir())
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := m.Update(context.Background(), nil); err != nil {
+			t.Errorf("Update failed: %v", err)
+		}
+		close(stop)
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			_ = m.Status()
+			_ = m.FilterPathsMap()
+			select {
+			case <-stop:
+				return
+			default:
+			}
+		}
+	}()
+
+	wg.Wait()
 }
 
 func TestManager_Status_ReflectsReadyCounts(t *testing.T) {
