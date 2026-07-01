@@ -25,6 +25,15 @@ data class SettingsState(
     val dnsCustom: String = "",
     val killSwitch: Boolean = false,
     val adblock: Boolean = false,
+    /**
+     * Browser ad-block (MITM): removes banner ads network-side and hides
+     * their empty containers in Chrome/WebView, via a local HTTPS proxy the
+     * user must approve a root certificate for. Requires API 29+
+     * (VpnService.Builder.setHttpProxy) and never touches apps with their
+     * own TLS stack (YouTube, banking apps) — see
+     * docs/superpowers/specs/2026-07-01-android-mitm-adblock-design.md.
+     */
+    val browserAdBlock: Boolean = false,
     val ipv6: Boolean = false,
     /** RFC1918 / link-local / multicast traffic bypasses the proxy. */
     val bypassLan: Boolean = true,
@@ -53,6 +62,7 @@ object SettingsRepository {
     private const val K_DNS_CUSTOM = "dns_custom"
     private const val K_KILL_SWITCH = "kill_switch"
     private const val K_ADBLOCK = "adblock"
+    private const val K_BROWSER_ADBLOCK = "browser_adblock"
     private const val K_IPV6 = "ipv6"
     private const val K_BYPASS_LAN = "bypass_lan"
     private const val K_LOG_LEVEL = "log_level"
@@ -92,6 +102,7 @@ object SettingsRepository {
             dnsCustom = prefs.getString(K_DNS_CUSTOM, "") ?: "",
             killSwitch = prefs.getBoolean(K_KILL_SWITCH, false),
             adblock = prefs.getBoolean(K_ADBLOCK, false),
+            browserAdBlock = prefs.getBoolean(K_BROWSER_ADBLOCK, false),
             ipv6 = prefs.getBoolean(K_IPV6, false),
             bypassLan = prefs.getBoolean(K_BYPASS_LAN, true),
             logLevel = prefs.getString(K_LOG_LEVEL, "info") ?: "info",
@@ -118,6 +129,11 @@ object SettingsRepository {
     fun setAdblock(enabled: Boolean) = mutate {
         prefs.edit().putBoolean(K_ADBLOCK, enabled).apply()
         it.copy(adblock = enabled)
+    }
+
+    fun setBrowserAdBlock(enabled: Boolean) = mutate {
+        prefs.edit().putBoolean(K_BROWSER_ADBLOCK, enabled).apply()
+        it.copy(browserAdBlock = enabled)
     }
 
     fun setIpv6(enabled: Boolean) = mutate {

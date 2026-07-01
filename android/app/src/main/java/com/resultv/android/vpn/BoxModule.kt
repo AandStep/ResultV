@@ -22,6 +22,7 @@ import libbox.WIFIState
 import java.io.File
 
 private const val TAG = "ResultV/Box"
+const val BROWSER_ADBLOCK_PORT = 8130
 
 // gomobile names Java packages by the Go package name only — for
 // `package libbox` the Java imports live under the unqualified `libbox.*`
@@ -37,6 +38,15 @@ object BoxModule {
 
     val isRunning: Boolean
         @Synchronized get() = commandServer != null
+
+    /**
+     * Set by ResultVpnService BEFORE calling BoxModule.start(), only when
+     * Mobile.startFilterProxy() has already returned successfully. Read by
+     * BoxPlatform.openTun() to decide whether to apply setHttpProxy — see
+     * applyBrowserAdBlockProxy() for why this can't just read the settings
+     * toggle directly.
+     */
+    @Volatile var filterProxyRunning: Boolean = false
 
     /**
      * Configure libbox global paths. Must be called before any Service
@@ -75,6 +85,9 @@ object BoxModule {
         }
         ensureSetup(service)
 
+        // Fresh connection session — let each destination host log once again.
+        EngineLog.resetSession()
+
         // Dump config in chunks (logcat caps lines around 4 KB).
         Log.i(TAG, "── config begin ──")
         configJson.chunked(3500).forEach { Log.i(TAG, it) }
@@ -110,6 +123,7 @@ object BoxModule {
     fun stop() {
         val server = commandServer ?: return
         commandServer = null
+        EngineLog.resetSession()
         try {
             server.closeService()
         } catch (t: Throwable) {
@@ -136,6 +150,7 @@ private class BoxPlatform(private val service: ResultVpnService) : PlatformInter
         // mapping for all-caps Go names like getMTU / getDNSServerAddress.
         val builder = service.Builder()
         builder.setSession("ResultV")
+        applyBrowserAdBlockProxy(builder)
         // Kotlin's bean-mapping is unreliable for all-caps acronyms
         // (getMTU / getDNSServerAddress) — call the explicit getters.
         val mtu = options.getMTU()
@@ -258,6 +273,31 @@ private class BoxPlatform(private val service: ResultVpnService) : PlatformInter
         }
     }
 
+    /**
+     * Points Android's system HTTP proxy at our local MITM (Task 3/4) so
+     * Chrome/WebView/system-proxy-aware apps route through it. Apps with
+     * their own TLS stack (YouTube, most native apps) ignore this entirely
+     * and keep going straight through the TUN as before — this call has no
+     * effect on them, by design.
+     *
+     * Deliberately checks `BoxModule.filterProxyRunning`, NOT the settings
+     * toggle directly: openTun() runs synchronously inside BoxModule.start(),
+     * so if we applied setHttpProxy whenever the toggle is on (regardless of
+     * whether the MITM proxy actually came up), a failed/slow MITM start
+     * would leave Chrome pointed at a port nothing is listening on — every
+     * HTTPS request in the browser would fail, which is strictly worse than
+     * not having this feature at all. ResultVpnService (Task 6) sets this
+     * flag ONLY after Mobile.startFilterProxy() returns successfully, and
+     * always BEFORE calling BoxModule.start() (which triggers this openTun).
+     */
+    private fun applyBrowserAdBlockProxy(builder: VpnService.Builder) {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) return
+        if (!BoxModule.filterProxyRunning) return
+        builder.setHttpProxy(
+            android.net.ProxyInfo.buildDirectProxy("127.0.0.1", BROWSER_ADBLOCK_PORT)
+        )
+    }
+
     private fun tryDisallow(builder: VpnService.Builder, pkg: String) {
         try {
             builder.addDisallowedApplication(pkg)
@@ -324,5 +364,9 @@ private class StubCommandHandler : CommandServerHandler {
     override fun setSystemProxyEnabled(enabled: Boolean) {}
     override fun writeDebugMessage(message: String?) {
         Log.d(TAG, "libbox: $message")
+        // Surface engine activity (connections, warnings, errors) in the
+        // in-app log. EngineLog filters the raw stream down to the same class
+        // of lines the desktop shows and dedups connections per host.
+        EngineLog.ingest(message)
     }
 }
