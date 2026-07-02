@@ -1,5 +1,5 @@
 {
-  "version": "",
+  "version": "3.2.6",
   "releaseTitle": {
     "ru": "Небольшой фикс для подписок ImpVPN",
     "en": "Small fix for ImpVPN subscriptions"
@@ -9,5 +9,31 @@
     "en": "Small fix for correct import of subscriptions from our partner impVPN. You can purchase a subscription on their website with a 20% bonus on your balance using the promo code \"result\": https://my.impio.space/?ref=NzQ3MDczMjUz or in Telegram bot: https://t.me/impVPNBot?start=NzQ3MDczMjUz"
   },
   "downloadUrl": "https://result-proxy.ru/",
-  "platforms": {}
+  "platforms": {
+    "windows-amd64-portable": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.6/ResultV.exe",
+      "sha256": "150c13a722ecdc3a16c3be998a272e5e6bbf9b9e6a7902f2996949be2430d9c8",
+      "size": 54382592
+    },
+    "windows-amd64-installer": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.6/ResultV-amd64-installer.exe",
+      "sha256": "652e1ddc4d8de39e35c78388326040be8c716318e0020410d3725cfd67a5d670",
+      "size": 26502083
+    },
+    "darwin-universal": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.6/ResultV.dmg",
+      "sha256": "e1cb3bb3da6e44b306f2dea182e6aadb05c738e00ae045af17b1537630dd19ef",
+      "size": 60025586
+    },
+    "linux-amd64-appimage": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.6/ResultV-3.2.6-x86_64.AppImage",
+      "sha256": "ee102ca44b8e35d30afcf3bb9c38d44b9fa103255887f200219dd4cf6b56e5eb",
+      "size": 93170168
+    },
+    "linux-amd64-deb": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.6/resultv_3.2.6_amd64.deb",
+      "sha256": "6e18363b5302d77ccf5ed80e5bcfa2bca80c07bdd4161e2aaeba2ba8f88e9bbc",
+      "size": 25468244
+    }
+  }
 }
