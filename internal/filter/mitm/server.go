@@ -16,7 +16,7 @@ import (
 
 	"github.com/AdguardTeam/gomitmproxy"
 	"github.com/AdguardTeam/gomitmproxy/mitm"
-	filterproxy "github.com/AdguardTeam/urlfilter/proxy"
+	filterproxy "resultproxy-wails/internal/filter/mitm/vendoredproxy"
 	"github.com/AdguardTeam/urlfilter/rules"
 )
 
