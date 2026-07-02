@@ -197,6 +197,7 @@ func (m *Manager) FilterPathsMap() map[rules.ListID]string {
 	idMap := map[string]rules.ListID{
 		"adguard-base": 1, "adguard-tracking": 2, "adguard-russian": 3,
 		"easylist": 4, "easyprivacy": 5, "fanboy-annoyance": 6,
+		"adguard-annoyances": 7, "adguard-mobile-ads": 8,
 		"fallback": 99,
 	}
 	m.mu.RLock()

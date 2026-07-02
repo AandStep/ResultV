@@ -62,4 +62,18 @@ var DefaultSources = []ListSource{
 			"https://easylist.to/easylist/fanboy-annoyance.txt",
 		},
 	},
+	{
+		ID: 7, Name: "adguard-annoyances",
+		URLs: []string{
+			"https://raw.githubusercontent.com/AdguardTeam/FiltersRegistry/master/filters/filter_14_Annoyances/filter.txt",
+			"https://filters.adtidy.org/windows/filters/14.txt",
+		},
+	},
+	{
+		ID: 8, Name: "adguard-mobile-ads",
+		URLs: []string{
+			"https://raw.githubusercontent.com/AdguardTeam/FiltersRegistry/master/filters/filter_11_Mobile/filter.txt",
+			"https://filters.adtidy.org/windows/filters/11.txt",
+		},
+	},
 }
