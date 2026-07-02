@@ -1987,14 +1987,31 @@ func resolveEncryptedSubscriptionURL(input string) (string, error) {
 	return plain, nil
 }
 
-func normalizeSubscriptionURL(subURL string) string {
-	if u, err := url.Parse(subURL); err == nil && u.Host == "my.impio.space" {
-		if !strings.HasSuffix(strings.TrimRight(u.Path, "/"), "/json") {
-			u.Path = strings.TrimRight(u.Path, "/") + "/json"
-			return u.String()
-		}
+// impioSubscriptionHost is the impio panel host whose subscription endpoint
+// historically required a "/json" path suffix. The panel later dropped the
+// suffix (the raw URL now serves JSON directly and ".../json" answers HTTP
+// 400), so neither form can be assumed. Var so tests can point it at a local
+// server.
+var impioSubscriptionHost = "my.impio.space"
+
+// impioAlternateSubscriptionURL returns the impio URL with the "/json"
+// suffix toggled — stripped when present, appended when absent — so the
+// fetcher can retry the other form after a failure. Returns "" for
+// non-impio or unparseable URLs (no alternate to try). This keeps both
+// legacy stored ".../json" URLs and fresh raw URLs working regardless of
+// which form the panel currently accepts.
+func impioAlternateSubscriptionURL(subURL string) string {
+	u, err := url.Parse(subURL)
+	if err != nil || u.Host != impioSubscriptionHost {
+		return ""
 	}
-	return subURL
+	trimmed := strings.TrimRight(u.Path, "/")
+	if strings.HasSuffix(trimmed, "/json") {
+		u.Path = strings.TrimSuffix(trimmed, "/json")
+	} else {
+		u.Path = trimmed + "/json"
+	}
+	return u.String()
 }
 
 // ErrInsecureSubscription is returned by fetchSubscriptionFromURL when the
@@ -2022,7 +2039,6 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 	} else if resolved != "" {
 		subURL = resolved
 	}
-	subURL = normalizeSubscriptionURL(subURL)
 	insecure := isInsecureSubURL(subURL)
 	if insecure && !allowInsecure {
 		return nil, 0, 0, 0, 0, "", "", ErrInsecureSubscription
@@ -2094,7 +2110,20 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 
 	entries, up, down, tot, exp, iconURL, profileTitle, _, err := doFetch(metadata.UserAgent)
 	if err != nil {
-		return nil, 0, 0, 0, 0, "", "", err
+		// impio moved its subscription endpoint between ".../json" and the
+		// raw path over time; retry the other form once before giving up.
+		alt := impioAlternateSubscriptionURL(subURL)
+		if alt == "" {
+			return nil, 0, 0, 0, 0, "", "", err
+		}
+		subURL = alt
+		var altErr error
+		entries, up, down, tot, exp, iconURL, profileTitle, _, altErr = doFetch(metadata.UserAgent)
+		if altErr != nil {
+			// Report the original failure — it corresponds to the URL the
+			// caller actually asked for.
+			return nil, 0, 0, 0, 0, "", "", err
+		}
 	}
 
 	providerName := extractProviderName(subURL)

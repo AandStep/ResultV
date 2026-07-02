@@ -119,12 +119,14 @@ func hasLeftoverTun() bool {
 
 // clearLeftoverTun severs every leftover sing-tun adapter from the network: it
 // deletes EVERY route bound to the adapter (so traffic falls back to the
-// physical default route and the internet works again) and resets the adapter's
-// DNS (so Windows' Smart Multi-Homed resolution stops querying the dead tunnel
-// resolver). Routing/DNS changes require admin; without it we run the cleanup
-// through an elevated (UAC) PowerShell, mirroring the DNS snapshot restore
-// path. The dead adapter itself is left in place — sing-box reclaims it on the
-// next connect — but with no routes it is inert.
+// physical default route and the internet works again), releases the adapter's
+// IPv6 ULA (so sing-tun can re-add it on the next boot instead of dying with
+// "set ipv6 address: The object already exists" — see removeTunIPv6PS), and
+// resets the adapter's DNS (so Windows' Smart Multi-Homed resolution stops
+// querying the dead tunnel resolver). Routing/DNS/address changes require admin;
+// without it we run the cleanup through an elevated (UAC) PowerShell, mirroring
+// the DNS snapshot restore path. The dead adapter itself is left in place —
+// sing-box reclaims it on the next connect — but with no routes it is inert.
 //
 // ALL routes, not just 0.0.0.0/0: auto_route with route_exclude_address (the
 // server-IP pin sets it for every non-endpoint protocol) makes sing-tun install
@@ -147,6 +149,8 @@ func clearLeftoverTun() error {
 			}
 			_ = runCmdFn("powershell", "-NoProfile", "-NonInteractive", "-Command",
 				removeAllRoutesPS(idx))
+			_ = runCmdFn("powershell", "-NoProfile", "-NonInteractive", "-Command",
+				removeTunIPv6PS(idx))
 		}
 		return firstErr
 	}
@@ -160,10 +164,25 @@ func removeAllRoutesPS(idx int) string {
 	return fmt.Sprintf("Remove-NetRoute -InterfaceIndex %d -Confirm:$false -ErrorAction SilentlyContinue", idx)
 }
 
+// removeTunIPv6PS returns the PowerShell command that releases the adapter's
+// IPv6 unicast addresses. The leftover sing-tun adapter keeps its ULA
+// (fdfe:dcba:9876::1/126) bound; sing-tun reopens that same-named adapter on the
+// next boot and re-adds the identical ULA, which Windows rejects with
+// "set ipv6 address: The object already exists" (ERROR_OBJECT_ALREADY_EXISTS).
+// Removing the address is synchronous — unlike async pnputil device removal,
+// whose teardown can lag past the retry window and collide again — so by the time
+// sing-tun re-adds the ULA the slot is free. Safe: the adapter is exclusively
+// ours (matched by the exact "sing-tun Tunnel" description) and sing-tun
+// reconfigures whatever addresses it needs when it reclaims the adapter.
+func removeTunIPv6PS(idx int) string {
+	return fmt.Sprintf("Remove-NetIPAddress -InterfaceIndex %d -AddressFamily IPv6 -Confirm:$false -ErrorAction SilentlyContinue", idx)
+}
+
 func buildTunCleanupCommands(idxs []int) []string {
 	var cmds []string
 	for _, idx := range idxs {
 		cmds = append(cmds, fmt.Sprintf(`powershell -NoProfile -NonInteractive -Command "%s"`, removeAllRoutesPS(idx)))
+		cmds = append(cmds, fmt.Sprintf(`powershell -NoProfile -NonInteractive -Command "%s"`, removeTunIPv6PS(idx)))
 		cmds = append(cmds, fmt.Sprintf("netsh interface ipv4 set dnsservers name=%d source=dhcp", idx))
 		cmds = append(cmds, fmt.Sprintf("netsh interface ipv6 set dnsservers name=%d source=dhcp", idx))
 	}
@@ -174,6 +193,7 @@ func buildTunCleanupScript(idxs []int) string {
 	var b strings.Builder
 	for _, idx := range idxs {
 		fmt.Fprintf(&b, "%s\n", removeAllRoutesPS(idx))
+		fmt.Fprintf(&b, "%s\n", removeTunIPv6PS(idx))
 		fmt.Fprintf(&b, "Set-DnsClientServerAddress -InterfaceIndex %d -ResetServerAddresses -ErrorAction SilentlyContinue\n", idx)
 	}
 	return b.String()

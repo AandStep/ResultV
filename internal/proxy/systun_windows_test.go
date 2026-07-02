@@ -56,6 +56,58 @@ func TestBuildTunCleanupScript(t *testing.T) {
 	}
 }
 
+// A leftover sing-tun adapter keeps its IPv6 ULA (fdfe:dcba:9876::1/126) bound.
+// clearLeftoverTun stripping only routes/DNS leaves that address in place, so the
+// next sing-tun boot re-adds the same ULA and dies with "set ipv6 address: The
+// object already exists" — fixable today only by a reboot. The cleanup must also
+// release the IPv6 address (synchronously, unlike async pnputil device removal).
+func TestBuildTunCleanupScript_RemovesIPv6Address(t *testing.T) {
+	s := buildTunCleanupScript([]int{3, 9})
+	for _, want := range []string{
+		"Remove-NetIPAddress -InterfaceIndex 3 -AddressFamily IPv6",
+		"Remove-NetIPAddress -InterfaceIndex 9 -AddressFamily IPv6",
+	} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("script missing IPv6 release %q:\n%s", want, s)
+		}
+	}
+}
+
+func TestBuildTunCleanupCommands_RemovesIPv6Address(t *testing.T) {
+	cmds := buildTunCleanupCommands([]int{3})
+	want := "Remove-NetIPAddress -InterfaceIndex 3 -AddressFamily IPv6"
+	found := false
+	for _, cmd := range cmds {
+		if strings.Contains(cmd, want) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected an IPv6-release command containing %q in %v", want, cmds)
+	}
+}
+
+func TestClearLeftoverTun_AdminReleasesIPv6Address(t *testing.T) {
+	ran, _ := withTunStubs(t, true, "3\n")
+	if err := clearLeftoverTun(); err != nil {
+		t.Fatalf("clearLeftoverTun: %v", err)
+	}
+	if !strings.Contains(*ran, "Remove-NetIPAddress -InterfaceIndex 3 -AddressFamily IPv6") {
+		t.Fatalf("admin cleanup must release the adapter's IPv6 address: %q", *ran)
+	}
+}
+
+func TestClearLeftoverTun_NonAdminReleasesIPv6Address(t *testing.T) {
+	_, elevated := withTunStubs(t, false, "5\n")
+	if err := clearLeftoverTun(); err != nil {
+		t.Fatalf("clearLeftoverTun: %v", err)
+	}
+	if !strings.Contains(*elevated, "Remove-NetIPAddress -InterfaceIndex 5 -AddressFamily IPv6") {
+		t.Fatalf("elevated cleanup must release the adapter's IPv6 address: %q", *elevated)
+	}
+}
+
 // withTunStubs swaps the PowerShell runners + admin check; detect returns the
 // given ifIndex output for the Get-NetAdapter probe.
 func withTunStubs(t *testing.T, admin bool, detectOut string) (ran *string, elevated *string) {
