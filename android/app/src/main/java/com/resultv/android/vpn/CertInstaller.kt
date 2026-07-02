@@ -44,15 +44,28 @@ object CertInstaller {
      * which this share sheet provides (save to Files, email, cloud storage,
      * etc., then pick it back up from Settings -> Encryption & credentials).
      *
+     * Copies ca.crt into a dedicated cacheDir/share_cert/ subdirectory before
+     * building the FileProvider URI, rather than exposing files/filter/
+     * directly — that directory also holds ca.key (the CA private key) and
+     * cached filter lists, which must never become reachable through this
+     * mechanism. (Pointing <files-path> at the exact ca.crt filename instead
+     * of a directory was tried and rejected: it crashes AndroidX
+     * FileProvider's SimplePathStrategy.getUriForFile with a
+     * StringIndexOutOfBoundsException — confirmed via live device test.
+     * <files-path>/<cache-path> entries must name a directory.)
+     *
      * Throws under the same conditions as [buildInstallIntent] — callers
      * should catch and show an error rather than crash.
      */
     fun buildShareIntent(context: Context, dataDir: String): android.content.Intent {
         val certPath = Mobile.filterCARootPath(dataDir)
+        val shareDir = File(context.cacheDir, "share_cert").apply { mkdirs() }
+        val shareFile = File(shareDir, "resultv-adblock-ca.crt")
+        File(certPath).copyTo(shareFile, overwrite = true)
         val uri = androidx.core.content.FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
-            File(certPath),
+            shareFile,
         )
         val sendIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
             type = "application/x-x509-ca-cert"
