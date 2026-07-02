@@ -18,6 +18,16 @@ import kotlinx.coroutines.flow.asStateFlow
  * to re-thread state plumbing. (`Ad blocking` IS wired — see
  * [BuildOptionsBuilder] and the Go `adblock` option.)
  */
+/**
+ * Last known result of [com.resultv.android.vpn.CertSelfTest] — whether the
+ * browser ad-block MITM root CA is currently trusted by the system. Updated
+ * only on a definitive PASS/CERT_UNTRUSTED result (see
+ * ResultVpnService.startBrowserAdBlockIfEnabled); a transient INCONCLUSIVE
+ * result never overwrites the last known-good/known-bad value. Drives
+ * whether the Settings toggle re-shows the KeyChain install dialog.
+ */
+enum class CertTrustState { UNKNOWN, TRUSTED, UNTRUSTED }
+
 data class SettingsState(
     /** "Auto" / "Google" / "Cloudflare" / "Quad9" / "Custom". */
     val dnsPreset: String = "Cloudflare",
@@ -34,6 +44,7 @@ data class SettingsState(
      * docs/superpowers/specs/2026-07-01-android-mitm-adblock-design.md.
      */
     val browserAdBlock: Boolean = false,
+    val certTrustState: CertTrustState = CertTrustState.UNKNOWN,
     val ipv6: Boolean = false,
     /** RFC1918 / link-local / multicast traffic bypasses the proxy. */
     val bypassLan: Boolean = true,
@@ -63,6 +74,7 @@ object SettingsRepository {
     private const val K_KILL_SWITCH = "kill_switch"
     private const val K_ADBLOCK = "adblock"
     private const val K_BROWSER_ADBLOCK = "browser_adblock"
+    private const val K_CERT_TRUST_STATE = "cert_trust_state"
     private const val K_IPV6 = "ipv6"
     private const val K_BYPASS_LAN = "bypass_lan"
     private const val K_LOG_LEVEL = "log_level"
@@ -103,6 +115,9 @@ object SettingsRepository {
             killSwitch = prefs.getBoolean(K_KILL_SWITCH, false),
             adblock = prefs.getBoolean(K_ADBLOCK, false),
             browserAdBlock = prefs.getBoolean(K_BROWSER_ADBLOCK, false),
+            certTrustState = runCatching {
+                CertTrustState.valueOf(prefs.getString(K_CERT_TRUST_STATE, CertTrustState.UNKNOWN.name)!!)
+            }.getOrDefault(CertTrustState.UNKNOWN),
             ipv6 = prefs.getBoolean(K_IPV6, false),
             bypassLan = prefs.getBoolean(K_BYPASS_LAN, true),
             logLevel = prefs.getString(K_LOG_LEVEL, "info") ?: "info",
@@ -134,6 +149,11 @@ object SettingsRepository {
     fun setBrowserAdBlock(enabled: Boolean) = mutate {
         prefs.edit().putBoolean(K_BROWSER_ADBLOCK, enabled).apply()
         it.copy(browserAdBlock = enabled)
+    }
+
+    fun setCertTrustState(state: CertTrustState) = mutate {
+        prefs.edit().putString(K_CERT_TRUST_STATE, state.name).apply()
+        it.copy(certTrustState = state)
     }
 
     fun setIpv6(enabled: Boolean) = mutate {
