@@ -57,6 +57,7 @@ import com.resultv.android.theme.Brand
 import com.resultv.android.theme.ResultVTheme
 import com.resultv.android.ui.screens.AddScreen
 import com.resultv.android.ui.screens.HomeScreen
+import com.resultv.android.ui.screens.FaqScreen
 import com.resultv.android.ui.screens.LogsScreen
 import com.resultv.android.ui.screens.ProxiesScreen
 import com.resultv.android.ui.screens.RulesScreen
@@ -307,6 +308,7 @@ private fun AppShell(
     // nav). There's no NavController in this app, so a simple overlay flag is
     // the lightest way to push a detail screen from a settings row.
     var showLogs by rememberSaveable { mutableStateOf(false) }
+    var showFaq by rememberSaveable { mutableStateOf(false) }
     // SaveableStateHolder retains each tab's `rememberSaveable` state across
     // tab switches, so returning to Proxies keeps the user's scroll position,
     // expanded subscriptions, sort mode and protocol filter instead of
@@ -358,7 +360,10 @@ private fun AppShell(
                         dataDir = dataDir,
                         onDone = { tab = Tab.Proxies },
                     )
-                    Tab.Settings -> SettingsScreen(onOpenLogs = { showLogs = true })
+                    Tab.Settings -> SettingsScreen(
+                        onOpenLogs = { showLogs = true },
+                        onOpenFaq = { showFaq = true },
+                    )
                 }
             }
         }
@@ -367,5 +372,10 @@ private fun AppShell(
     if (showLogs) {
         BackHandler { showLogs = false }
         LogsScreen(onBack = { showLogs = false })
+    }
+
+    if (showFaq) {
+        BackHandler { showFaq = false }
+        FaqScreen(onBack = { showFaq = false })
     }
 }
