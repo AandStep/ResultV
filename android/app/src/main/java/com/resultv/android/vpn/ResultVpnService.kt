@@ -197,6 +197,7 @@ class ResultVpnService : VpnService() {
             when (CertSelfTest.run(BROWSER_ADBLOCK_PORT)) {
                 CertSelfTest.Result.PASS -> {
                     BoxModule.filterProxyRunning = true
+                    SettingsRepository.setCertTrustState(com.resultv.android.vpn.CertTrustState.TRUSTED)
                     filterProxyWatchdog?.stop()
                     filterProxyWatchdog = FilterProxyWatchdog(filesDir.absolutePath) {
                         onFilterProxyUnhealthy()
@@ -205,11 +206,15 @@ class ResultVpnService : VpnService() {
                 CertSelfTest.Result.CERT_UNTRUSTED -> {
                     // Tear down; leave filterProxyRunning=false so setHttpProxy is NOT applied.
                     mobile.Mobile.stopFilterProxy()
+                    SettingsRepository.setCertTrustState(com.resultv.android.vpn.CertTrustState.UNTRUSTED)
                     SettingsRepository.setBrowserAdBlock(false)
                     AppLog.warning(getString(R.string.log_browser_adblock_cert_untrusted))
                 }
                 CertSelfTest.Result.INCONCLUSIVE -> {
                     // Don't leave an unused proxy running; keep the toggle for next time.
+                    // certTrustState is deliberately NOT touched here — a transient
+                    // network hiccup must not overwrite the last known-good/known-bad
+                    // determination (see CertTrustState's doc comment).
                     mobile.Mobile.stopFilterProxy()
                     AppLog.warning(getString(R.string.log_browser_adblock_selftest_inconclusive))
                 }
