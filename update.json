@@ -1,12 +1,12 @@
 {
   "version": "",
   "releaseTitle": {
-    "ru": "Фикс для Reality и Smart mode",
-    "en": "Fix for Reality and Smart mode"
+    "ru": "Небольшой фикс для подписок ImpVPN",
+    "en": "Small fix for ImpVPN subscriptions"
   },
   "releaseNotes": {
-    "ru": "Поправлены проблемы с подключением к серверам в режиме Reality. Улучшена работа Smart mode.",
-    "en": "Fixed connection issues with Reality. Improved Smart mode."
+    "ru": "Небольшой фикс для корректного импорта подписок от нашего партнера impVPN. Приобрести их подписку с бонусом 20% к пополнению по промокоду \"result\" можно у них на сайте: https://my.impio.space/?ref=NzQ3MDczMjUz или в ТГ-боте: https://t.me/impVPNBot?start=NzQ3MDczMjUz",
+    "en": "Small fix for correct import of subscriptions from our partner impVPN. You can purchase a subscription on their website with a 20% bonus on your balance using the promo code \"result\": https://my.impio.space/?ref=NzQ3MDczMjUz or in Telegram bot: https://t.me/impVPNBot?start=NzQ3MDczMjUz"
   },
   "downloadUrl": "https://result-proxy.ru/",
   "platforms": {}
