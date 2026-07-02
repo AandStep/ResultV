@@ -88,6 +88,13 @@
     <string name="settings_desc">Управление безопасностью и системой</string>
     <string name="settings_back">Назад к настройкам</string>
     <string name="settings_group_advanced">Дополнительные настройки</string>
+    <string name="settings_group_adblock">Блокировка рекламы</string>
+    <string name="settings_group_adblock_desc">Блокировка баннеров, трекеров и рекламы в браузере</string>
+    <string name="settings_browser_adblock_reinstall">Переустановить сертификат</string>
+    <string name="settings_browser_adblock_faq_link">Часто задаваемые вопросы</string>
+    <string name="cert_status_trusted">✓ Сертификат подтверждён</string>
+    <string name="cert_status_untrusted">⚠ Сертификат не подтверждён</string>
+    <string name="cert_status_unknown">Требуется проверка — подключите VPN</string>
     <string name="settings_group_advanced_desc">Параметры запуска, TUN и фильтрации трафика.</string>
     <string name="settings_data_usage_title">Статистика трафика</string>
     <string name="settings_data_usage_desc">Накопленный VPN-трафик с момента установки</string>

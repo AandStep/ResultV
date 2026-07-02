@@ -93,6 +93,13 @@
     <string name="settings_desc">Security and system management</string>
     <string name="settings_back">Back to settings</string>
     <string name="settings_group_advanced">Advanced settings</string>
+    <string name="settings_group_adblock">Ad blocking</string>
+    <string name="settings_group_adblock_desc">Block banners, trackers, and browser ads</string>
+    <string name="settings_browser_adblock_reinstall">Reinstall certificate</string>
+    <string name="settings_browser_adblock_faq_link">Frequently Asked Questions</string>
+    <string name="cert_status_trusted">✓ Certificate verified</string>
+    <string name="cert_status_untrusted">⚠ Certificate not verified</string>
+    <string name="cert_status_unknown">Verification required — connect the VPN</string>
     <string name="settings_group_advanced_desc">Startup, TUN and traffic filtering options.</string>
     <string name="settings_data_usage_title">Data usage</string>
     <string name="settings_data_usage_desc">Accumulated VPN traffic since install</string>
