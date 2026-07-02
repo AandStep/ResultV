@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Mobile.filterCARootPath returns a path under filesDir/filter/ca.crt -->
-    <files-path name="filter" path="filter/" />
+    <!-- Pinned to the exact certificate file, not the whole filter/
+         directory — that directory also holds ca.key (the CA private key)
+         and cached filter lists, which must not become shareable via this
+         FileProvider even though it's exported="false" (defense in depth). -->
+    <files-path name="cert" path="filter/ca.crt" />
 </paths>
