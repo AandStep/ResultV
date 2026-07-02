@@ -148,6 +148,103 @@ func TestFetchSubscriptionInsecureSuppressesHWID(t *testing.T) {
 	}
 }
 
+// impio dropped the /json suffix from its subscription endpoint: the raw URL
+// now returns JSON directly and .../json answers HTTP 400. The helper must
+// produce the toggled variant so the fetcher can fall back in either
+// direction (legacy stored .../json URLs and fresh raw URLs both work).
+func TestImpioAlternateSubscriptionURL(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"https://my.impio.space/api/sub/raw/abc", "https://my.impio.space/api/sub/raw/abc/json"},
+		{"https://my.impio.space/api/sub/raw/abc/json", "https://my.impio.space/api/sub/raw/abc"},
+		{"https://my.impio.space/api/sub/raw/abc/json/", "https://my.impio.space/api/sub/raw/abc"},
+		{"https://my.impio.space/api/sub/raw/abc/", "https://my.impio.space/api/sub/raw/abc/json"},
+		{"https://other.example.com/sub/json", ""},
+		{"not a url ://", ""},
+	}
+	for _, c := range cases {
+		if got := impioAlternateSubscriptionURL(c.in); got != c.want {
+			t.Errorf("impioAlternateSubscriptionURL(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// A stored legacy URL ending in /json now gets HTTP 400 from impio. The
+// fetcher must retry the toggled URL (suffix stripped) and succeed.
+func TestFetchSubscriptionImpioJSONFallback(t *testing.T) {
+	var paths []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Icon discovery re-fetches the page with a browser UA; only count
+		// actual subscription fetches (ResultV UA).
+		if strings.HasPrefix(r.Header.Get("User-Agent"), "ResultV/") {
+			paths = append(paths, r.URL.Path)
+		}
+		if r.URL.Path != "/api/sub/raw/abc" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte("vless://af815621-b245-4149-89da-dd184cfc4b3d@example.com:443?type=tcp&security=none#Node"))
+	}))
+	defer ts.Close()
+
+	oldHost := impioSubscriptionHost
+	impioSubscriptionHost = strings.TrimPrefix(ts.URL, "http://")
+	defer func() { impioSubscriptionHost = oldHost }()
+
+	app := NewApp()
+	entries, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL+"/api/sub/raw/abc/json", true)
+	if err != nil {
+		t.Fatalf("expected fallback to strip /json and succeed, got %v (paths: %v)", err, paths)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry after fallback, got %d", len(entries))
+	}
+	if len(paths) != 2 || paths[0] != "/api/sub/raw/abc/json" || paths[1] != "/api/sub/raw/abc" {
+		t.Fatalf("expected /json first then stripped retry, got %v", paths)
+	}
+	if entries[0].SubscriptionURL != ts.URL+"/api/sub/raw/abc" {
+		t.Fatalf("entries must carry the working URL, got %q", entries[0].SubscriptionURL)
+	}
+}
+
+// A fresh raw impio URL (no /json) must be fetched as-is with no suffix
+// rewriting — this is the deep-link import path that used to 400.
+func TestFetchSubscriptionImpioRawURLNotRewritten(t *testing.T) {
+	var paths []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Icon discovery re-fetches the page with a browser UA; only count
+		// actual subscription fetches (ResultV UA).
+		if strings.HasPrefix(r.Header.Get("User-Agent"), "ResultV/") {
+			paths = append(paths, r.URL.Path)
+		}
+		if r.URL.Path != "/api/sub/raw/abc" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte("vless://af815621-b245-4149-89da-dd184cfc4b3d@example.com:443?type=tcp&security=none#Node"))
+	}))
+	defer ts.Close()
+
+	oldHost := impioSubscriptionHost
+	impioSubscriptionHost = strings.TrimPrefix(ts.URL, "http://")
+	defer func() { impioSubscriptionHost = oldHost }()
+
+	app := NewApp()
+	entries, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL+"/api/sub/raw/abc", true)
+	if err != nil {
+		t.Fatalf("raw URL must fetch directly: %v (paths: %v)", err, paths)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if len(paths) != 1 || paths[0] != "/api/sub/raw/abc" {
+		t.Fatalf("raw URL must be fetched exactly once without rewriting, got %v", paths)
+	}
+}
+
 func TestFetchSubscriptionSendsConfiguredUserAgentAndDeviceHeaders(t *testing.T) {
 	app := NewApp()
 	mgr := config.NewManager(config.NewCryptoServiceWithID("subscription-metadata-test"))
