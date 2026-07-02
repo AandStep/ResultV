@@ -78,6 +78,22 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
         </service>
+
+        <!-- Exposes files/filter/ca.crt via a content:// URI so the user can
+             share/save the browser ad-block CA certificate through Android's
+             system share sheet, then install it manually via Settings ->
+             Encryption & credentials (KeyChain.createInstallIntent() only
+             shows an informational dialog on Android 7+, it does not install
+             directly — the user needs an actual file to pick in that flow). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

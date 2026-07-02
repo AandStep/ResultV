@@ -33,4 +33,32 @@ object CertInstaller {
             putExtra(KeyChain.EXTRA_NAME, "ResultV AdBlock Root CA")
         }
     }
+
+    /**
+     * Builds a share intent for the CA certificate file itself, via
+     * FileProvider + ACTION_SEND. This is the actually-functional path for
+     * getting the certificate onto the device where the user can pick it:
+     * KeyChain.createInstallIntent() (above) only shows an informational
+     * "install this in Settings" dialog on Android 7+, it never installs
+     * directly — the user needs a real file to select in that Settings flow,
+     * which this share sheet provides (save to Files, email, cloud storage,
+     * etc., then pick it back up from Settings -> Encryption & credentials).
+     *
+     * Throws under the same conditions as [buildInstallIntent] — callers
+     * should catch and show an error rather than crash.
+     */
+    fun buildShareIntent(context: Context, dataDir: String): android.content.Intent {
+        val certPath = Mobile.filterCARootPath(dataDir)
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            File(certPath),
+        )
+        val sendIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "application/x-x509-ca-cert"
+            putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        return android.content.Intent.createChooser(sendIntent, "ResultV AdBlock Root CA")
+    }
 }

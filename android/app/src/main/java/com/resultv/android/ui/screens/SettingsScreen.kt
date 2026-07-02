@@ -388,6 +388,28 @@ private fun BrowserAdBlockRow(settings: com.resultv.android.vpn.SettingsState) {
             }
         },
     )
+    HorizontalDivider(color = Brand.SurfaceHigh)
+    NavRow(
+        label = stringResource(R.string.settings_browser_adblock_share),
+        icon = Icons.Outlined.Share,
+        iconBg = Color(0xFF22c55e).copy(alpha = 0.18f),
+        iconTint = Color(0xFF4ade80),
+        onClick = {
+            try {
+                val intent = com.resultv.android.vpn.CertInstaller.buildShareIntent(
+                    context, context.filesDir.absolutePath,
+                )
+                context.startActivity(intent)
+            } catch (e: Exception) {
+                android.util.Log.w("SettingsScreen", "Failed to prepare ad-block cert share intent", e)
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.settings_browser_adblock_cert_error),
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

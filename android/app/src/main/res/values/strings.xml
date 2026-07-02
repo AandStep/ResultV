@@ -71,7 +71,7 @@
     <string name="faq_section_youtube_title">Why YouTube app ads aren\'t blocked</string>
     <string name="faq_section_youtube_body">Ads inside the YouTube app are embedded directly in the encrypted server response together with the video itself — there\'s no separate ad request to cut out without breaking playback. YouTube\'s app also only trusts system certificates and checks Certificate Transparency, so intercepting its traffic isn\'t possible even in theory. This feature removes banners and trackers in the browser (Chrome), not the ads inside YouTube videos.</string>
     <string name="faq_section_install_title">How to install the certificate</string>
-    <string name="faq_section_install_body">After turning the toggle on, Android shows a system warning dialog — this is normal for any app that installs its own certificate. Confirm the install in the system settings screen that opens. The certificate only affects this app\'s traffic on this device, is never sent anywhere, and stays entirely local.</string>
+    <string name="faq_section_install_body">After turning the toggle on, Android shows a warning that the certificate must be installed in Settings — this is normal for any app installing its own certificate, and Android does not let apps install it automatically. To finish: open this screen\'s "Share certificate file" button, save the file (e.g. to your Files app or Downloads), then go to Settings → Security → Encryption &amp; credentials → Install a certificate → CA certificate, and pick the saved file. The certificate only affects this app\'s traffic on this device, is never sent anywhere, and stays entirely local.</string>
     <string name="faq_section_broke_title">Sites stopped loading after enabling</string>
     <string name="faq_section_broke_body">If sites stop loading after enabling (a certificate error), the install wasn\'t completed. The app checks this itself on every VPN connection and automatically turns the feature off if the certificate isn\'t trusted, leaving your normal internet untouched. Just reinstall the certificate and reconnect.</string>
     <string name="faq_section_autodisabled_title">The feature turned itself off</string>
@@ -96,6 +96,7 @@
     <string name="settings_group_adblock">Ad blocking</string>
     <string name="settings_group_adblock_desc">Block banners, trackers, and browser ads</string>
     <string name="settings_browser_adblock_reinstall">Reinstall certificate</string>
+    <string name="settings_browser_adblock_share">Share certificate file</string>
     <string name="settings_browser_adblock_faq_link">Frequently Asked Questions</string>
     <string name="cert_status_trusted">✓ Certificate verified</string>
     <string name="cert_status_untrusted">⚠ Certificate not verified</string>
