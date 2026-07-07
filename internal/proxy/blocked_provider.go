@@ -158,14 +158,16 @@ func (p *HTTPBlockedListProvider) client() *http.Client {
 	return &http.Client{Timeout: 10 * time.Second}
 }
 
-// FetchTelegramCIDRs downloads the Telegram MTProto data-center subnets (IPv4 +
-// IPv6) and returns them as normalized CIDR strings. Unlike the domain list
-// this is country-independent. Sources are overridable via
-// RESULTPROXY_TELEGRAM_CIDR_SOURCES (comma-separated).
-func (p *HTTPBlockedListProvider) FetchTelegramCIDRs(ctx context.Context) ([]string, error) {
-	sources := p.telegramCIDRSources()
+// FetchBlockedCIDRs downloads the IP-only blocked-service subnets (Telegram
+// MTProto data centers + Discord voice media servers) and returns them as
+// normalized CIDR strings. Unlike the domain list this is country-independent.
+// Sources are overridable via RESULTPROXY_BLOCKED_CIDR_SOURCES
+// (comma-separated); the legacy RESULTPROXY_TELEGRAM_CIDR_SOURCES name still
+// works as a fallback.
+func (p *HTTPBlockedListProvider) FetchBlockedCIDRs(ctx context.Context) ([]string, error) {
+	sources := p.blockedCIDRSources()
 	if len(sources) == 0 {
-		return nil, fmt.Errorf("telegram cidr sources are empty")
+		return nil, fmt.Errorf("blocked cidr sources are empty")
 	}
 	merged := make([]string, 0, 32)
 	var lastErr error
@@ -189,7 +191,7 @@ func (p *HTTPBlockedListProvider) FetchTelegramCIDRs(ctx context.Context) ([]str
 			resp.Body.Close()
 			continue
 		}
-		body, err := io.ReadAll(io.LimitReader(resp.Body, 1*1024*1024))
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
 		resp.Body.Close()
 		if err != nil {
 			lastErr = err
@@ -207,8 +209,12 @@ func (p *HTTPBlockedListProvider) FetchTelegramCIDRs(ctx context.Context) ([]str
 	return merged, nil
 }
 
-func (p *HTTPBlockedListProvider) telegramCIDRSources() []string {
-	override := strings.TrimSpace(os.Getenv("RESULTPROXY_TELEGRAM_CIDR_SOURCES"))
+func (p *HTTPBlockedListProvider) blockedCIDRSources() []string {
+	override := strings.TrimSpace(os.Getenv("RESULTPROXY_BLOCKED_CIDR_SOURCES"))
+	if override == "" {
+		// Legacy name from the Telegram-only era; keep working.
+		override = strings.TrimSpace(os.Getenv("RESULTPROXY_TELEGRAM_CIDR_SOURCES"))
+	}
 	if override != "" {
 		parts := strings.Split(override, ",")
 		out := make([]string, 0, len(parts))
@@ -221,14 +227,21 @@ func (p *HTTPBlockedListProvider) telegramCIDRSources() []string {
 			return out
 		}
 	}
-	return defaultTelegramCIDRSources()
+	return defaultBlockedCIDRSources()
 }
 
-func defaultTelegramCIDRSources() []string {
-	const base = "https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Subnets/"
+// defaultBlockedCIDRSources are the IP-only blocked services: Telegram MTProto
+// data centers and Discord voice media servers (~2300 narrow /32s from
+// Re:filter). Invariant: sources must be NARROW service ranges — never
+// cloud-provider-wide blocks (itdog's Subnets/IPv4/discord.lst ships
+// 172.64.0.0/13 = all of Cloudflare and would drag half the internet into
+// the tunnel; Flowseal's ipset ships 40.0.0.0/8 = Azure. Both rejected).
+func defaultBlockedCIDRSources() []string {
+	const itdog = "https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Subnets/"
 	return []string{
-		base + "IPv4/telegram.lst",
-		base + "IPv6/telegram.lst",
+		itdog + "IPv4/telegram.lst",
+		itdog + "IPv6/telegram.lst",
+		"https://raw.githubusercontent.com/1andrevich/Re-filter-lists/main/discord_ips.lst",
 	}
 }
 

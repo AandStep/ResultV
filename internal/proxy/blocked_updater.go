@@ -140,11 +140,11 @@ func LoadCachedBlockedCIDRs(cachePath string) BlockedCIDRsResolveResult {
 	}
 }
 
-// CIDRFetcher fetches the Telegram MTProto subnet list. Narrow interface
-// (satisfied by *HTTPBlockedListProvider) so callers and tests don't depend on
-// the full BlockedListProvider.
+// CIDRFetcher fetches the IP-subnet block-list (Telegram MTProto + Discord
+// voice). Narrow interface (satisfied by *HTTPBlockedListProvider) so callers
+// and tests don't depend on the full BlockedListProvider.
 type CIDRFetcher interface {
-	FetchTelegramCIDRs(ctx context.Context) ([]string, error)
+	FetchBlockedCIDRs(ctx context.Context) ([]string, error)
 }
 
 type BlockedCIDRsResolveResult struct {
@@ -160,7 +160,7 @@ type BlockedCIDRsResolveResult struct {
 func ResolveBlockedCIDRs(ctx context.Context, fetcher CIDRFetcher, cachePath string) BlockedCIDRsResolveResult {
 	var lastErr error
 	if fetcher != nil {
-		cidrs, err := fetcher.FetchTelegramCIDRs(ctx)
+		cidrs, err := fetcher.FetchBlockedCIDRs(ctx)
 		if err == nil && len(cidrs) > 0 {
 			cache := BlockedCIDRsCache{
 				UpdatedAt: time.Now().Unix(),

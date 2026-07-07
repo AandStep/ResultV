@@ -49,7 +49,7 @@ type fakeCIDRFetcher struct {
 	err   error
 }
 
-func (f fakeCIDRFetcher) FetchTelegramCIDRs(ctx context.Context) ([]string, error) {
+func (f fakeCIDRFetcher) FetchBlockedCIDRs(ctx context.Context) ([]string, error) {
 	if f.err != nil {
 		return nil, f.err
 	}

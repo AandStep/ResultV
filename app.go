@@ -3020,14 +3020,15 @@ func (a *App) initSmartBlockedDomains(userDataPath, rootDir string) {
 		a.log.Info(fmt.Sprintf("[SMART] Источник списков: %s, записей: %d", domRes.Source, len(domRes.Domains)))
 	}
 
-	// IP-subnet block-list (Telegram MTProto): native Telegram dials its data
-	// centers by IP with no domain/SNI, so domain rules can't catch it — Smart
-	// mode needs these ranges. Cache-first, always resolves (static fallback).
+	// IP-subnet block-list (Telegram MTProto + Discord voice): these clients
+	// dial their servers by IP with no domain/SNI, so domain rules can't catch
+	// them — Smart mode needs the ranges. Cache-first, always resolves (static
+	// fallback).
 	cidrRes := proxy.LoadCachedBlockedCIDRs(cidrCachePath)
 	if router != nil && len(cidrRes.CIDRs) > 0 {
 		router.SetBlockedCIDRs(cidrRes.CIDRs)
 	}
-	a.log.Info(fmt.Sprintf("[SMART] IP-подсети (Telegram): источник %s, записей: %d", cidrRes.Source, len(cidrRes.CIDRs)))
+	a.log.Info(fmt.Sprintf("[SMART] IP-подсети (Telegram+Discord): источник %s, записей: %d", cidrRes.Source, len(cidrRes.CIDRs)))
 
 	a.startSmartBlockedRefresh(cachePath, cidrCachePath)
 }
