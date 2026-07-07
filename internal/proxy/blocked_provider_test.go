@@ -236,3 +236,17 @@ func TestParseDomainPayload_CSV(t *testing.T) {
 		t.Fatalf("expected example.com in parsed domains: %v", domains)
 	}
 }
+
+func TestCompressDomainSuffixes(t *testing.T) {
+	in := []string{"discord.com", "cdn.discord.com", "gg.discord.com", "x.com", "api.x.com", "unrelated.net"}
+	got := compressDomainSuffixes(in)
+	want := []string{"discord.com", "x.com", "unrelated.net"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v (order must be preserved)", got, want)
+		}
+	}
+}

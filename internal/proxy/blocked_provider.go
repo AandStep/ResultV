@@ -65,6 +65,38 @@ func (p *HTTPBlockedListProvider) ResolveCountry(ctx context.Context) (string, e
 	return p.Country.LookupSelfCountry(ctx)
 }
 
+// compressDomainSuffixes drops entries already covered by a parent suffix in
+// the same list (cdn.discord.com is redundant next to discord.com). Keeps
+// input order. Input must be normalized (see normalizeDomains).
+func compressDomainSuffixes(domains []string) []string {
+	if len(domains) < 2 {
+		return domains
+	}
+	set := make(map[string]struct{}, len(domains))
+	for _, d := range domains {
+		set[d] = struct{}{}
+	}
+	out := make([]string, 0, len(domains))
+	for _, d := range domains {
+		covered := false
+		for h := d; ; {
+			idx := strings.Index(h, ".")
+			if idx < 0 {
+				break
+			}
+			h = h[idx+1:]
+			if _, ok := set[h]; ok {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
 func (p *HTTPBlockedListProvider) FetchBlockedDomains(ctx context.Context, country string) ([]string, error) {
 	country = strings.ToLower(strings.TrimSpace(country))
 	if country == "" {
@@ -109,7 +141,7 @@ func (p *HTTPBlockedListProvider) FetchBlockedDomains(ctx context.Context, count
 		}
 		merged = append(merged, domains...)
 	}
-	merged = normalizeDomains(merged)
+	merged = compressDomainSuffixes(normalizeDomains(merged))
 	if len(merged) == 0 {
 		if lastErr != nil {
 			return nil, lastErr
