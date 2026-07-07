@@ -76,6 +76,12 @@ type EngineConfig struct {
 	RoutingMode  RoutingMode
 	Whitelist    []string
 	AppWhitelist []string
+	// AppForceVPN forces every connection owned by these process names through
+	// the proxy outbound, regardless of routing mode rules. This is the
+	// reliable equivalent of "cascade by domain": Discord voice and Speedtest
+	// talk UDP to bare IPs that no domain/SNI rule can catch, but the owning
+	// process is always known to sing-box's find_process. Tunnel mode only.
+	AppForceVPN []string
 	// BlockedDomains is the censored/blocked block-list (already normalized
 	// suffixes from Router.GetBlockedDomains). Consumed only in Smart mode:
 	// buildRoute routes these through the proxy while everything else goes
@@ -897,7 +903,8 @@ func splitDNSServer(raw string) (string, int) {
 }
 
 func buildRoute(cfg EngineConfig) *SBRoute {
-	findProcess := len(cfg.AppWhitelist) > 0
+	findProcess := len(cfg.AppWhitelist) > 0 ||
+		(cfg.Mode == ProxyModeTunnel && len(cfg.AppForceVPN) > 0)
 	if cfg.AdBlock && cfg.MITMPort > 0 {
 		findProcess = true
 	}
@@ -995,6 +1002,21 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 					Outbound:         "direct",
 				})
 			}
+		}
+	}
+
+	// Force-VPN apps: the whole process family goes through the tunnel. Placed
+	// before the app-whitelist direct rule so an explicit "via VPN" beats an
+	// accidental overlap with the exclusion list (the UI prevents adding one
+	// app to both). Tunnel-only: in proxy mode apps that ignore the system
+	// proxy never reach us, so the rule would be dead weight.
+	if cfg.Mode == ProxyModeTunnel {
+		if rx := appWhitelistPathRegexes(cfg.AppForceVPN); len(rx) > 0 {
+			rules = append(rules, SBRouteRule{
+				Action:           "route",
+				ProcessPathRegex: rx,
+				Outbound:         "proxy",
+			})
 		}
 	}
 
