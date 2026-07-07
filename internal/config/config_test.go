@@ -532,3 +532,24 @@ func TestManagerInitPromotesLegacyWhenNewIsEmpty(t *testing.T) {
 		t.Fatalf("legacy config should be removed after promotion, err=%v", err)
 	}
 }
+
+func TestRoutingRulesNewFieldsDefaults(t *testing.T) {
+	// Конфиг старого формата (3.2.x) без новых полей: после ensureDefaults
+	// оба списка не nil, чтобы JSON для фронта отдавал [], а не null.
+	raw := []byte(`{"routingRules":{"mode":"smart","whitelist":["localhost"],"appWhitelist":[]}}`)
+	var cfg AppConfig
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	cfg = ensureDefaults(cfg)
+	if cfg.RoutingRules.AppForceVPN == nil {
+		t.Error("AppForceVPN must default to empty slice, got nil")
+	}
+	if cfg.RoutingRules.CustomBlockedDomains == nil {
+		t.Error("CustomBlockedDomains must default to empty slice, got nil")
+	}
+	def := DefaultConfig()
+	if def.RoutingRules.AppForceVPN == nil || def.RoutingRules.CustomBlockedDomains == nil {
+		t.Error("DefaultConfig must initialise new routing fields")
+	}
+}

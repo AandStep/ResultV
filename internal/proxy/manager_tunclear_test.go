@@ -53,7 +53,7 @@ func connectWithTunStubs(t *testing.T, mode ProxyMode, present bool) bool {
 		ProxyConfig{IP: host, Port: port, Type: "http"},
 		mode,
 		ModeGlobal,
-		nil, nil,
+		nil, nil, nil,
 		false, false,
 		0, false, nil, "", "",
 		false,

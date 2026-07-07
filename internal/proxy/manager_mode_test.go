@@ -136,6 +136,7 @@ func TestConnect_TunnelStartFailureIncludesReasonAndFallbackFlag(t *testing.T) {
 		ModeGlobal,
 		nil,
 		nil,
+		nil,
 		false,
 		false,
 		0,
@@ -195,6 +196,7 @@ func TestSetMode_ReconnectsWhenConnected(t *testing.T) {
 		ModeWhitelist,
 		[]string{"localhost"},
 		[]string{"notepad.exe"},
+		nil,
 		true,
 		true,
 		0,
@@ -244,6 +246,7 @@ func TestConnect_TunnelRequiresAdmin(t *testing.T) {
 		ModeGlobal,
 		nil,
 		nil,
+		nil,
 		false,
 		false,
 		0,
@@ -291,6 +294,7 @@ func TestConnect_Hysteria2PostStartProbeFailure(t *testing.T) {
 		ProxyConfig{IP: "1.2.3.4", Port: 443, Type: "hysteria2", Password: "p"},
 		ProxyModeProxy,
 		ModeGlobal,
+		nil,
 		nil,
 		nil,
 		false,
@@ -343,6 +347,7 @@ func TestConnect_WireGuardTunnelFailsWhenE2EProbeFails(t *testing.T) {
 		ModeGlobal,
 		nil,
 		nil,
+		nil,
 		false,
 		false,
 		0,
@@ -393,6 +398,7 @@ func TestConnect_WireGuardPostStartProbeSuccess(t *testing.T) {
 		ModeGlobal,
 		nil,
 		nil,
+		nil,
 		false,
 		false,
 		0,
@@ -439,6 +445,7 @@ func TestConnect_AmneziaWGTunnelFailsWhenE2EProbeFails(t *testing.T) {
 		ProxyConfig{IP: "1.2.3.4", Port: 51820, Type: "amneziawg", Extra: []byte(extra)},
 		ProxyModeTunnel,
 		ModeGlobal,
+		nil,
 		nil,
 		nil,
 		false,
@@ -495,6 +502,7 @@ func TestConnect_WireGuardTunnelE2EProbeRetriesThreeTimes(t *testing.T) {
 		ModeGlobal,
 		nil,
 		nil,
+		nil,
 		false,
 		false,
 		0,
@@ -535,6 +543,7 @@ func TestConnect_TrojanTunnelFailsWhenE2EProbeFails(t *testing.T) {
 		ProxyConfig{IP: host, Port: port, Type: "trojan", Password: "x"},
 		ProxyModeTunnel,
 		ModeGlobal,
+		nil,
 		nil,
 		nil,
 		false,
@@ -580,6 +589,7 @@ func TestConnect_TrojanProxyFailsWhenE2EProbeFails(t *testing.T) {
 		ProxyConfig{IP: host, Port: port, Type: "trojan", Password: "x"},
 		ProxyModeProxy,
 		ModeGlobal,
+		nil,
 		nil,
 		nil,
 		false,
@@ -636,6 +646,7 @@ func TestConnect_AmneziaWGTunnelStopsSessionWhenE2EProbeFails(t *testing.T) {
 		ModeGlobal,
 		nil,
 		nil,
+		nil,
 		false,
 		false,
 		0,
@@ -689,6 +700,7 @@ func TestConnect_AmneziaWGTunnelClearsSystemProxy(t *testing.T) {
 		ModeGlobal,
 		nil,
 		nil,
+		nil,
 		true,
 		false,
 		0,
@@ -735,6 +747,7 @@ func TestConnect_FailedSwitchClearsCurrentProxyInStatus(t *testing.T) {
 		ModeGlobal,
 		nil,
 		nil,
+		nil,
 		false,
 		false,
 		0,
@@ -754,6 +767,7 @@ func TestConnect_FailedSwitchClearsCurrentProxyInStatus(t *testing.T) {
 		ProxyConfig{IP: newHost, Port: newPort, Type: "trojan", Password: "x"},
 		ProxyModeProxy,
 		ModeGlobal,
+		nil,
 		nil,
 		nil,
 		false,
@@ -810,5 +824,54 @@ func TestIsProxyProbeResponseAcceptable(t *testing.T) {
 	// 407 = прокси сам не принял запрос
 	if isProxyProbeResponseAcceptable(407) {
 		t.Fatal("expected 407 to be rejected (proxy auth required)")
+	}
+}
+
+func TestSetMode_PreservesAppForceVPN(t *testing.T) {
+	prev := isAdminCheck
+	isAdminCheck = func() bool { return true }
+	defer func() { isAdminCheck = prev }()
+
+	prevTunnelProbe := probeHTTPThroughProxyProbe
+	probeHTTPThroughProxyProbe = func(string) (bool, string) { return true, "" }
+	defer func() { probeHTTPThroughProxyProbe = prevTunnelProbe }()
+
+	host, port, closeFn := startReachableTCP(t)
+	defer closeFn()
+
+	log := logger.New()
+	engine := &stubEngine{}
+	m := NewManager(log)
+	m.engine = engine
+	m.sysProxy = &stubSystemProxy{}
+
+	connectRes := m.Connect(
+		context.Background(),
+		ProxyConfig{IP: host, Port: port, Type: "http"},
+		ProxyModeProxy,
+		ModeSmart,
+		nil,
+		nil,
+		[]string{"discord.exe"},
+		false,
+		false,
+		0,
+		false,
+		nil,
+		"",
+		"",
+		false,
+	)
+	if !connectRes.Success {
+		t.Fatalf("initial connect failed: %+v", connectRes)
+	}
+
+	if err := m.SetMode(ProxyModeTunnel); err != nil {
+		t.Fatalf("set mode failed: %v", err)
+	}
+
+	last := engine.startCalls[len(engine.startCalls)-1]
+	if len(last.AppForceVPN) != 1 || last.AppForceVPN[0] != "discord.exe" {
+		t.Fatalf("appForceVPN must survive SetMode reconnect, got %v", last.AppForceVPN)
 	}
 }

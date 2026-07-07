@@ -1328,3 +1328,46 @@ func TestBuildProxyModeConfig_AdBlock_SingBoxParses(t *testing.T) {
 		t.Fatalf("sing-box decode adblock config: %v\n%s", err, j)
 	}
 }
+
+func TestBuildRouteAppForceVPN(t *testing.T) {
+	cfg := EngineConfig{
+		Mode:         ProxyModeTunnel,
+		RoutingMode:  ModeSmart,
+		AppForceVPN:  []string{"Discord.exe"},
+		AppWhitelist: []string{"steam.exe"},
+	}
+	route := buildRoute(cfg)
+
+	forceIdx, whitelistIdx := -1, -1
+	for i, rule := range route.Rules {
+		if len(rule.ProcessPathRegex) == 0 {
+			continue
+		}
+		if rule.Outbound == "proxy" && strings.Contains(rule.ProcessPathRegex[0], "Discord") {
+			forceIdx = i
+		}
+		if rule.Outbound == "direct" && strings.Contains(rule.ProcessPathRegex[0], "steam") {
+			whitelistIdx = i
+		}
+	}
+	if forceIdx == -1 {
+		t.Fatal("force-VPN process rule missing in tunnel mode")
+	}
+	if whitelistIdx == -1 {
+		t.Fatal("app-whitelist rule missing")
+	}
+	if forceIdx > whitelistIdx {
+		t.Errorf("force-VPN rule (%d) must precede app-whitelist direct rule (%d)", forceIdx, whitelistIdx)
+	}
+	if !route.FindProcess {
+		t.Error("find_process must be enabled when force-VPN list is set")
+	}
+
+	cfg.Mode = ProxyModeProxy
+	route = buildRoute(cfg)
+	for _, rule := range route.Rules {
+		if rule.Outbound == "proxy" && len(rule.ProcessPathRegex) > 0 {
+			t.Error("force-VPN rule must not be emitted in proxy mode")
+		}
+	}
+}

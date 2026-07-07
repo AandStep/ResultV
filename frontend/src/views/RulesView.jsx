@@ -33,53 +33,67 @@ export const RulesView = () => {
 
   const appFileInputRef = useRef(null);
 
+  const isWin =
+    platform === "win32" || platform === "windows" || platform === "win64";
+
+  // The two lists change meaning with the routing mode. In Global they are
+  // exceptions (bypass the VPN): whitelist + appWhitelist. In Smart everything
+  // is direct by default, so the same blocks invert — they ADD to the VPN:
+  // customBlockedDomains + appForceVPN. Each mode edits its own config field,
+  // so switching modes shows the other list (Smart's start empty) without
+  // destroying the Global exceptions.
+  const isSmart = rules.mode === "smart";
+  const domainField = isSmart ? "customBlockedDomains" : "whitelist";
+  const appField = isSmart ? "appForceVPN" : "appWhitelist";
+  const domainList = rules[domainField] || [];
+  const appList = rules[appField] || [];
+
   const addDomain = () => {
-    if (newDomain && !rules.whitelist.includes(newDomain)) {
-      setRules({ ...rules, whitelist: [...rules.whitelist, newDomain] });
+    const d = isSmart ? newDomain.trim().toLowerCase() : newDomain;
+    if (d && !domainList.includes(d)) {
+      setRules({ ...rules, [domainField]: [...domainList, d] });
       setNewDomain("");
     }
   };
 
+  const removeDomain = (d) => {
+    setRules({ ...rules, [domainField]: domainList.filter((i) => i !== d) });
+  };
+
   const addSpecificDomain = (domain) => {
-    if (!rules.whitelist.includes(domain)) {
-      setRules({ ...rules, whitelist: [...rules.whitelist, domain] });
+    if (!domainList.includes(domain)) {
+      setRules({ ...rules, [domainField]: [...domainList, domain] });
     }
   };
 
-  const isWin =
-    platform === "win32" || platform === "windows" || platform === "win64";
+  const normalizeAppName = (raw) => {
+    let appName = raw.toLowerCase().trim();
+    if (isWin && !appName.endsWith(".exe")) appName += ".exe";
+    if (!isWin && !appName.includes(".")) appName += ".app";
+    return appName;
+  };
+
+  const addAppName = (appName) => {
+    if (!appName) return;
+    if (!appList.includes(appName)) {
+      setRules({ ...rules, [appField]: [...appList, appName] });
+    }
+  };
 
   const addApp = () => {
-    if (newApp) {
-      let appName = newApp.toLowerCase().trim();
-      if (isWin && !appName.endsWith(".exe")) appName += ".exe";
-      if (!isWin && !appName.includes(".")) appName += ".app";
-
-      const currentList = rules.appWhitelist || [];
-      if (!currentList.includes(appName)) {
-        setRules({ ...rules, appWhitelist: [...currentList, appName] });
-        setNewApp("");
-      }
-    }
+    if (!newApp) return;
+    addAppName(normalizeAppName(newApp));
+    setNewApp("");
   };
 
-  const addSpecificApp = (appName) => {
-    const currentList = rules.appWhitelist || [];
-    if (!currentList.includes(appName)) {
-      setRules({ ...rules, appWhitelist: [...currentList, appName] });
-    }
+  const removeApp = (appName) => {
+    setRules({ ...rules, [appField]: appList.filter((i) => i !== appName) });
   };
 
   const handleFileSelect = (e) => {
     const file = e.target.files[0];
     if (file) {
-      let appName = file.name.toLowerCase();
-      if (isWin && !appName.endsWith(".exe")) appName += ".exe";
-      if (!isWin && !appName.includes(".")) appName += ".app";
-      const currentList = rules.appWhitelist || [];
-      if (!currentList.includes(appName)) {
-        setRules({ ...rules, appWhitelist: [...currentList, appName] });
-      }
+      addAppName(normalizeAppName(file.name));
       e.target.value = "";
     }
   };
@@ -88,10 +102,7 @@ export const RulesView = () => {
     try {
       const appName = await PickAppForWhitelist();
       if (!appName) return;
-      const currentList = rules.appWhitelist || [];
-      if (!currentList.includes(appName)) {
-        setRules({ ...rules, appWhitelist: [...currentList, appName] });
-      }
+      addAppName(appName);
     } catch (err) {
       // Fallback to the legacy HTML file picker if the native dialog fails.
       if (appFileInputRef.current) appFileInputRef.current.click();
@@ -105,7 +116,20 @@ export const RulesView = () => {
   const popularApps = isWin
     ? ["steam.exe", "discord.exe", "telegram.exe", "epicgameslauncher.exe"]
     : ["safari.app", "discord.app", "telegram.app"];
-  const safeAppWhitelist = rules.appWhitelist || [];
+
+  const domainTitle = isSmart
+    ? t("rules.forceDomains.title")
+    : t("rules.domains.title");
+  const domainDesc = isSmart
+    ? t("rules.forceDomains.desc")
+    : t("rules.domains.desc");
+  const domainPlaceholder = isSmart
+    ? t("rules.forceDomains.placeholder")
+    : t("rules.domains.placeholder");
+
+  const appTitle = isSmart
+    ? t("rules.forceApps.title")
+    : t("rules.apps.title");
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
@@ -141,22 +165,22 @@ export const RulesView = () => {
 
       <div className="bg-zinc-900 p-6 rounded-3xl border border-zinc-800 mt-6">
         <div className="flex items-center space-x-2 mb-2">
-          <h3 className="text-white font-bold text-lg">
-            {t("rules.domains.title")}
-          </h3>
-          <div className="relative group">
-            <HelpCircle className="w-5 h-5 text-zinc-500 hover:text-zinc-300 cursor-help transition-colors" />
-            <div className="absolute bottom-full left-0 mb-2 px-3 py-2 bg-zinc-800 text-zinc-200 text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none w-64 z-10 border border-zinc-700 shadow-xl">
-              {t("rules.domains.tooltip")}
+          <h3 className="text-white font-bold text-lg">{domainTitle}</h3>
+          {!isSmart && (
+            <div className="relative group">
+              <HelpCircle className="w-5 h-5 text-zinc-500 hover:text-zinc-300 cursor-help transition-colors" />
+              <div className="absolute bottom-full left-0 mb-2 px-3 py-2 bg-zinc-800 text-zinc-200 text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none w-64 z-10 border border-zinc-700 shadow-xl">
+                {t("rules.domains.tooltip")}
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
-        <p className="text-zinc-500 text-sm mb-6">{t("rules.domains.desc")}</p>
+        <p className="text-zinc-500 text-sm mb-6">{domainDesc}</p>
         <div className="flex space-x-3 mb-6">
           <input
             type="text"
-            placeholder={t("rules.domains.placeholder")}
+            placeholder={domainPlaceholder}
             className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus:border-[#007E3A] transition-colors"
             value={newDomain}
             onChange={(e) => setNewDomain(e.target.value)}
@@ -169,20 +193,15 @@ export const RulesView = () => {
             {t("rules.domains.add_btn")}
           </button>
         </div>
-        <div className="flex flex-wrap gap-2 mb-8">
-          {rules.whitelist.map((d) => (
+        <div className="flex flex-wrap gap-2">
+          {domainList.map((d) => (
             <div
               key={d}
               className="bg-zinc-800 px-4 py-2 rounded-lg flex items-center space-x-3 border border-zinc-700"
             >
               <span className="text-sm text-zinc-300">{d}</span>
               <button
-                onClick={() =>
-                  setRules({
-                    ...rules,
-                    whitelist: rules.whitelist.filter((i) => i !== d),
-                  })
-                }
+                onClick={() => removeDomain(d)}
                 className="text-zinc-500 hover:text-rose-500 transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none"
               >
                 <Trash2 className="w-4 h-4" />
@@ -191,40 +210,48 @@ export const RulesView = () => {
           ))}
         </div>
 
-        <div className="pt-6 border-t border-zinc-800">
-          <p className="text-sm font-medium text-zinc-400 mb-4">
-            {t("rules.domains.fast_add")}
-          </p>
-          <div className="flex flex-wrap gap-3">
-            {popularTlds.map((tld) => {
-              const isAdded = rules.whitelist.includes(tld);
-              return (
-                <button
-                  key={tld}
-                  onClick={() => addSpecificDomain(tld)}
-                  disabled={isAdded}
-                  className={`flex items-center px-4 py-2 rounded-xl text-sm font-medium transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${
-                    isAdded
-                      ? "bg-[#007E3A]/10 text-[#007E3A] border-[#007E3A]/20 cursor-default"
-                      : "bg-zinc-800 text-zinc-300 border-zinc-700 hover:border-[#00A819] hover:text-white cursor-pointer"
-                  }`}
-                >
-                  {!isAdded && <Plus className="w-4 h-4 mr-2" />}
-                  {tld}
-                </button>
-              );
-            })}
+        {!isSmart && (
+          <div className="pt-6 mt-8 border-t border-zinc-800">
+            <p className="text-sm font-medium text-zinc-400 mb-4">
+              {t("rules.domains.fast_add")}
+            </p>
+            <div className="flex flex-wrap gap-3">
+              {popularTlds.map((tld) => {
+                const isAdded = domainList.includes(tld);
+                return (
+                  <button
+                    key={tld}
+                    onClick={() => addSpecificDomain(tld)}
+                    disabled={isAdded}
+                    className={`flex items-center px-4 py-2 rounded-xl text-sm font-medium transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${
+                      isAdded
+                        ? "bg-[#007E3A]/10 text-[#007E3A] border-[#007E3A]/20 cursor-default"
+                        : "bg-zinc-800 text-zinc-300 border-zinc-700 hover:border-[#00A819] hover:text-white cursor-pointer"
+                    }`}
+                  >
+                    {!isAdded && <Plus className="w-4 h-4 mr-2" />}
+                    {tld}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       <div className="bg-zinc-900 p-6 rounded-3xl border border-zinc-800 mt-6">
         <h3 className="text-white font-bold text-lg mb-2">
-          {t("rules.apps.title")} ({isWin ? ".EXE" : ".APP"})
+          {appTitle} ({isWin ? ".EXE" : ".APP"})
         </h3>
         <p className="text-zinc-500 text-sm mb-6">
-          {t("rules.apps.desc1")}
-          <strong>{t("rules.apps.desc2")}</strong>
+          {isSmart ? (
+            t("rules.forceApps.desc")
+          ) : (
+            <>
+              {t("rules.apps.desc1")}
+              <strong>{t("rules.apps.desc2")}</strong>
+            </>
+          )}
         </p>
         <div className="flex flex-wrap gap-3 mb-6">
           <input
@@ -257,20 +284,15 @@ export const RulesView = () => {
             {appExt}
           </button>
         </div>
-        <div className="flex flex-wrap gap-2 mb-8">
-          {safeAppWhitelist.map((appName) => (
+        <div className="flex flex-wrap gap-2">
+          {appList.map((appName) => (
             <div
               key={appName}
               className="bg-zinc-800 px-4 py-2 rounded-lg flex items-center space-x-3 border border-zinc-700"
             >
               <span className="text-sm text-zinc-300 font-mono">{appName}</span>
               <button
-                onClick={() =>
-                  setRules({
-                    ...rules,
-                    appWhitelist: safeAppWhitelist.filter((i) => i !== appName),
-                  })
-                }
+                onClick={() => removeApp(appName)}
                 className="text-zinc-500 hover:text-rose-500 transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none"
               >
                 <Trash2 className="w-4 h-4" />
@@ -279,31 +301,33 @@ export const RulesView = () => {
           ))}
         </div>
 
-        <div className="pt-6 border-t border-zinc-800">
-          <p className="text-sm font-medium text-zinc-400 mb-4">
-            {t("rules.apps.popular")}
-          </p>
-          <div className="flex flex-wrap gap-3">
-            {popularApps.map((appName) => {
-              const isAdded = safeAppWhitelist.includes(appName);
-              return (
-                <button
-                  key={appName}
-                  onClick={() => addSpecificApp(appName)}
-                  disabled={isAdded}
-                  className={`flex items-center px-4 py-2 rounded-xl text-sm font-medium transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${
-                    isAdded
-                      ? "bg-[#007E3A]/10 text-[#007E3A] border-[#007E3A]/20 cursor-default"
-                      : "bg-zinc-800 text-zinc-300 border-zinc-700 hover:border-[#00A819] hover:text-white cursor-pointer"
-                  }`}
-                >
-                  {!isAdded && <Plus className="w-4 h-4 mr-2" />}
-                  <span className="font-mono">{appName}</span>
-                </button>
-              );
-            })}
+        {!isSmart && (
+          <div className="pt-6 mt-8 border-t border-zinc-800">
+            <p className="text-sm font-medium text-zinc-400 mb-4">
+              {t("rules.apps.popular")}
+            </p>
+            <div className="flex flex-wrap gap-3">
+              {popularApps.map((appName) => {
+                const isAdded = appList.includes(appName);
+                return (
+                  <button
+                    key={appName}
+                    onClick={() => addAppName(appName)}
+                    disabled={isAdded}
+                    className={`flex items-center px-4 py-2 rounded-xl text-sm font-medium transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${
+                      isAdded
+                        ? "bg-[#007E3A]/10 text-[#007E3A] border-[#007E3A]/20 cursor-default"
+                        : "bg-zinc-800 text-zinc-300 border-zinc-700 hover:border-[#00A819] hover:text-white cursor-pointer"
+                    }`}
+                  >
+                    {!isAdded && <Plus className="w-4 h-4 mr-2" />}
+                    <span className="font-mono">{appName}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
