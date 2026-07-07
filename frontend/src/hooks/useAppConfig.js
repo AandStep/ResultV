@@ -48,6 +48,8 @@ export const useAppConfig = (addLog) => {
         mode: "global",
         whitelist: ["localhost", "127.0.0.1"],
         appWhitelist: [],
+        appForceVPN: [],
+        customBlockedDomains: [],
     });
     const [settings, setSettings] = useState(defaultSettings);
     const [showProtocolModal, setShowProtocolModal] = useState(false);

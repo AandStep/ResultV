@@ -46,7 +46,8 @@
     "pingTooltip": "Measure latency to servers (TCP, not through tunnel)",
     "sortMenuTooltip": "Sort servers in this list",
     "websiteTooltip": "Official website",
-    "telegramTooltip": "Telegram channel"
+    "telegramTooltip": "Telegram channel",
+    "proxyModeHint": "Some apps (Telegram, games) ignore the system proxy. If an app can't see the VPN — switch to TUNNEL mode."
   },
   "add": {
     "titleAdd": "Add Configuration",
@@ -308,6 +309,18 @@
       "add_manual": "Manual Add",
       "choose_file": "Select ",
       "popular": "Popular programs to bypass the proxy:"
+    },
+    "forceApps": {
+      "title": "Apps via VPN",
+      "desc": "All traffic of these apps always goes through the VPN — including Discord voice and other domainless connections Smart mode can't see. Works only in TUNNEL mode.",
+      "conflict": "This app is already in the exclusion list — remove it from there first.",
+      "popular": "Popular apps:"
+    },
+    "forceDomains": {
+      "title": "Sites via VPN",
+      "desc": "Add a domain if a site doesn't open in Smart mode — it and all its subdomains will go through the VPN.",
+      "placeholder": "aistudio.google.com",
+      "add_btn": "Add"
     }
   },
   "proxyList": {

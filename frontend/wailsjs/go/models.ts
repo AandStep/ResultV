@@ -116,6 +116,8 @@ export namespace config {
 	    mode: string;
 	    whitelist: string[];
 	    appWhitelist: string[];
+	    appForceVPN: string[];
+	    customBlockedDomains: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new RoutingRules(source);
@@ -126,6 +128,8 @@ export namespace config {
 	        this.mode = source["mode"];
 	        this.whitelist = source["whitelist"];
 	        this.appWhitelist = source["appWhitelist"];
+	        this.appForceVPN = source["appForceVPN"];
+	        this.customBlockedDomains = source["customBlockedDomains"];
 	    }
 	}
 	export class AppConfig {

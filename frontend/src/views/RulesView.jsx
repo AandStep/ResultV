@@ -30,6 +30,7 @@ export const RulesView = () => {
   } = useConfigContext();
   const [newDomain, setNewDomain] = useState("");
   const [newApp, setNewApp] = useState("");
+  const [newBlockedDomain, setNewBlockedDomain] = useState("");
 
   const appFileInputRef = useRef(null);
 
@@ -55,6 +56,10 @@ export const RulesView = () => {
       if (isWin && !appName.endsWith(".exe")) appName += ".exe";
       if (!isWin && !appName.includes(".")) appName += ".app";
 
+      if ((rules.appForceVPN || []).includes(appName)) {
+        alert(t("rules.forceApps.conflict"));
+        return;
+      }
       const currentList = rules.appWhitelist || [];
       if (!currentList.includes(appName)) {
         setRules({ ...rules, appWhitelist: [...currentList, appName] });
@@ -64,9 +69,33 @@ export const RulesView = () => {
   };
 
   const addSpecificApp = (appName) => {
+    if ((rules.appForceVPN || []).includes(appName)) {
+      alert(t("rules.forceApps.conflict"));
+      return;
+    }
     const currentList = rules.appWhitelist || [];
     if (!currentList.includes(appName)) {
       setRules({ ...rules, appWhitelist: [...currentList, appName] });
+    }
+  };
+
+  const addForceVpnApp = (appName) => {
+    if ((rules.appWhitelist || []).includes(appName)) {
+      alert(t("rules.forceApps.conflict"));
+      return;
+    }
+    const current = rules.appForceVPN || [];
+    if (!current.includes(appName)) {
+      setRules({ ...rules, appForceVPN: [...current, appName] });
+    }
+  };
+
+  const addBlockedDomain = () => {
+    const d = newBlockedDomain.trim().toLowerCase();
+    const current = rules.customBlockedDomains || [];
+    if (d && !current.includes(d)) {
+      setRules({ ...rules, customBlockedDomains: [...current, d] });
+      setNewBlockedDomain("");
     }
   };
 
@@ -105,6 +134,9 @@ export const RulesView = () => {
   const popularApps = isWin
     ? ["steam.exe", "discord.exe", "telegram.exe", "epicgameslauncher.exe"]
     : ["safari.app", "discord.app", "telegram.app"];
+  const forceVpnSuggestions = isWin
+    ? ["discord.exe", "speedtest.exe"]
+    : ["discord.app", "speedtest.app"];
   const safeAppWhitelist = rules.appWhitelist || [];
 
   return (
@@ -305,6 +337,117 @@ export const RulesView = () => {
           </div>
         </div>
       </div>
+
+      {rules.mode === "smart" && (
+        <div className="bg-zinc-900 p-6 rounded-3xl border border-zinc-800 mt-6">
+          <h3 className="text-white font-bold text-lg mb-2">
+            {t("rules.forceApps.title")}
+          </h3>
+          <p className="text-zinc-500 text-sm mb-6">
+            {t("rules.forceApps.desc")}
+          </p>
+          <div className="flex flex-wrap gap-2 mb-8">
+            {(rules.appForceVPN || []).map((appName) => (
+              <div
+                key={appName}
+                className="bg-zinc-800 px-4 py-2 rounded-lg flex items-center space-x-3 border border-zinc-700"
+              >
+                <span className="text-sm text-zinc-300 font-mono">
+                  {appName}
+                </span>
+                <button
+                  onClick={() =>
+                    setRules({
+                      ...rules,
+                      appForceVPN: (rules.appForceVPN || []).filter(
+                        (i) => i !== appName,
+                      ),
+                    })
+                  }
+                  className="text-zinc-500 hover:text-rose-500 transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+          <div className="pt-6 border-t border-zinc-800">
+            <p className="text-sm font-medium text-zinc-400 mb-4">
+              {t("rules.forceApps.popular")}
+            </p>
+            <div className="flex flex-wrap gap-3">
+              {forceVpnSuggestions.map((appName) => {
+                const isAdded = (rules.appForceVPN || []).includes(appName);
+                return (
+                  <button
+                    key={appName}
+                    onClick={() => addForceVpnApp(appName)}
+                    disabled={isAdded}
+                    className={`flex items-center px-4 py-2 rounded-xl text-sm font-medium transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${
+                      isAdded
+                        ? "bg-[#007E3A]/10 text-[#007E3A] border-[#007E3A]/20 cursor-default"
+                        : "bg-zinc-800 text-zinc-300 border-zinc-700 hover:border-[#00A819] hover:text-white cursor-pointer"
+                    }`}
+                  >
+                    {!isAdded && <Plus className="w-4 h-4 mr-2" />}
+                    <span className="font-mono">{appName}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {rules.mode === "smart" && (
+        <div className="bg-zinc-900 p-6 rounded-3xl border border-zinc-800 mt-6">
+          <h3 className="text-white font-bold text-lg mb-2">
+            {t("rules.forceDomains.title")}
+          </h3>
+          <p className="text-zinc-500 text-sm mb-6">
+            {t("rules.forceDomains.desc")}
+          </p>
+          <div className="flex space-x-3 mb-6">
+            <input
+              type="text"
+              placeholder={t("rules.forceDomains.placeholder")}
+              className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus:border-[#007E3A] transition-colors"
+              value={newBlockedDomain}
+              onChange={(e) => setNewBlockedDomain(e.target.value)}
+              onKeyPress={(e) => e.key === "Enter" && addBlockedDomain()}
+            />
+            <button
+              onClick={addBlockedDomain}
+              className="bg-[#007E3A] hover:bg-[#00A819] text-white px-6 font-bold rounded-xl transition-colors border-none outline-none focus:outline-none focus:ring-0 focus-visible:outline-none"
+            >
+              {t("rules.forceDomains.add_btn")}
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {(rules.customBlockedDomains || []).map((d) => (
+              <div
+                key={d}
+                className="bg-zinc-800 px-4 py-2 rounded-lg flex items-center space-x-3 border border-zinc-700"
+              >
+                <span className="text-sm text-zinc-300">{d}</span>
+                <button
+                  onClick={() =>
+                    setRules({
+                      ...rules,
+                      customBlockedDomains: (
+                        rules.customBlockedDomains || []
+                      ).filter((i) => i !== d),
+                    })
+                  }
+                  className="text-zinc-500 hover:text-rose-500 transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
