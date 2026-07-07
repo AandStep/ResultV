@@ -342,3 +342,34 @@ func TestIsBlockedDomainSuffixSemantics(t *testing.T) {
 		}
 	}
 }
+
+func TestCustomBlockedDomains(t *testing.T) {
+	r := NewRouter()
+	r.SetBlockedDomains([]string{"discord.com"})
+	r.SetCustomBlockedDomains([]string{"MySite.RU", "discord.com"}) // дубль + регистр
+
+	if !r.IsBlockedDomain("mysite.ru") {
+		t.Error("custom domain must be blocked")
+	}
+	if !r.IsBlockedDomain("cdn.mysite.ru") {
+		t.Error("custom domain suffix must be blocked")
+	}
+	all := r.GetBlockedDomains()
+	count := 0
+	for _, d := range all {
+		if d == "discord.com" {
+			count++
+		}
+		if d == "mysite.ru" {
+			count += 10
+		}
+	}
+	if count != 11 { // ровно один discord.com и один mysite.ru
+		t.Errorf("union wrong: %v", all)
+	}
+
+	r.SetCustomBlockedDomains(nil) // очистка отключает кастом
+	if r.IsBlockedDomain("mysite.ru") {
+		t.Error("cleared custom domain must not be blocked")
+	}
+}

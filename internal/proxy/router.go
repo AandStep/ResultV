@@ -43,6 +43,7 @@ type WhitelistResult struct {
 type Router struct {
 	mu             sync.RWMutex
 	blockedDomains []string
+	customDomains  []string
 	blockedCIDRs   []string
 	blockedSet     map[string]struct{}
 }
@@ -61,8 +62,11 @@ func NewRouter() *Router {
 // block-lists. Caller must hold r.mu. Task: keep IsBlockedDomain O(labels)
 // instead of O(list) and suffix-exact instead of substring.
 func (r *Router) rebuildBlockedSetLocked() {
-	set := make(map[string]struct{}, len(r.blockedDomains))
+	set := make(map[string]struct{}, len(r.blockedDomains)+len(r.customDomains))
 	for _, d := range r.blockedDomains {
+		set[d] = struct{}{}
+	}
+	for _, d := range r.customDomains {
 		set[d] = struct{}{}
 	}
 	r.blockedSet = set
@@ -87,6 +91,16 @@ func (r *Router) SetBlockedDomains(domains []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.blockedDomains = normalizeDomains(domains)
+	r.rebuildBlockedSetLocked()
+}
+
+// SetCustomBlockedDomains replaces the user-defined "route via VPN" domains
+// (config.RoutingRules.CustomBlockedDomains). They are unioned with the
+// fetched block-lists in IsBlockedDomain and GetBlockedDomains.
+func (r *Router) SetCustomBlockedDomains(domains []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.customDomains = normalizeDomains(domains)
 	r.rebuildBlockedSetLocked()
 }
 
@@ -273,9 +287,10 @@ func (r *Router) GetSafeOSWhitelist(whitelist []string) []string {
 func (r *Router) GetBlockedDomains() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	result := make([]string, len(r.blockedDomains))
-	copy(result, r.blockedDomains)
-	return result
+	union := make([]string, 0, len(r.blockedDomains)+len(r.customDomains))
+	union = append(union, r.blockedDomains...)
+	union = append(union, r.customDomains...)
+	return normalizeDomains(union)
 }
 
 
