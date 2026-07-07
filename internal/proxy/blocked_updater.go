@@ -125,8 +125,10 @@ func LoadCachedBlockedDomains(cachePath string, localPaths ...string) BlockedDom
 }
 
 // LoadCachedBlockedCIDRs is the network-free counterpart for the IP-subnet
-// block-list: cache → builtin. Telegram's static defaultBlockedCIDRs() always
-// guarantees a usable set so MTProto works offline and at first launch.
+// block-list (Telegram MTProto + Discord voice): cache → builtin. The static
+// defaultBlockedCIDRs() fallback is Telegram-only, but it always guarantees a
+// usable set so MTProto works offline and at first launch; Discord ranges
+// arrive with the first successful remote refresh.
 func LoadCachedBlockedCIDRs(cachePath string) BlockedCIDRsResolveResult {
 	if cachePath != "" {
 		cache, err := LoadBlockedCIDRsCache(cachePath)
@@ -153,10 +155,11 @@ type BlockedCIDRsResolveResult struct {
 	Err    error
 }
 
-// ResolveBlockedCIDRs resolves the IP-subnet block-list with the same
-// remote → cache → builtin precedence as ResolveBlockedDomains, minus the
-// country dimension (Telegram ranges are global). Always returns a usable set:
-// the static defaultBlockedCIDRs() fallback guarantees Telegram works offline.
+// ResolveBlockedCIDRs resolves the IP-subnet block-list (Telegram MTProto +
+// Discord voice) with the same remote → cache → builtin precedence as
+// ResolveBlockedDomains, minus the country dimension (the ranges are global).
+// Always returns a usable set: the static defaultBlockedCIDRs() fallback
+// guarantees Telegram works offline.
 func ResolveBlockedCIDRs(ctx context.Context, fetcher CIDRFetcher, cachePath string) BlockedCIDRsResolveResult {
 	var lastErr error
 	if fetcher != nil {
