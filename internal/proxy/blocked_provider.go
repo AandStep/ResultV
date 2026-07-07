@@ -488,8 +488,18 @@ func defaultPublicSourceTemplates(country string) []string {
 	}
 	if cc == "ru" {
 		sources = append(sources,
+			// Реестровые + «режут RU» списки. Re:filter domains_all ~86k записей,
+			// 1.4 MB — в лимит 8 MB LimitReader укладывается с запасом.
 			"https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Russia/inside-raw.lst",
-			"https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Russia/inside-dnsmasq-nfset.lst",
+			"https://raw.githubusercontent.com/1andrevich/Re-filter-lists/main/domains_all.lst",
+			"https://raw.githubusercontent.com/1andrevich/Re-filter-lists/main/community.lst",
+			// Точечные сервис-списки: побочные домены Discord/YouTube и сервисы,
+			// гео-блокирующие RU (Google AI Studio) — их нет в реестровых списках.
+			"https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Services/discord.lst",
+			"https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Services/youtube.lst",
+			"https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Services/google_ai.lst",
+			// Курируемый сообществом Discord-веер + Cloudflare-ECH хвосты.
+			"https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/main/lists/list-general.txt",
 		)
 	}
 	return sources
