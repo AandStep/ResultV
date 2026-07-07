@@ -30,6 +30,14 @@ type RoutingRules struct {
 	Mode         string   `json:"mode"`
 	Whitelist    []string `json:"whitelist"`
 	AppWhitelist []string `json:"appWhitelist"`
+	// AppForceVPN lists process names whose entire traffic is forced through
+	// the tunnel (Smart mode's answer to domainless traffic: Discord voice,
+	// Speedtest). Effective only in Tunnel mode — Proxy mode can't see apps
+	// that ignore the system proxy.
+	AppForceVPN []string `json:"appForceVPN"`
+	// CustomBlockedDomains are user-added "route via VPN" domains, unioned
+	// with the fetched block-lists in Smart mode.
+	CustomBlockedDomains []string `json:"customBlockedDomains"`
 }
 
 type ProxyEntry struct {
@@ -152,9 +160,11 @@ func DefaultConfig() AppConfig {
 	subscriptionSendHWID := true
 	return AppConfig{
 		RoutingRules: RoutingRules{
-			Mode:         "global",
-			Whitelist:    []string{"localhost", "127.0.0.1"},
-			AppWhitelist: []string{},
+			Mode:                 "global",
+			Whitelist:            []string{"localhost", "127.0.0.1"},
+			AppWhitelist:         []string{},
+			AppForceVPN:          []string{},
+			CustomBlockedDomains: []string{},
 		},
 		Proxies: []ProxyEntry{},
 		Settings: AppSettings{
@@ -380,6 +390,12 @@ func ensureDefaults(cfg AppConfig) AppConfig {
 	}
 	if cfg.RoutingRules.AppWhitelist == nil {
 		cfg.RoutingRules.AppWhitelist = []string{}
+	}
+	if cfg.RoutingRules.AppForceVPN == nil {
+		cfg.RoutingRules.AppForceVPN = []string{}
+	}
+	if cfg.RoutingRules.CustomBlockedDomains == nil {
+		cfg.RoutingRules.CustomBlockedDomains = []string{}
 	}
 	if cfg.Proxies == nil {
 		cfg.Proxies = []ProxyEntry{}
