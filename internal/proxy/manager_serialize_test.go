@@ -112,6 +112,7 @@ func TestConnect_SerializesConcurrentConnects(t *testing.T) {
 			ModeGlobal,
 			nil,
 			nil,
+			nil,
 			false,
 			false,
 			0,

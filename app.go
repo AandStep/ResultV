@@ -631,6 +631,7 @@ func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
 		proxy.RoutingMode(rules.Mode),
 		rules.Whitelist,
 		rules.AppWhitelist,
+		rules.AppForceVPN,
 		killSwitch,
 		adBlock,
 		cfg.Settings.LocalPort,
@@ -911,6 +912,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 			proxy.RoutingMode(cfg.RoutingRules.Mode),
 			cfg.RoutingRules.Whitelist,
 			cfg.RoutingRules.AppWhitelist,
+			cfg.RoutingRules.AppForceVPN,
 			cfg.Settings.KillSwitch,
 			cfg.Settings.AdBlock,
 			cfg.Settings.LocalPort,
@@ -951,6 +953,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 				proxy.RoutingMode(cfg.RoutingRules.Mode),
 				cfg.RoutingRules.Whitelist,
 				cfg.RoutingRules.AppWhitelist,
+				cfg.RoutingRules.AppForceVPN,
 				cfg.Settings.KillSwitch,
 				cfg.Settings.AdBlock,
 				cfg.Settings.LocalPort,
@@ -1049,7 +1052,7 @@ func (a *App) ToggleAdBlock(enable bool) error {
 		return err
 	}
 	if a.proxy != nil && a.proxy.GetStatus().IsConnected {
-		result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist)
+		result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist, cfg.RoutingRules.AppForceVPN)
 		if !result.Success {
 			a.log.Warning(fmt.Sprintf("[ADBLOCK] Переподключение после переключения: %s", result.Message))
 		}
@@ -1160,7 +1163,7 @@ func (a *App) UpdateAdBlockFilters() error {
 	a.log.Success(fmt.Sprintf("[ADBLOCK] Базы блокировки обновлены (%d/%d)", st.RuleSetsReady, st.RuleSetsTotal))
 	if a.proxy != nil && a.proxy.GetStatus().IsConnected && a.config != nil {
 		cfg := a.config.GetConfig()
-		result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist)
+		result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist, cfg.RoutingRules.AppForceVPN)
 		if !result.Success {
 			a.log.Warning(fmt.Sprintf("[ADBLOCK] Переподключение после обновления: %s", result.Message))
 		}
@@ -1224,7 +1227,7 @@ func (a *App) startAdBlockFilterRefresh() {
 				if a.proxy != nil && a.proxy.GetStatus().IsConnected && a.config != nil {
 					cfg := a.config.GetConfig()
 					if cfg.Settings.AdBlock {
-						result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist)
+						result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist, cfg.RoutingRules.AppForceVPN)
 						if !result.Success {
 							a.log.Warning(fmt.Sprintf("[ADBLOCK] Переподключение: %s", result.Message))
 						}
@@ -1270,6 +1273,12 @@ func (a *App) UpdateRules(rules config.RoutingRules) error {
 	if a.proxy == nil {
 		return nil
 	}
+	// Кастомные «сайты через VPN» живут в Router независимо от состояния
+	// подключения: применяем и в отключённом состоянии, чтобы следующий
+	// Connect снапшотнул их в route вместе с block-листами.
+	if r := a.proxy.GetRouter(); r != nil {
+		r.SetCustomBlockedDomains(rules.CustomBlockedDomains)
+	}
 	status := a.proxy.GetStatus()
 	if !status.IsConnected || status.CurrentProxy == nil {
 		return nil
@@ -1281,6 +1290,7 @@ func (a *App) UpdateRules(rules config.RoutingRules) error {
 		proxy.RoutingMode(rules.Mode),
 		rules.Whitelist,
 		rules.AppWhitelist,
+		rules.AppForceVPN,
 	)
 	if !result.Success {
 		a.log.Error(fmt.Sprintf("Ошибка применения правил маршрутизации: %s", result.Message))
@@ -3013,6 +3023,11 @@ func (a *App) initSmartBlockedDomains(userDataPath, rootDir string) {
 	domRes := proxy.LoadCachedBlockedDomains(cachePath, localPaths...)
 	if router != nil && len(domRes.Domains) > 0 {
 		router.SetBlockedDomains(domRes.Domains)
+	}
+	// Пользовательские «сайты через VPN» из конфига объединяются с
+	// block-листами до auto-connect — иначе первый route их не увидит.
+	if router != nil {
+		router.SetCustomBlockedDomains(a.config.GetConfig().RoutingRules.CustomBlockedDomains)
 	}
 	if domRes.Country != "" {
 		a.log.Info(fmt.Sprintf("[SMART] Источник списков: %s (%s), записей: %d", domRes.Source, strings.ToUpper(domRes.Country), len(domRes.Domains)))

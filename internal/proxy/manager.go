@@ -109,6 +109,7 @@ type Manager struct {
 	routingMode  RoutingMode
 	whitelist    []string
 	appWhitelist []string
+	appForceVPN  []string
 	connectedAt  time.Time
 
 	prevUp   int64
@@ -521,7 +522,7 @@ func (m *Manager) startEngine(ctx context.Context, cfg EngineConfig) (err error,
 // that, drop the stale entry, and retry once on the bare domain so sing-box
 // re-resolves fresh — seamless to the user.
 func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode,
-	routingMode RoutingMode, whitelist, appWhitelist []string,
+	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
 	killSwitch, adBlock bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
 	dnsLeakProtection bool) ConnectResultDTO {
@@ -535,7 +536,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 		}
 	}
 
-	res := m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist,
+	res := m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist, appForceVPN,
 		killSwitch, adBlock, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
 		dnsLeakProtection)
 
@@ -543,7 +544,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 		clearServerPin(dataDir, m.secrets, proxy.IP)
 		m.log.Warning("[PROXY] Закэшированный IP сервера устарел — переподключение по домену")
 		proxy.ResolvedIP = ""
-		res = m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist,
+		res = m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist, appForceVPN,
 			killSwitch, adBlock, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
 			dnsLeakProtection)
 	}
@@ -551,7 +552,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 }
 
 func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode ProxyMode,
-	routingMode RoutingMode, whitelist, appWhitelist []string,
+	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
 	killSwitch, adBlock bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
 	dnsLeakProtection bool) ConnectResultDTO {
@@ -710,6 +711,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		RoutingMode:       routingMode,
 		Whitelist:         whitelist,
 		AppWhitelist:      effectiveAppWhitelist,
+		AppForceVPN:       append([]string(nil), appForceVPN...),
 		KillSwitch:        killSwitch,
 		LocalPort:         actualLocalPort,
 		DNSServers:        dnsServers,
@@ -802,6 +804,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 				m.routingMode = routingMode
 				m.whitelist = append([]string(nil), whitelist...)
 				m.appWhitelist = append([]string(nil), appWhitelist...)
+				m.appForceVPN = append([]string(nil), appForceVPN...)
 				m.connectedAt = time.Now()
 				m.prevUp = 0
 				m.prevDown = 0
@@ -934,6 +937,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	m.routingMode = routingMode
 	m.whitelist = append([]string(nil), whitelist...)
 	m.appWhitelist = append([]string(nil), appWhitelist...)
+	m.appForceVPN = append([]string(nil), appForceVPN...)
 	m.connectedAt = time.Now()
 	m.prevUp = 0
 	m.prevDown = 0
@@ -1191,7 +1195,7 @@ func dnsOverrideServers(custom []string) []string {
 // connectLocked is the internal reconnect path used by SetMode/ReconnectWithRoutingRules.
 // Caller must hold m.mu.
 func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode ProxyMode,
-	routingMode RoutingMode, whitelist, appWhitelist []string,
+	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
 	killSwitch, adBlock bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
 	dnsLeakProtection bool) ConnectResultDTO {
@@ -1247,6 +1251,7 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 		RoutingMode:       routingMode,
 		Whitelist:         whitelist,
 		AppWhitelist:      effectiveAppWhitelist,
+		AppForceVPN:       append([]string(nil), appForceVPN...),
 		KillSwitch:        killSwitch,
 		LocalPort:         actualLocalPort,
 		DNSServers:        dnsServers,
@@ -1364,6 +1369,7 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 	m.routingMode = routingMode
 	m.whitelist = append([]string(nil), whitelist...)
 	m.appWhitelist = append([]string(nil), appWhitelist...)
+	m.appForceVPN = append([]string(nil), appForceVPN...)
 	m.connectedAt = time.Now()
 	m.prevUp = 0
 	m.prevDown = 0
@@ -1983,6 +1989,7 @@ func (m *Manager) SetMode(mode ProxyMode) error {
 	routingMode := m.routingMode
 	whitelist := append([]string(nil), m.whitelist...)
 	appWhitelist := append([]string(nil), m.appWhitelist...)
+	appForceVPN := append([]string(nil), m.appForceVPN...)
 
 	if wasConnected {
 		m.disconnectLocked()
@@ -1999,6 +2006,7 @@ func (m *Manager) SetMode(mode ProxyMode) error {
 			routingMode,
 			whitelist,
 			appWhitelist,
+			appForceVPN,
 			killSwitch,
 			adBlock,
 			m.localPort,
@@ -2022,7 +2030,7 @@ func (m *Manager) SetTunStack(stack string) {
 	m.tunStack = stack
 }
 
-func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode RoutingMode, whitelist, appWhitelist []string) ConnectResultDTO {
+func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string) ConnectResultDTO {
 	// Serialize against Connect/Disconnect/SetMode (see opMu) — acquired before
 	// mu to preserve the opMu→mu lock ordering.
 	m.opMu.Lock()
@@ -2046,7 +2054,7 @@ func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode Rou
 	tIPv6 := m.tunIPv6
 	dnsLeak := m.dnsLeakProtection
 
-	return m.connectLocked(ctx, p, mode, routingMode, whitelist, appWhitelist, killSwitch, adBlock, lPort, listenLAN, dServers, tIPv4, tIPv6, dnsLeak)
+	return m.connectLocked(ctx, p, mode, routingMode, whitelist, appWhitelist, appForceVPN, killSwitch, adBlock, lPort, listenLAN, dServers, tIPv4, tIPv6, dnsLeak)
 }
 
 // IsAdBlockActive reports whether the running sing-box engine has ad blocking enabled.
