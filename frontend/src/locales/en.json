@@ -312,9 +312,7 @@
     },
     "forceApps": {
       "title": "Apps via VPN",
-      "desc": "All traffic of these apps always goes through the VPN — including Discord voice and other domainless connections Smart mode can't see. Works only in TUNNEL mode.",
-      "conflict": "This app is already in the exclusion list — remove it from there first.",
-      "popular": "Popular apps:"
+      "desc": "All traffic of these apps always goes through the VPN — for apps whose traffic Smart mode can't match by lists (domainless connections). Works only in TUNNEL mode."
     },
     "forceDomains": {
       "title": "Sites via VPN",

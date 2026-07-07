@@ -438,7 +438,7 @@ export const HomeView = () => {
         </button>
       </div>
 
-      {settings.mode === "proxy" && (
+      {settings.mode === "proxy" && !isConnected && (
         <p className="text-zinc-500 text-xs text-center mt-2 max-w-md mx-auto">
           {t("home.proxyModeHint")}
         </p>
