@@ -44,16 +44,29 @@ type Router struct {
 	mu             sync.RWMutex
 	blockedDomains []string
 	blockedCIDRs   []string
+	blockedSet     map[string]struct{}
 }
 
 
 func NewRouter() *Router {
-	return &Router{
+	r := &Router{
 		blockedDomains: defaultBlockedDomains(),
 		blockedCIDRs:   defaultBlockedCIDRs(),
 	}
+	r.rebuildBlockedSetLocked()
+	return r
 }
 
+// rebuildBlockedSetLocked recomputes the suffix-lookup set from the current
+// block-lists. Caller must hold r.mu. Task: keep IsBlockedDomain O(labels)
+// instead of O(list) and suffix-exact instead of substring.
+func (r *Router) rebuildBlockedSetLocked() {
+	set := make(map[string]struct{}, len(r.blockedDomains))
+	for _, d := range r.blockedDomains {
+		set[d] = struct{}{}
+	}
+	r.blockedSet = set
+}
 
 func (r *Router) LoadBlockedLists(paths ...string) {
 	r.mu.Lock()
@@ -67,12 +80,14 @@ func (r *Router) LoadBlockedLists(paths ...string) {
 			}
 		}
 	}
+	r.rebuildBlockedSetLocked()
 }
 
 func (r *Router) SetBlockedDomains(domains []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.blockedDomains = normalizeDomains(domains)
+	r.rebuildBlockedSetLocked()
 }
 
 // SetBlockedCIDRs replaces the IP-subnet block-list (Telegram MTProto
@@ -188,15 +203,23 @@ func (r *Router) IsBlockedDomain(hostname string) bool {
 	if hostname == "" {
 		return false
 	}
+	h := normalizeRule(hostname)
+	if h == "" {
+		return false
+	}
 
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	h := strings.ToLower(hostname)
-	for _, d := range r.blockedDomains {
-		if strings.Contains(h, d) {
+	for h != "" {
+		if _, ok := r.blockedSet[h]; ok {
 			return true
 		}
+		idx := strings.Index(h, ".")
+		if idx < 0 {
+			break
+		}
+		h = h[idx+1:]
 	}
 	return false
 }

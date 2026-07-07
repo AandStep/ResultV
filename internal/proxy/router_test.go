@@ -319,3 +319,26 @@ func TestSetBlockedDomains(t *testing.T) {
 		t.Fatalf("expected 2 normalized domains, got %d (%v)", len(got), got)
 	}
 }
+
+func TestIsBlockedDomainSuffixSemantics(t *testing.T) {
+	r := NewRouter()
+	r.SetBlockedDomains([]string{"x.com", "discord.com"})
+
+	cases := []struct {
+		host string
+		want bool
+	}{
+		{"x.com", true},                // точное совпадение
+		{"api.x.com", true},            // сабдомен
+		{"cdn.discord.com", true},      // сабдомен
+		{"netflix.com", false},         // "x.com" — подстрока, но НЕ суффикс
+		{"notdiscord.com", false},      // суффикс-строка без точки — не матч
+		{"discord.com.evil.ru", false}, // блок-домен в середине — не матч
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := r.IsBlockedDomain(c.host); got != c.want {
+			t.Errorf("IsBlockedDomain(%q) = %v, want %v", c.host, got, c.want)
+		}
+	}
+}
