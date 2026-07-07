@@ -182,7 +182,7 @@ func TestIsBlockedDomain(t *testing.T) {
 		t.Error("discord.com should be blocked")
 	}
 	if !r.IsBlockedDomain("cdn.discord.com") {
-		t.Error("cdn.discord.com should be blocked (substring match)")
+		t.Error("cdn.discord.com should be blocked (suffix match)")
 	}
 	if r.IsBlockedDomain("google.com") {
 		t.Error("google.com should not be blocked")

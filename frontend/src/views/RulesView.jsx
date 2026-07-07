@@ -105,6 +105,11 @@ export const RulesView = () => {
       let appName = file.name.toLowerCase();
       if (isWin && !appName.endsWith(".exe")) appName += ".exe";
       if (!isWin && !appName.includes(".")) appName += ".app";
+      if ((rules.appForceVPN || []).includes(appName)) {
+        alert(t("rules.forceApps.conflict"));
+        e.target.value = "";
+        return;
+      }
       const currentList = rules.appWhitelist || [];
       if (!currentList.includes(appName)) {
         setRules({ ...rules, appWhitelist: [...currentList, appName] });
@@ -117,6 +122,10 @@ export const RulesView = () => {
     try {
       const appName = await PickAppForWhitelist();
       if (!appName) return;
+      if ((rules.appForceVPN || []).includes(appName)) {
+        alert(t("rules.forceApps.conflict"));
+        return;
+      }
       const currentList = rules.appWhitelist || [];
       if (!currentList.includes(appName)) {
         setRules({ ...rules, appWhitelist: [...currentList, appName] });
