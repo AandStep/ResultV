@@ -268,6 +268,67 @@ func (a *App) RefreshRoutingList(id string) (config.RoutingList, error) {
 	return *target, nil
 }
 
+// refreshRoutingListsOnce re-fetches every enabled list, updating the cache
+// and per-list counts/LastError for the NEXT connect. It never reconnects:
+// sing-box has no in-place route reload, so a live session keeps its
+// snapshot and a background list change applies on the user's next
+// connect — the same convention startSmartBlockedRefresh/
+// refreshSmartBlockedOnce already follow (see app.go).
+func (a *App) refreshRoutingListsOnce() {
+	if a.config == nil {
+		return
+	}
+	rr := a.config.GetConfig().RoutingRules
+	if len(rr.RoutingLists) == 0 {
+		return
+	}
+	changed := false
+	for i := range rr.RoutingLists {
+		rl := &rr.RoutingLists[i]
+		if !rl.Enabled {
+			continue
+		}
+		dn, cn, err := a.fetchParseAndCache(rl.ID, rl.URL, rl.AllowInsecure)
+		if err != nil {
+			rl.LastError = err.Error()
+			if a.log != nil {
+				a.log.Warning(fmt.Sprintf("[ROUTING] Не удалось обновить список %q: %v", rl.Name, err))
+			}
+			continue
+		}
+		rl.DomainCount, rl.CIDRCount, rl.UpdatedAt, rl.LastError = dn, cn, time.Now().Unix(), ""
+		changed = true
+	}
+	if changed {
+		_ = a.config.UpdateRoutingRules(rr)
+		a.syncRoutingListSpecs()
+	}
+}
+
+// startRoutingListRefresh runs an initial refresh (after leftover cleanup, as
+// Smart lists do) and then re-refreshes on the configured interval.
+func (a *App) startRoutingListRefresh() {
+	if a.ctx == nil {
+		return
+	}
+	go func() {
+		a.waitForLeftoverCleanup(15 * time.Second)
+		a.refreshRoutingListsOnce()
+
+		hours := a.config.GetConfig().Settings.EffectiveRoutingListUpdateHours()
+		ticker := time.NewTicker(time.Duration(hours) * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-a.ctx.Done():
+				return
+			case <-ticker.C:
+				a.refreshRoutingListsOnce()
+			}
+		}
+	}()
+}
+
 // applyRoutingRulesAndReconnect persists routing rules, re-syncs specs to the
 // manager, and reconnects if currently connected — mirroring the existing
 // UpdateRules path but for routing-list mutations. Consolidated so every CRUD

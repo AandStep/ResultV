@@ -3035,6 +3035,10 @@ func (a *App) initSmartBlockedDomains(userDataPath, rootDir string) {
 	if router != nil {
 		router.SetCustomBlockedDomains(a.config.GetConfig().RoutingRules.CustomBlockedDomains)
 	}
+	// Push cached routing-list specs to the proxy manager before auto-connect,
+	// mirroring the block-list cache-first load above — the first connect must
+	// see any lists fetched in a prior session.
+	a.syncRoutingListSpecs()
 	if domRes.Country != "" {
 		a.log.Info(fmt.Sprintf("[SMART] Источник списков: %s (%s), записей: %d", domRes.Source, strings.ToUpper(domRes.Country), len(domRes.Domains)))
 	} else {
@@ -3052,6 +3056,7 @@ func (a *App) initSmartBlockedDomains(userDataPath, rootDir string) {
 	a.log.Info(fmt.Sprintf("[SMART] IP-подсети (Telegram+Discord): источник %s, записей: %d", cidrRes.Source, len(cidrRes.CIDRs)))
 
 	a.startSmartBlockedRefresh(cachePath, cidrCachePath)
+	a.startRoutingListRefresh()
 }
 
 // waitForLeftoverCleanup blocks until startup leftover recovery has restored OS

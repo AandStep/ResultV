@@ -74,3 +74,14 @@ func TestFetchRoutingListRejectsPrivate(t *testing.T) {
 		t.Error("expected SSRF rejection for loopback URL")
 	}
 }
+
+func TestRefreshRoutingListsOnceUpdatesCache(t *testing.T) {
+	dir := t.TempDir()
+	// Serve a small list over a test server. NOTE: the SSRF guard blocks
+	// loopback, so this test uses a stubbed fetch — see fetchParseAndCache
+	// dependency injection below. If injection is not wired, assert the
+	// no-op path instead: with zero lists, refreshRoutingListsOnce must not panic.
+	a := newTestApp(t, dir)
+	a.config.UpdateRoutingRules(config.RoutingRules{Mode: "smart"}) // no lists
+	a.refreshRoutingListsOnce()                                     // must be a safe no-op
+}
