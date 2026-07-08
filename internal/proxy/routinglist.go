@@ -224,8 +224,33 @@ func WriteRoutingListRuleSet(dataDir, id string, p ParsedRoutingList) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(RoutingListsDir(dataDir), 0o700); err != nil {
+	dir := RoutingListsDir(dataDir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(RoutingListCachePath(dataDir, id), blob, 0o600)
+	tmp, err := os.CreateTemp(dir, id+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(blob); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	// os.Rename replaces an existing destination on both Unix and Windows.
+	if err := os.Rename(tmpName, RoutingListCachePath(dataDir, id)); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return nil
 }

@@ -22,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -180,7 +181,9 @@ func (a *App) AddRoutingList(name, url, action string, allowInsecure bool) (conf
 	rl.DomainCount, rl.CIDRCount, rl.UpdatedAt = dn, cn, time.Now().Unix()
 
 	rr := a.config.GetConfig().RoutingRules
-	rr.RoutingLists = append(rr.RoutingLists, rl)
+	next := make([]config.RoutingList, len(rr.RoutingLists), len(rr.RoutingLists)+1)
+	copy(next, rr.RoutingLists)
+	rr.RoutingLists = append(next, rl)
 	if err := a.applyRoutingRulesAndReconnect(rr); err != nil {
 		return config.RoutingList{}, err
 	}
@@ -198,17 +201,19 @@ func (a *App) UpdateRoutingList(rl config.RoutingList) error {
 		return fmt.Errorf("invalid action %q", rl.Action)
 	}
 	rr := a.config.GetConfig().RoutingRules
+	lists := make([]config.RoutingList, len(rr.RoutingLists))
+	copy(lists, rr.RoutingLists)
 	found := false
-	for i := range rr.RoutingLists {
-		if rr.RoutingLists[i].ID == rl.ID {
+	for i := range lists {
+		if lists[i].ID == rl.ID {
 			// Preserve fetch-derived fields.
-			rl.URL = rr.RoutingLists[i].URL
-			rl.AllowInsecure = rr.RoutingLists[i].AllowInsecure
-			rl.UpdatedAt = rr.RoutingLists[i].UpdatedAt
-			rl.DomainCount = rr.RoutingLists[i].DomainCount
-			rl.CIDRCount = rr.RoutingLists[i].CIDRCount
-			rl.LastError = rr.RoutingLists[i].LastError
-			rr.RoutingLists[i] = rl
+			rl.URL = lists[i].URL
+			rl.AllowInsecure = lists[i].AllowInsecure
+			rl.UpdatedAt = lists[i].UpdatedAt
+			rl.DomainCount = lists[i].DomainCount
+			rl.CIDRCount = lists[i].CIDRCount
+			rl.LastError = lists[i].LastError
+			lists[i] = rl
 			found = true
 			break
 		}
@@ -216,6 +221,7 @@ func (a *App) UpdateRoutingList(rl config.RoutingList) error {
 	if !found {
 		return fmt.Errorf("routing list %q not found", rl.ID)
 	}
+	rr.RoutingLists = lists
 	return a.applyRoutingRulesAndReconnect(rr)
 }
 
@@ -223,6 +229,9 @@ func (a *App) UpdateRoutingList(rl config.RoutingList) error {
 func (a *App) DeleteRoutingList(id string) error {
 	if a.config == nil {
 		return fmt.Errorf("config manager not initialized")
+	}
+	if id == "" || filepath.Base(id) != id {
+		return fmt.Errorf("invalid routing list id")
 	}
 	rr := a.config.GetConfig().RoutingRules
 	// Build a fresh slice — GetConfig returns a value whose RoutingLists shares
@@ -244,28 +253,52 @@ func (a *App) RefreshRoutingList(id string) (config.RoutingList, error) {
 	if a.config == nil {
 		return config.RoutingList{}, fmt.Errorf("config manager not initialized")
 	}
-	rr := a.config.GetConfig().RoutingRules
-	var target *config.RoutingList
-	for i := range rr.RoutingLists {
-		if rr.RoutingLists[i].ID == id {
-			target = &rr.RoutingLists[i]
+	var url string
+	var insecure bool
+	found := false
+	for _, rl := range a.config.GetConfig().RoutingRules.RoutingLists {
+		if rl.ID == id {
+			url, insecure, found = rl.URL, rl.AllowInsecure, true
 			break
 		}
 	}
-	if target == nil {
+	if !found {
 		return config.RoutingList{}, fmt.Errorf("routing list %q not found", id)
 	}
-	dn, cn, err := a.fetchParseAndCache(target.ID, target.URL, target.AllowInsecure)
-	if err != nil {
-		target.LastError = err.Error()
-		_ = a.config.UpdateRoutingRules(rr)
-		return *target, err
+	dn, cn, ferr := a.fetchParseAndCache(id, url, insecure)
+
+	rr := a.config.GetConfig().RoutingRules
+	merged := make([]config.RoutingList, len(rr.RoutingLists))
+	copy(merged, rr.RoutingLists)
+	var updated config.RoutingList
+	stillThere := false
+	for i := range merged {
+		if merged[i].ID != id {
+			continue
+		}
+		stillThere = true
+		if ferr != nil {
+			merged[i].LastError = ferr.Error()
+		} else {
+			merged[i].DomainCount, merged[i].CIDRCount = dn, cn
+			merged[i].UpdatedAt = time.Now().Unix()
+			merged[i].LastError = ""
+		}
+		updated = merged[i]
+		break
 	}
-	target.DomainCount, target.CIDRCount, target.UpdatedAt, target.LastError = dn, cn, time.Now().Unix(), ""
+	if !stillThere {
+		return config.RoutingList{}, fmt.Errorf("routing list %q not found", id)
+	}
+	rr.RoutingLists = merged
+	if ferr != nil {
+		_ = a.config.UpdateRoutingRules(rr)
+		return updated, ferr
+	}
 	if err := a.applyRoutingRulesAndReconnect(rr); err != nil {
 		return config.RoutingList{}, err
 	}
-	return *target, nil
+	return updated, nil
 }
 
 // refreshRoutingListsOnce re-fetches every enabled list, updating the cache
@@ -278,28 +311,58 @@ func (a *App) refreshRoutingListsOnce() {
 	if a.config == nil {
 		return
 	}
-	rr := a.config.GetConfig().RoutingRules
-	if len(rr.RoutingLists) == 0 {
+	type fetchJob struct {
+		id, url  string
+		insecure bool
+	}
+	var jobs []fetchJob
+	for _, rl := range a.config.GetConfig().RoutingRules.RoutingLists {
+		if rl.Enabled {
+			jobs = append(jobs, fetchJob{rl.ID, rl.URL, rl.AllowInsecure})
+		}
+	}
+	if len(jobs) == 0 {
 		return
 	}
-	changed := false
-	for i := range rr.RoutingLists {
-		rl := &rr.RoutingLists[i]
-		if !rl.Enabled {
-			continue
-		}
-		dn, cn, err := a.fetchParseAndCache(rl.ID, rl.URL, rl.AllowInsecure)
+	type fetchResult struct {
+		dn, cn  int
+		lastErr string
+		ok      bool
+	}
+	results := make(map[string]fetchResult, len(jobs))
+	for _, j := range jobs {
+		dn, cn, err := a.fetchParseAndCache(j.id, j.url, j.insecure)
 		if err != nil {
-			rl.LastError = err.Error()
+			results[j.id] = fetchResult{lastErr: err.Error()}
 			if a.log != nil {
-				a.log.Warning(fmt.Sprintf("[ROUTING] Не удалось обновить список %q: %v", rl.Name, err))
+				a.log.Warning(fmt.Sprintf("[ROUTING] Не удалось обновить список %q: %v", j.url, err))
 			}
 			continue
 		}
-		rl.DomainCount, rl.CIDRCount, rl.UpdatedAt, rl.LastError = dn, cn, time.Now().Unix(), ""
+		results[j.id] = fetchResult{dn: dn, cn: cn, ok: true}
+	}
+	// Re-read fresh and merge by id into a NEW slice so a concurrent
+	// Add/Delete during the fetches is not overwritten.
+	rr := a.config.GetConfig().RoutingRules
+	merged := make([]config.RoutingList, len(rr.RoutingLists))
+	copy(merged, rr.RoutingLists)
+	changed := false
+	for i := range merged {
+		r, found := results[merged[i].ID]
+		if !found {
+			continue
+		}
+		if r.ok {
+			merged[i].DomainCount, merged[i].CIDRCount = r.dn, r.cn
+			merged[i].UpdatedAt = time.Now().Unix()
+			merged[i].LastError = ""
+		} else {
+			merged[i].LastError = r.lastErr
+		}
 		changed = true
 	}
 	if changed {
+		rr.RoutingLists = merged
 		_ = a.config.UpdateRoutingRules(rr)
 		a.syncRoutingListSpecs()
 	}
