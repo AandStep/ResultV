@@ -107,7 +107,10 @@ func (a *App) syncRoutingListSpecs() {
 // Plaintext http:// requires allowInsecure. The body is bounded to
 // routingListMaxBytes.
 func (a *App) fetchRoutingListPayload(listURL string, allowInsecure bool) ([]byte, error) {
-	u := strings.TrimSpace(listURL)
+	// Rewrite a GitHub blob (web page) URL to its raw form so an ordinary
+	// github.com link fetches the file, not the HTML page. Idempotent, so it
+	// also fixes blob URLs stored by an older build on refresh.
+	u := proxy.NormalizeRoutingListURL(strings.TrimSpace(listURL))
 	if u == "" {
 		return nil, fmt.Errorf("empty routing-list URL")
 	}
@@ -151,7 +154,13 @@ func (a *App) fetchParseAndCache(id, url string, allowInsecure bool) (domains, c
 	if err != nil {
 		return 0, 0, err
 	}
+	if proxy.LooksLikeRoutingListHTML(body) {
+		return 0, 0, fmt.Errorf("ссылка вернула веб-страницу (HTML), а не список — для GitHub используйте ссылку Raw")
+	}
 	parsed := proxy.ParseRoutingListPayload(body)
+	if len(parsed.Domains) == 0 && len(parsed.CIDRs) == 0 {
+		return 0, 0, fmt.Errorf("в списке не найдено доменов или подсетей — проверьте, что ссылка ведёт на список доменов/CIDR или sing-box rule-set (JSON)")
+	}
 	if err := proxy.WriteRoutingListRuleSet(a.routingListDataDir(), id, parsed); err != nil {
 		return 0, 0, err
 	}
@@ -169,7 +178,7 @@ func (a *App) AddRoutingList(name, url, action string, allowInsecure bool) (conf
 	rl := config.RoutingList{
 		ID:            newRoutingListID(),
 		Name:          strings.TrimSpace(name),
-		URL:           strings.TrimSpace(url),
+		URL:           proxy.NormalizeRoutingListURL(strings.TrimSpace(url)),
 		Action:        action,
 		Enabled:       true,
 		AllowInsecure: allowInsecure,

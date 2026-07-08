@@ -21,6 +21,74 @@ import (
 	"testing"
 )
 
+func TestNormalizeRoutingListURL(t *testing.T) {
+	cases := map[string]string{
+		"https://github.com/Yuu518/sing-box-rules/blob/rule_set/rule_set_site/adguard.json": "https://raw.githubusercontent.com/Yuu518/sing-box-rules/rule_set/rule_set_site/adguard.json",
+		"https://github.com/o/r/blob/main/a/b.txt#L5":                                        "https://raw.githubusercontent.com/o/r/main/a/b.txt",
+		"http://github.com/o/r/blob/main/x.lst?plain=1":                                      "https://raw.githubusercontent.com/o/r/main/x.lst",
+		// Already-raw and non-github URLs are untouched.
+		"https://raw.githubusercontent.com/o/r/main/x.json": "https://raw.githubusercontent.com/o/r/main/x.json",
+		"https://example.com/list.txt":                      "https://example.com/list.txt",
+		// GitHub non-blob paths (tree/repo root) are untouched.
+		"https://github.com/o/r/tree/main": "https://github.com/o/r/tree/main",
+		"https://github.com/o/r":           "https://github.com/o/r",
+	}
+	for in, want := range cases {
+		if got := NormalizeRoutingListURL(in); got != want {
+			t.Errorf("NormalizeRoutingListURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestLooksLikeRoutingListHTML(t *testing.T) {
+	html := []string{
+		"<!DOCTYPE html>\n<html lang=\"en\">",
+		"<html><head></head></html>",
+		"  <!doctype HTML>",
+		"<?xml version=\"1.0\"?>",
+	}
+	for _, h := range html {
+		if !LooksLikeRoutingListHTML([]byte(h)) {
+			t.Errorf("LooksLikeRoutingListHTML(%q) = false, want true", h)
+		}
+	}
+	notHTML := []string{
+		"{\"version\":3,\"rules\":[]}",
+		"# comment\nexample.com\n",
+		"example.com",
+		"1.2.3.0/24",
+		"",
+	}
+	for _, n := range notHTML {
+		if LooksLikeRoutingListHTML([]byte(n)) {
+			t.Errorf("LooksLikeRoutingListHTML(%q) = true, want false", n)
+		}
+	}
+}
+
+func TestParseRoutingListRejectsHTML(t *testing.T) {
+	// A GitHub blob HTML page must yield nothing, not scraped junk "domains".
+	html := []byte("<!DOCTYPE html>\n<html>\n<head><title>github</title></head>\n<body>class=\"flex-1\"</body>\n</html>")
+	got := ParseRoutingListPayload(html)
+	if len(got.Domains) != 0 || len(got.CIDRs) != 0 {
+		t.Errorf("HTML must parse to empty, got %+v", got)
+	}
+}
+
+func TestParseRoutingListDropsJunkTokens(t *testing.T) {
+	// Non-HTML text with markup-ish junk lines mixed in: only real domains survive.
+	raw := []byte("example.com\nclass=\"flex-1\"\ndata-target=\"x\"\n<div>\nsub.example.org\n")
+	got := ParseRoutingListPayload(raw)
+	if !hasStr(got.Domains, "example.com") || !hasStr(got.Domains, "sub.example.org") {
+		t.Errorf("real domains missing: %v", got.Domains)
+	}
+	for _, d := range got.Domains {
+		if d != "example.com" && d != "sub.example.org" {
+			t.Errorf("junk token survived as domain: %q", d)
+		}
+	}
+}
+
 func hasStr(ss []string, want string) bool {
 	for _, s := range ss {
 		if s == want {

@@ -112,6 +112,13 @@ func ParseRoutingListPayload(raw []byte) ParsedRoutingList {
 	if trimmed == "" {
 		return ParsedRoutingList{}
 	}
+	// An HTML/XML page (the classic "pasted a GitHub blob URL, not the raw
+	// file" mistake) is never a valid list — refuse it rather than scraping
+	// junk "domains" out of the markup. A real list starts with '{' (source
+	// JSON) or a domain/comment, never '<'.
+	if strings.HasPrefix(trimmed, "<") {
+		return ParsedRoutingList{}
+	}
 	if strings.HasPrefix(trimmed, "{") {
 		if p, ok := parseSourceJSONRuleSet(raw); ok {
 			return p
@@ -135,7 +142,7 @@ func ParseRoutingListPayload(raw []byte) ParsedRoutingList {
 		}
 	}
 	return ParsedRoutingList{
-		Domains: compressDomainSuffixes(normalizeDomains(domains)),
+		Domains: compressDomainSuffixes(plausibleDomains(normalizeDomains(domains))),
 		CIDRs:   normalizeCIDRs(cidrs),
 	}
 }
@@ -152,9 +159,86 @@ func parseSourceJSONRuleSet(raw []byte) (ParsedRoutingList, bool) {
 		cidrs = append(cidrs, r.IPCidr...)
 	}
 	return ParsedRoutingList{
-		Domains: compressDomainSuffixes(normalizeDomains(domains)),
+		Domains: compressDomainSuffixes(plausibleDomains(normalizeDomains(domains))),
 		CIDRs:   normalizeCIDRs(cidrs),
 	}, true
+}
+
+// NormalizeRoutingListURL rewrites a GitHub "blob" web-page URL to its raw
+// content URL so a normal github.com link fetches the file, not the HTML page:
+//
+//	https://github.com/OWNER/REPO/blob/REF/PATH → https://raw.githubusercontent.com/OWNER/REPO/REF/PATH
+//
+// Any query/fragment on the blob URL is dropped. Already-raw, non-blob, and
+// non-github URLs are returned unchanged.
+func NormalizeRoutingListURL(raw string) string {
+	u := strings.TrimSpace(raw)
+	lower := strings.ToLower(u)
+	var rest string
+	switch {
+	case strings.HasPrefix(lower, "https://github.com/"):
+		rest = u[len("https://github.com/"):]
+	case strings.HasPrefix(lower, "http://github.com/"):
+		rest = u[len("http://github.com/"):]
+	case strings.HasPrefix(lower, "https://www.github.com/"):
+		rest = u[len("https://www.github.com/"):]
+	default:
+		return u
+	}
+	// rest = OWNER/REPO/blob/REF/PATH...
+	parts := strings.SplitN(rest, "/", 4)
+	if len(parts) < 4 || parts[2] != "blob" {
+		return u
+	}
+	owner, repo, path := parts[0], parts[1], parts[3]
+	if i := strings.IndexAny(path, "?#"); i >= 0 {
+		path = path[:i]
+	}
+	if owner == "" || repo == "" || path == "" {
+		return u
+	}
+	return "https://raw.githubusercontent.com/" + owner + "/" + repo + "/" + path
+}
+
+// LooksLikeRoutingListHTML reports whether a fetched body is an HTML/XML page
+// rather than a domain/CIDR list — the common mistake of pasting a GitHub
+// "blob" page URL instead of the raw file. A real list starts with '{' (source
+// JSON) or a domain/comment line, never '<'.
+func LooksLikeRoutingListHTML(raw []byte) bool {
+	t := strings.TrimSpace(string(raw))
+	return strings.HasPrefix(t, "<")
+}
+
+// plausibleDomains keeps only entries that look like real hostnames, dropping
+// markup/junk tokens (containing '=', '"', '<', spaces, etc.) that the lenient
+// line parser might otherwise admit. Input must already be normalized (lower
+// case, no scheme/path).
+func plausibleDomains(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, d := range in {
+		if isPlausibleDomain(d) {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func isPlausibleDomain(s string) bool {
+	if s == "" || !strings.Contains(s, ".") {
+		return false
+	}
+	if strings.HasPrefix(s, ".") || strings.HasSuffix(s, ".") ||
+		strings.HasPrefix(s, "-") || strings.HasSuffix(s, "-") {
+		return false
+	}
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') ||
+			r == '.' || r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // looksLikeCIDROrIP reports whether a raw list line is an IP/CIDR rather than
