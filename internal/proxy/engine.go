@@ -102,6 +102,12 @@ type EngineConfig struct {
 	TunStack     string
 	DataDir      string
 
+	// RoutingLists are user routing subscriptions resolved to local
+	// source-format rule_set caches. Applied in ALL modes as explicit rules
+	// ahead of the built-in Smart/whitelist/ad-block rules, ordered
+	// restrictive-first (block > proxy > direct). See buildRoute.
+	RoutingLists []RoutingListSpec
+
 	// DNSLeakProtection toggles sing-box `strict_route` on the TUN inbound.
 	// When true (the default for new installs), sing-box installs Windows
 	// Filtering Platform (WFP) rules that drop any outbound packet that
@@ -923,6 +929,7 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	if cfg.AdBlock {
 		route.RuleSet = buildAdBlockRuleSets(effectiveDataDir(cfg))
 	}
+	route.RuleSet = append(route.RuleSet, buildRoutingListRuleSets(cfg.RoutingLists)...)
 
 	var rules []SBRouteRule
 
@@ -969,6 +976,10 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		Protocol: []string{"dns"},
 		Action:   "hijack-dns",
 	})
+
+	// User routing lists win over the built-in Smart/whitelist/ad-block rules:
+	// inserted here, after the DNS/server infra rules but before every built-in.
+	rules = appendRoutingListRouteRules(cfg.RoutingLists, rules)
 
 	rules = appendAdBlockRouteRules(cfg, rules)
 

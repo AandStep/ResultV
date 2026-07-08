@@ -1371,3 +1371,124 @@ func TestBuildRouteAppForceVPN(t *testing.T) {
 		}
 	}
 }
+
+func TestRoutingListRulesRestrictiveOrder(t *testing.T) {
+	dir := t.TempDir()
+	// Three cache files so the stat-guard passes.
+	for _, id := range []string{"p", "d", "b"} {
+		if err := WriteRoutingListRuleSet(dir, id, ParsedRoutingList{Domains: []string{id + ".test"}}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	cfg := EngineConfig{
+		Mode:        ProxyModeTunnel,
+		RoutingMode: ModeGlobal,
+		DataDir:     dir,
+		RoutingLists: []RoutingListSpec{
+			{Tag: "rl-d", Path: RoutingListCachePath(dir, "d"), Action: "direct"},
+			{Tag: "rl-p", Path: RoutingListCachePath(dir, "p"), Action: "proxy"},
+			{Tag: "rl-b", Path: RoutingListCachePath(dir, "b"), Action: "block"},
+		},
+	}
+	route := buildRoute(cfg)
+
+	// rule_set entries exist for all three, as local source rule-sets.
+	tags := map[string]bool{}
+	for _, rs := range route.RuleSet {
+		tags[rs.Tag] = true
+		if rs.Tag == "rl-p" {
+			if rs.Type != "local" || rs.Format != "source" {
+				t.Errorf("rl-p rule_set: type=%q format=%q, want local/source", rs.Type, rs.Format)
+			}
+		}
+	}
+	for _, want := range []string{"rl-p", "rl-d", "rl-b"} {
+		if !tags[want] {
+			t.Errorf("missing rule_set tag %q", want)
+		}
+	}
+
+	// Route-rule order among the three: block before proxy before direct.
+	idx := func(tag string) int {
+		for i, r := range route.Rules {
+			if len(r.RuleSet) == 1 && r.RuleSet[0] == tag {
+				return i
+			}
+		}
+		return -1
+	}
+	ib, ip, id := idx("rl-b"), idx("rl-p"), idx("rl-d")
+	if ib < 0 || ip < 0 || id < 0 {
+		t.Fatalf("routing-list rules missing: b=%d p=%d d=%d", ib, ip, id)
+	}
+	if !(ib < ip && ip < id) {
+		t.Errorf("restrictive-first order violated: b=%d p=%d d=%d", ib, ip, id)
+	}
+
+	// Action/outbound mapping.
+	for _, r := range route.Rules {
+		if len(r.RuleSet) != 1 {
+			continue
+		}
+		switch r.RuleSet[0] {
+		case "rl-b":
+			if r.Action != "reject" {
+				t.Errorf("block list: action=%q, want reject", r.Action)
+			}
+		case "rl-p":
+			if r.Outbound != "proxy" {
+				t.Errorf("proxy list: outbound=%q, want proxy", r.Outbound)
+			}
+		case "rl-d":
+			if r.Outbound != "direct" {
+				t.Errorf("direct list: outbound=%q, want direct", r.Outbound)
+			}
+		}
+	}
+}
+
+func TestRoutingListRulesBeforeBuiltins(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteRoutingListRuleSet(dir, "u", ParsedRoutingList{Domains: []string{"user.test"}}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := EngineConfig{
+		Mode:           ProxyModeTunnel,
+		RoutingMode:    ModeSmart,
+		DataDir:        dir,
+		BlockedDomains: []string{"blocked.test"},
+		RoutingLists:   []RoutingListSpec{{Tag: "rl-u", Path: RoutingListCachePath(dir, "u"), Action: "direct"}},
+	}
+	route := buildRoute(cfg)
+	userIdx, smartIdx := -1, -1
+	for i, r := range route.Rules {
+		if len(r.RuleSet) == 1 && r.RuleSet[0] == "rl-u" {
+			userIdx = i
+		}
+		if len(r.DomainSuffix) == 1 && r.DomainSuffix[0] == "blocked.test" {
+			smartIdx = i
+		}
+	}
+	if userIdx < 0 || smartIdx < 0 {
+		t.Fatalf("rules missing: user=%d smart=%d", userIdx, smartIdx)
+	}
+	if userIdx > smartIdx {
+		t.Errorf("user list rule (%d) must come before built-in Smart rule (%d)", userIdx, smartIdx)
+	}
+}
+
+func TestRoutingListMissingCacheSkipped(t *testing.T) {
+	dir := t.TempDir() // no cache file written
+	cfg := EngineConfig{
+		Mode:         ProxyModeTunnel,
+		RoutingMode:  ModeGlobal,
+		DataDir:      dir,
+		RoutingLists: []RoutingListSpec{{Tag: "rl-x", Path: RoutingListCachePath(dir, "x"), Action: "proxy"}},
+	}
+	route := buildRoute(cfg)
+	for _, rs := range route.RuleSet {
+		if rs.Tag == "rl-x" {
+			t.Error("rule_set for a missing cache file must be skipped")
+		}
+	}
+}

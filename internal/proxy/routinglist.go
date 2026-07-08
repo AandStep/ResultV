@@ -30,6 +30,66 @@ type ParsedRoutingList struct {
 	CIDRs   []string
 }
 
+// RoutingListSpec is a resolved routing list ready for buildRoute: the
+// sing-box rule_set tag, the local source-format cache path, and the action.
+type RoutingListSpec struct {
+	Tag    string
+	Path   string
+	Action string // "proxy" | "direct" | "block"
+}
+
+// buildRoutingListRuleSets returns a local source-format rule_set per list
+// whose cache file exists and is non-empty.
+func buildRoutingListRuleSets(specs []RoutingListSpec) []SBRuleSet {
+	out := make([]SBRuleSet, 0, len(specs))
+	for _, s := range specs {
+		if !routingListCacheReady(s.Path) {
+			continue
+		}
+		out = append(out, SBRuleSet{
+			Type:         "local",
+			Tag:          s.Tag,
+			Format:       "source",
+			LocalOptions: SBLocalRuleSet{Path: s.Path},
+		})
+	}
+	return out
+}
+
+// appendRoutingListRouteRules appends one route rule per list, ordered
+// restrictive-first: all block, then proxy, then direct. block → reject;
+// proxy/direct → route to the matching outbound.
+func appendRoutingListRouteRules(specs []RoutingListSpec, rules []SBRouteRule) []SBRouteRule {
+	for _, action := range []string{"block", "proxy", "direct"} {
+		for _, s := range specs {
+			if s.Action != action || !routingListCacheReady(s.Path) {
+				continue
+			}
+			r := SBRouteRule{RuleSet: []string{s.Tag}}
+			switch action {
+			case "block":
+				r.Action = "reject"
+			case "proxy":
+				r.Action = "route"
+				r.Outbound = "proxy"
+			default: // "direct"
+				r.Action = "route"
+				r.Outbound = "direct"
+			}
+			rules = append(rules, r)
+		}
+	}
+	return rules
+}
+
+func routingListCacheReady(path string) bool {
+	if path == "" {
+		return false
+	}
+	st, err := os.Stat(path)
+	return err == nil && st.Size() > 0
+}
+
 // srcRuleSetFile mirrors the sing-box source-format rule_set JSON we both
 // accept as input and emit as cache.
 type srcRuleSetFile struct {
