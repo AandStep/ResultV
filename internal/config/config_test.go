@@ -552,6 +552,9 @@ func TestRoutingRulesNewFieldsDefaults(t *testing.T) {
 	if def.RoutingRules.AppForceVPN == nil || def.RoutingRules.CustomBlockedDomains == nil {
 		t.Error("DefaultConfig must initialise new routing fields")
 	}
+	if def.RoutingRules.RoutingLists == nil {
+		t.Error("DefaultConfig must initialise RoutingLists to empty slice, got nil")
+	}
 }
 
 func TestRoutingListsDefaults(t *testing.T) {

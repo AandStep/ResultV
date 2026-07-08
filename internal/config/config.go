@@ -195,6 +195,7 @@ func DefaultConfig() AppConfig {
 			AppWhitelist:         []string{},
 			AppForceVPN:          []string{},
 			CustomBlockedDomains: []string{},
+			RoutingLists:         []RoutingList{},
 		},
 		Proxies: []ProxyEntry{},
 		Settings: AppSettings{
