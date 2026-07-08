@@ -950,6 +950,14 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	m.dnsLeakProtection = dnsLeakProtection
 	m.startProcessTrackerLocked()
 	m.startHealthWatchdogLocked(proxy, mode)
+	// Harden the in-process sing-box engine against CPU starvation for the
+	// lifetime of the session: under full-core load (dev `go test`/builds) a
+	// Normal-priority engine stops draining its sockets and the OS aborts every
+	// tunneled connection at once. Restored in disconnectLocked. Best-effort —
+	// a failed bump only forfeits hardening, never blocks the connect.
+	if err := sys.RaiseProcessPriority(); err != nil {
+		m.log.Warning(fmt.Sprintf("[СИСТЕМА] Не удалось повысить приоритет процесса: %v", err))
+	}
 	m.emitStatusLocked()
 	m.mu.Unlock()
 
@@ -1965,6 +1973,12 @@ func (m *Manager) disconnectLocked() error {
 	m.proxy = nil
 	m.clearPendingLocked()
 
+	// Drop the session-scoped priority bump raised on connect (see
+	// sys.RaiseProcessPriority). A reconnect re-raises it on the next success.
+	if err := sys.RestoreProcessPriority(); err != nil {
+		m.log.Warning(fmt.Sprintf("[СИСТЕМА] Не удалось вернуть приоритет процесса: %v", err))
+	}
+
 	m.emitStatusLocked()
 
 	return nil
@@ -2197,6 +2211,16 @@ func (m *Manager) stopHealthWatchdogLocked() {
 // direct/split traffic can never mask a genuinely dead upstream.
 const watchdogTrafficAliveBytes int64 = 16 * 1024
 
+// maxConsecutiveVetoes bounds how long the traffic-veto (see
+// watchdogTrafficAliveBytes) may suppress a kill-switch trip. A truly alive
+// upstream recovers its HTTP probe within a tick or two, so a healthy session
+// never approaches this cap; a wedged transport that keeps spraying retry bytes
+// while every probe fails hits it and the veto yields, letting the outage be
+// detected. In tunnel mode (5s interval) this is ~30s of grace; in proxy mode
+// (10s) ~60s — long enough to ride out a transient exit hiccup, short enough
+// that a dead session doesn't stay silently masked.
+const maxConsecutiveVetoes = 6
+
 func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy ProxyConfig, mode ProxyMode) {
 	// Both modes now probe the data path (see probeHealthy): proxy mode through
 	// the local listener, tunnel mode through the TUN default route. Direct
@@ -2217,6 +2241,14 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy Proxy
 	defer ticker.Stop()
 
 	consecutiveFails := 0
+	// consecutiveVetoes counts how many ticks in a row the traffic-veto has
+	// suppressed a would-be kill-switch trip. A wedged transport (e.g. a
+	// half-open gRPC session, or the engine thrashing retries after a CPU-
+	// starvation event) keeps emitting failed probes *and* churns enough retry
+	// bytes on the proxy outbound to clear watchdogTrafficAliveBytes every tick,
+	// so the veto would otherwise mask a genuinely dead session forever. After
+	// maxConsecutiveVetoes the veto yields and the normal engage path runs.
+	consecutiveVetoes := 0
 	// Proxy-outbound byte counters at the previous tick, for the traffic veto.
 	// Start at 0: the engage check needs failuresBeforeDead consecutive failures,
 	// so the first tick's inflated delta (bytes since connect) never gates a trip.
@@ -2279,6 +2311,7 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy Proxy
 		wasDead := m.proxyDead
 		if alive {
 			consecutiveFails = 0
+			consecutiveVetoes = 0
 			var disengageFn func()
 			if wasDead {
 				m.proxyDead = false
@@ -2317,12 +2350,16 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy Proxy
 		var engageFn func(ProxyConfig, []string)
 		var engageProxy ProxyConfig
 		var engageDNS []string
-		if consecutiveFails >= failuresBeforeDead && !wasDead && proxyDelta >= watchdogTrafficAliveBytes {
+		if consecutiveFails >= failuresBeforeDead && !wasDead && proxyDelta >= watchdogTrafficAliveBytes && consecutiveVetoes < maxConsecutiveVetoes {
 			// Probe failed, but the proxy outbound moved real traffic this
 			// interval → the upstream is alive (a transient new-connection/route
 			// hiccup, not a dead server). Hold off the kill switch; keep counting
 			// so a genuine outage (traffic actually stops) still trips next tick.
-			m.log.Warning(fmt.Sprintf("[KILL SWITCH] Проба не прошла, но прокси несёт трафик (Δ=%d КБ за интервал) — блокировка отложена", proxyDelta/1024))
+			// Bounded by maxConsecutiveVetoes so a wedged transport that keeps
+			// churning retry bytes while every probe fails can't mask a dead
+			// session indefinitely.
+			consecutiveVetoes++
+			m.log.Warning(fmt.Sprintf("[KILL SWITCH] Проба не прошла, но прокси несёт трафик (Δ=%d КБ за интервал) — блокировка отложена (%d/%d)", proxyDelta/1024, consecutiveVetoes, maxConsecutiveVetoes))
 			m.mu.Unlock()
 			continue
 		}
