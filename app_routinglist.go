@@ -16,6 +16,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -30,7 +31,15 @@ import (
 	"resultproxy-wails/internal/proxy"
 )
 
-const routingListMaxBytes = 8 * 1024 * 1024
+const (
+	routingListMaxBytes = 8 * 1024 * 1024
+	// A routing-list host (often a Fastly/GitHub CDN edge) occasionally stalls
+	// before sending response headers. Retry a few times with a short per-
+	// attempt timeout so a one-off stall recovers on the next try in ~1-2s
+	// instead of failing the whole add after one long wait.
+	routingListFetchAttempts  = 3
+	routingListAttemptTimeout = 8 * time.Second
+)
 
 var validRoutingActions = map[string]bool{"proxy": true, "direct": true, "block": true}
 
@@ -124,26 +133,52 @@ func (a *App) fetchRoutingListPayload(listURL string, allowInsecure bool) ([]byt
 		return nil, fmt.Errorf("unsupported URL scheme")
 	}
 	client := &http.Client{
-		Timeout:   15 * time.Second,
+		Timeout:   routingListAttemptTimeout,
 		Transport: &http.Transport{DialContext: safeImageDialer().DialContext},
 	}
-	req, err := http.NewRequestWithContext(a.ctx, http.MethodGet, u, nil)
+	var lastErr error
+	for attempt := 1; attempt <= routingListFetchAttempts; attempt++ {
+		if a.ctx != nil && a.ctx.Err() != nil {
+			return nil, a.ctx.Err()
+		}
+		body, status, err := tryFetchRoutingList(a.ctx, client, u)
+		if err == nil && status == http.StatusOK {
+			return body, nil
+		}
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		lastErr = fmt.Errorf("routing-list http %d", status)
+		// A definitive client error (not found / auth / gone) won't fix itself
+		// on retry — stop early. Retry only on 5xx and 429.
+		if status >= 400 && status < 500 && status != http.StatusTooManyRequests {
+			break
+		}
+	}
+	return nil, lastErr
+}
+
+// tryFetchRoutingList performs one GET attempt, returning the body (on 200),
+// the HTTP status, and any transport error.
+func tryFetchRoutingList(ctx context.Context, client *http.Client, u string) ([]byte, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("routing-list http %d", resp.StatusCode)
+		return nil, resp.StatusCode, nil
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, routingListMaxBytes))
 	if err != nil {
-		return nil, err
+		return nil, resp.StatusCode, err
 	}
-	return body, nil
+	return body, resp.StatusCode, nil
 }
 
 // fetchParseAndCache downloads, parses, and writes the cache, returning counts.
