@@ -553,3 +553,32 @@ func TestRoutingRulesNewFieldsDefaults(t *testing.T) {
 		t.Error("DefaultConfig must initialise new routing fields")
 	}
 }
+
+func TestRoutingListsDefaults(t *testing.T) {
+	cfg := ensureDefaults(AppConfig{})
+	if cfg.RoutingRules.RoutingLists == nil {
+		t.Error("RoutingLists must default to empty slice, got nil")
+	}
+	if got := cfg.Settings.EffectiveRoutingListUpdateHours(); got != 24 {
+		t.Errorf("EffectiveRoutingListUpdateHours default: got %d, want 24", got)
+	}
+}
+
+func TestRoutingListRoundTrip(t *testing.T) {
+	rl := RoutingList{
+		ID: "abc", Name: "My list", URL: "https://example.com/list.txt",
+		Action: "proxy", Enabled: true, DomainCount: 3, CIDRCount: 1,
+	}
+	rr := RoutingRules{Mode: "smart", RoutingLists: []RoutingList{rl}}
+	blob, err := json.Marshal(rr)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var back RoutingRules
+	if err := json.Unmarshal(blob, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(back.RoutingLists) != 1 || back.RoutingLists[0].Action != "proxy" || back.RoutingLists[0].ID != "abc" {
+		t.Fatalf("round-trip mismatch: %+v", back.RoutingLists)
+	}
+}

@@ -38,6 +38,25 @@ type RoutingRules struct {
 	// CustomBlockedDomains are user-added "route via VPN" domains, unioned
 	// with the fetched block-lists in Smart mode.
 	CustomBlockedDomains []string `json:"customBlockedDomains"`
+	// RoutingLists are user-managed routing subscriptions (URL + action).
+	RoutingLists []RoutingList `json:"routingLists"`
+}
+
+// RoutingList is a user-managed routing subscription: a remote list of
+// domains/CIDRs (plain-text or sing-box source-JSON rule-set) routed by a
+// single action. Cached locally as a source-format rule_set and referenced
+// by buildRoute ahead of the built-in Smart/whitelist/ad-block rules.
+type RoutingList struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	URL           string `json:"url"`
+	Action        string `json:"action"` // "proxy" | "direct" | "block"
+	Enabled       bool   `json:"enabled"`
+	AllowInsecure bool   `json:"allowInsecure,omitempty"`
+	UpdatedAt     int64  `json:"updatedAt,omitempty"`
+	DomainCount   int    `json:"domainCount,omitempty"`
+	CIDRCount     int    `json:"cidrCount,omitempty"`
+	LastError     string `json:"lastError,omitempty"`
 }
 
 type ProxyEntry struct {
@@ -103,6 +122,10 @@ type AppSettings struct {
 	// via EffectiveDNSLeakProtection — anything else would silently
 	// downgrade existing installs to a leaky state on upgrade.
 	DNSLeakProtection *bool `json:"dnsLeakProtection,omitempty"`
+
+	// RoutingListUpdateHours is the app-wide auto-update interval for
+	// user routing lists. 0/absent → 24h via EffectiveRoutingListUpdateHours.
+	RoutingListUpdateHours int `json:"routingListUpdateHours,omitempty"`
 }
 
 // EffectiveDNSLeakProtection returns true unless the user has explicitly
@@ -138,6 +161,13 @@ func (s AppSettings) EffectiveSubscriptionUpdateIntervalHours() int {
 		return 6
 	}
 	return s.SubscriptionUpdateIntervalHours
+}
+
+func (s AppSettings) EffectiveRoutingListUpdateHours() int {
+	if s.RoutingListUpdateHours < 1 {
+		return 24
+	}
+	return s.RoutingListUpdateHours
 }
 
 func (s AppSettings) EffectiveSubscriptionSendHWID() bool {
@@ -396,6 +426,9 @@ func ensureDefaults(cfg AppConfig) AppConfig {
 	}
 	if cfg.RoutingRules.CustomBlockedDomains == nil {
 		cfg.RoutingRules.CustomBlockedDomains = []string{}
+	}
+	if cfg.RoutingRules.RoutingLists == nil {
+		cfg.RoutingRules.RoutingLists = []RoutingList{}
 	}
 	if cfg.Proxies == nil {
 		cfg.Proxies = []ProxyEntry{}
