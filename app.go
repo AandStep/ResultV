@@ -114,6 +114,12 @@ type App struct {
 	updateMu     sync.Mutex
 	updateCancel context.CancelFunc
 
+	// dataDirOverride, when non-empty, replaces getUserDataPath() as the
+	// routing-list cache directory. Production leaves it empty (so caches land
+	// in system.UserDataDir(), exactly where the engine's buildRoute stats
+	// them); tests set it to a temp dir. See routingListDataDir.
+	dataDirOverride string
+
 	// leftoverReport holds what startup recovery cleaned up after a prior
 	// unclean exit, consumed once by the frontend to show an informational
 	// notice. Guarded by leftoverMu.
