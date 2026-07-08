@@ -595,10 +595,10 @@ export const RulesView = () => {
                       disabled={busy || refreshing}
                       title={t("routingLists.refreshAria")}
                       aria-label={t("routingLists.refreshAria")}
-                      className="flex h-10 w-10 items-center justify-center p-0 rounded-xl border border-zinc-700/60 bg-zinc-900/50 text-zinc-300 hover:text-white hover:border-zinc-600 transition-colors outline-none focus:outline-none focus:ring-2 focus:ring-[#00A819]/25 disabled:opacity-50"
+                      className="p-2 bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 rounded-xl transition-colors shrink-0 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none disabled:opacity-50"
                     >
                       <RefreshCw
-                        className={`h-4 w-4 text-[#00A819] ${refreshing ? "animate-spin" : ""}`}
+                        className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`}
                       />
                     </button>
                     <button
@@ -607,9 +607,9 @@ export const RulesView = () => {
                       disabled={busy}
                       title={t("routingLists.editAria")}
                       aria-label={t("routingLists.editAria")}
-                      className="flex h-10 w-10 items-center justify-center p-0 rounded-xl border border-zinc-700/60 bg-zinc-900/50 text-zinc-300 hover:text-white hover:border-zinc-600 transition-colors outline-none focus:outline-none focus:ring-2 focus:ring-[#00A819]/25 disabled:opacity-50"
+                      className="p-2 bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 rounded-xl transition-colors shrink-0 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none disabled:opacity-50"
                     >
-                      <Pencil className="h-4 w-4" />
+                      <Pencil className="w-3.5 h-3.5" />
                     </button>
                     <button
                       type="button"
@@ -617,9 +617,9 @@ export const RulesView = () => {
                       disabled={busy}
                       title={t("routingLists.deleteAria")}
                       aria-label={t("routingLists.deleteAria")}
-                      className="flex h-10 w-10 items-center justify-center p-0 rounded-xl border border-rose-500/40 bg-rose-500/15 text-rose-400 hover:bg-rose-500/25 hover:text-rose-300 transition-colors outline-none focus:outline-none focus:ring-2 focus:ring-rose-500/30 disabled:opacity-50"
+                      className="p-2 bg-zinc-800 text-zinc-400 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-colors shrink-0 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none disabled:opacity-50"
                     >
-                      <Trash2 className="h-4 w-4" />
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
