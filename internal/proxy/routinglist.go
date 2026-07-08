@@ -17,6 +17,9 @@ package proxy
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -124,4 +127,45 @@ func looksLikeCIDROrIP(s string) bool {
 		}
 	}
 	return hasDigit || hasColon
+}
+
+const (
+	routingListsSubdir        = "routing/lists"
+	routingListRuleSetVersion = 3
+)
+
+// RoutingListsDir is where per-list source-format rule_set caches live.
+func RoutingListsDir(dataDir string) string {
+	return filepath.Join(dataDir, routingListsSubdir)
+}
+
+// RoutingListCachePath is the cache file for one list id. The id is used
+// verbatim as the base name; callers must pass sanitized ids (see the app
+// layer, which generates them). No path separators are permitted.
+func RoutingListCachePath(dataDir, id string) string {
+	return filepath.Join(RoutingListsDir(dataDir), id+".json")
+}
+
+// RoutingListRuleSetTag is the sing-box rule_set tag for a list id.
+func RoutingListRuleSetTag(id string) string {
+	return "rl-" + id
+}
+
+// WriteRoutingListRuleSet writes the parsed list as a sing-box source-format
+// rule_set. Returns an error (and writes nothing) when the list is empty, so
+// callers can reject the add and preserve any previous cache on refresh.
+func WriteRoutingListRuleSet(dataDir, id string, p ParsedRoutingList) error {
+	if len(p.Domains) == 0 && len(p.CIDRs) == 0 {
+		return fmt.Errorf("routing list %q is empty", id)
+	}
+	rule := srcRuleSetRule{DomainSuffix: p.Domains, IPCidr: p.CIDRs}
+	f := srcRuleSetFile{Version: routingListRuleSetVersion, Rules: []srcRuleSetRule{rule}}
+	blob, err := json.Marshal(f)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(RoutingListsDir(dataDir), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(RoutingListCachePath(dataDir, id), blob, 0o600)
 }

@@ -15,7 +15,11 @@
 
 package proxy
 
-import "testing"
+import (
+	"encoding/json"
+	"os"
+	"testing"
+)
 
 func hasStr(ss []string, want string) bool {
 	for _, s := range ss {
@@ -82,5 +86,47 @@ func TestParseRoutingListPlainTextIPv6CIDR(t *testing.T) {
 	}
 	if !hasStr(got.Domains, "example.net") {
 		t.Errorf("domain missing: %v", got.Domains)
+	}
+}
+
+func TestWriteRoutingListRuleSet(t *testing.T) {
+	dir := t.TempDir()
+	p := ParsedRoutingList{Domains: []string{"example.com"}, CIDRs: []string{"1.2.3.0/24"}}
+	if err := WriteRoutingListRuleSet(dir, "abc", p); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	path := RoutingListCachePath(dir, "abc")
+	blob, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var f srcRuleSetFile
+	if err := json.Unmarshal(blob, &f); err != nil {
+		t.Fatalf("cache not valid JSON: %v", err)
+	}
+	if f.Version != routingListRuleSetVersion {
+		t.Errorf("version: got %d, want %d", f.Version, routingListRuleSetVersion)
+	}
+	if len(f.Rules) != 1 || !hasStr(f.Rules[0].DomainSuffix, "example.com") || !hasStr(f.Rules[0].IPCidr, "1.2.3.0/24") {
+		t.Errorf("unexpected cache rules: %+v", f.Rules)
+	}
+}
+
+func TestWriteRoutingListRuleSetEmptyRejected(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteRoutingListRuleSet(dir, "empty", ParsedRoutingList{}); err == nil {
+		t.Error("expected error writing empty routing list")
+	}
+	if _, err := os.Stat(RoutingListCachePath(dir, "empty")); err == nil {
+		t.Error("empty list must not create a cache file")
+	}
+}
+
+func TestRoutingListRuleSetTagStable(t *testing.T) {
+	if RoutingListRuleSetTag("abc") != RoutingListRuleSetTag("abc") {
+		t.Error("tag not stable")
+	}
+	if RoutingListRuleSetTag("abc") == RoutingListRuleSetTag("def") {
+		t.Error("tags must differ per id")
 	}
 }
