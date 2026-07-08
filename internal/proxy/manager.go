@@ -110,6 +110,7 @@ type Manager struct {
 	whitelist    []string
 	appWhitelist []string
 	appForceVPN  []string
+	routingLists []RoutingListSpec
 	connectedAt  time.Time
 
 	prevUp   int64
@@ -721,6 +722,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		DNSLeakProtection: dnsLeakProtection,
 		DataDir:           resultProxyDataDir(),
 	}
+	engineCfg.RoutingLists = m.routingListSpecsLocked()
 	// Smart mode needs the censored block-list in the engine config so
 	// buildRoute can tunnel those domains/ranges while everything else goes
 	// direct. Only populated for Smart — Global/Whitelist ignore it.
@@ -1269,6 +1271,7 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 		DNSLeakProtection: dnsLeakProtection,
 		DataDir:           resultProxyDataDir(),
 	}
+	engineCfg.RoutingLists = m.routingListSpecsLocked()
 	// Smart mode needs the censored block-list in the engine config so
 	// buildRoute can tunnel those domains/ranges while everything else goes
 	// direct. Only populated for Smart — Global/Whitelist ignore it.
@@ -2042,6 +2045,26 @@ func (m *Manager) SetTunStack(stack string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.tunStack = stack
+}
+
+// SetRoutingLists replaces the resolved routing-list specs used by the next
+// engine start/reload. Stored under m.mu; a copy is taken so the caller may
+// reuse its slice.
+func (m *Manager) SetRoutingLists(specs []RoutingListSpec) {
+	cp := make([]RoutingListSpec, len(specs))
+	copy(cp, specs)
+	m.mu.Lock()
+	m.routingLists = cp
+	m.mu.Unlock()
+}
+
+// routingListSpecsLocked returns a copy of the current specs. Callers must
+// hold m.mu — both EngineConfig build sites in Connect/connectLocked already
+// do.
+func (m *Manager) routingListSpecsLocked() []RoutingListSpec {
+	cp := make([]RoutingListSpec, len(m.routingLists))
+	copy(cp, m.routingLists)
+	return cp
 }
 
 func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string) ConnectResultDTO {
