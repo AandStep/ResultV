@@ -321,6 +321,31 @@
       "add_btn": "Добавить"
     }
   },
+  "routingLists": {
+    "title": "Списки маршрутизации",
+    "subtitle": "Свои списки доменов/подсетей с действием",
+    "add": "Добавить список",
+    "url": "Ссылка на список",
+    "name": "Название",
+    "action": "Действие",
+    "actionProxy": "Через VPN",
+    "actionDirect": "Напрямую",
+    "actionBlock": "Блокировать",
+    "insecureConsent": "Понимаю, что http:// небезопасно",
+    "updateInterval": "Интервал обновления (часы)",
+    "counts": "{{domains}} доменов · {{cidrs}} подсетей",
+    "refresh": "Обновить",
+    "refreshAria": "Обновить список",
+    "editAria": "Изменить список",
+    "deleteAria": "Удалить список",
+    "empty": "Списки не добавлены",
+    "namePlaceholder": "Например: Мой блок-лист",
+    "urlPlaceholder": "https://example.com/list.txt",
+    "updatedNever": "Ещё не обновлялся",
+    "updatedAgo": "Обновлено {{time}}",
+    "confirmDelete": "Удалить список «{{name}}»? Также будет удалён его кэш.",
+    "errorLabel": "Ошибка: {{error}}"
+  },
   "proxyList": {
     "title": "Сохраненные профили",
     "desc": "Управляйте вашими серверами",
@@ -443,7 +468,9 @@
     "cancel": "Отмена",
     "confirm": "Подтвердить",
     "confirmAction": "Подтвердите действие",
-    "delete": "Удалить"
+    "delete": "Удалить",
+    "edit": "Изменить",
+    "save": "Сохранить"
   },
   "killswitchPopup": {
     "title": "Сработал Kill Switch",

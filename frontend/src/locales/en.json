@@ -321,6 +321,31 @@
       "add_btn": "Add"
     }
   },
+  "routingLists": {
+    "title": "Routing lists",
+    "subtitle": "Your own domain/subnet lists with a routing action",
+    "add": "Add list",
+    "url": "List URL",
+    "name": "Name",
+    "action": "Action",
+    "actionProxy": "Via VPN",
+    "actionDirect": "Direct",
+    "actionBlock": "Block",
+    "insecureConsent": "I understand http:// is insecure",
+    "updateInterval": "Update interval (hours)",
+    "counts": "{{domains}} domains · {{cidrs}} subnets",
+    "refresh": "Refresh",
+    "refreshAria": "Refresh list",
+    "editAria": "Edit list",
+    "deleteAria": "Delete list",
+    "empty": "No lists added yet",
+    "namePlaceholder": "E.g.: My blocklist",
+    "urlPlaceholder": "https://example.com/list.txt",
+    "updatedNever": "Not refreshed yet",
+    "updatedAgo": "Updated {{time}}",
+    "confirmDelete": "Delete the list \"{{name}}\"? This also removes its cached rules.",
+    "errorLabel": "Error: {{error}}"
+  },
   "proxyList": {
     "title": "Saved Profiles",
     "desc": "Manage your servers",
@@ -443,7 +468,9 @@
     "cancel": "Cancel",
     "confirm": "Confirm",
     "confirmAction": "Confirm action",
-    "delete": "Delete"
+    "delete": "Delete",
+    "edit": "Edit",
+    "save": "Save"
   },
   "killswitchPopup": {
     "title": "Kill Switch Triggered",

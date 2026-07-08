@@ -15,23 +15,186 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import React, { useState, useRef } from "react";
-import { Plus, Trash2, HelpCircle } from "lucide-react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
+import {
+  Plus,
+  Trash2,
+  HelpCircle,
+  RefreshCw,
+  Pencil,
+  ListPlus,
+} from "lucide-react";
 import { useConfigContext } from "../context/ConfigContext";
 import { useTranslation } from "react-i18next";
 import { PickAppForWhitelist } from "../../wailsjs/go/main/App";
+import wailsAPI from "../utils/wailsAPI";
+import RoutingListModal from "../components/ui/RoutingListModal";
+
+const ROUTING_ACTION_STYLES = {
+  proxy: "bg-[#007E3A]/10 text-[#00A819] border-[#007E3A]/20",
+  direct: "bg-zinc-800 text-zinc-300 border-zinc-700",
+  block: "bg-rose-500/10 text-rose-400 border-rose-500/20",
+};
 
 export const RulesView = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const {
     routingRules: rules,
     setRoutingRules: setRules,
+    syncRoutingLists,
+    settings,
+    updateSetting,
+    showConfirmDialog,
     platform,
   } = useConfigContext();
   const [newDomain, setNewDomain] = useState("");
   const [newApp, setNewApp] = useState("");
 
   const appFileInputRef = useRef(null);
+
+  const routingLists = rules.routingLists || [];
+  const [listModal, setListModal] = useState({ isOpen: false, mode: "add", initial: null });
+  const [refreshingListId, setRefreshingListId] = useState(null);
+  const [busyListId, setBusyListId] = useState(null);
+  const [intervalInput, setIntervalInput] = useState(
+    settings?.routingListUpdateHours
+      ? String(settings.routingListUpdateHours)
+      : "24",
+  );
+
+  useEffect(() => {
+    setIntervalInput(
+      settings?.routingListUpdateHours
+        ? String(settings.routingListUpdateHours)
+        : "24",
+    );
+  }, [settings?.routingListUpdateHours]);
+
+  const commitInterval = async () => {
+    const raw = String(intervalInput || "").trim();
+    const n = parseInt(raw, 10);
+    if (!Number.isFinite(n) || n < 1) {
+      setIntervalInput(
+        settings?.routingListUpdateHours
+          ? String(settings.routingListUpdateHours)
+          : "24",
+      );
+      return;
+    }
+    await updateSetting("routingListUpdateHours", n);
+  };
+
+  const refreshRoutingListsFromConfig = async () => {
+    try {
+      const cfg = await wailsAPI.getConfig();
+      if (cfg?.routingRules?.routingLists) {
+        syncRoutingLists(cfg.routingRules.routingLists);
+      }
+    } catch (err) {
+      console.error("Refresh routing lists error:", err);
+    }
+  };
+
+  const openAddListModal = () =>
+    setListModal({ isOpen: true, mode: "add", initial: null });
+  const openEditListModal = (rl) =>
+    setListModal({ isOpen: true, mode: "edit", initial: rl });
+  const closeListModal = () =>
+    setListModal({ isOpen: false, mode: "add", initial: null });
+
+  const handleListModalSubmit = async (payload) => {
+    if (listModal.mode === "edit" && listModal.initial) {
+      await wailsAPI.updateRoutingList({
+        ...listModal.initial,
+        name: payload.name,
+        action: payload.action,
+      });
+    } else {
+      await wailsAPI.addRoutingList(
+        payload.name,
+        payload.url,
+        payload.action,
+        payload.allowInsecure,
+      );
+    }
+    await refreshRoutingListsFromConfig();
+  };
+
+  const handleToggleListEnabled = async (rl) => {
+    setBusyListId(rl.id);
+    try {
+      await wailsAPI.updateRoutingList({ ...rl, enabled: !rl.enabled });
+    } catch (err) {
+      console.error("Toggle routing list error:", err);
+    } finally {
+      await refreshRoutingListsFromConfig();
+      setBusyListId(null);
+    }
+  };
+
+  const handleRefreshList = async (rl) => {
+    setRefreshingListId(rl.id);
+    try {
+      await wailsAPI.refreshRoutingList(rl.id);
+    } catch (err) {
+      console.error("Refresh routing list error:", err);
+    } finally {
+      await refreshRoutingListsFromConfig();
+      setRefreshingListId(null);
+    }
+  };
+
+  const handleDeleteList = async (rl) => {
+    const ok = await showConfirmDialog({
+      title: t("common.confirmAction"),
+      message: t("routingLists.confirmDelete", { name: rl.name || rl.url }),
+      variant: "danger",
+      confirmText: t("common.delete"),
+      cancelText: t("common.cancel"),
+    });
+    if (!ok) return;
+    setBusyListId(rl.id);
+    try {
+      await wailsAPI.deleteRoutingList(rl.id);
+    } catch (err) {
+      console.error("Delete routing list error:", err);
+    } finally {
+      await refreshRoutingListsFromConfig();
+      setBusyListId(null);
+    }
+  };
+
+  const formatUpdatedAgo = useMemo(() => {
+    return (updatedAt) => {
+      if (!updatedAt) return t("routingLists.updatedNever");
+      const deltaSec = Math.max(
+        0,
+        Math.floor(Date.now() / 1000) - updatedAt,
+      );
+      let value, unit;
+      if (deltaSec < 60) {
+        value = -deltaSec;
+        unit = "second";
+      } else if (deltaSec < 3600) {
+        value = -Math.floor(deltaSec / 60);
+        unit = "minute";
+      } else if (deltaSec < 86400) {
+        value = -Math.floor(deltaSec / 3600);
+        unit = "hour";
+      } else {
+        value = -Math.floor(deltaSec / 86400);
+        unit = "day";
+      }
+      try {
+        const rtf = new Intl.RelativeTimeFormat(i18n.language, {
+          numeric: "auto",
+        });
+        return t("routingLists.updatedAgo", { time: rtf.format(value, unit) });
+      } catch {
+        return t("routingLists.updatedAgo", { time: `${-value} ${unit}` });
+      }
+    };
+  }, [t, i18n.language]);
 
   const isWin =
     platform === "win32" || platform === "windows" || platform === "win64";
@@ -329,6 +492,150 @@ export const RulesView = () => {
           </div>
         )}
       </div>
+
+      <div className="bg-zinc-900 p-6 rounded-3xl border border-zinc-800 mt-6">
+        <div className="flex flex-wrap items-start justify-between gap-4 mb-2">
+          <div>
+            <h3 className="text-white font-bold text-lg">
+              {t("routingLists.title")}
+            </h3>
+            <p className="text-zinc-500 text-sm mt-1">
+              {t("routingLists.subtitle")}
+            </p>
+          </div>
+          <button
+            onClick={openAddListModal}
+            className="flex items-center px-6 py-3 bg-[#007E3A] hover:bg-[#00A819] text-white font-bold rounded-xl transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none shrink-0"
+          >
+            <ListPlus className="w-5 h-5 mr-2" />
+            {t("routingLists.add")}
+          </button>
+        </div>
+
+        <div className="flex items-center gap-3 mb-6 mt-4">
+          <label className="text-sm font-medium text-zinc-400 shrink-0">
+            {t("routingLists.updateInterval")}
+          </label>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            className="w-28 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-white outline-none focus:border-[#007E3A] transition-colors focus:ring-0"
+            value={intervalInput}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "" || /^[0-9]+$/.test(v)) setIntervalInput(v);
+            }}
+            onBlur={commitInterval}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                commitInterval();
+              }
+            }}
+          />
+        </div>
+
+        {routingLists.length === 0 ? (
+          <p className="text-zinc-500 text-sm">{t("routingLists.empty")}</p>
+        ) : (
+          <div className="space-y-3">
+            {routingLists.map((rl) => {
+              const busy = busyListId === rl.id;
+              const refreshing = refreshingListId === rl.id;
+              return (
+                <div
+                  key={rl.id}
+                  className="p-4 bg-zinc-800 rounded-xl border border-zinc-700 flex flex-wrap items-center gap-4"
+                >
+                  <div
+                    className={`relative w-12 h-7 rounded-2xl transition-colors duration-300 ease-in-out shrink-0 cursor-pointer ${rl.enabled ? "bg-[#007E3A]" : "bg-zinc-700"}`}
+                    onClick={() => !busy && handleToggleListEnabled(rl)}
+                    role="button"
+                    aria-pressed={rl.enabled}
+                    style={{ opacity: busy ? 0.5 : 1 }}
+                  >
+                    <div
+                      className={`absolute top-1 left-1 bg-white w-5 h-5 rounded-full transition-transform duration-300 ease-in-out ${rl.enabled ? "transform translate-x-5" : ""}`}
+                    ></div>
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-white font-bold truncate">
+                        {rl.name || rl.url}
+                      </span>
+                      <span
+                        className={`shrink-0 text-xs font-medium px-2.5 py-0.5 rounded-full border ${ROUTING_ACTION_STYLES[rl.action] || ROUTING_ACTION_STYLES.direct}`}
+                      >
+                        {t(`routingLists.action${rl.action?.charAt(0).toUpperCase()}${rl.action?.slice(1)}`)}
+                      </span>
+                    </div>
+                    <p className="text-zinc-500 text-xs mt-1 truncate">
+                      {rl.url}
+                    </p>
+                    <p className="text-zinc-500 text-xs mt-1">
+                      {formatUpdatedAgo(rl.updatedAt)} ·{" "}
+                      {t("routingLists.counts", {
+                        domains: rl.domainCount || 0,
+                        cidrs: rl.cidrCount || 0,
+                      })}
+                    </p>
+                    {rl.lastError && (
+                      <p className="text-rose-500 text-xs mt-1 break-words">
+                        {t("routingLists.errorLabel", { error: rl.lastError })}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleRefreshList(rl)}
+                      disabled={busy || refreshing}
+                      title={t("routingLists.refreshAria")}
+                      aria-label={t("routingLists.refreshAria")}
+                      className="flex h-10 w-10 items-center justify-center rounded-xl border border-zinc-700/60 bg-zinc-900/50 text-zinc-300 hover:text-white hover:border-zinc-600 transition-colors outline-none focus:outline-none focus:ring-2 focus:ring-[#00A819]/25 disabled:opacity-50"
+                    >
+                      <RefreshCw
+                        className={`h-4 w-4 text-[#00A819] ${refreshing ? "animate-spin" : ""}`}
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openEditListModal(rl)}
+                      disabled={busy}
+                      title={t("routingLists.editAria")}
+                      aria-label={t("routingLists.editAria")}
+                      className="flex h-10 w-10 items-center justify-center rounded-xl border border-zinc-700/60 bg-zinc-900/50 text-zinc-300 hover:text-white hover:border-zinc-600 transition-colors outline-none focus:outline-none focus:ring-2 focus:ring-[#00A819]/25 disabled:opacity-50"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteList(rl)}
+                      disabled={busy}
+                      title={t("routingLists.deleteAria")}
+                      aria-label={t("routingLists.deleteAria")}
+                      className="flex h-10 w-10 items-center justify-center rounded-xl border border-rose-500/40 bg-rose-500/15 text-rose-400 hover:bg-rose-500/25 hover:text-rose-300 transition-colors outline-none focus:outline-none focus:ring-2 focus:ring-rose-500/30 disabled:opacity-50"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <RoutingListModal
+        isOpen={listModal.isOpen}
+        mode={listModal.mode}
+        initial={listModal.initial}
+        onClose={closeListModal}
+        onSubmit={handleListModalSubmit}
+      />
     </div>
   );
 };

@@ -16,6 +16,10 @@
  */
 
 import {
+  AddRoutingList,
+  UpdateRoutingList,
+  DeleteRoutingList,
+  RefreshRoutingList,
   ApplyMode,
   CancelConnect,
   Connect,
@@ -357,7 +361,46 @@ export const wailsAPI = {
     }
   },
 
-  
+  // Routing-list subscriptions (user-managed domain/CIDR lists routed by a
+  // single action: proxy | direct | block). Plaintext http:// is refused
+  // unless allowInsecure=true — mirrors the subscription consent flow.
+  addRoutingList: async (name, url, action, allowInsecure = false) => {
+    try {
+      return await AddRoutingList(name, url, action, allowInsecure);
+    } catch (e) {
+      console.error("wailsAPI.addRoutingList error:", e);
+      throw e;
+    }
+  },
+
+  updateRoutingList: async (routingList) => {
+    try {
+      return await UpdateRoutingList(routingList);
+    } catch (e) {
+      console.error("wailsAPI.updateRoutingList error:", e);
+      throw e;
+    }
+  },
+
+  deleteRoutingList: async (id) => {
+    try {
+      return await DeleteRoutingList(id);
+    } catch (e) {
+      console.error("wailsAPI.deleteRoutingList error:", e);
+      throw e;
+    }
+  },
+
+  refreshRoutingList: async (id) => {
+    try {
+      return await RefreshRoutingList(id);
+    } catch (e) {
+      console.error("wailsAPI.refreshRoutingList error:", e);
+      throw e;
+    }
+  },
+
+
   // Fetch a subscription URL. Plaintext http:// is refused unless
   // allowInsecure=true is passed explicitly. The Go side returns the error
   // string "subscription URL uses plaintext HTTP — credentials and HWID

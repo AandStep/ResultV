@@ -68,6 +68,13 @@ export const useAppConfig = (addLog) => {
     });
     const confirmResolverRef = useRef(null);
     const dialogConfirmRef = useRef(null);
+    // AddRoutingList/UpdateRoutingList/DeleteRoutingList/RefreshRoutingList
+    // already persist + reconnect on the Go side (applyRoutingRulesAndReconnect).
+    // Reflecting their result into `routingRules` via setRoutingRules would
+    // otherwise re-fire the generic UpdateRules effect below and trigger a
+    // second, redundant reconnect. This ref lets syncRoutingLists (below)
+    // update local state for exactly one render without re-pushing to the backend.
+    const skipNextRulesPushRef = useRef(false);
 
     const resetDialog = useCallback(() => ({
         isOpen: false,
@@ -191,8 +198,26 @@ export const useAppConfig = (addLog) => {
     
     useEffect(() => {
         if (!isConfigLoaded) return;
+        if (skipNextRulesPushRef.current) {
+            skipNextRulesPushRef.current = false;
+            return;
+        }
         wailsAPI.updateRules(routingRules).catch(err => console.error("UpdateRules err:", err));
     }, [routingRules, isConfigLoaded]);
+
+    // Reflects a fresh routingLists array (from AddRoutingList/UpdateRoutingList/
+    // DeleteRoutingList/RefreshRoutingList or a post-mutation getConfig refetch)
+    // into local state without re-pushing to UpdateRules — the backend already
+    // applied and reconnected for these calls. Keeping routingRules.routingLists
+    // accurate here also matters for persistSettings, which saves the whole
+    // routingRules blob on every unrelated setting change.
+    const syncRoutingLists = useCallback((routingLists) => {
+        skipNextRulesPushRef.current = true;
+        setRoutingRules((prev) => ({
+            ...prev,
+            routingLists: Array.isArray(routingLists) ? routingLists : [],
+        }));
+    }, []);
 
     useEffect(() => {
         if (!isConfigLoaded) return;
@@ -482,6 +507,7 @@ export const useAppConfig = (addLog) => {
         setProxies,
         routingRules,
         setRoutingRules,
+        syncRoutingLists,
         settings,
         setSettings,
         updateSetting,
