@@ -93,7 +93,7 @@ func routingListCacheReady(path string) bool {
 // srcRuleSetFile mirrors the sing-box source-format rule_set JSON we both
 // accept as input and emit as cache.
 type srcRuleSetFile struct {
-	Version int             `json:"version"`
+	Version int              `json:"version"`
 	Rules   []srcRuleSetRule `json:"rules"`
 }
 
