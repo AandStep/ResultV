@@ -102,6 +102,15 @@ func TestExtractRoutingListsLimit(t *testing.T) {
 	}
 }
 
+func TestExtractRoutingListsInvalidHeaderFallsBackToBody(t *testing.T) {
+	hdr := b64(`[{"url":"https://bad.test/x.lst","action":"tunnel"}]`) // parses, 0 valid
+	body := `{"routingLists":[{"url":"https://body.test/b.lst","action":"block"}]}`
+	got := ExtractSubscriptionRoutingLists(hdr, body)
+	if len(got) != 1 || !strings.Contains(got[0].URL, "body.test") {
+		t.Fatalf("all-invalid header must fall back to body: %+v", got)
+	}
+}
+
 func TestExtractRoutingListsGarbage(t *testing.T) {
 	for _, hdr := range []string{"", "not-base64!!!", b64("not json"), b64("{}")} {
 		if got := ExtractSubscriptionRoutingLists(hdr, "plain text body"); len(got) != 0 {

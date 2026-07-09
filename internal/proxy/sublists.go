@@ -39,11 +39,11 @@ type subRoutingListDecl struct {
 // a subscription response. Two channels, same payload shape (JSON array of
 // {name,url,action}): the Routing-Lists header carries base64(JSON) and works
 // with any body format; a JSON body may carry a top-level "routingLists" key.
-// The header wins when it yields at least one valid entry. Returned entries
-// have only Name/URL/Action set; invalid entries are silently dropped.
+// The header wins only when it yields at least one valid entry after validation.
+// Returned entries have only Name/URL/Action set; invalid entries are silently dropped.
 func ExtractSubscriptionRoutingLists(headerVal, body string) []config.RoutingList {
-	if decls := declsFromHeader(headerVal); len(decls) > 0 {
-		return validateSubRoutingLists(decls)
+	if fromHeader := validateSubRoutingLists(declsFromHeader(headerVal)); len(fromHeader) > 0 {
+		return fromHeader
 	}
 	return validateSubRoutingLists(declsFromJSONBody(body))
 }
