@@ -9,7 +9,7 @@ import {updater} from '../models';
 
 export function AddRoutingList(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<config.RoutingList>;
 
-export function AddSubscription(arg1:string,arg2:string,arg3:boolean,arg4:string):Promise<Array<config.ProxyEntry>>;
+export function AddSubscription(arg1:string,arg2:string,arg3:boolean,arg4:string,arg5:Array<string>):Promise<Array<config.ProxyEntry>>;
 
 export function ApplyMode(arg1:string):Promise<proxy.ConnectResultDTO>;
 
@@ -33,7 +33,7 @@ export function Disconnect():Promise<void>;
 
 export function ExportConfig(arg1:string):Promise<string>;
 
-export function FetchSubscription(arg1:string,arg2:boolean):Promise<Array<config.ProxyEntry>>;
+export function FetchSubscription(arg1:string,arg2:boolean):Promise<main.SubscriptionPreview>;
 
 export function GetAdBlockStatus():Promise<main.AdBlockStatusDTO>;
 
@@ -71,7 +71,7 @@ export function IsAdmin():Promise<boolean>;
 
 export function IsAutostartEnabled():Promise<boolean>;
 
-export function ParseSubscriptionText(arg1:string):Promise<Array<config.ProxyEntry>>;
+export function ParseSubscriptionText(arg1:string):Promise<main.SubscriptionPreview>;
 
 export function PickAppForWhitelist():Promise<string>;
 

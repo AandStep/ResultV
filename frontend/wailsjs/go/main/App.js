@@ -6,8 +6,8 @@ export function AddRoutingList(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['AddRoutingList'](arg1, arg2, arg3, arg4);
 }
 
-export function AddSubscription(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['AddSubscription'](arg1, arg2, arg3, arg4);
+export function AddSubscription(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['AddSubscription'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function ApplyMode(arg1) {

@@ -446,9 +446,9 @@ export const wailsAPI = {
   // Add a subscription. See fetchSubscription for the http:// consent flow.
   // The accepted-plaintext flag is persisted on the Subscription record so
   // refreshSubscription doesn't need to re-prompt.
-  addSubscription: async (name, url, allowInsecure = false, subscriptionSource = "") => {
+  addSubscription: async (name, url, allowInsecure = false, subscriptionSource = "", disabledListURLs = []) => {
     try {
-      return await AddSubscription(name, url, allowInsecure, subscriptionSource || "");
+      return await AddSubscription(name, url, allowInsecure, subscriptionSource || "", disabledListURLs || []);
     } catch (e) {
       console.error("wailsAPI.addSubscription error:", e);
       throw e;

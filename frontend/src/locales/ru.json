@@ -344,7 +344,11 @@
     "updatedNever": "Ещё не обновлялся",
     "updatedAgo": "Обновлено {{time}}",
     "confirmDelete": "Удалить список «{{name}}»? Также будет удалён его кэш.",
-    "errorLabel": "Ошибка: {{error}}"
+    "confirmDeleteProvider": "Список из подписки — после удаления он не вернётся при обновлении подписки. Удалить?",
+    "errorLabel": "Ошибка: {{error}}",
+    "subscriptionAddsTitle": "Подписка также добавляет списки маршрутизации ({{count}})",
+    "fromSubscription": "Из подписки {{name}}",
+    "fromSubscriptionUnknown": "Из подписки"
   },
   "proxyList": {
     "title": "Сохраненные профили",

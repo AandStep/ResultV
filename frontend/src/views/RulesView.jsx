@@ -46,6 +46,7 @@ export const RulesView = () => {
     updateSetting,
     showConfirmDialog,
     platform,
+    subscriptions,
   } = useConfigContext();
   const [newDomain, setNewDomain] = useState("");
   const [newApp, setNewApp] = useState("");
@@ -53,6 +54,11 @@ export const RulesView = () => {
   const appFileInputRef = useRef(null);
 
   const routingLists = rules.routingLists || [];
+  const subscriptionNameById = useMemo(() => {
+    const map = new Map();
+    (subscriptions || []).forEach((s) => map.set(s.id, s.name || s.url));
+    return map;
+  }, [subscriptions]);
   const [listModal, setListModal] = useState({ isOpen: false, mode: "add", initial: null });
   const [refreshingListId, setRefreshingListId] = useState(null);
   const [busyListId, setBusyListId] = useState(null);
@@ -147,7 +153,9 @@ export const RulesView = () => {
   const handleDeleteList = async (rl) => {
     const ok = await showConfirmDialog({
       title: t("common.confirmAction"),
-      message: t("routingLists.confirmDelete", { name: rl.name || rl.url }),
+      message: rl.subscriptionId
+        ? t("routingLists.confirmDeleteProvider")
+        : t("routingLists.confirmDelete", { name: rl.name || rl.url }),
       variant: "danger",
       confirmText: t("common.delete"),
       cancelText: t("common.cancel"),
@@ -570,6 +578,15 @@ export const RulesView = () => {
                       >
                         {t(`routingLists.action${rl.action?.charAt(0).toUpperCase()}${rl.action?.slice(1)}`)}
                       </span>
+                      {rl.subscriptionId && (
+                        <span className="shrink-0 text-xs font-medium px-2.5 py-0.5 rounded-full border bg-zinc-800 text-zinc-400 border-zinc-700">
+                          {t("routingLists.fromSubscription", {
+                            name:
+                              subscriptionNameById.get(rl.subscriptionId) ||
+                              t("routingLists.fromSubscriptionUnknown"),
+                          })}
+                        </span>
+                      )}
                     </div>
                     <p className="text-zinc-500 text-xs mt-1 truncate">
                       {rl.url}
@@ -601,16 +618,18 @@ export const RulesView = () => {
                         className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`}
                       />
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => openEditListModal(rl)}
-                      disabled={busy}
-                      title={t("routingLists.editAria")}
-                      aria-label={t("routingLists.editAria")}
-                      className="p-2 bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 rounded-xl transition-colors shrink-0 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none disabled:opacity-50"
-                    >
-                      <Pencil className="w-3.5 h-3.5" />
-                    </button>
+                    {!rl.subscriptionId && (
+                      <button
+                        type="button"
+                        onClick={() => openEditListModal(rl)}
+                        disabled={busy}
+                        title={t("routingLists.editAria")}
+                        aria-label={t("routingLists.editAria")}
+                        className="p-2 bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 rounded-xl transition-colors shrink-0 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none disabled:opacity-50"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => handleDeleteList(rl)}

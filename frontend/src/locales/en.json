@@ -344,7 +344,11 @@
     "updatedNever": "Not refreshed yet",
     "updatedAgo": "Updated {{time}}",
     "confirmDelete": "Delete the list \"{{name}}\"? This also removes its cached rules.",
-    "errorLabel": "Error: {{error}}"
+    "confirmDeleteProvider": "This list comes from the subscription — once deleted it won't return on refresh. Delete?",
+    "errorLabel": "Error: {{error}}",
+    "subscriptionAddsTitle": "This subscription also adds routing lists ({{count}})",
+    "fromSubscription": "From {{name}}",
+    "fromSubscriptionUnknown": "From subscription"
   },
   "proxyList": {
     "title": "Saved Profiles",

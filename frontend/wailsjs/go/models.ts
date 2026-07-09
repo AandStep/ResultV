@@ -125,6 +125,7 @@ export namespace config {
 	    domainCount?: number;
 	    cidrCount?: number;
 	    lastError?: string;
+	    subscriptionId?: string;
 
 	    static createFrom(source: any = {}) {
 	        return new RoutingList(source);
@@ -142,6 +143,7 @@ export namespace config {
 	        this.domainCount = source["domainCount"];
 	        this.cidrCount = source["cidrCount"];
 	        this.lastError = source["lastError"];
+	        this.subscriptionId = source["subscriptionId"];
 	    }
 	}
 	export class RoutingRules {
@@ -294,7 +296,39 @@ export namespace logger {
 }
 
 export namespace main {
-	
+
+	export class SubscriptionPreview {
+	    proxies: config.ProxyEntry[];
+	    routingLists: config.RoutingList[];
+
+	    static createFrom(source: any = {}) {
+	        return new SubscriptionPreview(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.proxies = this.convertValues(source["proxies"], config.ProxyEntry);
+	        this.routingLists = this.convertValues(source["routingLists"], config.RoutingList);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class AdBlockStatusDTO {
 	    enabled: boolean;
 	    filterCount: number;
