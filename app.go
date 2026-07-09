@@ -2437,7 +2437,9 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 	if err := a.config.SaveConfig(cfg); err != nil {
 		return nil, fmt.Errorf("saving subscription: %w", err)
 	}
-	_ = a.syncSubscriptionRoutingLists(sub.ID, lists, disabledListURLs)
+	if err := a.syncSubscriptionRoutingLists(sub.ID, lists, disabledListURLs); err != nil {
+		a.log.Warning(fmt.Sprintf("[ROUTING] Не удалось применить списки подписки %q: %v", displayName, err))
+	}
 
 	visibleCount := len(entries)
 	memberIDs := make(map[string]bool)

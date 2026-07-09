@@ -41,8 +41,10 @@ func (a *App) syncSubscriptionRoutingLists(subID string, provided []config.Routi
 	cfg := a.config.GetConfig()
 	var tombstones map[string]bool
 	subAllowInsecure := false // spec: provider lists inherit the subscription's plaintext consent
+	subFound := false
 	for i := range cfg.Subscriptions {
 		if cfg.Subscriptions[i].ID == subID {
+			subFound = true
 			subAllowInsecure = cfg.Subscriptions[i].AllowInsecure
 			tombstones = make(map[string]bool, len(cfg.Subscriptions[i].RemovedRoutingListURLs))
 			for _, u := range cfg.Subscriptions[i].RemovedRoutingListURLs {
@@ -50,6 +52,9 @@ func (a *App) syncSubscriptionRoutingLists(subID string, provided []config.Routi
 			}
 			break
 		}
+	}
+	if !subFound {
+		return nil
 	}
 	disabled := make(map[string]bool, len(disabledURLs))
 	for _, u := range disabledURLs {

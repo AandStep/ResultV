@@ -381,6 +381,7 @@ export const useAppConfig = (addLog) => {
             try {
                 const cfg = await wailsAPI.getConfig();
                 if (cfg?.subscriptions) setSubscriptions(cfg.subscriptions);
+                if (cfg?.routingRules?.routingLists) syncRoutingLists(cfg.routingRules.routingLists);
             } catch (e) {
                 console.error("getConfig after subscription refresh:", e);
             }

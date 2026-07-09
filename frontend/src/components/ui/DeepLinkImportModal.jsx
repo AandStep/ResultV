@@ -88,6 +88,7 @@ const DeepLinkImportModal = () => {
     handleBulkSaveProxies,
     setActiveTab,
     setSubscriptions,
+    syncRoutingLists,
     showConfirmDialog,
   } = useConfigContext();
 
@@ -245,6 +246,7 @@ const DeepLinkImportModal = () => {
         await handleBulkSaveProxies(withNames, setActiveTab, protocol);
         const cfg = await wailsAPI.getConfig();
         if (cfg.subscriptions) setSubscriptions(cfg.subscriptions);
+        if (cfg?.routingRules?.routingLists) syncRoutingLists(cfg.routingRules.routingLists);
       } else {
         await handleBulkSaveProxies(namedProxies, setActiveTab, protocol);
       }

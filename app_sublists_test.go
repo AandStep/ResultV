@@ -158,6 +158,17 @@ func TestDeleteRoutingListTombstonesProviderList(t *testing.T) {
 	}
 }
 
+func TestSyncUnknownSubscriptionIsNoop(t *testing.T) {
+	a := newTestApp(t, t.TempDir())
+	provided := []config.RoutingList{{URL: "https://x.test/l.lst", Action: "proxy"}}
+	if err := a.syncSubscriptionRoutingLists("ghost", provided, nil); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if got := a.config.GetConfig().RoutingRules.RoutingLists; len(got) != 0 {
+		t.Fatalf("unknown subID must not create lists: %+v", got)
+	}
+}
+
 func TestDeleteSubscriptionRemovesItsLists(t *testing.T) {
 	a := newTestApp(t, t.TempDir())
 	seedSubWithLists(t, a, "sub1", []config.RoutingList{

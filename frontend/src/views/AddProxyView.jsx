@@ -191,6 +191,7 @@ export const AddProxyView = () => {
     setEditingProxy,
     setActiveTab,
     setSubscriptions,
+    syncRoutingLists,
     showAlertDialog,
     showConfirmDialog,
     setPendingDeepLink,
@@ -479,6 +480,7 @@ export const AddProxyView = () => {
         await handleBulkSaveProxies(withNames, setActiveTab, protocol);
         const cfg = await wailsAPI.getConfig();
         if (cfg.subscriptions) setSubscriptions(cfg.subscriptions);
+        if (cfg?.routingRules?.routingLists) syncRoutingLists(cfg.routingRules.routingLists);
       } else {
         await handleBulkSaveProxies(namedProxies, setActiveTab, protocol);
       }
