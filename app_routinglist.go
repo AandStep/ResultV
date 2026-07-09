@@ -282,13 +282,50 @@ func (a *App) DeleteRoutingList(id string) error {
 	// the live cache's backing array, so an in-place [:0] compaction would
 	// mutate it before the save. A new slice keeps the mutation local.
 	out := make([]config.RoutingList, 0, len(rr.RoutingLists))
+	var deleted config.RoutingList
+	found := false
 	for _, rl := range rr.RoutingLists {
-		if rl.ID != id {
-			out = append(out, rl)
+		if rl.ID == id {
+			deleted = rl
+			found = true
+			continue
 		}
+		out = append(out, rl)
 	}
 	rr.RoutingLists = out
 	_ = removeFileIfExists(proxy.RoutingListCachePath(a.routingListDataDir(), id))
+
+	// A deleted provider-delivered list must be tombstoned on its subscription
+	// so a later sync doesn't silently re-add it.
+	if found && deleted.SubscriptionID != "" {
+		cfg := a.config.GetConfig()
+		// Fresh slice — Subscriptions aliases the live config cache's backing
+		// array (same ALIASING RULE as RoutingLists above).
+		subs := make([]config.Subscription, len(cfg.Subscriptions))
+		copy(subs, cfg.Subscriptions)
+		for i := range subs {
+			if subs[i].ID != deleted.SubscriptionID {
+				continue
+			}
+			already := false
+			for _, u := range subs[i].RemovedRoutingListURLs {
+				if u == deleted.URL {
+					already = true
+					break
+				}
+			}
+			if !already {
+				tomb := make([]string, len(subs[i].RemovedRoutingListURLs), len(subs[i].RemovedRoutingListURLs)+1)
+				copy(tomb, subs[i].RemovedRoutingListURLs)
+				subs[i].RemovedRoutingListURLs = append(tomb, deleted.URL)
+			}
+			break
+		}
+		cfg.Subscriptions = subs
+		if err := a.config.SaveConfig(cfg); err != nil {
+			return err
+		}
+	}
 	return a.applyRoutingRulesAndReconnect(rr)
 }
 

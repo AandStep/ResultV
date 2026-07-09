@@ -2299,7 +2299,7 @@ func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
 	// they accepted plaintext at AddSubscription time, refresh keeps using
 	// http; if not, an http URL refresh will fail with ErrInsecureSubscription
 	// and the UI must re-prompt before retrying.
-	entries, up, down, tot, exp, iconURL, profileTitle, _, err := a.fetchSubscriptionFromURL(sub.URL, sub.AllowInsecure)
+	entries, up, down, tot, exp, iconURL, profileTitle, lists, err := a.fetchSubscriptionFromURL(sub.URL, sub.AllowInsecure)
 	if err != nil {
 		return nil, fmt.Errorf("refreshing subscription %s: %w", sub.Name, err)
 	}
@@ -2331,6 +2331,9 @@ func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
 	}
 	if err := a.config.SaveConfig(cfg); err != nil {
 		a.log.Error(fmt.Sprintf("Ошибка сохранения после обновления подписки: %v", err))
+	}
+	if err := a.syncSubscriptionRoutingLists(subID, lists, nil); err != nil {
+		a.log.Warning(fmt.Sprintf("Ошибка синхронизации списков маршрутизации подписки: %v", err))
 	}
 
 	visibleCount := len(entries)
@@ -2364,7 +2367,7 @@ func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
 // passed explicitly for http:// URLs after the user has confirmed the
 // warning. The consent is persisted on the Subscription record so
 // RefreshSubscription doesn't need to re-prompt.
-func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source string) ([]config.ProxyEntry, error) {
+func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source string, disabledListURLs []string) ([]config.ProxyEntry, error) {
 	if a.config == nil {
 		return nil, fmt.Errorf("config manager not initialized")
 	}
@@ -2392,13 +2395,15 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 		break
 	}
 	if staleIdx >= 0 {
+		staleSubID := cfg.Subscriptions[staleIdx].ID
 		cfg.Subscriptions = append(cfg.Subscriptions[:staleIdx], cfg.Subscriptions[staleIdx+1:]...)
+		a.removeSubscriptionRoutingLists(&cfg, staleSubID)
 		if err := a.config.SaveConfig(cfg); err != nil {
 			return nil, fmt.Errorf("clearing stale subscription: %w", err)
 		}
 	}
 
-	entries, up, down, tot, exp, iconURL, profileTitle, _, err := a.fetchSubscriptionFromURL(subURL, allowInsecure)
+	entries, up, down, tot, exp, iconURL, profileTitle, lists, err := a.fetchSubscriptionFromURL(subURL, allowInsecure)
 	if err != nil {
 		return nil, err
 	}
@@ -2432,6 +2437,7 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 	if err := a.config.SaveConfig(cfg); err != nil {
 		return nil, fmt.Errorf("saving subscription: %w", err)
 	}
+	_ = a.syncSubscriptionRoutingLists(sub.ID, lists, disabledListURLs)
 
 	visibleCount := len(entries)
 	memberIDs := make(map[string]bool)
@@ -2479,7 +2485,12 @@ func (a *App) DeleteSubscription(subID string) error {
 		return fmt.Errorf("subscription %s not found", subID)
 	}
 	cfg.Subscriptions = newSubs
-	return a.config.SaveConfig(cfg)
+	a.removeSubscriptionRoutingLists(&cfg, subID)
+	if err := a.config.SaveConfig(cfg); err != nil {
+		return err
+	}
+	a.syncRoutingListSpecs()
+	return nil
 }
 
 // visibleSubscriptionCount returns the number of entries the user actually
