@@ -57,6 +57,9 @@ type RoutingList struct {
 	DomainCount   int    `json:"domainCount,omitempty"`
 	CIDRCount     int    `json:"cidrCount,omitempty"`
 	LastError     string `json:"lastError,omitempty"`
+	// SubscriptionID links a provider-delivered list to its subscription.
+	// Empty for user-added lists. Identity within a subscription is the URL.
+	SubscriptionID string `json:"subscriptionId,omitempty"`
 }
 
 type ProxyEntry struct {
@@ -96,6 +99,10 @@ type Subscription struct {
 	// suppresses the x-hwid header — sending a stable device identifier in
 	// plaintext is exactly the leak this flag is opted into.
 	AllowInsecure bool `json:"allowInsecure,omitempty"`
+	// RemovedRoutingListURLs are provider routing-list URLs the user explicitly
+	// deleted; subscription sync must not re-add them. Cleared only by deleting
+	// the subscription itself.
+	RemovedRoutingListURLs []string `json:"removedRoutingListUrls,omitempty"`
 }
 
 type AppSettings struct {

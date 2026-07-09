@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -583,5 +584,28 @@ func TestRoutingListRoundTrip(t *testing.T) {
 	}
 	if len(back.RoutingLists) != 1 || back.RoutingLists[0].Action != "proxy" || back.RoutingLists[0].ID != "abc" {
 		t.Fatalf("round-trip mismatch: %+v", back.RoutingLists)
+	}
+}
+
+func TestRoutingListSubscriptionProvenance(t *testing.T) {
+	rl := RoutingList{ID: "x", URL: "https://a.test/l.txt", Action: "proxy", SubscriptionID: "sub1"}
+	blob, err := json.Marshal(rl)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(blob), `"subscriptionId":"sub1"`) {
+		t.Errorf("subscriptionId tag missing: %s", blob)
+	}
+	sub := Subscription{ID: "sub1", RemovedRoutingListURLs: []string{"https://a.test/gone.txt"}}
+	blob2, err := json.Marshal(sub)
+	if err != nil {
+		t.Fatalf("marshal sub: %v", err)
+	}
+	var back Subscription
+	if err := json.Unmarshal(blob2, &back); err != nil {
+		t.Fatalf("unmarshal sub: %v", err)
+	}
+	if len(back.RemovedRoutingListURLs) != 1 || back.RemovedRoutingListURLs[0] != "https://a.test/gone.txt" {
+		t.Errorf("tombstones round-trip failed: %+v", back.RemovedRoutingListURLs)
 	}
 }
