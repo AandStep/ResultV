@@ -118,3 +118,58 @@ func TestExtractRoutingListsGarbage(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractEmbeddedRoutingLists(t *testing.T) {
+	body := `[{"routing":{"rules":[
+	  {"type":"field","protocol":["bittorrent"],"outboundTag":"block"},
+	  {"type":"field","domain":["domain:telegram.org","t.me"],"outboundTag":"proxy"},
+	  {"type":"field","domain":["2gis.ru","nalog.ru","geosite:category-ads","regexp:.*\\.ru"],"outboundTag":"direct"},
+	  {"type":"field","ip":["geoip:private","1.2.3.0/24"],"outboundTag":"direct"},
+	  {"type":"field","network":"tcp,udp","outboundTag":"proxy"}
+	]}}]`
+	got := ExtractEmbeddedRoutingLists(body)
+
+	// block action: bittorrent rule has no domain/ip -> no block list emitted.
+	if _, ok := got["block"]; ok {
+		t.Errorf("block must not be emitted (protocol-only rule): %+v", got["block"])
+	}
+	// proxy: telegram.org, t.me (catch-all network rule contributes nothing).
+	p := got["proxy"]
+	if !hasStr(p.Domains, "telegram.org") || !hasStr(p.Domains, "t.me") || len(p.CIDRs) != 0 {
+		t.Errorf("proxy wrong: %+v", p)
+	}
+	// direct: 2gis.ru, nalog.ru (geosite/regexp dropped) + 1.2.3.0/24 (geoip:private dropped).
+	d := got["direct"]
+	if !hasStr(d.Domains, "2gis.ru") || !hasStr(d.Domains, "nalog.ru") {
+		t.Errorf("direct domains wrong: %+v", d.Domains)
+	}
+	for _, bad := range d.Domains {
+		if strings.Contains(bad, "geosite") || strings.Contains(bad, "regexp") || strings.Contains(bad, "*") {
+			t.Errorf("unsupported domain form survived: %q", bad)
+		}
+	}
+	if !hasStr(d.CIDRs, "1.2.3.0/24") || len(d.CIDRs) != 1 {
+		t.Errorf("direct cidrs wrong (geoip:private must drop): %+v", d.CIDRs)
+	}
+}
+
+func TestExtractEmbeddedRoutingListsSingleObjectAndGarbage(t *testing.T) {
+	obj := `{"routing":{"rules":[{"type":"field","domain":["example.com"],"outboundTag":"direct"}]}}`
+	if got := ExtractEmbeddedRoutingLists(obj); len(got) != 1 || !hasStr(got["direct"].Domains, "example.com") {
+		t.Errorf("single-object config not parsed: %+v", got)
+	}
+	for _, b := range []string{"", "not json", "[]", `[{"log":{}}]`, `{"routing":{}}`} {
+		if got := ExtractEmbeddedRoutingLists(b); len(got) != 0 {
+			t.Errorf("garbage/no-routing %q must yield nothing: %+v", b, got)
+		}
+	}
+}
+
+func TestExtractEmbeddedRoutingListsUsesFirstConfigWithRules(t *testing.T) {
+	// Array where the first config has no routing; second does.
+	body := `[{"log":{"loglevel":"warning"}},{"routing":{"rules":[{"type":"field","domain":["a.test"],"outboundTag":"block"}]}}]`
+	got := ExtractEmbeddedRoutingLists(body)
+	if len(got) != 1 || !hasStr(got["block"].Domains, "a.test") {
+		t.Errorf("must use first config that HAS rules: %+v", got)
+	}
+}

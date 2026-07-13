@@ -110,3 +110,128 @@ func validateSubRoutingLists(decls []subRoutingListDecl) []config.RoutingList {
 	}
 	return out
 }
+
+// xrayRoutingRule is one entry of an xray/v2ray config's routing.rules. Only
+// the fields we fold into routing lists are decoded.
+type xrayRoutingRule struct {
+	Type        string   `json:"type"`
+	Domain      []string `json:"domain"`
+	IP          []string `json:"ip"`
+	OutboundTag string   `json:"outboundTag"`
+}
+
+type xrayConfigRouting struct {
+	Routing struct {
+		Rules []xrayRoutingRule `json:"rules"`
+	} `json:"routing"`
+}
+
+// ExtractEmbeddedRoutingLists folds a subscription body's embedded xray
+// routing.rules into routing lists keyed by action (proxy|direct|block). The
+// body may be a single xray config object or an array of them (one per server);
+// rules are identical across servers, so the FIRST config that has routing.rules
+// is used. Returns nil when the body carries no xray routing. Unsupported rule
+// forms (geosite/geoip/regexp/keyword/ext, protocol/network/port-only rules,
+// unknown outbound tags) are silently skipped; an action with no domains and no
+// CIDRs is not emitted.
+func ExtractEmbeddedRoutingLists(body string) map[string]ParsedRoutingList {
+	rules := firstXrayRoutingRules(body)
+	if len(rules) == 0 {
+		return nil
+	}
+	domainsByAction := map[string][]string{}
+	cidrsByAction := map[string][]string{}
+	for _, r := range rules {
+		action := mapXrayOutbound(r.OutboundTag)
+		if action == "" {
+			continue
+		}
+		for _, d := range r.Domain {
+			if dom := xrayDomainToSuffix(d); dom != "" {
+				domainsByAction[action] = append(domainsByAction[action], dom)
+			}
+		}
+		for _, ip := range r.IP {
+			if c := xrayIPLiteral(ip); c != "" {
+				cidrsByAction[action] = append(cidrsByAction[action], c)
+			}
+		}
+	}
+	out := map[string]ParsedRoutingList{}
+	for _, action := range []string{"proxy", "direct", "block"} {
+		doms := compressDomainSuffixes(plausibleDomains(normalizeDomains(domainsByAction[action])))
+		cidrs := normalizeCIDRs(cidrsByAction[action])
+		if len(doms) == 0 && len(cidrs) == 0 {
+			continue
+		}
+		out[action] = ParsedRoutingList{Domains: doms, CIDRs: cidrs}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func firstXrayRoutingRules(body string) []xrayRoutingRule {
+	t := strings.TrimSpace(body)
+	if strings.HasPrefix(t, "[") {
+		var arr []xrayConfigRouting
+		if err := json.Unmarshal([]byte(t), &arr); err != nil {
+			return nil
+		}
+		for _, c := range arr {
+			if len(c.Routing.Rules) > 0 {
+				return c.Routing.Rules
+			}
+		}
+		return nil
+	}
+	if strings.HasPrefix(t, "{") {
+		var c xrayConfigRouting
+		if err := json.Unmarshal([]byte(t), &c); err != nil {
+			return nil
+		}
+		return c.Routing.Rules
+	}
+	return nil
+}
+
+func mapXrayOutbound(tag string) string {
+	switch strings.ToLower(strings.TrimSpace(tag)) {
+	case "direct":
+		return "direct"
+	case "block", "reject", "blackhole":
+		return "block"
+	case "proxy":
+		return "proxy"
+	default:
+		return ""
+	}
+}
+
+func xrayDomainToSuffix(raw string) string {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	if s == "" {
+		return ""
+	}
+	for _, p := range []string{"geosite:", "regexp:", "ext:", "keyword:"} {
+		if strings.HasPrefix(s, p) {
+			return ""
+		}
+	}
+	s = strings.TrimPrefix(s, "domain:")
+	s = strings.TrimPrefix(s, "full:")
+	return normalizeRule(s)
+}
+
+func xrayIPLiteral(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	lower := strings.ToLower(s)
+	if strings.HasPrefix(lower, "geoip:") || strings.HasPrefix(lower, "ext:") {
+		return ""
+	}
+	return s // normalizeCIDRs validates/drops anything non-IP
+}
