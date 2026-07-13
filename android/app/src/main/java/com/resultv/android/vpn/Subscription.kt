@@ -3,6 +3,7 @@ package com.resultv.android.vpn
 import android.content.Context
 import android.util.Base64
 import android.util.Log
+import com.resultv.android.R
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -259,6 +260,8 @@ object SubscriptionRepository {
             SubscriptionsState(subs = list)
         } catch (t: Throwable) {
             Log.w(TAG, "failed to read $f, starting empty", t)
+            AppLog.warning(R.string.log_read_failed, f.name,
+                source = AppLog.resolve(R.string.log_source_config))
             SubscriptionsState()
         }
     }
@@ -271,6 +274,8 @@ object SubscriptionRepository {
             f.writeText(root.toString())
         } catch (t: Throwable) {
             Log.e(TAG, "failed to persist subscriptions", t)
+            AppLog.error(R.string.log_persist_failed, f.name,
+                source = AppLog.resolve(R.string.log_source_config))
         }
     }
 }

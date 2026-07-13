@@ -142,6 +142,8 @@ object AdBlockRepository {
             )
         } catch (t: Throwable) {
             Log.w(TAG, "failed to read $f, starting empty", t)
+            AppLog.warning(R.string.log_read_failed, f.name,
+                source = AppLog.resolve(R.string.log_source_config))
             Snapshot()
         }
     }
@@ -158,6 +160,8 @@ object AdBlockRepository {
             f.writeText(o.toString())
         } catch (t: Throwable) {
             Log.e(TAG, "failed to persist adblock meta", t)
+            AppLog.error(R.string.log_persist_failed, f.name,
+                source = AppLog.resolve(R.string.log_source_config))
         }
     }
 }
