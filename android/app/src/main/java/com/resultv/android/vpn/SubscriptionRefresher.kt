@@ -2,6 +2,7 @@ package com.resultv.android.vpn
 
 import android.content.Context
 import android.util.Log
+import com.resultv.android.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -93,6 +94,8 @@ object SubscriptionRefresher {
                 refreshOne(sub, dataDir)
             } catch (t: Throwable) {
                 Log.w(TAG, "refresh failed for ${sub.id}", t)
+                AppLog.warning(R.string.log_sub_refresh_failed,
+                    sub.name, t.message ?: t.javaClass.simpleName)
             }
         }
     }
@@ -114,6 +117,8 @@ object SubscriptionRefresher {
                 refreshOne(sub, dataDir)
             } catch (t: Throwable) {
                 Log.w(TAG, "refresh failed for ${sub.id}", t)
+                AppLog.warning(R.string.log_sub_refresh_failed,
+                    sub.name, t.message ?: t.javaClass.simpleName)
             }
         }
     }
@@ -168,6 +173,9 @@ object SubscriptionRefresher {
             }
         }
         ProfileRepository.replaceForSubscription(sub.id, fresh)
+        // Desktop parity: «Подписка 'X' обновлена: N серверов».
+        val displayName = response.optString("title").ifBlank { sub.name }
+        AppLog.success(R.string.log_sub_refreshed, displayName, fresh.count { !it.isSection })
         // Ping only the servers that just changed, not the whole app's
         // profile list — keeps this as fast/streaming as a manual per-row
         // ping instead of getting diluted into a full-app sweep.

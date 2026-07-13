@@ -42,6 +42,8 @@ object DeepLinkImporter {
             if (decoded.isFailure) {
                 toast(appCtx, R.string.deeplink_err_decode)
                 Log.w(TAG, "decode failed", decoded.exceptionOrNull())
+                AppLog.error(R.string.log_import_decode_failed,
+                    decoded.exceptionOrNull()?.message ?: "decode error")
                 return@launch
             }
             val payload = JSONObject(decoded.getOrNull()!!)
@@ -112,6 +114,8 @@ object DeepLinkImporter {
         if (responseJson.isFailure) {
             toast(ctx, R.string.deeplink_err_fetch)
             Log.w(TAG, "fetch failed", responseJson.exceptionOrNull())
+            AppLog.warning(R.string.log_import_fetch_failed,
+                responseJson.exceptionOrNull()?.message ?: "network error")
             return
         }
         val response = JSONObject(responseJson.getOrNull()!!)
@@ -150,6 +154,8 @@ object DeepLinkImporter {
         ProfileRepository.replaceForSubscription(subId, profiles)
         val imported = profiles.count { !it.isSection }
         toast(ctx, R.string.deeplink_imported_subscription, imported)
+        AppLog.success(R.string.log_sub_imported,
+            title.ifBlank { subUrl.substringAfter("://").substringBefore('/') }, imported)
     }
 
     /**
@@ -169,8 +175,10 @@ object DeepLinkImporter {
         }
         if (added == 0) {
             toast(ctx, R.string.deeplink_err_no_uris)
+            AppLog.warning(R.string.log_import_no_uris)
         } else {
             toast(ctx, R.string.deeplink_imported_profiles, added)
+            AppLog.success(R.string.log_profiles_imported, added)
         }
     }
 

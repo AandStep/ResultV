@@ -351,4 +351,13 @@
     <string name="log_protect_failed">Не удалось защитить сокет движка — возможна петля маршрутизации.</string>
     <string name="log_adblock_proxy_start_failed">Блокировка рекламы в браузере не запустилась (%1$s) — браузер работает без фильтра.</string>
     <string name="log_traffic_stats_failed">Статистика трафика в этом сеансе недоступна: %1$s</string>
+
+    <!-- Subscription refresh and deep-link import logging -->
+    <string name="log_sub_refreshed">Подписка \'%1$s\' обновлена: %2$d серверов.</string>
+    <string name="log_sub_refresh_failed">Не удалось обновить подписку \'%1$s\': %2$s</string>
+    <string name="log_sub_imported">Подписка \'%1$s\' добавлена: %2$d серверов.</string>
+    <string name="log_profiles_imported">Импортировано %1$d прокси.</string>
+    <string name="log_import_decode_failed">Не удалось обработать ссылку resultv://: %1$s</string>
+    <string name="log_import_fetch_failed">Не удалось загрузить подписку: %1$s</string>
+    <string name="log_import_no_uris">В импорте не найдено корректных ссылок на прокси.</string>
 </resources>

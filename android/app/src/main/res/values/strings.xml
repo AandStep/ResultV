@@ -387,4 +387,13 @@
     <string name="log_protect_failed">Failed to protect an engine socket — possible routing loop.</string>
     <string name="log_adblock_proxy_start_failed">Browser ad-block failed to start (%1$s) — browser uses normal routing.</string>
     <string name="log_traffic_stats_failed">Traffic statistics unavailable this session: %1$s</string>
+
+    <!-- Subscription refresh and deep-link import logging -->
+    <string name="log_sub_refreshed">Subscription \'%1$s\' updated: %2$d servers.</string>
+    <string name="log_sub_refresh_failed">Subscription \'%1$s\' update failed: %2$s</string>
+    <string name="log_sub_imported">Subscription \'%1$s\' added: %2$d servers.</string>
+    <string name="log_profiles_imported">Imported %1$d proxies.</string>
+    <string name="log_import_decode_failed">Failed to process a resultv:// link: %1$s</string>
+    <string name="log_import_fetch_failed">Failed to fetch subscription: %1$s</string>
+    <string name="log_import_no_uris">No valid proxy links found in the import.</string>
 </resources>
