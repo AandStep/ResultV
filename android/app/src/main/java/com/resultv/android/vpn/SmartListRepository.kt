@@ -2,6 +2,7 @@ package com.resultv.android.vpn
 
 import android.content.Context
 import android.util.Log
+import com.resultv.android.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -102,12 +103,18 @@ object SmartListRepository {
             withContext(Dispatchers.IO) { Mobile.fetchSmartList(cc, dd) }
         } catch (t: Throwable) {
             Log.w(TAG, "fetchSmartList(${cc}) failed", t)
+            AppLog.warning(R.string.log_smart_update_failed,
+                t.message ?: t.javaClass.simpleName,
+                source = AppLog.resolve(R.string.log_source_smart))
             val next = _state.value.copy(lastError = t.message ?: t.javaClass.simpleName)
             _state.value = next
             return@withLock next
         }
         val parsed = runCatching { parseSnapshot(raw) }.getOrNull()
         if (parsed == null) {
+            AppLog.warning(R.string.log_smart_update_failed,
+                "could not parse engine response",
+                source = AppLog.resolve(R.string.log_source_smart))
             val next = _state.value.copy(lastError = "could not parse engine response")
             _state.value = next
             return@withLock next
@@ -117,6 +124,9 @@ object SmartListRepository {
         if (parsed.country.isNotBlank()) country = parsed.country
         _state.value = parsed
         saveMeta()
+        AppLog.info(R.string.log_smart_updated,
+            parsed.country.uppercase().ifBlank { "?" }, parsed.domains.size,
+            source = AppLog.resolve(R.string.log_source_smart))
         parsed
     }
 

@@ -360,4 +360,10 @@
     <string name="log_import_decode_failed">Не удалось обработать ссылку resultv://: %1$s</string>
     <string name="log_import_fetch_failed">Не удалось загрузить подписку: %1$s</string>
     <string name="log_import_no_uris">В импорте не найдено корректных ссылок на прокси.</string>
+
+    <!-- Ad-block and Smart list update logging -->
+    <string name="log_adblock_updated">Базы блокировки обновлены (%1$d/%2$d).</string>
+    <string name="log_adblock_update_failed">Не удалось обновить базы блокировки: %1$s</string>
+    <string name="log_smart_updated">Списки Smart обновлены (%1$s), записей: %2$d.</string>
+    <string name="log_smart_update_failed">Не удалось обновить списки Smart: %1$s</string>
 </resources>

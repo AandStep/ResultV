@@ -2,6 +2,7 @@ package com.resultv.android.vpn
 
 import android.content.Context
 import android.util.Log
+import com.resultv.android.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -84,18 +85,26 @@ object AdBlockRepository {
             withContext(Dispatchers.IO) { Mobile.fetchAdBlockLists(dd) }
         } catch (t: Throwable) {
             Log.w(TAG, "fetchAdBlockLists failed", t)
+            AppLog.warning(R.string.log_adblock_update_failed,
+                t.message ?: t.javaClass.simpleName,
+                source = AppLog.resolve(R.string.log_source_adblock))
             val next = _state.value.copy(lastError = t.message ?: t.javaClass.simpleName)
             _state.value = next
             return@withLock next
         }
         val parsed = runCatching { parseSnapshot(raw) }.getOrNull()
         if (parsed == null) {
+            AppLog.warning(R.string.log_adblock_update_failed,
+                "could not parse engine response",
+                source = AppLog.resolve(R.string.log_source_adblock))
             val next = _state.value.copy(lastError = "could not parse engine response")
             _state.value = next
             return@withLock next
         }
         _state.value = parsed
         saveMeta()
+        AppLog.success(R.string.log_adblock_updated, parsed.ready, parsed.total,
+            source = AppLog.resolve(R.string.log_source_adblock))
         parsed
     }
 
