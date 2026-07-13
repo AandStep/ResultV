@@ -16,6 +16,9 @@
 package main
 
 import (
+	"bytes"
+	"os"
+	"strings"
 	"time"
 
 	"resultproxy-wails/internal/config"
@@ -57,7 +60,7 @@ func embeddedRoutingListDeclarations(embedded map[string]proxy.ParsedRoutingList
 // the config. Provider controls composition (add/update/remove); the user
 // controls Enabled (never overwritten). Tombstoned URLs are never re-added.
 // No-op sync writes nothing and does not reconnect.
-func (a *App) syncSubscriptionRoutingLists(subID string, provided []config.RoutingList, disabledURLs []string) error {
+func (a *App) syncSubscriptionRoutingLists(subID string, provided []config.RoutingList, disabledURLs []string, embedded map[string]proxy.ParsedRoutingList) error {
 	if a.config == nil || subID == "" {
 		return nil
 	}
@@ -126,12 +129,36 @@ func (a *App) syncSubscriptionRoutingLists(subID string, provided []config.Routi
 		needFetch = append(needFetch, nl.ID)
 		changed = true
 	}
-	if !changed {
-		return nil
-	}
-	// Download content for new entries before persisting counts; a failed
-	// download keeps the entry with LastError — the import must not fail.
+	// Content step: embedded lists write their cache directly from the body on
+	// EVERY sync (the provider doesn't expose a fetchable URL); non-embedded
+	// lists are only downloaded for NEW entries before persisting counts — a
+	// failed download keeps the entry with LastError — the import must not
+	// fail.
+	dir := a.routingListDataDir()
 	for i := range merged {
+		if merged[i].SubscriptionID != subID {
+			continue
+		}
+		if strings.HasPrefix(merged[i].URL, "embedded:") {
+			parsed, ok := embedded[strings.TrimPrefix(merged[i].URL, "embedded:")]
+			if !ok {
+				continue // provider dropped this action; the remove-branch already handled it
+			}
+			cachePath := proxy.RoutingListCachePath(dir, merged[i].ID)
+			oldBytes, _ := os.ReadFile(cachePath)
+			if err := proxy.WriteRoutingListRuleSet(dir, merged[i].ID, parsed); err != nil {
+				merged[i].LastError = err.Error()
+			} else {
+				newBytes, _ := os.ReadFile(cachePath)
+				if !bytes.Equal(oldBytes, newBytes) {
+					changed = true
+				}
+				merged[i].DomainCount, merged[i].CIDRCount = len(parsed.Domains), len(parsed.CIDRs)
+				merged[i].UpdatedAt = time.Now().Unix()
+				merged[i].LastError = ""
+			}
+			continue
+		}
 		for _, id := range needFetch {
 			if merged[i].ID != id {
 				continue
@@ -145,6 +172,9 @@ func (a *App) syncSubscriptionRoutingLists(subID string, provided []config.Routi
 				merged[i].LastError = ""
 			}
 		}
+	}
+	if !changed {
+		return nil
 	}
 	rr.RoutingLists = merged
 	return a.applyRoutingRulesAndReconnect(rr)

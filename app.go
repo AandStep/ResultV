@@ -2309,7 +2309,6 @@ func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("refreshing subscription %s: %w", sub.Name, err)
 	}
-	_ = embedded // TODO(Task 3): thread into syncSubscriptionRoutingLists for embedded xray list sync
 
 	displayName := sub.Name
 	if profileTitle != "" {
@@ -2339,7 +2338,8 @@ func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
 	if err := a.config.SaveConfig(cfg); err != nil {
 		a.log.Error(fmt.Sprintf("Ошибка сохранения после обновления подписки: %v", err))
 	}
-	if err := a.syncSubscriptionRoutingLists(subID, lists, nil); err != nil {
+	provided := append(append([]config.RoutingList(nil), lists...), embeddedRoutingListDeclarations(embedded)...)
+	if err := a.syncSubscriptionRoutingLists(subID, provided, nil, embedded); err != nil {
 		a.log.Warning(fmt.Sprintf("Ошибка синхронизации списков маршрутизации подписки: %v", err))
 	}
 
@@ -2414,7 +2414,6 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 	if err != nil {
 		return nil, err
 	}
-	_ = embedded // TODO(Task 3): thread into syncSubscriptionRoutingLists for embedded xray list sync
 
 	displayName := name
 	if profileTitle != "" {
@@ -2445,7 +2444,8 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 	if err := a.config.SaveConfig(cfg); err != nil {
 		return nil, fmt.Errorf("saving subscription: %w", err)
 	}
-	if err := a.syncSubscriptionRoutingLists(sub.ID, lists, disabledListURLs); err != nil {
+	provided := append(append([]config.RoutingList(nil), lists...), embeddedRoutingListDeclarations(embedded)...)
+	if err := a.syncSubscriptionRoutingLists(sub.ID, provided, disabledListURLs, embedded); err != nil {
 		a.log.Warning(fmt.Sprintf("[ROUTING] Не удалось применить списки подписки %q: %v", displayName, err))
 	}
 

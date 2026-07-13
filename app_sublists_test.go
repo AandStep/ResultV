@@ -19,6 +19,8 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	"resultproxy-wails/internal/config"
@@ -110,7 +112,7 @@ func TestSyncAddsUpdatesRemovesRespectsEnabled(t *testing.T) {
 		{Name: "NewName", URL: "https://keep.test/l.lst", Action: "block"}, // update
 		{Name: "Fresh", URL: "https://fresh.test/l.lst", Action: "proxy"},  // add
 	}
-	if err := a.syncSubscriptionRoutingLists("sub1", provided, nil); err != nil {
+	if err := a.syncSubscriptionRoutingLists("sub1", provided, nil, nil); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 	got := a.config.GetConfig().RoutingRules.RoutingLists
@@ -144,7 +146,7 @@ func TestSyncRespectsTombstonesAndDisabled(t *testing.T) {
 		{URL: "https://dead.test/l.lst", Action: "proxy"},
 		{URL: "https://off.test/l.lst", Action: "proxy"},
 	}
-	if err := a.syncSubscriptionRoutingLists("sub1", provided, []string{"https://off.test/l.lst"}); err != nil {
+	if err := a.syncSubscriptionRoutingLists("sub1", provided, []string{"https://off.test/l.lst"}, nil); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 	byURL := map[string]config.RoutingList{}
@@ -181,7 +183,7 @@ func TestDeleteRoutingListTombstonesProviderList(t *testing.T) {
 func TestSyncUnknownSubscriptionIsNoop(t *testing.T) {
 	a := newTestApp(t, t.TempDir())
 	provided := []config.RoutingList{{URL: "https://x.test/l.lst", Action: "proxy"}}
-	if err := a.syncSubscriptionRoutingLists("ghost", provided, nil); err != nil {
+	if err := a.syncSubscriptionRoutingLists("ghost", provided, nil, nil); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 	if got := a.config.GetConfig().RoutingRules.RoutingLists; len(got) != 0 {
@@ -201,5 +203,72 @@ func TestDeleteSubscriptionRemovesItsLists(t *testing.T) {
 	got := a.config.GetConfig().RoutingRules.RoutingLists
 	if len(got) != 1 || got[0].ID != "u1" {
 		t.Errorf("only the user list must remain: %+v", got)
+	}
+}
+
+func TestSyncWritesEmbeddedCacheFromBody(t *testing.T) {
+	a := newTestApp(t, t.TempDir())
+	seedSubWithLists(t, a, "sub1", nil, nil) // sub exists, no lists yet
+	provided := []config.RoutingList{
+		{Name: "embedded-direct", URL: "embedded:direct", Action: "direct", DomainCount: 2},
+	}
+	embedded := map[string]proxy.ParsedRoutingList{
+		"direct": {Domains: []string{"gov.test", "nalog.test"}},
+	}
+	if err := a.syncSubscriptionRoutingLists("sub1", provided, nil, embedded); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	lists := a.config.GetConfig().RoutingRules.RoutingLists
+	if len(lists) != 1 {
+		t.Fatalf("want 1 list, got %+v", lists)
+	}
+	rl := lists[0]
+	if rl.URL != "embedded:direct" || rl.SubscriptionID != "sub1" || !rl.Enabled {
+		t.Errorf("embedded list wrong: %+v", rl)
+	}
+	if rl.DomainCount != 2 || rl.LastError != "" {
+		t.Errorf("counts/err wrong (cache should be written, no fetch): count=%d err=%q", rl.DomainCount, rl.LastError)
+	}
+	// The cache file must exist and contain the domains (written from body, no network).
+	blob, err := os.ReadFile(proxy.RoutingListCachePath(a.routingListDataDir(), rl.ID))
+	if err != nil {
+		t.Fatalf("cache not written: %v", err)
+	}
+	if !strings.Contains(string(blob), "gov.test") || !strings.Contains(string(blob), "nalog.test") {
+		t.Errorf("cache content wrong: %s", blob)
+	}
+}
+
+func TestSyncEmbeddedContentUpdateReflected(t *testing.T) {
+	a := newTestApp(t, t.TempDir())
+	seedSubWithLists(t, a, "sub1", nil, nil)
+	provided := []config.RoutingList{{Name: "embedded-direct", URL: "embedded:direct", Action: "direct"}}
+	if err := a.syncSubscriptionRoutingLists("sub1", provided,
+		nil, map[string]proxy.ParsedRoutingList{"direct": {Domains: []string{"old.test"}}}); err != nil {
+		t.Fatal(err)
+	}
+	id := a.config.GetConfig().RoutingRules.RoutingLists[0].ID
+	// Second sync with changed content must rewrite the cache.
+	if err := a.syncSubscriptionRoutingLists("sub1", provided,
+		nil, map[string]proxy.ParsedRoutingList{"direct": {Domains: []string{"new.test"}}}); err != nil {
+		t.Fatal(err)
+	}
+	blob, _ := os.ReadFile(proxy.RoutingListCachePath(a.routingListDataDir(), id))
+	if strings.Contains(string(blob), "old.test") || !strings.Contains(string(blob), "new.test") {
+		t.Errorf("embedded cache not updated on content change: %s", blob)
+	}
+}
+
+func TestRefreshOnceSkipsEmbedded(t *testing.T) {
+	a := newTestApp(t, t.TempDir())
+	// An embedded list with counts must survive refreshRoutingListsOnce untouched
+	// (no fetch attempt that would set LastError).
+	seedSubWithLists(t, a, "sub1", []config.RoutingList{
+		{ID: "e1", SubscriptionID: "sub1", URL: "embedded:direct", Action: "direct", Enabled: true, DomainCount: 5},
+	}, nil)
+	a.refreshRoutingListsOnce()
+	got := a.config.GetConfig().RoutingRules.RoutingLists
+	if len(got) != 1 || got[0].LastError != "" || got[0].DomainCount != 5 {
+		t.Errorf("embedded list must be skipped by refresh, unchanged: %+v", got)
 	}
 }

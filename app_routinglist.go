@@ -334,19 +334,24 @@ func (a *App) RefreshRoutingList(id string) (config.RoutingList, error) {
 	if a.config == nil {
 		return config.RoutingList{}, fmt.Errorf("config manager not initialized")
 	}
-	var url string
-	var insecure bool
+	var target config.RoutingList
 	found := false
 	for _, rl := range a.config.GetConfig().RoutingRules.RoutingLists {
 		if rl.ID == id {
-			url, insecure, found = rl.URL, rl.AllowInsecure, true
+			target, found = rl, true
 			break
 		}
 	}
 	if !found {
 		return config.RoutingList{}, fmt.Errorf("routing list %q not found", id)
 	}
-	dn, cn, ferr := a.fetchParseAndCache(id, url, insecure)
+	if strings.HasPrefix(target.URL, "embedded:") {
+		// Embedded lists have no fetchable URL — they refresh with the
+		// subscription (syncSubscriptionRoutingLists), not here. No-op;
+		// the UI hides the refresh button for these, this is defense.
+		return target, nil
+	}
+	dn, cn, ferr := a.fetchParseAndCache(id, target.URL, target.AllowInsecure)
 
 	rr := a.config.GetConfig().RoutingRules
 	merged := make([]config.RoutingList, len(rr.RoutingLists))
@@ -398,9 +403,13 @@ func (a *App) refreshRoutingListsOnce() {
 	}
 	var jobs []fetchJob
 	for _, rl := range a.config.GetConfig().RoutingRules.RoutingLists {
-		if rl.Enabled {
-			jobs = append(jobs, fetchJob{rl.ID, rl.URL, rl.AllowInsecure})
+		if !rl.Enabled {
+			continue
 		}
+		if strings.HasPrefix(rl.URL, "embedded:") {
+			continue // no fetchable URL — refreshes with the subscription
+		}
+		jobs = append(jobs, fetchJob{rl.ID, rl.URL, rl.AllowInsecure})
 	}
 	if len(jobs) == 0 {
 		return
