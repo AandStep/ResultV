@@ -373,4 +373,14 @@
     <string name="log_source_adblock" translatable="false">ADBLOCK</string>
     <string name="log_source_smart" translatable="false">SMART</string>
     <string name="log_source_config" translatable="false">CONFIG</string>
+    <string name="log_connect_timing">Connection timing: total=%1$d ms</string>
+    <string name="log_engine_stopped">Engine stopped.</string>
+    <string name="log_engine_stop_error">Engine shutdown error: %1$s</string>
+    <string name="log_engine_reloaded">Engine configuration reloaded in place.</string>
+    <string name="log_tun_up">Tunnel established (MTU %1$d).</string>
+    <string name="log_dns_fallback">Engine provided no DNS address — falling back to 8.8.8.8.</string>
+    <string name="log_app_route_failed">Per-app routing: rule for %1$s was not applied.</string>
+    <string name="log_protect_failed">Failed to protect an engine socket — possible routing loop.</string>
+    <string name="log_adblock_proxy_start_failed">Browser ad-block failed to start (%1$s) — browser uses normal routing.</string>
+    <string name="log_traffic_stats_failed">Traffic statistics unavailable this session: %1$s</string>
 </resources>

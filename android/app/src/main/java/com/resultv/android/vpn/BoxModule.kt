@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
 import android.util.Log
+import com.resultv.android.R
 import libbox.CommandServer
 import libbox.CommandServerHandler
 import libbox.ConnectionOwner
@@ -48,6 +49,10 @@ object BoxModule {
      */
     @Volatile var filterProxyRunning: Boolean = false
 
+    // One warning per session: protect() is called per-socket and a broken
+    // state would otherwise flood the user log.
+    @Volatile var protectWarned: Boolean = false
+
     /**
      * Configure libbox global paths. Must be called before any Service
      * construction. Safe to call multiple times.
@@ -85,6 +90,8 @@ object BoxModule {
         }
         ensureSetup(service)
 
+        protectWarned = false
+
         // Fresh connection session — let each destination host log once again.
         EngineLog.resetSession()
 
@@ -117,6 +124,7 @@ object BoxModule {
         
         server.startOrReloadService(configJson, OverrideOptions())
         Log.i(TAG, "BoxModule reloaded")
+        AppLog.info(R.string.log_engine_reloaded, source = EngineLog.ENGINE)
     }
 
     @Synchronized
@@ -128,6 +136,8 @@ object BoxModule {
             server.closeService()
         } catch (t: Throwable) {
             Log.w(TAG, "closeService threw", t)
+            AppLog.warning(R.string.log_engine_stop_error,
+                t.message ?: t.javaClass.simpleName, source = EngineLog.ENGINE)
         }
         try {
             server.close()
@@ -135,6 +145,7 @@ object BoxModule {
             Log.w(TAG, "close threw", t)
         }
         Log.i(TAG, "BoxModule stopped")
+        AppLog.info(R.string.log_engine_stopped, source = EngineLog.ENGINE)
     }
 }
 
@@ -190,6 +201,7 @@ private class BoxPlatform(private val service: ResultVpnService) : PlatformInter
             }
         } catch (t: Throwable) {
             Log.w(TAG, "no DNS hijack address from libbox; falling back to 8.8.8.8", t)
+            AppLog.warning(R.string.log_dns_fallback, source = EngineLog.ENGINE)
             builder.addDnsServer("8.8.8.8")
         }
 
@@ -223,6 +235,7 @@ private class BoxPlatform(private val service: ResultVpnService) : PlatformInter
 
         service.tunPfd = pfd
         Log.i(TAG, "openTun → fd=$newFd, mtu=$mtu, autoRoute=${options.autoRoute}")
+        AppLog.info(R.string.log_tun_up, if (mtu > 0) mtu else 9000, source = EngineLog.ENGINE)
         return newFd
     }
 
@@ -260,6 +273,7 @@ private class BoxPlatform(private val service: ResultVpnService) : PlatformInter
                         builder.addAllowedApplication(pkg)
                     } catch (t: Throwable) {
                         Log.w(TAG, "addAllowedApplication($pkg) failed", t)
+                        AppLog.warning(R.string.log_app_route_failed, pkg)
                     }
                 }
             }
@@ -303,6 +317,7 @@ private class BoxPlatform(private val service: ResultVpnService) : PlatformInter
             builder.addDisallowedApplication(pkg)
         } catch (t: Throwable) {
             Log.w(TAG, "addDisallowedApplication($pkg) failed", t)
+            AppLog.warning(R.string.log_app_route_failed, pkg)
         }
     }
 
@@ -315,6 +330,10 @@ private class BoxPlatform(private val service: ResultVpnService) : PlatformInter
         val ok = service.protect(fd)
         if (!ok) {
             Log.w(TAG, "protect($fd) returned false")
+            if (!BoxModule.protectWarned) {
+                BoxModule.protectWarned = true
+                AppLog.warning(R.string.log_protect_failed, source = EngineLog.ENGINE)
+            }
         } else {
             Log.d(TAG, "protect($fd) ok")
         }

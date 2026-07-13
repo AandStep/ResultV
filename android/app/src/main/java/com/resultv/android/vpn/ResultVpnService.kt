@@ -129,6 +129,7 @@ class ResultVpnService : VpnService() {
                 }
                 val connectedMsg = getString(R.string.log_connected)
                 worker.execute {
+                    val t0 = System.currentTimeMillis()
                     try {
                         startBrowserAdBlockIfEnabled()
                         BoxModule.start(this, config)
@@ -136,6 +137,11 @@ class ResultVpnService : VpnService() {
                         val connected = VpnStatus.Connected(connectedAt)
                         VpnState.set(connected)
                         if (!isReload) AppLog.success(connectedMsg)
+                        AppLog.info(
+                            R.string.log_connect_timing,
+                            connectedAt - t0,
+                            source = AppLog.resolve(R.string.log_source_proxy),
+                        )
                         renotify(buildNotification(connected))
                         startReloadWatcher()
                         startKillSwitchWatchdog()
@@ -224,6 +230,11 @@ class ResultVpnService : VpnService() {
             BoxModule.filterProxyRunning = false
             try { mobile.Mobile.stopFilterProxy() } catch (_: Throwable) {}
             Log.w(TAG, "browser ad-block proxy failed to start; Chrome will use normal routing", t)
+            AppLog.warning(
+                R.string.log_adblock_proxy_start_failed,
+                t.message ?: t.javaClass.simpleName,
+                source = AppLog.resolve(R.string.log_source_adblock),
+            )
         }
     }
 
@@ -370,6 +381,7 @@ class ResultVpnService : VpnService() {
         val configJson = BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath)
         if (configJson == null) {
             Log.w(TAG, "rebuild config for reload failed or profile empty")
+            AppLog.warning(getString(R.string.log_build_failed))
             return
         }
         if (!BoxModule.isRunning) {

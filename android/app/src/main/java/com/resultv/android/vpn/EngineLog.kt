@@ -49,6 +49,7 @@ object EngineLog {
         }
     }
 
-    private const val ENGINE = "ENGINE"
-    private const val CONN = "CONN"
+    // Public: BoxModule tags its engine-lifecycle entries with the same source.
+    const val ENGINE = "ENGINE"
+    const val CONN = "CONN"
 }

@@ -337,4 +337,14 @@
     <string name="log_no_server">Сервер не выбран.</string>
     <string name="log_build_failed">Не удалось сформировать конфигурацию.</string>
     <string name="log_permission_denied">Разрешение на VPN отклонено.</string>
+    <string name="log_connect_timing">Тайминг подключения: total=%1$d мс</string>
+    <string name="log_engine_stopped">Движок остановлен.</string>
+    <string name="log_engine_stop_error">Ошибка остановки движка: %1$s</string>
+    <string name="log_engine_reloaded">Конфигурация движка перезагружена на лету.</string>
+    <string name="log_tun_up">Туннель установлен (MTU %1$d).</string>
+    <string name="log_dns_fallback">Движок не выдал DNS-адрес — используется 8.8.8.8.</string>
+    <string name="log_app_route_failed">Маршрутизация приложений: правило для %1$s не применено.</string>
+    <string name="log_protect_failed">Не удалось защитить сокет движка — возможна петля маршрутизации.</string>
+    <string name="log_adblock_proxy_start_failed">Блокировка рекламы в браузере не запустилась (%1$s) — браузер работает без фильтра.</string>
+    <string name="log_traffic_stats_failed">Статистика трафика в этом сеансе недоступна: %1$s</string>
 </resources>

@@ -1,6 +1,7 @@
 package com.resultv.android.vpn
 
 import android.util.Log
+import com.resultv.android.R
 import libbox.CommandClient
 import libbox.CommandClientHandler
 import libbox.CommandClientOptions
@@ -51,6 +52,8 @@ object TrafficWatcher {
             Log.i(TAG, "connected to libbox status stream")
         } catch (t: Throwable) {
             Log.w(TAG, "CommandClient.connect failed", t)
+            AppLog.warning(R.string.log_traffic_stats_failed,
+                t.message ?: t.javaClass.simpleName)
             // Try to clean up the half-built client so we don't leak the ref.
             try {
                 c.disconnect()
