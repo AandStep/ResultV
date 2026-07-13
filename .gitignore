@@ -63,3 +63,4 @@ docs/review
 
 # build
 build/bin/
+perf-diag/

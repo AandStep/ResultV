@@ -88,11 +88,14 @@ const DeepLinkImportModal = () => {
     handleBulkSaveProxies,
     setActiveTab,
     setSubscriptions,
+    syncRoutingLists,
     showConfirmDialog,
   } = useConfigContext();
 
   const [stage, setStage] = useState("idle");
   const [pendingProxies, setPendingProxies] = useState([]);
+  const [pendingRoutingLists, setPendingRoutingLists] = useState([]);
+  const [disabledListUrls, setDisabledListUrls] = useState(new Set());
   const [error, setError] = useState("");
   const reqId = useRef(0);
 
@@ -120,10 +123,10 @@ const DeepLinkImportModal = () => {
         if (/^resultv:(\/\/)?/i.test(resolved)) {
           resolved = (await wailsAPI.decodeDeepLink(resolved)).trim();
         }
-        let entries;
+        let preview;
         if (isSubscriptionURL(resolved)) {
           try {
-            entries = await wailsAPI.fetchSubscription(resolved);
+            preview = await wailsAPI.fetchSubscription(resolved);
           } catch (fetchErr) {
             if (!isInsecureSubscriptionError(fetchErr)) throw fetchErr;
             const ok = await showConfirmDialog({
@@ -139,20 +142,24 @@ const DeepLinkImportModal = () => {
               setStage("error");
               return;
             }
-            entries = await wailsAPI.fetchSubscription(resolved, true);
+            preview = await wailsAPI.fetchSubscription(resolved, true);
           }
         } else if (isEncryptedSubscription(resolved)) {
-          entries = await wailsAPI.parseSubscriptionText(resolved);
+          preview = await wailsAPI.parseSubscriptionText(resolved);
         } else {
-          entries = await wailsAPI.parseSubscriptionText(resolved);
+          preview = await wailsAPI.parseSubscriptionText(resolved);
         }
         if (myReq !== reqId.current) return;
+        const entries = preview?.proxies || [];
+        const lists = preview?.routingLists || [];
         if (!entries || entries.length === 0) {
           setError(t("add.noProxiesFound") || "Серверы не найдены");
           setStage("error");
           return;
         }
         setPendingProxies(entries);
+        setPendingRoutingLists(lists);
+        setDisabledListUrls(new Set());
         setStage("preview");
       } catch (e) {
         if (myReq !== reqId.current) return;
@@ -166,6 +173,8 @@ const DeepLinkImportModal = () => {
     reqId.current++;
     setStage("idle");
     setPendingProxies([]);
+    setPendingRoutingLists([]);
+    setDisabledListUrls(new Set());
     setError("");
     setPendingDeepLink("");
     setPendingDeepLinkSource("");
@@ -197,6 +206,7 @@ const DeepLinkImportModal = () => {
               subURL,
               allowInsecure,
               pendingDeepLinkSource,
+              Array.from(disabledListUrls),
             );
             break;
           } catch (err) {
@@ -236,6 +246,7 @@ const DeepLinkImportModal = () => {
         await handleBulkSaveProxies(withNames, setActiveTab, protocol);
         const cfg = await wailsAPI.getConfig();
         if (cfg.subscriptions) setSubscriptions(cfg.subscriptions);
+        if (cfg?.routingRules?.routingLists) syncRoutingLists(cfg.routingRules.routingLists);
       } else {
         await handleBulkSaveProxies(namedProxies, setActiveTab, protocol);
       }
@@ -255,6 +266,16 @@ const DeepLinkImportModal = () => {
         isOpen
         proxies={pendingProxies}
         count={pendingProxies.length}
+        routingLists={pendingRoutingLists}
+        disabledListUrls={disabledListUrls}
+        onToggleListDisabled={(url, disabled) => {
+          setDisabledListUrls((prev) => {
+            const next = new Set(prev);
+            if (disabled) next.add(url);
+            else next.delete(url);
+            return next;
+          });
+        }}
         onClose={close}
         onConfirm={handleConfirm}
       />

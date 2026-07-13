@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -530,5 +531,81 @@ func TestManagerInitPromotesLegacyWhenNewIsEmpty(t *testing.T) {
 	}
 	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
 		t.Fatalf("legacy config should be removed after promotion, err=%v", err)
+	}
+}
+
+func TestRoutingRulesNewFieldsDefaults(t *testing.T) {
+	// Конфиг старого формата (3.2.x) без новых полей: после ensureDefaults
+	// оба списка не nil, чтобы JSON для фронта отдавал [], а не null.
+	raw := []byte(`{"routingRules":{"mode":"smart","whitelist":["localhost"],"appWhitelist":[]}}`)
+	var cfg AppConfig
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	cfg = ensureDefaults(cfg)
+	if cfg.RoutingRules.AppForceVPN == nil {
+		t.Error("AppForceVPN must default to empty slice, got nil")
+	}
+	if cfg.RoutingRules.CustomBlockedDomains == nil {
+		t.Error("CustomBlockedDomains must default to empty slice, got nil")
+	}
+	def := DefaultConfig()
+	if def.RoutingRules.AppForceVPN == nil || def.RoutingRules.CustomBlockedDomains == nil {
+		t.Error("DefaultConfig must initialise new routing fields")
+	}
+	if def.RoutingRules.RoutingLists == nil {
+		t.Error("DefaultConfig must initialise RoutingLists to empty slice, got nil")
+	}
+}
+
+func TestRoutingListsDefaults(t *testing.T) {
+	cfg := ensureDefaults(AppConfig{})
+	if cfg.RoutingRules.RoutingLists == nil {
+		t.Error("RoutingLists must default to empty slice, got nil")
+	}
+	if got := cfg.Settings.EffectiveRoutingListUpdateHours(); got != 24 {
+		t.Errorf("EffectiveRoutingListUpdateHours default: got %d, want 24", got)
+	}
+}
+
+func TestRoutingListRoundTrip(t *testing.T) {
+	rl := RoutingList{
+		ID: "abc", Name: "My list", URL: "https://example.com/list.txt",
+		Action: "proxy", Enabled: true, DomainCount: 3, CIDRCount: 1,
+	}
+	rr := RoutingRules{Mode: "smart", RoutingLists: []RoutingList{rl}}
+	blob, err := json.Marshal(rr)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var back RoutingRules
+	if err := json.Unmarshal(blob, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(back.RoutingLists) != 1 || back.RoutingLists[0].Action != "proxy" || back.RoutingLists[0].ID != "abc" {
+		t.Fatalf("round-trip mismatch: %+v", back.RoutingLists)
+	}
+}
+
+func TestRoutingListSubscriptionProvenance(t *testing.T) {
+	rl := RoutingList{ID: "x", URL: "https://a.test/l.txt", Action: "proxy", SubscriptionID: "sub1"}
+	blob, err := json.Marshal(rl)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(blob), `"subscriptionId":"sub1"`) {
+		t.Errorf("subscriptionId tag missing: %s", blob)
+	}
+	sub := Subscription{ID: "sub1", RemovedRoutingListURLs: []string{"https://a.test/gone.txt"}}
+	blob2, err := json.Marshal(sub)
+	if err != nil {
+		t.Fatalf("marshal sub: %v", err)
+	}
+	var back Subscription
+	if err := json.Unmarshal(blob2, &back); err != nil {
+		t.Fatalf("unmarshal sub: %v", err)
+	}
+	if len(back.RemovedRoutingListURLs) != 1 || back.RemovedRoutingListURLs[0] != "https://a.test/gone.txt" {
+		t.Errorf("tombstones round-trip failed: %+v", back.RemovedRoutingListURLs)
 	}
 }

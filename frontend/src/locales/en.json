@@ -46,7 +46,8 @@
     "pingTooltip": "Measure latency to servers (TCP, not through tunnel)",
     "sortMenuTooltip": "Sort servers in this list",
     "websiteTooltip": "Official website",
-    "telegramTooltip": "Telegram channel"
+    "telegramTooltip": "Telegram channel",
+    "proxyModeHint": "Some apps (Telegram, games) ignore the system proxy. If an app can't see the VPN — switch to TUNNEL mode."
   },
   "add": {
     "titleAdd": "Add Configuration",
@@ -229,7 +230,7 @@
     "subscription_user_agent": {
       "title": "User agent",
       "desc": "Clear the field to use the default ResultV/<version>/Windows/<OS version> value.",
-      "placeholder": "ResultV/3.2.6/Windows/11_10.0.26200"
+      "placeholder": "ResultV/3.2.7/Windows/11_10.0.26200"
     },
     "dns": {
       "title": "DNS Servers",
@@ -308,7 +309,49 @@
       "add_manual": "Manual Add",
       "choose_file": "Select ",
       "popular": "Popular programs to bypass the proxy:"
+    },
+    "forceApps": {
+      "title": "Apps via VPN",
+      "desc": "All traffic of these apps always goes through the VPN — for apps whose traffic Smart mode can't match by lists (domainless connections). Works only in TUNNEL mode."
+    },
+    "forceDomains": {
+      "title": "Sites via VPN",
+      "desc": "Add a domain if a site doesn't open in Smart mode — it and all its subdomains will go through the VPN.",
+      "placeholder": "aistudio.google.com",
+      "add_btn": "Add"
     }
+  },
+  "routingLists": {
+    "title": "Routing lists",
+    "subtitle": "Your own domain/subnet lists with a routing action",
+    "add": "Add list",
+    "url": "List URL",
+    "name": "Name",
+    "action": "Action",
+    "actionProxy": "Via VPN",
+    "actionDirect": "Direct",
+    "actionBlock": "Block",
+    "insecureConsent": "I understand http:// is insecure",
+    "updateInterval": "Update interval (hours)",
+    "counts": "{{domains}} domains · {{cidrs}} subnets",
+    "refresh": "Refresh",
+    "refreshAria": "Refresh list",
+    "editAria": "Edit list",
+    "deleteAria": "Delete list",
+    "empty": "No lists added yet",
+    "namePlaceholder": "E.g.: My blocklist",
+    "urlPlaceholder": "https://example.com/list.txt",
+    "updatedNever": "Not refreshed yet",
+    "updatedAgo": "Updated {{time}}",
+    "confirmDelete": "Delete the list \"{{name}}\"? This also removes its cached rules.",
+    "confirmDeleteProvider": "This list comes from the subscription — once deleted it won't return on refresh. Delete?",
+    "errorLabel": "Error: {{error}}",
+    "subscriptionAddsTitle": "This subscription also adds routing lists ({{count}})",
+    "fromSubscription": "From {{name}}",
+    "fromSubscriptionUnknown": "From subscription",
+    "embeddedBadge": "Embedded in subscription",
+    "embeddedName": "Embedded: {{action}}",
+    "applying": "Applying…"
   },
   "proxyList": {
     "title": "Saved Profiles",
@@ -432,7 +475,9 @@
     "cancel": "Cancel",
     "confirm": "Confirm",
     "confirmAction": "Confirm action",
-    "delete": "Delete"
+    "delete": "Delete",
+    "edit": "Edit",
+    "save": "Save"
   },
   "killswitchPopup": {
     "title": "Kill Switch Triggered",

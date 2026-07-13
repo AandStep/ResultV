@@ -76,6 +76,12 @@ type EngineConfig struct {
 	RoutingMode  RoutingMode
 	Whitelist    []string
 	AppWhitelist []string
+	// AppForceVPN forces every connection owned by these process names through
+	// the proxy outbound, regardless of routing mode rules. This is the
+	// reliable equivalent of "cascade by domain": Discord voice and Speedtest
+	// talk UDP to bare IPs that no domain/SNI rule can catch, but the owning
+	// process is always known to sing-box's find_process. Tunnel mode only.
+	AppForceVPN []string
 	// BlockedDomains is the censored/blocked block-list (already normalized
 	// suffixes from Router.GetBlockedDomains). Consumed only in Smart mode:
 	// buildRoute routes these through the proxy while everything else goes
@@ -95,6 +101,12 @@ type EngineConfig struct {
 	TunIPv6      string
 	TunStack     string
 	DataDir      string
+
+	// RoutingLists are user routing subscriptions resolved to local
+	// source-format rule_set caches. Applied in ALL modes as explicit rules
+	// ahead of the built-in Smart/whitelist/ad-block rules, ordered
+	// restrictive-first (block > proxy > direct). See buildRoute.
+	RoutingLists []RoutingListSpec
 
 	// DNSLeakProtection toggles sing-box `strict_route` on the TUN inbound.
 	// When true (the default for new installs), sing-box installs Windows
@@ -897,7 +909,8 @@ func splitDNSServer(raw string) (string, int) {
 }
 
 func buildRoute(cfg EngineConfig) *SBRoute {
-	findProcess := len(cfg.AppWhitelist) > 0
+	findProcess := len(cfg.AppWhitelist) > 0 ||
+		(cfg.Mode == ProxyModeTunnel && len(cfg.AppForceVPN) > 0)
 	if cfg.AdBlock && cfg.MITMPort > 0 {
 		findProcess = true
 	}
@@ -916,6 +929,7 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	if cfg.AdBlock {
 		route.RuleSet = buildAdBlockRuleSets(effectiveDataDir(cfg))
 	}
+	route.RuleSet = append(route.RuleSet, buildRoutingListRuleSets(cfg.RoutingLists)...)
 
 	var rules []SBRouteRule
 
@@ -963,6 +977,10 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		Action:   "hijack-dns",
 	})
 
+	// User routing lists win over the built-in Smart/whitelist/ad-block rules:
+	// inserted here, after the DNS/server infra rules but before every built-in.
+	rules = appendRoutingListRouteRules(cfg.RoutingLists, rules)
+
 	rules = appendAdBlockRouteRules(cfg, rules)
 
 	if cfg.Mode == ProxyModeTunnel {
@@ -995,6 +1013,21 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 					Outbound:         "direct",
 				})
 			}
+		}
+	}
+
+	// Force-VPN apps: the whole process family goes through the tunnel. Placed
+	// before the app-whitelist direct rule so an explicit "via VPN" beats an
+	// accidental overlap with the exclusion list (the UI prevents adding one
+	// app to both). Tunnel-only: in proxy mode apps that ignore the system
+	// proxy never reach us, so the rule would be dead weight.
+	if cfg.Mode == ProxyModeTunnel {
+		if rx := appWhitelistPathRegexes(cfg.AppForceVPN); len(rx) > 0 {
+			rules = append(rules, SBRouteRule{
+				Action:           "route",
+				ProcessPathRegex: rx,
+				Outbound:         "proxy",
+			})
 		}
 	}
 

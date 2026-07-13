@@ -7,7 +7,9 @@ import {logger} from '../models';
 import {system} from '../models';
 import {updater} from '../models';
 
-export function AddSubscription(arg1:string,arg2:string,arg3:boolean,arg4:string):Promise<Array<config.ProxyEntry>>;
+export function AddRoutingList(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<config.RoutingList>;
+
+export function AddSubscription(arg1:string,arg2:string,arg3:boolean,arg4:string,arg5:Array<string>):Promise<Array<config.ProxyEntry>>;
 
 export function ApplyMode(arg1:string):Promise<proxy.ConnectResultDTO>;
 
@@ -21,6 +23,8 @@ export function DebugFrontendLog(arg1:string):Promise<void>;
 
 export function DecodeDeepLink(arg1:string):Promise<string>;
 
+export function DeleteRoutingList(arg1:string):Promise<void>;
+
 export function DeleteSubscription(arg1:string):Promise<void>;
 
 export function DetectCountry(arg1:string):Promise<string>;
@@ -29,7 +33,7 @@ export function Disconnect():Promise<void>;
 
 export function ExportConfig(arg1:string):Promise<string>;
 
-export function FetchSubscription(arg1:string,arg2:boolean):Promise<Array<config.ProxyEntry>>;
+export function FetchSubscription(arg1:string,arg2:boolean):Promise<main.SubscriptionPreview>;
 
 export function GetAdBlockStatus():Promise<main.AdBlockStatusDTO>;
 
@@ -67,13 +71,15 @@ export function IsAdmin():Promise<boolean>;
 
 export function IsAutostartEnabled():Promise<boolean>;
 
-export function ParseSubscriptionText(arg1:string):Promise<Array<config.ProxyEntry>>;
+export function ParseSubscriptionText(arg1:string):Promise<main.SubscriptionPreview>;
 
 export function PickAppForWhitelist():Promise<string>;
 
 export function PingProxy(arg1:string,arg2:number,arg3:string):Promise<proxy.PingResultDTO>;
 
 export function QueueDeepLink(arg1:string):Promise<void>;
+
+export function RefreshRoutingList(arg1:string):Promise<config.RoutingList>;
 
 export function RefreshSubscription(arg1:string):Promise<Array<config.ProxyEntry>>;
 
@@ -104,5 +110,7 @@ export function ToggleAdBlock(arg1:boolean):Promise<void>;
 export function ToggleKillSwitch(arg1:boolean):Promise<void>;
 
 export function UpdateAdBlockFilters():Promise<void>;
+
+export function UpdateRoutingList(arg1:config.RoutingList):Promise<void>;
 
 export function UpdateRules(arg1:config.RoutingRules):Promise<void>;

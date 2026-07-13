@@ -191,6 +191,7 @@ export const AddProxyView = () => {
     setEditingProxy,
     setActiveTab,
     setSubscriptions,
+    syncRoutingLists,
     showAlertDialog,
     showConfirmDialog,
     setPendingDeepLink,
@@ -228,6 +229,8 @@ export const AddProxyView = () => {
   const [bulkText, setBulkText] = useState("");
   const [isImporting, setIsImporting] = useState(false);
   const [pendingProxies, setPendingProxies] = useState([]);
+  const [pendingRoutingLists, setPendingRoutingLists] = useState([]);
+  const [disabledListUrls, setDisabledListUrls] = useState(new Set());
   const [showSelectionModal, setShowSelectionModal] = useState(false);
   const [vpnUri, setVpnUri] = useState("");
   const [vpnLoading, setVpnLoading] = useState(false);
@@ -277,9 +280,9 @@ export const AddProxyView = () => {
     if (isSubscriptionURL(text)) {
       setIsImporting(true);
       try {
-        let entries;
+        let preview;
         try {
-          entries = await wailsAPI.fetchSubscription(text.trim());
+          preview = await wailsAPI.fetchSubscription(text.trim());
         } catch (fetchErr) {
           if (!isInsecureSubscriptionError(fetchErr)) throw fetchErr;
           const ok = await showConfirmDialog({
@@ -297,8 +300,10 @@ export const AddProxyView = () => {
             });
             return;
           }
-          entries = await wailsAPI.fetchSubscription(text.trim(), true);
+          preview = await wailsAPI.fetchSubscription(text.trim(), true);
         }
+        const entries = preview?.proxies || [];
+        const lists = preview?.routingLists || [];
         if (!entries || entries.length === 0) {
           showAlertDialog({
             title: t("common.notice"),
@@ -308,6 +313,8 @@ export const AddProxyView = () => {
           return;
         }
         setPendingProxies(entries);
+        setPendingRoutingLists(lists);
+        setDisabledListUrls(new Set());
         setShowSelectionModal(true);
       } catch (err) {
         console.error("Subscription fetch error:", err);
@@ -325,7 +332,9 @@ export const AddProxyView = () => {
     if (isEncryptedSubscription(text)) {
       setIsImporting(true);
       try {
-        const entries = await wailsAPI.parseSubscriptionText(text.trim());
+        const preview = await wailsAPI.parseSubscriptionText(text.trim());
+        const entries = preview?.proxies || [];
+        const lists = preview?.routingLists || [];
         if (!entries || entries.length === 0) {
           showAlertDialog({
             title: t("common.notice"),
@@ -335,6 +344,8 @@ export const AddProxyView = () => {
           return;
         }
         setPendingProxies(entries);
+        setPendingRoutingLists(lists);
+        setDisabledListUrls(new Set());
         setShowSelectionModal(true);
       } catch (err) {
         console.error("Encrypted subscription parse error:", err);
@@ -370,9 +381,13 @@ export const AddProxyView = () => {
       // (a bare base64 blob) silently reported "no proxies".
       setIsImporting(true);
       try {
-        const entries = await wailsAPI.parseSubscriptionText(text.trim());
+        const preview = await wailsAPI.parseSubscriptionText(text.trim());
+        const entries = preview?.proxies || [];
+        const lists = preview?.routingLists || [];
         if (entries && entries.length > 0) {
           setPendingProxies(entries);
+          setPendingRoutingLists(lists);
+          setDisabledListUrls(new Set());
           setShowSelectionModal(true);
           return;
         }
@@ -390,6 +405,8 @@ export const AddProxyView = () => {
     }
 
     setPendingProxies(proxiesToImport);
+    setPendingRoutingLists([]);
+    setDisabledListUrls(new Set());
     setShowSelectionModal(true);
   };
 
@@ -419,6 +436,8 @@ export const AddProxyView = () => {
               label,
               subURL,
               allowInsecure,
+              "",
+              Array.from(disabledListUrls),
             );
             break;
           } catch (err) {
@@ -461,6 +480,7 @@ export const AddProxyView = () => {
         await handleBulkSaveProxies(withNames, setActiveTab, protocol);
         const cfg = await wailsAPI.getConfig();
         if (cfg.subscriptions) setSubscriptions(cfg.subscriptions);
+        if (cfg?.routingRules?.routingLists) syncRoutingLists(cfg.routingRules.routingLists);
       } else {
         await handleBulkSaveProxies(namedProxies, setActiveTab, protocol);
       }
@@ -468,6 +488,8 @@ export const AddProxyView = () => {
       setBulkText("");
       setImportMode("single");
       setPendingProxies([]);
+      setPendingRoutingLists([]);
+      setDisabledListUrls(new Set());
     } catch (error) {
       console.error("Import failed:", error);
     } finally {
@@ -497,9 +519,9 @@ export const AddProxyView = () => {
     if (isSubscriptionURL(text)) {
       setVpnLoading(true);
       try {
-        let entries;
+        let preview;
         try {
-          entries = await wailsAPI.fetchSubscription(text);
+          preview = await wailsAPI.fetchSubscription(text);
         } catch (fetchErr) {
           if (!isInsecureSubscriptionError(fetchErr)) throw fetchErr;
           const ok = await showConfirmDialog({
@@ -517,8 +539,10 @@ export const AddProxyView = () => {
             });
             return;
           }
-          entries = await wailsAPI.fetchSubscription(text, true);
+          preview = await wailsAPI.fetchSubscription(text, true);
         }
+        const entries = preview?.proxies || [];
+        const lists = preview?.routingLists || [];
         if (!entries || entries.length === 0) {
           showAlertDialog({
             title: t("common.notice"),
@@ -528,6 +552,8 @@ export const AddProxyView = () => {
           return;
         }
         setPendingProxies(entries);
+        setPendingRoutingLists(lists);
+        setDisabledListUrls(new Set());
         setShowSelectionModal(true);
       } catch (err) {
         console.error("Subscription fetch error:", err);
@@ -545,7 +571,9 @@ export const AddProxyView = () => {
     if (isEncryptedSubscription(text)) {
       setVpnLoading(true);
       try {
-        const entries = await wailsAPI.parseSubscriptionText(text);
+        const preview = await wailsAPI.parseSubscriptionText(text);
+        const entries = preview?.proxies || [];
+        const lists = preview?.routingLists || [];
         if (!entries || entries.length === 0) {
           showAlertDialog({
             title: t("common.notice"),
@@ -555,6 +583,8 @@ export const AddProxyView = () => {
           return;
         }
         setPendingProxies(entries);
+        setPendingRoutingLists(lists);
+        setDisabledListUrls(new Set());
         setShowSelectionModal(true);
       } catch (err) {
         console.error("Encrypted subscription parse error:", err);
@@ -587,6 +617,8 @@ export const AddProxyView = () => {
       });
     } else {
       setPendingProxies(parsed);
+      setPendingRoutingLists([]);
+      setDisabledListUrls(new Set());
       setShowSelectionModal(true);
     }
     setVpnUri("");
@@ -2274,9 +2306,21 @@ export const AddProxyView = () => {
         isOpen={showSelectionModal}
         proxies={pendingProxies}
         count={pendingProxies.length}
+        routingLists={pendingRoutingLists}
+        disabledListUrls={disabledListUrls}
+        onToggleListDisabled={(url, disabled) => {
+          setDisabledListUrls((prev) => {
+            const next = new Set(prev);
+            if (disabled) next.add(url);
+            else next.delete(url);
+            return next;
+          });
+        }}
         onClose={() => {
           setShowSelectionModal(false);
           setPendingProxies([]);
+          setPendingRoutingLists([]);
+          setDisabledListUrls(new Set());
         }}
         onConfirm={handleConfirmImport}
       />

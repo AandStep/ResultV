@@ -438,6 +438,12 @@ export const HomeView = () => {
         </button>
       </div>
 
+      {settings.mode === "proxy" && !isConnected && (
+        <p className="text-zinc-500 text-xs text-center mt-2 max-w-md mx-auto">
+          {t("home.proxyModeHint")}
+        </p>
+      )}
+
       {!hasProxies ? (
         <div className="w-full flex flex-col items-center animate-in fade-in duration-300">
           <p className="text-zinc-400 mb-4 text-center">

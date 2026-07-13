@@ -114,6 +114,12 @@ type App struct {
 	updateMu     sync.Mutex
 	updateCancel context.CancelFunc
 
+	// dataDirOverride, when non-empty, replaces getUserDataPath() as the
+	// routing-list cache directory. Production leaves it empty (so caches land
+	// in system.UserDataDir(), exactly where the engine's buildRoute stats
+	// them); tests set it to a temp dir. See routingListDataDir.
+	dataDirOverride string
+
 	// leftoverReport holds what startup recovery cleaned up after a prior
 	// unclean exit, consumed once by the frontend to show an informational
 	// notice. Guarded by leftoverMu.
@@ -631,6 +637,7 @@ func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
 		proxy.RoutingMode(rules.Mode),
 		rules.Whitelist,
 		rules.AppWhitelist,
+		rules.AppForceVPN,
 		killSwitch,
 		adBlock,
 		cfg.Settings.LocalPort,
@@ -911,6 +918,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 			proxy.RoutingMode(cfg.RoutingRules.Mode),
 			cfg.RoutingRules.Whitelist,
 			cfg.RoutingRules.AppWhitelist,
+			cfg.RoutingRules.AppForceVPN,
 			cfg.Settings.KillSwitch,
 			cfg.Settings.AdBlock,
 			cfg.Settings.LocalPort,
@@ -951,6 +959,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 				proxy.RoutingMode(cfg.RoutingRules.Mode),
 				cfg.RoutingRules.Whitelist,
 				cfg.RoutingRules.AppWhitelist,
+				cfg.RoutingRules.AppForceVPN,
 				cfg.Settings.KillSwitch,
 				cfg.Settings.AdBlock,
 				cfg.Settings.LocalPort,
@@ -1049,7 +1058,7 @@ func (a *App) ToggleAdBlock(enable bool) error {
 		return err
 	}
 	if a.proxy != nil && a.proxy.GetStatus().IsConnected {
-		result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist)
+		result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist, cfg.RoutingRules.AppForceVPN)
 		if !result.Success {
 			a.log.Warning(fmt.Sprintf("[ADBLOCK] Переподключение после переключения: %s", result.Message))
 		}
@@ -1160,7 +1169,7 @@ func (a *App) UpdateAdBlockFilters() error {
 	a.log.Success(fmt.Sprintf("[ADBLOCK] Базы блокировки обновлены (%d/%d)", st.RuleSetsReady, st.RuleSetsTotal))
 	if a.proxy != nil && a.proxy.GetStatus().IsConnected && a.config != nil {
 		cfg := a.config.GetConfig()
-		result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist)
+		result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist, cfg.RoutingRules.AppForceVPN)
 		if !result.Success {
 			a.log.Warning(fmt.Sprintf("[ADBLOCK] Переподключение после обновления: %s", result.Message))
 		}
@@ -1224,7 +1233,7 @@ func (a *App) startAdBlockFilterRefresh() {
 				if a.proxy != nil && a.proxy.GetStatus().IsConnected && a.config != nil {
 					cfg := a.config.GetConfig()
 					if cfg.Settings.AdBlock {
-						result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist)
+						result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist, cfg.RoutingRules.AppForceVPN)
 						if !result.Success {
 							a.log.Warning(fmt.Sprintf("[ADBLOCK] Переподключение: %s", result.Message))
 						}
@@ -1270,6 +1279,12 @@ func (a *App) UpdateRules(rules config.RoutingRules) error {
 	if a.proxy == nil {
 		return nil
 	}
+	// Кастомные «сайты через VPN» живут в Router независимо от состояния
+	// подключения: применяем и в отключённом состоянии, чтобы следующий
+	// Connect снапшотнул их в route вместе с block-листами.
+	if r := a.proxy.GetRouter(); r != nil {
+		r.SetCustomBlockedDomains(rules.CustomBlockedDomains)
+	}
 	status := a.proxy.GetStatus()
 	if !status.IsConnected || status.CurrentProxy == nil {
 		return nil
@@ -1281,6 +1296,7 @@ func (a *App) UpdateRules(rules config.RoutingRules) error {
 		proxy.RoutingMode(rules.Mode),
 		rules.Whitelist,
 		rules.AppWhitelist,
+		rules.AppForceVPN,
 	)
 	if !result.Success {
 		a.log.Error(fmt.Sprintf("Ошибка применения правил маршрутизации: %s", result.Message))
@@ -2033,24 +2049,24 @@ func isInsecureSubURL(subURL string) bool {
 // must be true to accept http:// URLs; when set, we also suppress the
 // x-hwid header because sending a stable device identifier in plaintext is
 // exactly the leak the warning is opted into.
-func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]config.ProxyEntry, int64, int64, int64, int64, string, string, error) {
+func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]config.ProxyEntry, int64, int64, int64, int64, string, string, []config.RoutingList, map[string]proxy.ParsedRoutingList, error) {
 	if resolved, err := resolveEncryptedSubscriptionURL(subURL); err != nil {
-		return nil, 0, 0, 0, 0, "", "", err
+		return nil, 0, 0, 0, 0, "", "", nil, nil, err
 	} else if resolved != "" {
 		subURL = resolved
 	}
 	insecure := isInsecureSubURL(subURL)
 	if insecure && !allowInsecure {
-		return nil, 0, 0, 0, 0, "", "", ErrInsecureSubscription
+		return nil, 0, 0, 0, 0, "", "", nil, nil, ErrInsecureSubscription
 	}
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Timeout: 15 * time.Second, Jar: jar}
 	metadata := a.subscriptionRequestMetadata()
 
-	doFetch := func(userAgent string) ([]config.ProxyEntry, int64, int64, int64, int64, string, string, bool, error) {
+	doFetch := func(userAgent string) ([]config.ProxyEntry, int64, int64, int64, int64, string, string, []config.RoutingList, map[string]proxy.ParsedRoutingList, bool, error) {
 		req, err := http.NewRequest(http.MethodGet, subURL, nil)
 		if err != nil {
-			return nil, 0, 0, 0, 0, "", "", false, fmt.Errorf("creating subscription request: %w", err)
+			return nil, 0, 0, 0, 0, "", "", nil, nil, false, fmt.Errorf("creating subscription request: %w", err)
 		}
 		req.Header.Set("User-Agent", userAgent)
 		// Remnawave HWID device identification headers.
@@ -2069,23 +2085,26 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 
 		resp, err := client.Do(req)
 		if err != nil {
-			return nil, 0, 0, 0, 0, "", "", false, fmt.Errorf("fetching subscription: %w", err)
+			return nil, 0, 0, 0, 0, "", "", nil, nil, false, fmt.Errorf("fetching subscription: %w", err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return nil, 0, 0, 0, 0, "", "", false, fmt.Errorf("subscription returned HTTP %d", resp.StatusCode)
+			return nil, 0, 0, 0, 0, "", "", nil, nil, false, fmt.Errorf("subscription returned HTTP %d", resp.StatusCode)
 		}
 
 		profileTitle := parseSubscriptionHeaderText(resp.Header.Get("Profile-Title"))
 		up, down, tot, exp := parseSubscriptionUserInfoHeader(resp.Header.Get("Subscription-Userinfo"))
 		iconURL := resolveSubscriptionIcon(client, subURL, resp.Header)
+		routingListsHeader := resp.Header.Get("Routing-Lists")
 
 		bodyBytes, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return nil, up, down, tot, exp, iconURL, profileTitle, false, fmt.Errorf("reading subscription body: %w", err)
+			return nil, up, down, tot, exp, iconURL, profileTitle, nil, nil, false, fmt.Errorf("reading subscription body: %w", err)
 		}
 		bodyStr := string(bodyBytes)
+		routingLists := proxy.ExtractSubscriptionRoutingLists(routingListsHeader, bodyStr)
+		embedded := proxy.ExtractEmbeddedRoutingLists(bodyStr)
 
 		if iconURL == "" && strings.Contains(bodyStr, "<link") {
 			if fromBody := pickIconFromSubscriptionHTML(client, subURL, bodyStr); fromBody != "" {
@@ -2095,34 +2114,34 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 
 		trimmed := strings.TrimSpace(strings.TrimPrefix(bodyStr, "\uFEFF"))
 		if trimmed == "" {
-			return nil, up, down, tot, exp, iconURL, profileTitle, false, subscriptionEmptyBodyError(resp.Header)
+			return nil, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, false, subscriptionEmptyBodyError(resp.Header)
 		}
 
 		isJSON := strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")
 
 		entries, err := proxy.ParseSubscriptionBody(bodyStr)
 		if err != nil {
-			return nil, up, down, tot, exp, iconURL, profileTitle, isJSON, err
+			return nil, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, isJSON, err
 		}
 
-		return entries, up, down, tot, exp, iconURL, profileTitle, isJSON, nil
+		return entries, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, isJSON, nil
 	}
 
-	entries, up, down, tot, exp, iconURL, profileTitle, _, err := doFetch(metadata.UserAgent)
+	entries, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, _, err := doFetch(metadata.UserAgent)
 	if err != nil {
 		// impio moved its subscription endpoint between ".../json" and the
 		// raw path over time; retry the other form once before giving up.
 		alt := impioAlternateSubscriptionURL(subURL)
 		if alt == "" {
-			return nil, 0, 0, 0, 0, "", "", err
+			return nil, 0, 0, 0, 0, "", "", nil, nil, err
 		}
 		subURL = alt
 		var altErr error
-		entries, up, down, tot, exp, iconURL, profileTitle, _, altErr = doFetch(metadata.UserAgent)
+		entries, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, _, altErr = doFetch(metadata.UserAgent)
 		if altErr != nil {
 			// Report the original failure — it corresponds to the URL the
 			// caller actually asked for.
-			return nil, 0, 0, 0, 0, "", "", err
+			return nil, 0, 0, 0, 0, "", "", nil, nil, err
 		}
 	}
 
@@ -2214,47 +2233,55 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 	}
 
 	a.log.Success(fmt.Sprintf("Подписка загружена: %d серверов", visibleCount))
-	return entries, up, down, tot, exp, iconURL, profileTitle, nil
+	return entries, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, nil
 }
 
 // FetchSubscription performs a one-off subscription fetch (no persistence).
 // allowInsecure must be true for plaintext http:// URLs — see
 // ErrInsecureSubscription. The frontend should call this with false first
 // and re-call with true only after surfacing the warning to the user.
-func (a *App) FetchSubscription(subURL string, allowInsecure bool) ([]config.ProxyEntry, error) {
-	entries, _, _, _, _, _, _, err := a.fetchSubscriptionFromURL(subURL, allowInsecure)
-	return entries, err
+func (a *App) FetchSubscription(subURL string, allowInsecure bool) (SubscriptionPreview, error) {
+	entries, _, _, _, _, _, _, lists, embedded, err := a.fetchSubscriptionFromURL(subURL, allowInsecure)
+	lists = append(lists, embeddedRoutingListDeclarations(embedded)...)
+	return SubscriptionPreview{Proxies: entries, RoutingLists: lists}, err
 }
 
 // ParseSubscriptionText accepts pasted content. When the paste resolves to
 // a URL (via RVSUB1 decryption), we still enforce https:// on the resolved
 // target — there's no UI-side prompt for paste flows, so plaintext URLs are
 // refused outright.
-func (a *App) ParseSubscriptionText(text string) ([]config.ProxyEntry, error) {
+func (a *App) ParseSubscriptionText(text string) (SubscriptionPreview, error) {
 	if proxy.IsDeepLink(text) {
 		decoded, err := proxy.DecodeDeepLink(text)
 		if err != nil {
-			return nil, err
+			return SubscriptionPreview{}, err
 		}
 		text = decoded
 	}
 	text = strings.TrimSpace(text)
 	lower := strings.ToLower(text)
 	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
-		entries, _, _, _, _, _, _, ferr := a.fetchSubscriptionFromURL(text, false)
-		return entries, ferr
+		entries, _, _, _, _, _, _, lists, embedded, ferr := a.fetchSubscriptionFromURL(text, false)
+		lists = append(lists, embeddedRoutingListDeclarations(embedded)...)
+		return SubscriptionPreview{Proxies: entries, RoutingLists: lists}, ferr
 	}
 	if proxy.IsEncryptedSubscription(text) {
 		if resolved, err := resolveEncryptedSubscriptionURL(text); err == nil && resolved != "" {
-			entries, _, _, _, _, _, _, ferr := a.fetchSubscriptionFromURL(resolved, false)
-			return entries, ferr
+			entries, _, _, _, _, _, _, lists, embedded, ferr := a.fetchSubscriptionFromURL(resolved, false)
+			lists = append(lists, embeddedRoutingListDeclarations(embedded)...)
+			return SubscriptionPreview{Proxies: entries, RoutingLists: lists}, ferr
 		}
 	}
 	entries, err := proxy.ParseSubscriptionBody(text)
 	if err != nil {
-		return nil, err
+		return SubscriptionPreview{}, err
 	}
-	return proxy.FinalizeSubscriptionEntries(entries), nil
+	lists := proxy.ExtractSubscriptionRoutingLists("", text)
+	lists = append(lists, embeddedRoutingListDeclarations(proxy.ExtractEmbeddedRoutingLists(text))...)
+	return SubscriptionPreview{
+		Proxies:      proxy.FinalizeSubscriptionEntries(entries),
+		RoutingLists: lists,
+	}, nil
 }
 
 func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
@@ -2278,7 +2305,7 @@ func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
 	// they accepted plaintext at AddSubscription time, refresh keeps using
 	// http; if not, an http URL refresh will fail with ErrInsecureSubscription
 	// and the UI must re-prompt before retrying.
-	entries, up, down, tot, exp, iconURL, profileTitle, err := a.fetchSubscriptionFromURL(sub.URL, sub.AllowInsecure)
+	entries, up, down, tot, exp, iconURL, profileTitle, lists, embedded, err := a.fetchSubscriptionFromURL(sub.URL, sub.AllowInsecure)
 	if err != nil {
 		return nil, fmt.Errorf("refreshing subscription %s: %w", sub.Name, err)
 	}
@@ -2310,6 +2337,10 @@ func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
 	}
 	if err := a.config.SaveConfig(cfg); err != nil {
 		a.log.Error(fmt.Sprintf("Ошибка сохранения после обновления подписки: %v", err))
+	}
+	provided := append(append([]config.RoutingList(nil), lists...), embeddedRoutingListDeclarations(embedded)...)
+	if err := a.syncSubscriptionRoutingLists(subID, provided, nil, embedded); err != nil {
+		a.log.Warning(fmt.Sprintf("Ошибка синхронизации списков маршрутизации подписки: %v", err))
 	}
 
 	visibleCount := len(entries)
@@ -2343,7 +2374,7 @@ func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
 // passed explicitly for http:// URLs after the user has confirmed the
 // warning. The consent is persisted on the Subscription record so
 // RefreshSubscription doesn't need to re-prompt.
-func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source string) ([]config.ProxyEntry, error) {
+func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source string, disabledListURLs []string) ([]config.ProxyEntry, error) {
 	if a.config == nil {
 		return nil, fmt.Errorf("config manager not initialized")
 	}
@@ -2371,13 +2402,15 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 		break
 	}
 	if staleIdx >= 0 {
+		staleSubID := cfg.Subscriptions[staleIdx].ID
 		cfg.Subscriptions = append(cfg.Subscriptions[:staleIdx], cfg.Subscriptions[staleIdx+1:]...)
+		a.removeSubscriptionRoutingLists(&cfg, staleSubID)
 		if err := a.config.SaveConfig(cfg); err != nil {
 			return nil, fmt.Errorf("clearing stale subscription: %w", err)
 		}
 	}
 
-	entries, up, down, tot, exp, iconURL, profileTitle, err := a.fetchSubscriptionFromURL(subURL, allowInsecure)
+	entries, up, down, tot, exp, iconURL, profileTitle, lists, embedded, err := a.fetchSubscriptionFromURL(subURL, allowInsecure)
 	if err != nil {
 		return nil, err
 	}
@@ -2410,6 +2443,10 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 	cfg.Subscriptions = append(cfg.Subscriptions, sub)
 	if err := a.config.SaveConfig(cfg); err != nil {
 		return nil, fmt.Errorf("saving subscription: %w", err)
+	}
+	provided := append(append([]config.RoutingList(nil), lists...), embeddedRoutingListDeclarations(embedded)...)
+	if err := a.syncSubscriptionRoutingLists(sub.ID, provided, disabledListURLs, embedded); err != nil {
+		a.log.Warning(fmt.Sprintf("[ROUTING] Не удалось применить списки подписки %q: %v", displayName, err))
 	}
 
 	visibleCount := len(entries)
@@ -2458,7 +2495,12 @@ func (a *App) DeleteSubscription(subID string) error {
 		return fmt.Errorf("subscription %s not found", subID)
 	}
 	cfg.Subscriptions = newSubs
-	return a.config.SaveConfig(cfg)
+	a.removeSubscriptionRoutingLists(&cfg, subID)
+	if err := a.config.SaveConfig(cfg); err != nil {
+		return err
+	}
+	a.syncRoutingListSpecs()
+	return nil
 }
 
 // visibleSubscriptionCount returns the number of entries the user actually
@@ -3014,22 +3056,33 @@ func (a *App) initSmartBlockedDomains(userDataPath, rootDir string) {
 	if router != nil && len(domRes.Domains) > 0 {
 		router.SetBlockedDomains(domRes.Domains)
 	}
+	// Пользовательские «сайты через VPN» из конфига объединяются с
+	// block-листами до auto-connect — иначе первый route их не увидит.
+	if router != nil {
+		router.SetCustomBlockedDomains(a.config.GetConfig().RoutingRules.CustomBlockedDomains)
+	}
+	// Push cached routing-list specs to the proxy manager before auto-connect,
+	// mirroring the block-list cache-first load above — the first connect must
+	// see any lists fetched in a prior session.
+	a.syncRoutingListSpecs()
 	if domRes.Country != "" {
 		a.log.Info(fmt.Sprintf("[SMART] Источник списков: %s (%s), записей: %d", domRes.Source, strings.ToUpper(domRes.Country), len(domRes.Domains)))
 	} else {
 		a.log.Info(fmt.Sprintf("[SMART] Источник списков: %s, записей: %d", domRes.Source, len(domRes.Domains)))
 	}
 
-	// IP-subnet block-list (Telegram MTProto): native Telegram dials its data
-	// centers by IP with no domain/SNI, so domain rules can't catch it — Smart
-	// mode needs these ranges. Cache-first, always resolves (static fallback).
+	// IP-subnet block-list (Telegram MTProto + Discord voice): these clients
+	// dial their servers by IP with no domain/SNI, so domain rules can't catch
+	// them — Smart mode needs the ranges. Cache-first, always resolves (static
+	// fallback).
 	cidrRes := proxy.LoadCachedBlockedCIDRs(cidrCachePath)
 	if router != nil && len(cidrRes.CIDRs) > 0 {
 		router.SetBlockedCIDRs(cidrRes.CIDRs)
 	}
-	a.log.Info(fmt.Sprintf("[SMART] IP-подсети (Telegram): источник %s, записей: %d", cidrRes.Source, len(cidrRes.CIDRs)))
+	a.log.Info(fmt.Sprintf("[SMART] IP-подсети (Telegram+Discord): источник %s, записей: %d", cidrRes.Source, len(cidrRes.CIDRs)))
 
 	a.startSmartBlockedRefresh(cachePath, cidrCachePath)
+	a.startRoutingListRefresh()
 }
 
 // waitForLeftoverCleanup blocks until startup leftover recovery has restored OS

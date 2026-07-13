@@ -39,7 +39,7 @@ func TestFetchSubscriptionOverHTTPSSendsHWID(t *testing.T) {
 	// available here, so we hit it via the real fetcher and accept that
 	// this test only runs locally with the trusted httptest CA.
 	_ = ts.Client()
-	entries, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL, false)
+	entries, _, _, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL, false)
 	if err != nil {
 		// Self-signed cert path: the production fetcher uses its own
 		// http.Client with the system root CAs and will reject the test
@@ -102,7 +102,7 @@ func TestFetchSubscriptionHTTPDefaultRefused(t *testing.T) {
 	defer ts.Close()
 
 	app := NewApp()
-	_, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL, false)
+	_, _, _, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL, false)
 	if err == nil {
 		t.Fatal("expected ErrInsecureSubscription for http URL")
 	}
@@ -136,7 +136,7 @@ func TestFetchSubscriptionInsecureSuppressesHWID(t *testing.T) {
 	defer ts.Close()
 
 	app := NewApp()
-	entries, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL, true)
+	entries, _, _, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL, true)
 	if err != nil {
 		t.Fatalf("unexpected error with allowInsecure=true: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestFetchSubscriptionImpioJSONFallback(t *testing.T) {
 	defer func() { impioSubscriptionHost = oldHost }()
 
 	app := NewApp()
-	entries, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL+"/api/sub/raw/abc/json", true)
+	entries, _, _, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL+"/api/sub/raw/abc/json", true)
 	if err != nil {
 		t.Fatalf("expected fallback to strip /json and succeed, got %v (paths: %v)", err, paths)
 	}
@@ -233,7 +233,7 @@ func TestFetchSubscriptionImpioRawURLNotRewritten(t *testing.T) {
 	defer func() { impioSubscriptionHost = oldHost }()
 
 	app := NewApp()
-	entries, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL+"/api/sub/raw/abc", true)
+	entries, _, _, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL+"/api/sub/raw/abc", true)
 	if err != nil {
 		t.Fatalf("raw URL must fetch directly: %v (paths: %v)", err, paths)
 	}
@@ -271,7 +271,7 @@ func TestFetchSubscriptionSendsConfiguredUserAgentAndDeviceHeaders(t *testing.T)
 	}))
 	defer ts.Close()
 
-	if _, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL, true); err != nil {
+	if _, _, _, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL, true); err != nil {
 		t.Fatalf("fetch subscription: %v", err)
 	}
 	if seenUA != "ResultV/Test-UA" {
@@ -329,7 +329,7 @@ func TestFetchSubscriptionFromURLEmptyBodyReturnsHWIDDiagnostic(t *testing.T) {
 	defer ts.Close()
 
 	app := NewApp()
-	_, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL, true)
+	_, _, _, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL, true)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -358,7 +358,7 @@ func TestFetchSubscriptionFromURLProfileTitleOverridesProvider(t *testing.T) {
 	defer ts.Close()
 
 	app := NewApp()
-	entries, _, _, _, _, _, gotTitle, err := app.fetchSubscriptionFromURL(ts.URL, true)
+	entries, _, _, _, _, _, gotTitle, _, _, err := app.fetchSubscriptionFromURL(ts.URL, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -372,10 +372,11 @@ func TestFetchSubscriptionFromURLProfileTitleOverridesProvider(t *testing.T) {
 
 func TestParseSubscriptionTextAcceptsResultvDeepLink(t *testing.T) {
 	app := NewApp()
-	entries, err := app.ParseSubscriptionText("resultv://plain/vless://af815621-b245-4149-89da-dd184cfc4b3d@example.com:443?type=tcp&security=none#Node")
+	prev, err := app.ParseSubscriptionText("resultv://plain/vless://af815621-b245-4149-89da-dd184cfc4b3d@example.com:443?type=tcp&security=none#Node")
 	if err != nil {
 		t.Fatalf("unexpected parse error: %v", err)
 	}
+	entries := prev.Proxies
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(entries))
 	}

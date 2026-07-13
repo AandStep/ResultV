@@ -30,6 +30,36 @@ type RoutingRules struct {
 	Mode         string   `json:"mode"`
 	Whitelist    []string `json:"whitelist"`
 	AppWhitelist []string `json:"appWhitelist"`
+	// AppForceVPN lists process names whose entire traffic is forced through
+	// the tunnel (Smart mode's answer to domainless traffic: Discord voice,
+	// Speedtest). Effective only in Tunnel mode — Proxy mode can't see apps
+	// that ignore the system proxy.
+	AppForceVPN []string `json:"appForceVPN"`
+	// CustomBlockedDomains are user-added "route via VPN" domains, unioned
+	// with the fetched block-lists in Smart mode.
+	CustomBlockedDomains []string `json:"customBlockedDomains"`
+	// RoutingLists are user-managed routing subscriptions (URL + action).
+	RoutingLists []RoutingList `json:"routingLists"`
+}
+
+// RoutingList is a user-managed routing subscription: a remote list of
+// domains/CIDRs (plain-text or sing-box source-JSON rule-set) routed by a
+// single action. Cached locally as a source-format rule_set and referenced
+// by buildRoute ahead of the built-in Smart/whitelist/ad-block rules.
+type RoutingList struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	URL           string `json:"url"`
+	Action        string `json:"action"` // "proxy" | "direct" | "block"
+	Enabled       bool   `json:"enabled"`
+	AllowInsecure bool   `json:"allowInsecure,omitempty"`
+	UpdatedAt     int64  `json:"updatedAt,omitempty"`
+	DomainCount   int    `json:"domainCount,omitempty"`
+	CIDRCount     int    `json:"cidrCount,omitempty"`
+	LastError     string `json:"lastError,omitempty"`
+	// SubscriptionID links a provider-delivered list to its subscription.
+	// Empty for user-added lists. Identity within a subscription is the URL.
+	SubscriptionID string `json:"subscriptionId,omitempty"`
 }
 
 type ProxyEntry struct {
@@ -69,6 +99,10 @@ type Subscription struct {
 	// suppresses the x-hwid header — sending a stable device identifier in
 	// plaintext is exactly the leak this flag is opted into.
 	AllowInsecure bool `json:"allowInsecure,omitempty"`
+	// RemovedRoutingListURLs are provider routing-list URLs the user explicitly
+	// deleted; subscription sync must not re-add them. Cleared only by deleting
+	// the subscription itself.
+	RemovedRoutingListURLs []string `json:"removedRoutingListUrls,omitempty"`
 }
 
 type AppSettings struct {
@@ -95,6 +129,10 @@ type AppSettings struct {
 	// via EffectiveDNSLeakProtection — anything else would silently
 	// downgrade existing installs to a leaky state on upgrade.
 	DNSLeakProtection *bool `json:"dnsLeakProtection,omitempty"`
+
+	// RoutingListUpdateHours is the app-wide auto-update interval for
+	// user routing lists. 0/absent → 24h via EffectiveRoutingListUpdateHours.
+	RoutingListUpdateHours int `json:"routingListUpdateHours,omitempty"`
 }
 
 // EffectiveDNSLeakProtection returns true unless the user has explicitly
@@ -132,6 +170,13 @@ func (s AppSettings) EffectiveSubscriptionUpdateIntervalHours() int {
 	return s.SubscriptionUpdateIntervalHours
 }
 
+func (s AppSettings) EffectiveRoutingListUpdateHours() int {
+	if s.RoutingListUpdateHours < 1 {
+		return 24
+	}
+	return s.RoutingListUpdateHours
+}
+
 func (s AppSettings) EffectiveSubscriptionSendHWID() bool {
 	if s.SubscriptionSendHWID == nil {
 		return true
@@ -152,9 +197,12 @@ func DefaultConfig() AppConfig {
 	subscriptionSendHWID := true
 	return AppConfig{
 		RoutingRules: RoutingRules{
-			Mode:         "global",
-			Whitelist:    []string{"localhost", "127.0.0.1"},
-			AppWhitelist: []string{},
+			Mode:                 "global",
+			Whitelist:            []string{"localhost", "127.0.0.1"},
+			AppWhitelist:         []string{},
+			AppForceVPN:          []string{},
+			CustomBlockedDomains: []string{},
+			RoutingLists:         []RoutingList{},
 		},
 		Proxies: []ProxyEntry{},
 		Settings: AppSettings{
@@ -380,6 +428,15 @@ func ensureDefaults(cfg AppConfig) AppConfig {
 	}
 	if cfg.RoutingRules.AppWhitelist == nil {
 		cfg.RoutingRules.AppWhitelist = []string{}
+	}
+	if cfg.RoutingRules.AppForceVPN == nil {
+		cfg.RoutingRules.AppForceVPN = []string{}
+	}
+	if cfg.RoutingRules.CustomBlockedDomains == nil {
+		cfg.RoutingRules.CustomBlockedDomains = []string{}
+	}
+	if cfg.RoutingRules.RoutingLists == nil {
+		cfg.RoutingRules.RoutingLists = []RoutingList{}
 	}
 	if cfg.Proxies == nil {
 		cfg.Proxies = []ProxyEntry{}

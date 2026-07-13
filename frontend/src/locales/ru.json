@@ -46,7 +46,8 @@
     "pingTooltip": "Замер задержки до серверов (TCP, не через туннель)",
     "sortMenuTooltip": "Сортировка списка серверов",
     "websiteTooltip": "Официальный сайт",
-    "telegramTooltip": "Telegram-канал"
+    "telegramTooltip": "Telegram-канал",
+    "proxyModeHint": "Некоторые приложения (Telegram, игры) игнорируют системный прокси. Если приложение не видит VPN — включите режим ТУННЕЛЬ."
   },
   "add": {
     "titleAdd": "Добавить конфигурацию",
@@ -229,7 +230,7 @@
     "subscription_user_agent": {
       "title": "User agent",
       "desc": "Очистите поле, чтобы использовать значение по умолчанию ResultV/<версия>/Windows/<версия ОС>.",
-      "placeholder": "ResultV/3.2.6/Windows/11_10.0.26200"
+      "placeholder": "ResultV/3.2.7/Windows/11_10.0.26200"
     },
     "dns": {
       "title": "DNS-серверы",
@@ -300,7 +301,6 @@
       "fast_add": "Быстро добавить в исключения домены:",
       "tooltip": "Если в списке есть общая маска (например, .ru) и конкретный домен (например, avito.ru), то конкретный домен будет проксироваться (станет исключением из правила обхода)."
     },
-
     "apps": {
       "title": "Приложения-исключения",
       "desc1": "Трафик этих приложений пойдет напрямую. ",
@@ -309,7 +309,49 @@
       "add_manual": "Вручную",
       "choose_file": "Выбрать ",
       "popular": "Популярные программы для обхода прокси:"
+    },
+    "forceApps": {
+      "title": "Приложения через VPN",
+      "desc": "Весь трафик этих приложений всегда идёт через VPN — для приложений, чей трафик Smart-режим не ловит по спискам (соединения без домена). Работает только в режиме ТУННЕЛЬ."
+    },
+    "forceDomains": {
+      "title": "Сайты через VPN",
+      "desc": "Добавьте домен, если сайт не открывается в Smart-режиме — он и все его поддомены пойдут через VPN.",
+      "placeholder": "aistudio.google.com",
+      "add_btn": "Добавить"
     }
+  },
+  "routingLists": {
+    "title": "Списки маршрутизации",
+    "subtitle": "Свои списки доменов/подсетей с действием",
+    "add": "Добавить список",
+    "url": "Ссылка на список",
+    "name": "Название",
+    "action": "Действие",
+    "actionProxy": "Через VPN",
+    "actionDirect": "Напрямую",
+    "actionBlock": "Блокировать",
+    "insecureConsent": "Понимаю, что http:// небезопасно",
+    "updateInterval": "Интервал обновления (часы)",
+    "counts": "{{domains}} доменов · {{cidrs}} подсетей",
+    "refresh": "Обновить",
+    "refreshAria": "Обновить список",
+    "editAria": "Изменить список",
+    "deleteAria": "Удалить список",
+    "empty": "Списки не добавлены",
+    "namePlaceholder": "Например: Мой блок-лист",
+    "urlPlaceholder": "https://example.com/list.txt",
+    "updatedNever": "Ещё не обновлялся",
+    "updatedAgo": "Обновлено {{time}}",
+    "confirmDelete": "Удалить список «{{name}}»? Также будет удалён его кэш.",
+    "confirmDeleteProvider": "Список из подписки — после удаления он не вернётся при обновлении подписки. Удалить?",
+    "errorLabel": "Ошибка: {{error}}",
+    "subscriptionAddsTitle": "Подписка также добавляет списки маршрутизации ({{count}})",
+    "fromSubscription": "Из подписки {{name}}",
+    "fromSubscriptionUnknown": "Из подписки",
+    "embeddedBadge": "Встроен в подписку",
+    "embeddedName": "Встроен: {{action}}",
+    "applying": "Применяется…"
   },
   "proxyList": {
     "title": "Сохраненные профили",
@@ -433,7 +475,9 @@
     "cancel": "Отмена",
     "confirm": "Подтвердить",
     "confirmAction": "Подтвердите действие",
-    "delete": "Удалить"
+    "delete": "Удалить",
+    "edit": "Изменить",
+    "save": "Сохранить"
   },
   "killswitchPopup": {
     "title": "Сработал Kill Switch",

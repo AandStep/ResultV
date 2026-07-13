@@ -21,9 +21,34 @@ import { Info, Check, Shield } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { VPN_TYPES } from "../../utils/proxyParser";
 
-const ProtocolSelectionModal = ({ isOpen, onClose, onConfirm, count, proxies = [] }) => {
+// Mirrors RulesView's ROUTING_ACTION_STYLES — kept as a local copy rather
+// than a cross-view import so this modal stays a self-contained component.
+const ROUTING_ACTION_STYLES = {
+  proxy: "bg-[#007E3A]/10 text-[#00A819] border-[#007E3A]/20",
+  direct: "bg-zinc-800 text-zinc-300 border-zinc-700",
+  block: "bg-rose-500/10 text-rose-400 border-rose-500/20",
+};
+
+// Embedded routing lists ship inside a subscription payload (url: "embedded:<action>")
+// rather than being fetched from their own URL. `rl.action` is already populated
+// for these rows, so no need to re-derive it from the url here.
+const isEmbeddedList = (rl) =>
+  typeof rl.url === "string" && rl.url.startsWith("embedded:");
+
+const ProtocolSelectionModal = ({
+  isOpen,
+  onClose,
+  onConfirm,
+  count,
+  proxies = [],
+  routingLists = [],
+  disabledListUrls,
+  onToggleListDisabled,
+}) => {
   const { t } = useTranslation();
   const [selectedType, setSelectedType] = useState("HTTP");
+  const disabledSet =
+    disabledListUrls instanceof Set ? disabledListUrls : new Set();
 
   const { plainProxies, vpnProxies, vpnSummary, visibleCount } = useMemo(() => {
     const autoMemberIds = new Set();
@@ -139,6 +164,56 @@ const ProtocolSelectionModal = ({ isOpen, onClose, onConfirm, count, proxies = [
                   )}
                 </button>
               ))}
+            </div>
+          </div>
+        )}
+
+        {routingLists.length > 0 && (
+          <div className="space-y-3 pt-2 border-t border-zinc-800">
+            <p className="text-sm text-zinc-400 font-medium pt-4">
+              {t("routingLists.subscriptionAddsTitle", {
+                count: routingLists.length,
+              })}
+            </p>
+            <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+              {routingLists.map((rl) => {
+                const enabled = !disabledSet.has(rl.url);
+                const actionLabel = t(
+                  `routingLists.action${rl.action?.charAt(0).toUpperCase()}${rl.action?.slice(1)}`,
+                );
+                const displayName = isEmbeddedList(rl)
+                  ? t("routingLists.embeddedName", { action: actionLabel })
+                  : rl.name || rl.url;
+                return (
+                  <div
+                    key={rl.url}
+                    className="flex items-center gap-3 p-3 bg-zinc-950 rounded-xl border border-zinc-800"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-white text-sm font-bold truncate">
+                          {displayName}
+                        </span>
+                        <span
+                          className={`shrink-0 text-xs font-medium px-2.5 py-0.5 rounded-full border ${ROUTING_ACTION_STYLES[rl.action] || ROUTING_ACTION_STYLES.direct}`}
+                        >
+                          {actionLabel}
+                        </span>
+                      </div>
+                    </div>
+                    <div
+                      className={`relative w-12 h-7 rounded-2xl transition-colors duration-300 ease-in-out shrink-0 cursor-pointer ${enabled ? "bg-[#007E3A]" : "bg-zinc-700"}`}
+                      onClick={() => onToggleListDisabled?.(rl.url, enabled)}
+                      role="button"
+                      aria-pressed={enabled}
+                    >
+                      <div
+                        className={`absolute top-1 left-1 bg-white w-5 h-5 rounded-full transition-transform duration-300 ease-in-out ${enabled ? "transform translate-x-5" : ""}`}
+                      ></div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}

@@ -125,8 +125,10 @@ func LoadCachedBlockedDomains(cachePath string, localPaths ...string) BlockedDom
 }
 
 // LoadCachedBlockedCIDRs is the network-free counterpart for the IP-subnet
-// block-list: cache → builtin. Telegram's static defaultBlockedCIDRs() always
-// guarantees a usable set so MTProto works offline and at first launch.
+// block-list (Telegram MTProto + Discord voice): cache → builtin. The static
+// defaultBlockedCIDRs() fallback is Telegram-only, but it always guarantees a
+// usable set so MTProto works offline and at first launch; Discord ranges
+// arrive with the first successful remote refresh.
 func LoadCachedBlockedCIDRs(cachePath string) BlockedCIDRsResolveResult {
 	if cachePath != "" {
 		cache, err := LoadBlockedCIDRsCache(cachePath)
@@ -140,11 +142,11 @@ func LoadCachedBlockedCIDRs(cachePath string) BlockedCIDRsResolveResult {
 	}
 }
 
-// CIDRFetcher fetches the Telegram MTProto subnet list. Narrow interface
-// (satisfied by *HTTPBlockedListProvider) so callers and tests don't depend on
-// the full BlockedListProvider.
+// CIDRFetcher fetches the IP-subnet block-list (Telegram MTProto + Discord
+// voice). Narrow interface (satisfied by *HTTPBlockedListProvider) so callers
+// and tests don't depend on the full BlockedListProvider.
 type CIDRFetcher interface {
-	FetchTelegramCIDRs(ctx context.Context) ([]string, error)
+	FetchBlockedCIDRs(ctx context.Context) ([]string, error)
 }
 
 type BlockedCIDRsResolveResult struct {
@@ -153,14 +155,15 @@ type BlockedCIDRsResolveResult struct {
 	Err    error
 }
 
-// ResolveBlockedCIDRs resolves the IP-subnet block-list with the same
-// remote → cache → builtin precedence as ResolveBlockedDomains, minus the
-// country dimension (Telegram ranges are global). Always returns a usable set:
-// the static defaultBlockedCIDRs() fallback guarantees Telegram works offline.
+// ResolveBlockedCIDRs resolves the IP-subnet block-list (Telegram MTProto +
+// Discord voice) with the same remote → cache → builtin precedence as
+// ResolveBlockedDomains, minus the country dimension (the ranges are global).
+// Always returns a usable set: the static defaultBlockedCIDRs() fallback
+// guarantees Telegram works offline.
 func ResolveBlockedCIDRs(ctx context.Context, fetcher CIDRFetcher, cachePath string) BlockedCIDRsResolveResult {
 	var lastErr error
 	if fetcher != nil {
-		cidrs, err := fetcher.FetchTelegramCIDRs(ctx)
+		cidrs, err := fetcher.FetchBlockedCIDRs(ctx)
 		if err == nil && len(cidrs) > 0 {
 			cache := BlockedCIDRsCache{
 				UpdatedAt: time.Now().Unix(),

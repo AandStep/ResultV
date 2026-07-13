@@ -109,6 +109,8 @@ type Manager struct {
 	routingMode  RoutingMode
 	whitelist    []string
 	appWhitelist []string
+	appForceVPN  []string
+	routingLists []RoutingListSpec
 	connectedAt  time.Time
 
 	prevUp   int64
@@ -521,7 +523,7 @@ func (m *Manager) startEngine(ctx context.Context, cfg EngineConfig) (err error,
 // that, drop the stale entry, and retry once on the bare domain so sing-box
 // re-resolves fresh — seamless to the user.
 func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode,
-	routingMode RoutingMode, whitelist, appWhitelist []string,
+	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
 	killSwitch, adBlock bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
 	dnsLeakProtection bool) ConnectResultDTO {
@@ -535,7 +537,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 		}
 	}
 
-	res := m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist,
+	res := m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist, appForceVPN,
 		killSwitch, adBlock, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
 		dnsLeakProtection)
 
@@ -543,7 +545,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 		clearServerPin(dataDir, m.secrets, proxy.IP)
 		m.log.Warning("[PROXY] Закэшированный IP сервера устарел — переподключение по домену")
 		proxy.ResolvedIP = ""
-		res = m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist,
+		res = m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist, appForceVPN,
 			killSwitch, adBlock, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
 			dnsLeakProtection)
 	}
@@ -551,7 +553,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 }
 
 func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode ProxyMode,
-	routingMode RoutingMode, whitelist, appWhitelist []string,
+	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
 	killSwitch, adBlock bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
 	dnsLeakProtection bool) ConnectResultDTO {
@@ -710,6 +712,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		RoutingMode:       routingMode,
 		Whitelist:         whitelist,
 		AppWhitelist:      effectiveAppWhitelist,
+		AppForceVPN:       append([]string(nil), appForceVPN...),
 		KillSwitch:        killSwitch,
 		LocalPort:         actualLocalPort,
 		DNSServers:        dnsServers,
@@ -719,6 +722,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		DNSLeakProtection: dnsLeakProtection,
 		DataDir:           resultProxyDataDir(),
 	}
+	engineCfg.RoutingLists = m.routingListSpecsLocked()
 	// Smart mode needs the censored block-list in the engine config so
 	// buildRoute can tunnel those domains/ranges while everything else goes
 	// direct. Only populated for Smart — Global/Whitelist ignore it.
@@ -802,6 +806,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 				m.routingMode = routingMode
 				m.whitelist = append([]string(nil), whitelist...)
 				m.appWhitelist = append([]string(nil), appWhitelist...)
+				m.appForceVPN = append([]string(nil), appForceVPN...)
 				m.connectedAt = time.Now()
 				m.prevUp = 0
 				m.prevDown = 0
@@ -934,6 +939,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	m.routingMode = routingMode
 	m.whitelist = append([]string(nil), whitelist...)
 	m.appWhitelist = append([]string(nil), appWhitelist...)
+	m.appForceVPN = append([]string(nil), appForceVPN...)
 	m.connectedAt = time.Now()
 	m.prevUp = 0
 	m.prevDown = 0
@@ -946,6 +952,14 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	m.dnsLeakProtection = dnsLeakProtection
 	m.startProcessTrackerLocked()
 	m.startHealthWatchdogLocked(proxy, mode)
+	// Harden the in-process sing-box engine against CPU starvation for the
+	// lifetime of the session: under full-core load (dev `go test`/builds) a
+	// Normal-priority engine stops draining its sockets and the OS aborts every
+	// tunneled connection at once. Restored in disconnectLocked. Best-effort —
+	// a failed bump only forfeits hardening, never blocks the connect.
+	if err := sys.RaiseProcessPriority(); err != nil {
+		m.log.Warning(fmt.Sprintf("[СИСТЕМА] Не удалось повысить приоритет процесса: %v", err))
+	}
 	m.emitStatusLocked()
 	m.mu.Unlock()
 
@@ -1191,7 +1205,7 @@ func dnsOverrideServers(custom []string) []string {
 // connectLocked is the internal reconnect path used by SetMode/ReconnectWithRoutingRules.
 // Caller must hold m.mu.
 func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode ProxyMode,
-	routingMode RoutingMode, whitelist, appWhitelist []string,
+	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
 	killSwitch, adBlock bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
 	dnsLeakProtection bool) ConnectResultDTO {
@@ -1247,6 +1261,7 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 		RoutingMode:       routingMode,
 		Whitelist:         whitelist,
 		AppWhitelist:      effectiveAppWhitelist,
+		AppForceVPN:       append([]string(nil), appForceVPN...),
 		KillSwitch:        killSwitch,
 		LocalPort:         actualLocalPort,
 		DNSServers:        dnsServers,
@@ -1256,6 +1271,7 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 		DNSLeakProtection: dnsLeakProtection,
 		DataDir:           resultProxyDataDir(),
 	}
+	engineCfg.RoutingLists = m.routingListSpecsLocked()
 	// Smart mode needs the censored block-list in the engine config so
 	// buildRoute can tunnel those domains/ranges while everything else goes
 	// direct. Only populated for Smart — Global/Whitelist ignore it.
@@ -1364,6 +1380,7 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 	m.routingMode = routingMode
 	m.whitelist = append([]string(nil), whitelist...)
 	m.appWhitelist = append([]string(nil), appWhitelist...)
+	m.appForceVPN = append([]string(nil), appForceVPN...)
 	m.connectedAt = time.Now()
 	m.prevUp = 0
 	m.prevDown = 0
@@ -1959,6 +1976,12 @@ func (m *Manager) disconnectLocked() error {
 	m.proxy = nil
 	m.clearPendingLocked()
 
+	// Drop the session-scoped priority bump raised on connect (see
+	// sys.RaiseProcessPriority). A reconnect re-raises it on the next success.
+	if err := sys.RestoreProcessPriority(); err != nil {
+		m.log.Warning(fmt.Sprintf("[СИСТЕМА] Не удалось вернуть приоритет процесса: %v", err))
+	}
+
 	m.emitStatusLocked()
 
 	return nil
@@ -1983,6 +2006,7 @@ func (m *Manager) SetMode(mode ProxyMode) error {
 	routingMode := m.routingMode
 	whitelist := append([]string(nil), m.whitelist...)
 	appWhitelist := append([]string(nil), m.appWhitelist...)
+	appForceVPN := append([]string(nil), m.appForceVPN...)
 
 	if wasConnected {
 		m.disconnectLocked()
@@ -1999,6 +2023,7 @@ func (m *Manager) SetMode(mode ProxyMode) error {
 			routingMode,
 			whitelist,
 			appWhitelist,
+			appForceVPN,
 			killSwitch,
 			adBlock,
 			m.localPort,
@@ -2022,7 +2047,27 @@ func (m *Manager) SetTunStack(stack string) {
 	m.tunStack = stack
 }
 
-func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode RoutingMode, whitelist, appWhitelist []string) ConnectResultDTO {
+// SetRoutingLists replaces the resolved routing-list specs used by the next
+// engine start/reload. Stored under m.mu; a copy is taken so the caller may
+// reuse its slice.
+func (m *Manager) SetRoutingLists(specs []RoutingListSpec) {
+	cp := make([]RoutingListSpec, len(specs))
+	copy(cp, specs)
+	m.mu.Lock()
+	m.routingLists = cp
+	m.mu.Unlock()
+}
+
+// routingListSpecsLocked returns a copy of the current specs. Callers must
+// hold m.mu — both EngineConfig build sites in Connect/connectLocked already
+// do.
+func (m *Manager) routingListSpecsLocked() []RoutingListSpec {
+	cp := make([]RoutingListSpec, len(m.routingLists))
+	copy(cp, m.routingLists)
+	return cp
+}
+
+func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string) ConnectResultDTO {
 	// Serialize against Connect/Disconnect/SetMode (see opMu) — acquired before
 	// mu to preserve the opMu→mu lock ordering.
 	m.opMu.Lock()
@@ -2046,7 +2091,7 @@ func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode Rou
 	tIPv6 := m.tunIPv6
 	dnsLeak := m.dnsLeakProtection
 
-	return m.connectLocked(ctx, p, mode, routingMode, whitelist, appWhitelist, killSwitch, adBlock, lPort, listenLAN, dServers, tIPv4, tIPv6, dnsLeak)
+	return m.connectLocked(ctx, p, mode, routingMode, whitelist, appWhitelist, appForceVPN, killSwitch, adBlock, lPort, listenLAN, dServers, tIPv4, tIPv6, dnsLeak)
 }
 
 // IsAdBlockActive reports whether the running sing-box engine has ad blocking enabled.
@@ -2189,6 +2234,16 @@ func (m *Manager) stopHealthWatchdogLocked() {
 // direct/split traffic can never mask a genuinely dead upstream.
 const watchdogTrafficAliveBytes int64 = 16 * 1024
 
+// maxConsecutiveVetoes bounds how long the traffic-veto (see
+// watchdogTrafficAliveBytes) may suppress a kill-switch trip. A truly alive
+// upstream recovers its HTTP probe within a tick or two, so a healthy session
+// never approaches this cap; a wedged transport that keeps spraying retry bytes
+// while every probe fails hits it and the veto yields, letting the outage be
+// detected. In tunnel mode (5s interval) this is ~30s of grace; in proxy mode
+// (10s) ~60s — long enough to ride out a transient exit hiccup, short enough
+// that a dead session doesn't stay silently masked.
+const maxConsecutiveVetoes = 6
+
 func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy ProxyConfig, mode ProxyMode) {
 	// Both modes now probe the data path (see probeHealthy): proxy mode through
 	// the local listener, tunnel mode through the TUN default route. Direct
@@ -2209,6 +2264,14 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy Proxy
 	defer ticker.Stop()
 
 	consecutiveFails := 0
+	// consecutiveVetoes counts how many ticks in a row the traffic-veto has
+	// suppressed a would-be kill-switch trip. A wedged transport (e.g. a
+	// half-open gRPC session, or the engine thrashing retries after a CPU-
+	// starvation event) keeps emitting failed probes *and* churns enough retry
+	// bytes on the proxy outbound to clear watchdogTrafficAliveBytes every tick,
+	// so the veto would otherwise mask a genuinely dead session forever. After
+	// maxConsecutiveVetoes the veto yields and the normal engage path runs.
+	consecutiveVetoes := 0
 	// Proxy-outbound byte counters at the previous tick, for the traffic veto.
 	// Start at 0: the engage check needs failuresBeforeDead consecutive failures,
 	// so the first tick's inflated delta (bytes since connect) never gates a trip.
@@ -2271,6 +2334,7 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy Proxy
 		wasDead := m.proxyDead
 		if alive {
 			consecutiveFails = 0
+			consecutiveVetoes = 0
 			var disengageFn func()
 			if wasDead {
 				m.proxyDead = false
@@ -2309,12 +2373,16 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy Proxy
 		var engageFn func(ProxyConfig, []string)
 		var engageProxy ProxyConfig
 		var engageDNS []string
-		if consecutiveFails >= failuresBeforeDead && !wasDead && proxyDelta >= watchdogTrafficAliveBytes {
+		if consecutiveFails >= failuresBeforeDead && !wasDead && proxyDelta >= watchdogTrafficAliveBytes && consecutiveVetoes < maxConsecutiveVetoes {
 			// Probe failed, but the proxy outbound moved real traffic this
 			// interval → the upstream is alive (a transient new-connection/route
 			// hiccup, not a dead server). Hold off the kill switch; keep counting
 			// so a genuine outage (traffic actually stops) still trips next tick.
-			m.log.Warning(fmt.Sprintf("[KILL SWITCH] Проба не прошла, но прокси несёт трафик (Δ=%d КБ за интервал) — блокировка отложена", proxyDelta/1024))
+			// Bounded by maxConsecutiveVetoes so a wedged transport that keeps
+			// churning retry bytes while every probe fails can't mask a dead
+			// session indefinitely.
+			consecutiveVetoes++
+			m.log.Warning(fmt.Sprintf("[KILL SWITCH] Проба не прошла, но прокси несёт трафик (Δ=%d КБ за интервал) — блокировка отложена (%d/%d)", proxyDelta/1024, consecutiveVetoes, maxConsecutiveVetoes))
 			m.mu.Unlock()
 			continue
 		}

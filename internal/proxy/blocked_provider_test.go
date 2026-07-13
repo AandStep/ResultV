@@ -22,6 +22,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -234,5 +235,91 @@ func TestParseDomainPayload_CSV(t *testing.T) {
 	}
 	if domains[0] != "example.com" && domains[1] != "example.com" {
 		t.Fatalf("expected example.com in parsed domains: %v", domains)
+	}
+}
+
+func TestCompressDomainSuffixes(t *testing.T) {
+	in := []string{"discord.com", "cdn.discord.com", "gg.discord.com", "x.com", "api.x.com", "unrelated.net"}
+	got := compressDomainSuffixes(in)
+	want := []string{"discord.com", "x.com", "unrelated.net"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v (order must be preserved)", got, want)
+		}
+	}
+}
+
+func TestDefaultPublicSourceTemplatesRU(t *testing.T) {
+	sources := defaultPublicSourceTemplates("ru")
+	wantContains := []string{
+		"citizenlab/test-lists/master/lists/global.csv",
+		"citizenlab/test-lists/master/lists/ru.csv",
+		"itdoginfo/allow-domains/main/Russia/inside-raw.lst",
+		"1andrevich/Re-filter-lists/main/domains_all.lst",
+		"1andrevich/Re-filter-lists/main/community.lst",
+		"itdoginfo/allow-domains/main/Services/discord.lst",
+		"itdoginfo/allow-domains/main/Services/youtube.lst",
+		"itdoginfo/allow-domains/main/Services/google_ai.lst",
+		"Flowseal/zapret-discord-youtube/main/lists/list-general.txt",
+	}
+	for _, frag := range wantContains {
+		found := false
+		for _, s := range sources {
+			if strings.Contains(s, frag) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("ru sources missing %q; got %v", frag, sources)
+		}
+	}
+	for _, s := range sources {
+		if strings.Contains(s, "inside-dnsmasq-nfset") {
+			t.Error("dnsmasq duplicate source must be removed")
+		}
+	}
+	if got := defaultPublicSourceTemplates("de"); len(got) != 2 {
+		t.Errorf("non-ru countries keep citizenlab only, got %v", got)
+	}
+}
+
+func TestDefaultBlockedCIDRSources(t *testing.T) {
+	sources := defaultBlockedCIDRSources()
+	wantContains := []string{
+		"itdoginfo/allow-domains/main/Subnets/IPv4/telegram.lst",
+		"itdoginfo/allow-domains/main/Subnets/IPv6/telegram.lst",
+		"1andrevich/Re-filter-lists/main/discord_ips.lst",
+	}
+	for _, frag := range wantContains {
+		found := false
+		for _, s := range sources {
+			if strings.Contains(s, frag) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("cidr sources missing %q; got %v", frag, sources)
+		}
+	}
+}
+
+func TestBlockedCIDRSourcesEnvFallback(t *testing.T) {
+	t.Setenv("RESULTPROXY_BLOCKED_CIDR_SOURCES", "")
+	t.Setenv("RESULTPROXY_TELEGRAM_CIDR_SOURCES", "https://legacy.example/cidr.lst")
+	p := NewHTTPBlockedListProvider("")
+	got := p.blockedCIDRSources()
+	if len(got) != 1 || got[0] != "https://legacy.example/cidr.lst" {
+		t.Errorf("legacy env must win when new env empty, got %v", got)
+	}
+
+	t.Setenv("RESULTPROXY_BLOCKED_CIDR_SOURCES", "https://new.example/a.lst,https://new.example/b.lst")
+	got = p.blockedCIDRSources()
+	if len(got) != 2 || got[0] != "https://new.example/a.lst" {
+		t.Errorf("new env must take precedence, got %v", got)
 	}
 }
