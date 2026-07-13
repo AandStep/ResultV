@@ -367,4 +367,10 @@
     <string name="log_no_server">No server selected.</string>
     <string name="log_build_failed">Failed to build configuration.</string>
     <string name="log_permission_denied">VPN permission denied.</string>
+    <!-- Log source tokens — same Latin category tags the desktop uses; not translated. -->
+    <string name="log_source_proxy" translatable="false">PROXY</string>
+    <string name="log_source_killswitch" translatable="false">KILL SWITCH</string>
+    <string name="log_source_adblock" translatable="false">ADBLOCK</string>
+    <string name="log_source_smart" translatable="false">SMART</string>
+    <string name="log_source_config" translatable="false">CONFIG</string>
 </resources>

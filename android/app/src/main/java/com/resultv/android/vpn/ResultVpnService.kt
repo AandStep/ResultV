@@ -165,6 +165,7 @@ class ResultVpnService : VpnService() {
      * system settings.
      */
     private fun ensureReposReady() {
+        AppLog.init(applicationContext)
         val app = applicationContext
         ProfileRepository.init(app)
         SubscriptionRepository.init(app)

@@ -136,6 +136,7 @@ class MainActivity : ComponentActivity() {
         // flashing white.
         setTheme(R.style.Theme_ResultV)
         super.onCreate(savedInstanceState)
+        com.resultv.android.vpn.AppLog.init(this)
         // Edge-to-edge: app draws behind status + nav bars; Scaffold's TopAppBar
         // and NavigationBar consume the window-inset paddings so content above
         // the gesture nav stays tappable.

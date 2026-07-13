@@ -191,6 +191,7 @@ object DeepLinkImporter {
     }
 
     private fun ensureReposReady(ctx: Context) {
+        AppLog.init(ctx)
         ProfileRepository.init(ctx)
         SubscriptionRepository.init(ctx)
         SettingsRepository.init(ctx)
