@@ -68,6 +68,10 @@ export const RulesView = () => {
   const [listModal, setListModal] = useState({ isOpen: false, mode: "add", initial: null });
   const [refreshingListId, setRefreshingListId] = useState(null);
   const [busyListId, setBusyListId] = useState(null);
+  // Optimistic toggle: the switch flips instantly and shows an "applying"
+  // spinner while the tunnel reconnects, instead of a dead greyed-out control.
+  const [applyingListId, setApplyingListId] = useState(null);
+  const [optimisticEnabled, setOptimisticEnabled] = useState({});
   const [intervalInput, setIntervalInput] = useState(
     settings?.routingListUpdateHours
       ? String(settings.routingListUpdateHours)
@@ -133,14 +137,26 @@ export const RulesView = () => {
   };
 
   const handleToggleListEnabled = async (rl) => {
+    const next = !rl.enabled;
+    // Flip the switch immediately (optimistic) and lock the row while the
+    // backend rebuilds the route and reconnects; reconcile to the real config
+    // afterwards so a failed apply visibly snaps back.
+    setOptimisticEnabled((m) => ({ ...m, [rl.id]: next }));
+    setApplyingListId(rl.id);
     setBusyListId(rl.id);
     try {
-      await wailsAPI.updateRoutingList({ ...rl, enabled: !rl.enabled });
+      await wailsAPI.updateRoutingList({ ...rl, enabled: next });
     } catch (err) {
       console.error("Toggle routing list error:", err);
     } finally {
       await refreshRoutingListsFromConfig();
-      setBusyListId(null);
+      setOptimisticEnabled((m) => {
+        const copy = { ...m };
+        delete copy[rl.id];
+        return copy;
+      });
+      setApplyingListId((cur) => (cur === rl.id ? null : cur));
+      setBusyListId((cur) => (cur === rl.id ? null : cur));
     }
   };
 
@@ -557,6 +573,9 @@ export const RulesView = () => {
             {routingLists.map((rl) => {
               const busy = busyListId === rl.id;
               const refreshing = refreshingListId === rl.id;
+              const applying = applyingListId === rl.id;
+              const shownEnabled =
+                rl.id in optimisticEnabled ? optimisticEnabled[rl.id] : rl.enabled;
               const embedded = isEmbeddedList(rl);
               const actionLabel = t(
                 `routingLists.action${rl.action?.charAt(0).toUpperCase()}${rl.action?.slice(1)}`,
@@ -569,16 +588,26 @@ export const RulesView = () => {
                   key={rl.id}
                   className="p-4 bg-zinc-800 rounded-xl border border-zinc-700 flex flex-wrap items-center gap-4"
                 >
-                  <div
-                    className={`relative w-12 h-7 rounded-2xl transition-colors duration-300 ease-in-out shrink-0 cursor-pointer ${rl.enabled ? "bg-[#007E3A]" : "bg-zinc-700"}`}
-                    onClick={() => !busy && handleToggleListEnabled(rl)}
-                    role="button"
-                    aria-pressed={rl.enabled}
-                    style={{ opacity: busy ? 0.5 : 1 }}
-                  >
+                  <div className="flex items-center gap-2 shrink-0">
                     <div
-                      className={`absolute top-1 left-1 bg-white w-5 h-5 rounded-full transition-transform duration-300 ease-in-out ${rl.enabled ? "transform translate-x-5" : ""}`}
-                    ></div>
+                      className={`relative w-12 h-7 rounded-2xl transition-colors duration-300 ease-in-out ${applying ? "pointer-events-none" : "cursor-pointer"} ${shownEnabled ? "bg-[#007E3A]" : "bg-zinc-700"}`}
+                      onClick={() => !applying && handleToggleListEnabled(rl)}
+                      role="button"
+                      aria-pressed={shownEnabled}
+                    >
+                      <div
+                        className={`absolute top-1 left-1 bg-white w-5 h-5 rounded-full transition-transform duration-300 ease-in-out ${shownEnabled ? "transform translate-x-5" : ""}`}
+                      ></div>
+                    </div>
+                    {applying && (
+                      <span
+                        className="flex items-center gap-1.5 text-xs text-[#00A819]"
+                        aria-live="polite"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        {t("routingLists.applying")}
+                      </span>
+                    )}
                   </div>
 
                   <div className="min-w-0 flex-1">

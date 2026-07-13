@@ -350,7 +350,8 @@
     "fromSubscription": "From {{name}}",
     "fromSubscriptionUnknown": "From subscription",
     "embeddedBadge": "Embedded in subscription",
-    "embeddedName": "Embedded: {{action}}"
+    "embeddedName": "Embedded: {{action}}",
+    "applying": "Applying…"
   },
   "proxyList": {
     "title": "Saved Profiles",

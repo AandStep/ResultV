@@ -350,7 +350,8 @@
     "fromSubscription": "Из подписки {{name}}",
     "fromSubscriptionUnknown": "Из подписки",
     "embeddedBadge": "Встроен в подписку",
-    "embeddedName": "Встроен: {{action}}"
+    "embeddedName": "Встроен: {{action}}",
+    "applying": "Применяется…"
   },
   "proxyList": {
     "title": "Сохраненные профили",
