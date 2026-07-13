@@ -136,12 +136,14 @@ class ResultVpnService : VpnService() {
                         val connectedAt = System.currentTimeMillis()
                         val connected = VpnStatus.Connected(connectedAt)
                         VpnState.set(connected)
-                        if (!isReload) AppLog.success(connectedMsg)
-                        AppLog.info(
-                            R.string.log_connect_timing,
-                            connectedAt - t0,
-                            source = AppLog.resolve(R.string.log_source_proxy),
-                        )
+                        if (!isReload) {
+                            AppLog.success(connectedMsg)
+                            AppLog.info(
+                                R.string.log_connect_timing,
+                                connectedAt - t0,
+                                source = AppLog.resolve(R.string.log_source_proxy),
+                            )
+                        }
                         renotify(buildNotification(connected))
                         startReloadWatcher()
                         startKillSwitchWatchdog()

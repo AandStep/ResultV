@@ -46,9 +46,17 @@ class KillSwitchWatchdog(
     @Volatile private var lastDelayMs: Int = -1
     private var lastTrafficTotal = 0L
 
+    // Latches the "deferred by traffic" warning to once per veto episode so a
+    // sustained "probe down but traffic flowing" condition doesn't spam the
+    // AppLog ring buffer every tick. tick() only ever runs on the watchdog's
+    // single tickJob coroutine, so this is single-thread confined and needs
+    // no synchronization.
+    private var deferredWarned = false
+
     fun start() {
         if (client != null) return
         if (!scope.isActive) scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        deferredWarned = false
         val opts = CommandClientOptions().apply {
             statusInterval = 1_000_000_000L // 1s, ns (Go time.Duration)
             addCommand(Libbox.CommandGroup)
@@ -88,6 +96,7 @@ class KillSwitchWatchdog(
         lastTrafficTotal = total
 
         val tick = decider.onTick(lastDelayMs, delta)
+        if (tick.failCount == 0) deferredWarned = false
         when (tick.action) {
             KsAction.ENGAGE -> {
                 Log.w(TAG, "proxy dead → ENGAGE kill switch")
@@ -106,7 +115,10 @@ class KillSwitchWatchdog(
                 if (tick.failCount > 0 && !decider.isEngaged) {
                     val src = AppLog.resolve(R.string.log_source_killswitch)
                     if (tick.deferredByTraffic) {
-                        AppLog.warning(R.string.log_ks_probe_deferred, source = src)
+                        if (!deferredWarned) {
+                            AppLog.warning(R.string.log_ks_probe_deferred, source = src)
+                            deferredWarned = true
+                        }
                     } else {
                         AppLog.warning(
                             R.string.log_ks_probe_failed,
