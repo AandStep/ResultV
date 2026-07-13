@@ -364,6 +364,10 @@
     <string name="log_revoked">VPN disabled by the system.</string>
     <string name="log_killswitch_engaged">Kill switch engaged — proxy unreachable, all traffic blocked.</string>
     <string name="log_killswitch_released">Kill switch released — proxy reachable again, traffic restored.</string>
+    <string name="log_ks_probe_failed">Probe failed (%1$d/%2$d): server not responding.</string>
+    <string name="log_ks_probe_deferred">Probe failed, but the proxy is carrying traffic — blocking deferred.</string>
+    <string name="log_ks_monitor_failed">Kill switch monitor failed to attach to the engine: %1$s</string>
+    <string name="log_ks_reload_build_failed">Kill switch could not rebuild the configuration — traffic is NOT blocked.</string>
     <string name="log_no_server">No server selected.</string>
     <string name="log_build_failed">Failed to build configuration.</string>
     <string name="log_permission_denied">VPN permission denied.</string>

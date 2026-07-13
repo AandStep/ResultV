@@ -334,6 +334,10 @@
     <string name="log_revoked">VPN отключён системой.</string>
     <string name="log_killswitch_engaged">Kill switch сработал — узел недоступен, весь трафик заблокирован.</string>
     <string name="log_killswitch_released">Kill switch снят — узел снова доступен, трафик восстановлен.</string>
+    <string name="log_ks_probe_failed">Проба не прошла (%1$d/%2$d): сервер не отвечает.</string>
+    <string name="log_ks_probe_deferred">Проба не прошла, но прокси несёт трафик — блокировка отложена.</string>
+    <string name="log_ks_monitor_failed">Монитор kill switch не смог подключиться к движку: %1$s</string>
+    <string name="log_ks_reload_build_failed">Kill switch не смог перестроить конфигурацию — трафик НЕ заблокирован.</string>
     <string name="log_no_server">Сервер не выбран.</string>
     <string name="log_build_failed">Не удалось сформировать конфигурацию.</string>
     <string name="log_permission_denied">Разрешение на VPN отклонено.</string>

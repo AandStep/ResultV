@@ -1,6 +1,7 @@
 package com.resultv.android.vpn
 
 import android.util.Log
+import com.resultv.android.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -58,6 +59,11 @@ class KillSwitchWatchdog(
             client = c
         } catch (t: Throwable) {
             Log.w(TAG, "group CommandClient connect failed", t)
+            AppLog.warning(
+                R.string.log_ks_monitor_failed,
+                t.message ?: t.javaClass.simpleName,
+                source = AppLog.resolve(R.string.log_source_killswitch),
+            )
             return
         }
         tickJob = scope.launch {
@@ -81,7 +87,8 @@ class KillSwitchWatchdog(
         val delta = (total - lastTrafficTotal).coerceAtLeast(0)
         lastTrafficTotal = total
 
-        when (decider.onTick(lastDelayMs, delta)) {
+        val tick = decider.onTick(lastDelayMs, delta)
+        when (tick.action) {
             KsAction.ENGAGE -> {
                 Log.w(TAG, "proxy dead → ENGAGE kill switch")
                 onEngage()
@@ -90,7 +97,25 @@ class KillSwitchWatchdog(
                 Log.i(TAG, "proxy recovered → DISENGAGE kill switch")
                 onDisengage()
             }
-            KsAction.NONE -> {}
+            KsAction.NONE -> {
+                // Mirror the desktop's per-probe lines: each failed probe while
+                // not yet engaged is user-visible with its (N/M) counter, and
+                // the traffic veto is called out explicitly. ENGAGE/DISENGAGE
+                // themselves are logged by the service (log_killswitch_*), so
+                // no duplicate here.
+                if (tick.failCount > 0 && !decider.isEngaged) {
+                    val src = AppLog.resolve(R.string.log_source_killswitch)
+                    if (tick.deferredByTraffic) {
+                        AppLog.warning(R.string.log_ks_probe_deferred, source = src)
+                    } else {
+                        AppLog.warning(
+                            R.string.log_ks_probe_failed,
+                            tick.failCount, decider.failureThreshold,
+                            source = src,
+                        )
+                    }
+                }
+            }
         }
         // Do NOT reset lastDelayMs here. The group command pushes ~every second
         // (server ticks on statusInterval plus urlTestUpdate), and on a real

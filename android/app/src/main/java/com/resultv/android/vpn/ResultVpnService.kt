@@ -356,6 +356,10 @@ class ResultVpnService : VpnService() {
         val cfg = BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath, panic = panic)
         if (cfg == null) {
             Log.w(TAG, "kill switch reload skipped — config build failed")
+            AppLog.error(
+                getString(R.string.log_ks_reload_build_failed),
+                getString(R.string.log_source_killswitch),
+            )
             return
         }
         // Resolve the localized log line before hopping to the worker (getString
