@@ -29,6 +29,12 @@ const ROUTING_ACTION_STYLES = {
   block: "bg-rose-500/10 text-rose-400 border-rose-500/20",
 };
 
+// Embedded routing lists ship inside a subscription payload (url: "embedded:<action>")
+// rather than being fetched from their own URL. `rl.action` is already populated
+// for these rows, so no need to re-derive it from the url here.
+const isEmbeddedList = (rl) =>
+  typeof rl.url === "string" && rl.url.startsWith("embedded:");
+
 const ProtocolSelectionModal = ({
   isOpen,
   onClose,
@@ -172,6 +178,12 @@ const ProtocolSelectionModal = ({
             <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
               {routingLists.map((rl) => {
                 const enabled = !disabledSet.has(rl.url);
+                const actionLabel = t(
+                  `routingLists.action${rl.action?.charAt(0).toUpperCase()}${rl.action?.slice(1)}`,
+                );
+                const displayName = isEmbeddedList(rl)
+                  ? t("routingLists.embeddedName", { action: actionLabel })
+                  : rl.name || rl.url;
                 return (
                   <div
                     key={rl.url}
@@ -180,14 +192,12 @@ const ProtocolSelectionModal = ({
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-white text-sm font-bold truncate">
-                          {rl.name || rl.url}
+                          {displayName}
                         </span>
                         <span
                           className={`shrink-0 text-xs font-medium px-2.5 py-0.5 rounded-full border ${ROUTING_ACTION_STYLES[rl.action] || ROUTING_ACTION_STYLES.direct}`}
                         >
-                          {t(
-                            `routingLists.action${rl.action?.charAt(0).toUpperCase()}${rl.action?.slice(1)}`,
-                          )}
+                          {actionLabel}
                         </span>
                       </div>
                     </div>

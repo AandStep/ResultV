@@ -36,6 +36,12 @@ const ROUTING_ACTION_STYLES = {
   block: "bg-rose-500/10 text-rose-400 border-rose-500/20",
 };
 
+// Embedded routing lists ship inside a subscription payload (url: "embedded:<action>")
+// rather than being fetched from their own URL. `rl.action` is already populated
+// for these rows, so no need to re-derive it from the url here.
+const isEmbeddedList = (rl) =>
+  typeof rl.url === "string" && rl.url.startsWith("embedded:");
+
 export const RulesView = () => {
   const { t, i18n } = useTranslation();
   const {
@@ -551,6 +557,13 @@ export const RulesView = () => {
             {routingLists.map((rl) => {
               const busy = busyListId === rl.id;
               const refreshing = refreshingListId === rl.id;
+              const embedded = isEmbeddedList(rl);
+              const actionLabel = t(
+                `routingLists.action${rl.action?.charAt(0).toUpperCase()}${rl.action?.slice(1)}`,
+              );
+              const displayName = embedded
+                ? t("routingLists.embeddedName", { action: actionLabel })
+                : rl.name || rl.url;
               return (
                 <div
                   key={rl.id}
@@ -571,12 +584,12 @@ export const RulesView = () => {
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-white font-bold truncate">
-                        {rl.name || rl.url}
+                        {displayName}
                       </span>
                       <span
                         className={`shrink-0 text-xs font-medium px-2.5 py-0.5 rounded-full border ${ROUTING_ACTION_STYLES[rl.action] || ROUTING_ACTION_STYLES.direct}`}
                       >
-                        {t(`routingLists.action${rl.action?.charAt(0).toUpperCase()}${rl.action?.slice(1)}`)}
+                        {actionLabel}
                       </span>
                       {rl.subscriptionId && (
                         <span className="shrink-0 text-xs font-medium px-2.5 py-0.5 rounded-full border bg-zinc-800 text-zinc-400 border-zinc-700">
@@ -585,6 +598,11 @@ export const RulesView = () => {
                               subscriptionNameById.get(rl.subscriptionId) ||
                               t("routingLists.fromSubscriptionUnknown"),
                           })}
+                        </span>
+                      )}
+                      {embedded && (
+                        <span className="shrink-0 text-xs font-medium px-2.5 py-0.5 rounded-full border bg-zinc-800 text-zinc-400 border-zinc-700">
+                          {t("routingLists.embeddedBadge")}
                         </span>
                       )}
                     </div>
@@ -606,18 +624,20 @@ export const RulesView = () => {
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => handleRefreshList(rl)}
-                      disabled={busy || refreshing}
-                      title={t("routingLists.refreshAria")}
-                      aria-label={t("routingLists.refreshAria")}
-                      className="p-2 bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 rounded-xl transition-colors shrink-0 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none disabled:opacity-50"
-                    >
-                      <RefreshCw
-                        className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`}
-                      />
-                    </button>
+                    {!embedded && (
+                      <button
+                        type="button"
+                        onClick={() => handleRefreshList(rl)}
+                        disabled={busy || refreshing}
+                        title={t("routingLists.refreshAria")}
+                        aria-label={t("routingLists.refreshAria")}
+                        className="p-2 bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 rounded-xl transition-colors shrink-0 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none disabled:opacity-50"
+                      >
+                        <RefreshCw
+                          className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`}
+                        />
+                      </button>
+                    )}
                     {!rl.subscriptionId && (
                       <button
                         type="button"

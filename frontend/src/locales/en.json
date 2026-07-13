@@ -348,7 +348,9 @@
     "errorLabel": "Error: {{error}}",
     "subscriptionAddsTitle": "This subscription also adds routing lists ({{count}})",
     "fromSubscription": "From {{name}}",
-    "fromSubscriptionUnknown": "From subscription"
+    "fromSubscriptionUnknown": "From subscription",
+    "embeddedBadge": "Embedded in subscription",
+    "embeddedName": "Embedded: {{action}}"
   },
   "proxyList": {
     "title": "Saved Profiles",

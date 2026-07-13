@@ -348,7 +348,9 @@
     "errorLabel": "Ошибка: {{error}}",
     "subscriptionAddsTitle": "Подписка также добавляет списки маршрутизации ({{count}})",
     "fromSubscription": "Из подписки {{name}}",
-    "fromSubscriptionUnknown": "Из подписки"
+    "fromSubscriptionUnknown": "Из подписки",
+    "embeddedBadge": "Встроен в подписку",
+    "embeddedName": "Встроен: {{action}}"
   },
   "proxyList": {
     "title": "Сохраненные профили",
