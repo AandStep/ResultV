@@ -30,6 +30,29 @@ type SubscriptionPreview struct {
 	RoutingLists []config.RoutingList `json:"routingLists"`
 }
 
+// embeddedRoutingListDeclarations synthesizes routing-list declarations for the
+// provider's embedded xray routing lists. Each gets the pseudo-URL
+// embedded:<action> (its identity within the subscription) and pre-computed
+// counts so the import preview can show them before any download. Deterministic
+// order so previews and diffs are stable.
+func embeddedRoutingListDeclarations(embedded map[string]proxy.ParsedRoutingList) []config.RoutingList {
+	out := make([]config.RoutingList, 0, len(embedded))
+	for _, action := range []string{"proxy", "direct", "block"} {
+		p, ok := embedded[action]
+		if !ok {
+			continue
+		}
+		out = append(out, config.RoutingList{
+			Name:        "embedded-" + action,
+			URL:         "embedded:" + action,
+			Action:      action,
+			DomainCount: len(p.Domains),
+			CIDRCount:   len(p.CIDRs),
+		})
+	}
+	return out
+}
+
 // syncSubscriptionRoutingLists reconciles provider-declared routing lists into
 // the config. Provider controls composition (add/update/remove); the user
 // controls Enabled (never overwritten). Tombstoned URLs are never re-added.

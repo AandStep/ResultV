@@ -2049,24 +2049,24 @@ func isInsecureSubURL(subURL string) bool {
 // must be true to accept http:// URLs; when set, we also suppress the
 // x-hwid header because sending a stable device identifier in plaintext is
 // exactly the leak the warning is opted into.
-func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]config.ProxyEntry, int64, int64, int64, int64, string, string, []config.RoutingList, error) {
+func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]config.ProxyEntry, int64, int64, int64, int64, string, string, []config.RoutingList, map[string]proxy.ParsedRoutingList, error) {
 	if resolved, err := resolveEncryptedSubscriptionURL(subURL); err != nil {
-		return nil, 0, 0, 0, 0, "", "", nil, err
+		return nil, 0, 0, 0, 0, "", "", nil, nil, err
 	} else if resolved != "" {
 		subURL = resolved
 	}
 	insecure := isInsecureSubURL(subURL)
 	if insecure && !allowInsecure {
-		return nil, 0, 0, 0, 0, "", "", nil, ErrInsecureSubscription
+		return nil, 0, 0, 0, 0, "", "", nil, nil, ErrInsecureSubscription
 	}
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Timeout: 15 * time.Second, Jar: jar}
 	metadata := a.subscriptionRequestMetadata()
 
-	doFetch := func(userAgent string) ([]config.ProxyEntry, int64, int64, int64, int64, string, string, []config.RoutingList, bool, error) {
+	doFetch := func(userAgent string) ([]config.ProxyEntry, int64, int64, int64, int64, string, string, []config.RoutingList, map[string]proxy.ParsedRoutingList, bool, error) {
 		req, err := http.NewRequest(http.MethodGet, subURL, nil)
 		if err != nil {
-			return nil, 0, 0, 0, 0, "", "", nil, false, fmt.Errorf("creating subscription request: %w", err)
+			return nil, 0, 0, 0, 0, "", "", nil, nil, false, fmt.Errorf("creating subscription request: %w", err)
 		}
 		req.Header.Set("User-Agent", userAgent)
 		// Remnawave HWID device identification headers.
@@ -2085,12 +2085,12 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 
 		resp, err := client.Do(req)
 		if err != nil {
-			return nil, 0, 0, 0, 0, "", "", nil, false, fmt.Errorf("fetching subscription: %w", err)
+			return nil, 0, 0, 0, 0, "", "", nil, nil, false, fmt.Errorf("fetching subscription: %w", err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return nil, 0, 0, 0, 0, "", "", nil, false, fmt.Errorf("subscription returned HTTP %d", resp.StatusCode)
+			return nil, 0, 0, 0, 0, "", "", nil, nil, false, fmt.Errorf("subscription returned HTTP %d", resp.StatusCode)
 		}
 
 		profileTitle := parseSubscriptionHeaderText(resp.Header.Get("Profile-Title"))
@@ -2100,10 +2100,11 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 
 		bodyBytes, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return nil, up, down, tot, exp, iconURL, profileTitle, nil, false, fmt.Errorf("reading subscription body: %w", err)
+			return nil, up, down, tot, exp, iconURL, profileTitle, nil, nil, false, fmt.Errorf("reading subscription body: %w", err)
 		}
 		bodyStr := string(bodyBytes)
 		routingLists := proxy.ExtractSubscriptionRoutingLists(routingListsHeader, bodyStr)
+		embedded := proxy.ExtractEmbeddedRoutingLists(bodyStr)
 
 		if iconURL == "" && strings.Contains(bodyStr, "<link") {
 			if fromBody := pickIconFromSubscriptionHTML(client, subURL, bodyStr); fromBody != "" {
@@ -2113,34 +2114,34 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 
 		trimmed := strings.TrimSpace(strings.TrimPrefix(bodyStr, "\uFEFF"))
 		if trimmed == "" {
-			return nil, up, down, tot, exp, iconURL, profileTitle, routingLists, false, subscriptionEmptyBodyError(resp.Header)
+			return nil, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, false, subscriptionEmptyBodyError(resp.Header)
 		}
 
 		isJSON := strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")
 
 		entries, err := proxy.ParseSubscriptionBody(bodyStr)
 		if err != nil {
-			return nil, up, down, tot, exp, iconURL, profileTitle, routingLists, isJSON, err
+			return nil, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, isJSON, err
 		}
 
-		return entries, up, down, tot, exp, iconURL, profileTitle, routingLists, isJSON, nil
+		return entries, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, isJSON, nil
 	}
 
-	entries, up, down, tot, exp, iconURL, profileTitle, routingLists, _, err := doFetch(metadata.UserAgent)
+	entries, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, _, err := doFetch(metadata.UserAgent)
 	if err != nil {
 		// impio moved its subscription endpoint between ".../json" and the
 		// raw path over time; retry the other form once before giving up.
 		alt := impioAlternateSubscriptionURL(subURL)
 		if alt == "" {
-			return nil, 0, 0, 0, 0, "", "", nil, err
+			return nil, 0, 0, 0, 0, "", "", nil, nil, err
 		}
 		subURL = alt
 		var altErr error
-		entries, up, down, tot, exp, iconURL, profileTitle, routingLists, _, altErr = doFetch(metadata.UserAgent)
+		entries, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, _, altErr = doFetch(metadata.UserAgent)
 		if altErr != nil {
 			// Report the original failure — it corresponds to the URL the
 			// caller actually asked for.
-			return nil, 0, 0, 0, 0, "", "", nil, err
+			return nil, 0, 0, 0, 0, "", "", nil, nil, err
 		}
 	}
 
@@ -2232,7 +2233,7 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 	}
 
 	a.log.Success(fmt.Sprintf("Подписка загружена: %d серверов", visibleCount))
-	return entries, up, down, tot, exp, iconURL, profileTitle, routingLists, nil
+	return entries, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, nil
 }
 
 // FetchSubscription performs a one-off subscription fetch (no persistence).
@@ -2240,7 +2241,8 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 // ErrInsecureSubscription. The frontend should call this with false first
 // and re-call with true only after surfacing the warning to the user.
 func (a *App) FetchSubscription(subURL string, allowInsecure bool) (SubscriptionPreview, error) {
-	entries, _, _, _, _, _, _, lists, err := a.fetchSubscriptionFromURL(subURL, allowInsecure)
+	entries, _, _, _, _, _, _, lists, embedded, err := a.fetchSubscriptionFromURL(subURL, allowInsecure)
+	lists = append(lists, embeddedRoutingListDeclarations(embedded)...)
 	return SubscriptionPreview{Proxies: entries, RoutingLists: lists}, err
 }
 
@@ -2259,12 +2261,14 @@ func (a *App) ParseSubscriptionText(text string) (SubscriptionPreview, error) {
 	text = strings.TrimSpace(text)
 	lower := strings.ToLower(text)
 	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
-		entries, _, _, _, _, _, _, lists, ferr := a.fetchSubscriptionFromURL(text, false)
+		entries, _, _, _, _, _, _, lists, embedded, ferr := a.fetchSubscriptionFromURL(text, false)
+		lists = append(lists, embeddedRoutingListDeclarations(embedded)...)
 		return SubscriptionPreview{Proxies: entries, RoutingLists: lists}, ferr
 	}
 	if proxy.IsEncryptedSubscription(text) {
 		if resolved, err := resolveEncryptedSubscriptionURL(text); err == nil && resolved != "" {
-			entries, _, _, _, _, _, _, lists, ferr := a.fetchSubscriptionFromURL(resolved, false)
+			entries, _, _, _, _, _, _, lists, embedded, ferr := a.fetchSubscriptionFromURL(resolved, false)
+			lists = append(lists, embeddedRoutingListDeclarations(embedded)...)
 			return SubscriptionPreview{Proxies: entries, RoutingLists: lists}, ferr
 		}
 	}
@@ -2272,9 +2276,11 @@ func (a *App) ParseSubscriptionText(text string) (SubscriptionPreview, error) {
 	if err != nil {
 		return SubscriptionPreview{}, err
 	}
+	lists := proxy.ExtractSubscriptionRoutingLists("", text)
+	lists = append(lists, embeddedRoutingListDeclarations(proxy.ExtractEmbeddedRoutingLists(text))...)
 	return SubscriptionPreview{
 		Proxies:      proxy.FinalizeSubscriptionEntries(entries),
-		RoutingLists: proxy.ExtractSubscriptionRoutingLists("", text),
+		RoutingLists: lists,
 	}, nil
 }
 
@@ -2299,10 +2305,11 @@ func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
 	// they accepted plaintext at AddSubscription time, refresh keeps using
 	// http; if not, an http URL refresh will fail with ErrInsecureSubscription
 	// and the UI must re-prompt before retrying.
-	entries, up, down, tot, exp, iconURL, profileTitle, lists, err := a.fetchSubscriptionFromURL(sub.URL, sub.AllowInsecure)
+	entries, up, down, tot, exp, iconURL, profileTitle, lists, embedded, err := a.fetchSubscriptionFromURL(sub.URL, sub.AllowInsecure)
 	if err != nil {
 		return nil, fmt.Errorf("refreshing subscription %s: %w", sub.Name, err)
 	}
+	_ = embedded // TODO(Task 3): thread into syncSubscriptionRoutingLists for embedded xray list sync
 
 	displayName := sub.Name
 	if profileTitle != "" {
@@ -2403,10 +2410,11 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 		}
 	}
 
-	entries, up, down, tot, exp, iconURL, profileTitle, lists, err := a.fetchSubscriptionFromURL(subURL, allowInsecure)
+	entries, up, down, tot, exp, iconURL, profileTitle, lists, embedded, err := a.fetchSubscriptionFromURL(subURL, allowInsecure)
 	if err != nil {
 		return nil, err
 	}
+	_ = embedded // TODO(Task 3): thread into syncSubscriptionRoutingLists for embedded xray list sync
 
 	displayName := name
 	if profileTitle != "" {

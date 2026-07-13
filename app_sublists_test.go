@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"resultproxy-wails/internal/config"
+	"resultproxy-wails/internal/proxy"
 )
 
 // The subscription HTTP client has no SSRF dialer, so loopback httptest works.
@@ -60,6 +61,25 @@ func TestParseSubscriptionTextJSONBodyLists(t *testing.T) {
 	}
 	if len(prev.RoutingLists) != 0 {
 		t.Fatalf("plain URI text must yield no routing lists: %+v", prev.RoutingLists)
+	}
+}
+
+func TestEmbeddedRoutingListDeclarations(t *testing.T) {
+	embedded := map[string]proxy.ParsedRoutingList{
+		"direct": {Domains: []string{"a.test", "b.test"}, CIDRs: []string{"1.2.3.0/24"}},
+		"proxy":  {Domains: []string{"c.test"}},
+	}
+	decls := embeddedRoutingListDeclarations(embedded)
+	if len(decls) != 2 {
+		t.Fatalf("want 2 decls, got %d: %+v", len(decls), decls)
+	}
+	// Deterministic order: proxy before direct.
+	if decls[0].URL != "embedded:proxy" || decls[1].URL != "embedded:direct" {
+		t.Errorf("order/urls wrong: %+v", decls)
+	}
+	d := decls[1]
+	if d.Action != "direct" || d.DomainCount != 2 || d.CIDRCount != 1 {
+		t.Errorf("direct decl wrong: %+v", d)
 	}
 }
 
