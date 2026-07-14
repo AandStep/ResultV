@@ -70,7 +70,16 @@ object AdBlockRepository {
     /** Block-download the lists if missing or stale. Concurrent calls coalesce. */
     suspend fun ensureLoaded(): Snapshot {
         val cur = _state.value
-        if (cur.hasLists && !cur.isStale) return cur
+        if (cur.hasLists && !cur.isStale) {
+            // Cache hit — surface the loaded lists like the desktop does at
+            // startup, so the warm-cache path isn't silent (refresh() logs the
+            // download path).
+            AppLog.info(
+                R.string.log_adblock_loaded, cur.ready, cur.total,
+                source = AppLog.resolve(R.string.log_source_adblock),
+            )
+            return cur
+        }
         return refresh()
     }
 

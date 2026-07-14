@@ -180,6 +180,10 @@ class MainActivity : ComponentActivity() {
         // the original launch intent, so re-running this would re-import the
         // same subscription. The warm-start path is handled by onNewIntent.
         if (savedInstanceState == null) {
+            // Cold-start boot marker, mirroring the desktop's "ResultV
+            // запускается" line. Guarded by the same cold-start check so an
+            // Activity recreate (e.g. language switch) doesn't re-log it.
+            com.resultv.android.vpn.AppLog.info(getString(R.string.log_app_started))
             handleDeepLinkIntent(intent)
         }
     }

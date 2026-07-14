@@ -87,7 +87,16 @@ object SmartListRepository {
      */
     suspend fun ensureLoaded(): Snapshot {
         val cur = _state.value
-        if (!cur.isEmpty && !cur.isStale) return cur
+        if (!cur.isEmpty && !cur.isStale) {
+            // Cache hit — mirror the desktop's per-load "[SMART] загружены" line
+            // so the fresh (non-fetch) path is visible too, not only refresh().
+            AppLog.info(
+                R.string.log_smart_loaded,
+                cur.country.uppercase().ifBlank { "?" }, cur.domains.size,
+                source = AppLog.resolve(R.string.log_source_smart),
+            )
+            return cur
+        }
         return refresh()
     }
 
