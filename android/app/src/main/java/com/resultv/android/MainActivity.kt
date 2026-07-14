@@ -152,6 +152,12 @@ class MainActivity : ComponentActivity() {
         if (com.resultv.android.vpn.SettingsRepository.state.value.adblock) {
             com.resultv.android.vpn.AdBlockRepository.ensureLoadedAsync()
         }
+        // Load + log the Smart routing lists at startup, unconditionally, like
+        // the desktop's initSmartBlockedDomains (app.go): it surfaces "[SMART]
+        // Источник списков …" at launch regardless of routing mode, and the
+        // 24h TTL means a warm cache just logs without a network fetch.
+        com.resultv.android.vpn.SmartListRepository.init(applicationContext)
+        com.resultv.android.vpn.SmartListRepository.ensureLoadedAsync()
         com.resultv.android.vpn.DataUsageRepository.init(applicationContext)
         // Periodic subscription auto-refresh — runs while the Activity is
         // alive (matches the desktop's React hook). The refresher self-

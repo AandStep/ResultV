@@ -87,7 +87,16 @@ object SmartListRepository {
      */
     suspend fun ensureLoaded(): Snapshot {
         val cur = _state.value
-        if (!cur.isEmpty && !cur.isStale) return cur
+        if (!cur.isEmpty && !cur.isStale) {
+            // Cache hit — mirror the desktop's startup "[SMART] Источник списков:
+            // cache (RU), записей: N". refresh() logs the fetch path instead.
+            AppLog.info(
+                R.string.log_smart_loaded,
+                cur.country.uppercase().ifBlank { "?" }, cur.domains.size,
+                source = AppLog.resolve(R.string.log_source_smart),
+            )
+            return cur
+        }
         return refresh()
     }
 
@@ -140,28 +149,10 @@ object SmartListRepository {
         scope.launch { ensureLoaded() }
     }
 
-    // Signature (country:size) of the last list surfaced in the log, so a
-    // connect logs "[SMART] загружены …" once but reloads with the unchanged
-    // list (kill-switch flips, config re-applies) don't repeat it.
-    @Volatile private var lastLoggedSig: String? = null
-
     /** Engine wire format: newline-separated, one domain per line. */
     fun toEngineList(): String {
         val s = _state.value
         if (s.domains.isEmpty()) return ""
-        // This is the real consumption point on connect (BuildOptions reads it
-        // when Smart mode is on), so it's where the desktop's per-connect
-        // "[SMART] Источник списков … записей: N" belongs — ensureLoaded() is
-        // never called on the connect path.
-        val sig = "${s.country}:${s.domains.size}"
-        if (sig != lastLoggedSig) {
-            lastLoggedSig = sig
-            AppLog.info(
-                R.string.log_smart_loaded,
-                s.country.uppercase().ifBlank { "?" }, s.domains.size,
-                source = AppLog.resolve(R.string.log_source_smart),
-            )
-        }
         return s.domains.joinToString("\n")
     }
 
