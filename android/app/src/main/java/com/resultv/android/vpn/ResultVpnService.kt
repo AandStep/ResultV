@@ -85,6 +85,7 @@ class ResultVpnService : VpnService() {
                 stopKillSwitchWatchdog()
                 stopFilterProxyWatchdog()
                 TrafficWatcher.stop()
+                ConnectionWatcher.stop()
                 // Close the tun fd up front — this drops the system VPN
                 // lock icon immediately. libbox.closeService() takes a
                 // couple of seconds to drain connections, so push it to
@@ -151,6 +152,8 @@ class ResultVpnService : VpnService() {
                         // traffic cards show real uplink/downlink instead of
                         // the placeholder zeros.
                         TrafficWatcher.start()
+                        // Structured per-host [CONN] lines (domain -> ip:port).
+                        ConnectionWatcher.start()
                     } catch (t: Throwable) {
                         Log.e(TAG, "BoxModule.start failed", t)
                         val msg = t.message ?: t.javaClass.simpleName
@@ -274,6 +277,7 @@ class ResultVpnService : VpnService() {
         reloadWatcher?.cancel(); reloadWatcher = null
         stopKillSwitchWatchdog()
         TrafficWatcher.stop()
+        ConnectionWatcher.stop()
         closeTun()
         VpnState.set(VpnStatus.Idle)
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -287,6 +291,7 @@ class ResultVpnService : VpnService() {
         stopKillSwitchWatchdog()
         stopFilterProxyWatchdog()
         TrafficWatcher.stop()
+        ConnectionWatcher.stop()
         scope.cancel()
         closeTun()
         if (!reloadInProgress) {
@@ -409,6 +414,7 @@ class ResultVpnService : VpnService() {
         reloadInProgress = true
         TrafficStats.reset()
         TrafficWatcher.stop()
+        ConnectionWatcher.stop()
         reloadWatcher?.cancel(); reloadWatcher = null
         stopKillSwitchWatchdog()
 

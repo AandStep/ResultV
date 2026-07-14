@@ -92,9 +92,6 @@ object BoxModule {
 
         protectWarned = false
 
-        // Fresh connection session — let each destination host log once again.
-        EngineLog.resetSession()
-
         // Dump config in chunks (logcat caps lines around 4 KB).
         Log.i(TAG, "── config begin ──")
         configJson.chunked(3500).forEach { Log.i(TAG, it) }
@@ -131,7 +128,6 @@ object BoxModule {
     fun stop() {
         val server = commandServer ?: return
         commandServer = null
-        EngineLog.resetSession()
         try {
             server.closeService()
         } catch (t: Throwable) {
