@@ -84,9 +84,16 @@ android {
     // Per-ABI APK splits for release — produces separate arm64-v8a and
     // armeabi-v7a APKs (~70 MB each) instead of one universal (~140 MB).
     // versionCode is offset by ABI so Play Store knows which APK to serve.
+    //
+    // Debug builds opt out: this list never includes x86_64, so it was
+    // silently overriding the debug buildType's -Pdebug.abi selection
+    // (see the `debug` block above) and forcing every debug APK onto
+    // arm64-v8a/armeabi-v7a regardless of the flag. build-android.sh always
+    // passes -Pdebug.abi for debug builds, so that property's presence is
+    // what distinguishes "debug run" from "release run" here.
     splits {
         abi {
-            isEnable = true
+            isEnable = !project.hasProperty("debug.abi")
             reset()
             include("arm64-v8a", "armeabi-v7a")
             isUniversalApk = true  // fallback for sideloading

@@ -37,6 +37,13 @@ type Config struct {
 	// * The content script content depends on the FLAGS value
 	InjectionHost string
 
+	// Engine, when non-nil, is used verbatim instead of building one from
+	// FiltersPaths. ResultV addition: parsing the filter lists is the expensive
+	// part of NewServer, so the Manager builds the engine once and reuses it
+	// across proxy restarts (see internal/filter Manager.cachedEngine) to keep
+	// the browser ad-block attach fast on every connect after the first.
+	Engine *urlfilter.Engine
+
 	// If true, we will serve the content-script compressed
 	// This is useful for the case when the proxy is on a public server,
 	// as it saves some data.
@@ -94,9 +101,15 @@ func NewServer(config Config) (*Server, error) {
 		Config:    config,
 	}
 
-	engine, err := buildEngine(config)
-	if err != nil {
-		return nil, err
+	// ResultV: reuse a pre-built engine when the caller supplies one (the
+	// Manager caches it across proxy restarts), else build from FiltersPaths.
+	engine := config.Engine
+	if engine == nil {
+		var err error
+		engine, err = buildEngine(config)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	s.engine = engine
@@ -115,6 +128,13 @@ func (s *Server) Start() error {
 // Close stops the proxy server
 func (s *Server) Close() {
 	s.proxyServer.Close()
+}
+
+// BuildEngine builds a urlfilter engine from the given filter files. Exported
+// (ResultV addition) so the Manager can build the engine once and cache it
+// across proxy restarts — parsing the lists is the expensive part of NewServer.
+func BuildEngine(paths map[rules.ListID]string) (*urlfilter.Engine, error) {
+	return buildEngine(Config{FiltersPaths: paths})
 }
 
 // buildEngine builds a new network engine

@@ -64,11 +64,40 @@ func TestBuildRoute_AdBlockOff_NoRejectRules(t *testing.T) {
 	route := buildRoute(EngineConfig{Mode: ProxyModeTunnel})
 	for _, r := range route.Rules {
 		if r.Action == "reject" {
+			// The DoT (port 853) reject is DNS hardening, present regardless of
+			// the AdBlock toggle — only ad-block (rule_set) rejects must be
+			// absent here.
+			if len(r.Port) == 1 && r.Port[0] == 853 {
+				continue
+			}
 			t.Fatalf("did not expect a reject rule when AdBlock is off, rules=%+v", route.Rules)
 		}
 	}
 	if len(route.RuleSet) != 0 {
 		t.Fatalf("did not expect rule_set defs when AdBlock is off, got %+v", route.RuleSet)
+	}
+}
+
+// TestBuildRoute_TunnelRejectsDoTPort853 pins Bug D: Android "Private DNS"
+// (DoT, port 853) must be reject-routed so it can't stall on the direct
+// outbound in Smart mode — Android then falls back to plaintext DNS, which is
+// hijacked. The reject must sit after hijack-dns.
+func TestBuildRoute_TunnelRejectsDoTPort853(t *testing.T) {
+	route := buildRoute(EngineConfig{Mode: ProxyModeTunnel})
+	hijackIdx, dotIdx := -1, -1
+	for i, r := range route.Rules {
+		if r.Action == "hijack-dns" {
+			hijackIdx = i
+		}
+		if r.Action == "reject" && len(r.Port) == 1 && r.Port[0] == 853 {
+			dotIdx = i
+		}
+	}
+	if dotIdx == -1 {
+		t.Fatalf("expected a reject rule for DoT port 853, rules=%+v", route.Rules)
+	}
+	if hijackIdx == -1 || dotIdx < hijackIdx {
+		t.Fatalf("DoT reject (idx=%d) must come after hijack-dns (idx=%d)", dotIdx, hijackIdx)
 	}
 }
 

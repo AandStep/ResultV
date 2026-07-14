@@ -1,0 +1,39 @@
+{
+  "version": "3.2.7",
+  "releaseTitle": {
+    "ru": "Расширение списков Smart режима и правила маршрутизации от провайдеров",
+    "en": "Expanding Smart Mode lists and routing rules from providers"
+  },
+  "releaseNotes": {
+    "ru": "Ресурсы Smart режима была рассширены до 80 тысяч для РФ. Теперь из подписок также получаются правила маршрутизации на странице умные правила, помимо подписок есть возможность по ссылке добавлять сторонние правила",
+    "en": "Smart mode resources have been expanded to 80,000 for the Russian Federation. Subscriptions now also generate routing rules on the Smart Rules page, In addition to subscriptions, third-party rules can be added via a link."
+  },
+  "downloadUrl": "https://result-proxy.ru/",
+  "platforms": {
+    "windows-amd64-portable": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.7/ResultV.exe",
+      "sha256": "2ea4b852a52eb1a5647827d6d56a7c66619a82892b206dedaffbe56bc7e6478b",
+      "size": 54504960
+    },
+    "windows-amd64-installer": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.7/ResultV-amd64-installer.exe",
+      "sha256": "c6158416291a08788ccf5cf75f7a7e018ec670e14fc8258528008badff6f3f26",
+      "size": 26543944
+    },
+    "darwin-universal": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.7/ResultV.dmg",
+      "sha256": "702d5ffb49dc1b458fad2998babb5f94b93fda5b9deb93cb95bbcb97baf143e5",
+      "size": 59731463
+    },
+    "linux-amd64-appimage": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.7/ResultV-3.2.7-x86_64.AppImage",
+      "sha256": "82aff7b5c82a732d52a38d0675e42465db8c60c2abcb9ab70508ca95f1ea1feb",
+      "size": 93198840
+    },
+    "linux-amd64-deb": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.7/resultv_3.2.7_amd64.deb",
+      "sha256": "db5811b5727776244050cc183eb56c7abc1a18e7499c5b72b56c161fc5ea9325",
+      "size": 25514228
+    }
+  }
+}

@@ -829,6 +829,20 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		Action:   "hijack-dns",
 	})
 
+	// Neutralize DNS-over-TLS (Android "Private DNS"). DoT sniffs as "tls",
+	// not "dns", so it skips hijack-dns above; in Smart mode final=direct it
+	// then routes to the direct outbound and STALLS — the device probes the
+	// advertised in-tunnel DNS IP :853 (no DoT listener → 5s i/o timeout) and
+	// public resolvers :853 (~20s). Rejecting port 853 makes DoT fail fast so
+	// Android falls back to plaintext DNS on port 53, which IS hijacked. Port
+	// matching needs no sniff, so this fires immediately.
+	if cfg.Mode == ProxyModeTunnel {
+		rules = append(rules, SBRouteRule{
+			Port:   []int{853},
+			Action: "reject",
+		})
+	}
+
 	// Ad-block: reject connections to ad/tracker domains. Backstop for the DNS
 	// reject in buildDNS — catches hardcoded IPs / DoH that skip our resolver.
 	// MUST come after sniff so the rule_set domain matcher sees the host.

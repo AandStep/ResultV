@@ -19,7 +19,13 @@ internal object BuildOptionsBuilder {
         return JSONObject()
             .put("dnsServers", SettingsRepository.resolveDnsServers())
             .put("excludedDomains", rules.domainExclusions.joinToString(","))
-            .put("ipv6", settings.ipv6)
+            // Honour the IPv6 toggle only when the underlying (non-VPN) network
+            // actually routes IPv6. On carriers that advertise a v6 address but
+            // blackhole transit, a dual-stack TUN makes every `direct` IPv6
+            // connection stall ~5s (Smart mode routes non-listed hosts direct),
+            // which surfaces as browser searches hanging / 502. NetworkProbe
+            // reachability-tests v6 off the main thread and caches the result.
+            .put("ipv6", settings.ipv6 && NetworkProbe.usableIPv6())
             .put("bypassLAN", settings.bypassLan)
             .put("logLevel", settings.logLevel)
             .put("smartMode", smartMode)

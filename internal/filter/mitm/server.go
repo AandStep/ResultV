@@ -17,6 +17,7 @@ import (
 	"github.com/AdguardTeam/gomitmproxy"
 	"github.com/AdguardTeam/gomitmproxy/mitm"
 	filterproxy "resultproxy-wails/internal/filter/mitm/vendoredproxy"
+	"github.com/AdguardTeam/urlfilter"
 	"github.com/AdguardTeam/urlfilter/rules"
 )
 
@@ -27,6 +28,17 @@ type Config struct {
 	RootKey     *rsa.PrivateKey
 	FilterPaths map[rules.ListID]string
 	OnBlocked   func(cosmetic bool)
+	// Engine, when non-nil, is reused instead of rebuilding from FilterPaths.
+	// The Manager caches it across proxy restarts to keep the browser ad-block
+	// attach fast on every connect after the first.
+	Engine *urlfilter.Engine
+}
+
+// BuildEngine builds (and lets the caller cache) a urlfilter engine from the
+// given filter files, so the expensive list parse happens once, not on every
+// proxy restart.
+func BuildEngine(paths map[rules.ListID]string) (*urlfilter.Engine, error) {
+	return filterproxy.BuildEngine(paths)
 }
 
 // Server wraps urlfilter's MITM proxy.
@@ -58,6 +70,7 @@ func NewServer(cfg Config) (*Server, error) {
 	s := &Server{}
 	inner, err := filterproxy.NewServer(filterproxy.Config{
 		FiltersPaths:  cfg.FilterPaths,
+		Engine:        cfg.Engine,
 		InjectionHost: "injections.resultv.local",
 		ProxyConfig: gomitmproxy.Config{
 			ListenAddr:     addr,

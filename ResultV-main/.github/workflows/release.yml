@@ -1,0 +1,422 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*' # Запускается автоматически при создании тега, например v2.1.1
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      actions: write
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install Wails CLI
+        shell: pwsh
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@latest
+          $goBin = "$(go env GOPATH)/bin"
+          "$goBin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          choco install nsis -y
+          $makensisCandidates = @(
+            "C:\ProgramData\chocolatey\bin\makensis.exe",
+            "$env:ProgramFiles\NSIS\makensis.exe",
+            "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          )
+          $makensis = $null
+          foreach ($candidate in $makensisCandidates) {
+            if (Test-Path $candidate) {
+              $makensis = $candidate
+              break
+            }
+          }
+          if (-not $makensis) {
+            $found = Get-ChildItem -Path "C:\ProgramData\chocolatey" -Filter "makensis.exe" -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) {
+              $makensis = $found.FullName
+            }
+          }
+          if (-not $makensis) {
+            Write-Error "makensis.exe not found after NSIS installation"
+            exit 1
+          }
+          $nsisRoot = Split-Path -Parent $makensis
+          $multiUser = Join-Path $nsisRoot "Include\MultiUser.nsh"
+          if (-not (Test-Path $multiUser)) {
+            Write-Error "NSIS MultiUser.nsh not found at $multiUser"
+            exit 1
+          }
+          Split-Path -Parent $makensis | Out-File -FilePath $env:GITHUB_PATH -Append
+          "NSISDIR=$nsisRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+          & $makensis /VERSION
+
+      - name: Stage libcronet.dll (sing-box naive / Cronet)
+        shell: pwsh
+        run: ./scripts/ensure-libcronet-windows.ps1
+
+      - name: Build Windows app and installer
+        shell: pwsh
+        env:
+          SUBSCRIPTION_ENCRYPT_KEY: ${{ secrets.SUBSCRIPTION_ENCRYPT_KEY }}
+          # For pre-release tags (containing '-') point the updater at the dev branch
+          # so test builds don't check the production manifest.
+          MANIFEST_URL_OVERRIDE: ${{ contains(github.ref_name, '-') && 'https://raw.githubusercontent.com/AandStep/ResultV/dev/update.json' || '' }}
+        run: |
+          $key = $env:SUBSCRIPTION_ENCRYPT_KEY
+          $ldflags = ""
+          if ($key) {
+            $ldflags = "-X resultproxy-wails/internal/proxy.subscriptionEncryptKey=$key"
+          }
+          $manifestOverride = $env:MANIFEST_URL_OVERRIDE
+          if ($manifestOverride) {
+            $ldflags = "$ldflags -X resultproxy-wails/internal/updater.ManifestURLOverride=$manifestOverride".Trim()
+          }
+          if ($ldflags) {
+            wails build -clean -nsis -platform windows/amd64 -ldflags $ldflags
+          } else {
+            wails build -clean -nsis -platform windows/amd64
+          }
+
+      - name: Copy libcronet.dll next to portable exe
+        shell: pwsh
+        run: |
+          $dll = Join-Path (Get-Location) "build/windows/libcronet.dll"
+          if (-not (Test-Path $dll)) { throw "libcronet.dll missing — run scripts/ensure-libcronet-windows.ps1" }
+          $portable = Get-ChildItem -Path "build/bin" -Filter "*.exe" -File |
+            Where-Object { $_.Name -notlike "*-installer.exe" } |
+            Select-Object -First 1
+          if (-not $portable) { throw "Portable exe not found under build/bin" }
+          Copy-Item -LiteralPath $dll -Destination $portable.DirectoryName -Force
+          Write-Host "Copied libcronet.dll beside $($portable.Name)"
+
+      - name: Validate Windows artifacts
+        shell: pwsh
+        run: |
+          $portable = Get-ChildItem -Path "build/bin" -Filter "*.exe" |
+            Where-Object { $_.Name -notlike "*-installer.exe" } |
+            Select-Object -First 1
+          $installer = Get-ChildItem -Path "build/bin" -Filter "*-installer.exe" | Select-Object -First 1
+          if (-not $portable) {
+            Write-Error "Portable executable not found in build/bin"
+            exit 1
+          }
+          if (-not $installer) {
+            Write-Error "Installer executable not found in build/bin"
+            exit 1
+          }
+          "PORTABLE_PATH=build/bin/$($portable.Name)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "INSTALLER_PATH=build/bin/$($installer.Name)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-windows
+          path: |
+            ${{ env.PORTABLE_PATH }}
+            ${{ env.INSTALLER_PATH }}
+          retention-days: 1
+
+  build-macos:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+      actions: write
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install Wails CLI
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Stage libcronet.dylib (sing-box naive / Cronet)
+        run: |
+          chmod +x scripts/ensure-libcronet-macos.sh
+          ./scripts/ensure-libcronet-macos.sh
+
+      - name: Build macOS app and .dmg
+        env:
+          SUBSCRIPTION_ENCRYPT_KEY: ${{ secrets.SUBSCRIPTION_ENCRYPT_KEY }}
+          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+          APPLE_NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+          APPLE_NOTARY_TEAM_ID: ${{ secrets.APPLE_NOTARY_TEAM_ID }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+          MANIFEST_URL_OVERRIDE: ${{ contains(github.ref_name, '-') && 'https://raw.githubusercontent.com/AandStep/ResultV/dev/update.json' || '' }}
+        run: |
+          chmod +x build-macos.sh
+          ./build-macos.sh
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-macos
+          path: build/bin/ResultV.dmg
+          retention-days: 1
+
+  build-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: write
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install Linux build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -eux
+          # azure.archive.ubuntu.com on GitHub-hosted runners sometimes stalls for
+          # many minutes; archive.ubuntu.com is a reliable fallback.
+          sudo find /etc/apt \( -name '*.sources' -o -name '*.list' -o -name '*.sources.list' \) \
+            -type f -exec sed -i 's/azure\.archive\.ubuntu\.com/archive.ubuntu.com/g' {} +
+          sudo tee /etc/apt/apt.conf.d/99-ci-apt >/dev/null <<'EOF'
+          Acquire::Retries "5";
+          Acquire::http::Timeout "120";
+          Acquire::https::Timeout "120";
+          Dpkg::Use-Pty "0";
+          EOF
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libgtk-3-dev libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            rpm fuse libfuse2
+
+      - name: Install Wails CLI
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Install nfpm
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+
+      - name: Install linuxdeploy
+        run: |
+          curl -fsSL -o /usr/local/bin/linuxdeploy \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x /usr/local/bin/linuxdeploy
+
+      - name: Stage libcronet.so (sing-box naive / Cronet)
+        run: |
+          chmod +x scripts/ensure-libcronet-linux.sh
+          ./scripts/ensure-libcronet-linux.sh
+
+      - name: Build Linux artifacts
+        env:
+          SUBSCRIPTION_ENCRYPT_KEY: ${{ secrets.SUBSCRIPTION_ENCRYPT_KEY }}
+          MANIFEST_URL_OVERRIDE: ${{ contains(github.ref_name, '-') && 'https://raw.githubusercontent.com/AandStep/ResultV/dev/update.json' || '' }}
+        run: |
+          chmod +x build-linux.sh
+          VERSION="${GITHUB_REF_NAME#v}" ./build-linux.sh
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-linux
+          path: |
+            build/bin/*.deb
+            build/bin/*.rpm
+            build/bin/*.AppImage
+          retention-days: 1
+          if-no-files-found: warn
+
+  create-release:
+    needs: [build-windows, build-macos, build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+
+      - name: Parse update.json and format Release Data
+        id: prepare_release
+        run: |
+          cat > prepare_release.cjs <<'NODE_EOF'
+          const fs = require('fs');
+          const update = JSON.parse(fs.readFileSync('update.json', 'utf8'));
+
+          // Version comes from the git tag, not update.json — the file is kept
+          // with version: "" between releases so clients on main don't see a
+          // version bump before CI has published the artifacts.
+          const version = (process.env.GITHUB_REF_NAME || '').replace(/^v/, '');
+
+          const pickLang = (v, lang) => {
+            if (v == null) return '';
+            if (typeof v === 'string') return v;
+            return v[lang] || v.ru || v.en || Object.values(v)[0] || '';
+          };
+
+          const formatBullets = (text) => {
+            const t = String(text || '').trim();
+            if (!t) return '';
+            let out = t.replace(/\. /g, '.\n-');
+            if (!out.startsWith('-')) out = '-' + out;
+            if (out.endsWith('-')) out = out.slice(0, -1);
+            return out;
+          };
+
+          const ruNotes = formatBullets(pickLang(update.releaseNotes, 'ru'));
+          const enNotes = formatBullets(pickLang(update.releaseNotes, 'en'));
+          const ruTitle = pickLang(update.releaseTitle, 'ru').trim() || 'Bug Fixes & Improvements';
+          const enTitle = pickLang(update.releaseTitle, 'en').trim() || ruTitle;
+          const host = new URL(update.downloadUrl).hostname;
+          const telegramUrl = 'https://t.me/resultvpn';
+
+          const sections = [];
+          if (ruNotes) {
+            sections.push(`Что нового в версии ${version}?\n\n${ruNotes}\n\n🌐 Официальный сайт: ${host}\n📣 Наш телеграм-канал с новостями и инсайдами: ${telegramUrl}`);
+          }
+          if (enNotes && enNotes !== ruNotes) {
+            sections.push(`What's new in version ${version}?\n\n${enNotes}\n\n🌐 Official website: ${host}\n📣 Our Telegram channel with news and insights: ${telegramUrl}`);
+          }
+          const releaseBody = sections.join('\n\n---\n\n');
+          fs.writeFileSync('RELEASE_BODY.txt', releaseBody);
+
+          const releaseName = enTitle && enTitle !== ruTitle
+            ? `ResultV v${version} - ${ruTitle} / ${enTitle}`
+            : `ResultV v${version} - ${ruTitle}`;
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `release_name=${releaseName}\n`);
+          NODE_EOF
+          node prepare_release.cjs
+
+      - name: Download all workflow assets
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: release-assets-*
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ steps.prepare_release.outputs.release_name }}
+          body_path: RELEASE_BODY.txt
+          files: release-assets/*
+          draft: false
+          # Tags with a hyphen (e.g. v3.2.0-dev.1) are pre-releases.
+          # Pre-releases are visible on GitHub but not shown as "Latest release",
+          # so production auto-update is unaffected.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute sha256 and commit updated update.json
+        run: |
+          # Choose target branch based on whether this is a pre-release tag.
+          if [[ "${{ github.ref_name }}" == *"-"* ]]; then
+            TARGET_BRANCH="dev"
+          else
+            TARGET_BRANCH="main"
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin "$TARGET_BRANCH"
+          git checkout "$TARGET_BRANCH"
+
+          cat > update_manifest.cjs <<'NODE_EOF'
+          const fs   = require('fs');
+          const path = require('path');
+          const crypto = require('crypto');
+
+          const tag     = process.env.GITHUB_REF_NAME;          // e.g. "v3.2.0"
+          const version = tag.replace(/^v/, '');
+          const repo    = process.env.GITHUB_REPOSITORY;        // "AandStep/ResultV"
+          const baseURL = `https://github.com/${repo}/releases/download/${tag}`;
+          const dir     = 'release-assets';
+
+          function sha256File(p) {
+            return crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+          }
+
+          const files = fs.readdirSync(dir);
+
+          const portableFile   = files.find(f => /^ResultV.*\.exe$/i.test(f) && !/installer/i.test(f) && !/setup/i.test(f));
+          const installerFile  = files.find(f => /installer.*\.exe$/i.test(f) || /setup.*\.exe$/i.test(f));
+          const dmgFile        = files.find(f => /\.dmg$/i.test(f));
+          const appimageFile   = files.find(f => /\.AppImage$/i.test(f));
+          const debFile        = files.find(f => /\.deb$/i.test(f));
+
+          const update = JSON.parse(fs.readFileSync('update.json', 'utf8'));
+          update.version   = version;
+          update.platforms = {};
+
+          function addPlatform(key, filename) {
+            if (!filename) return;
+            const p = path.join(dir, filename);
+            if (!fs.existsSync(p)) return;
+            const stat = fs.statSync(p);
+            update.platforms[key] = {
+              url:    `${baseURL}/${filename}`,
+              sha256: sha256File(p),
+              size:   stat.size,
+            };
+            console.log(`[${key}] ${filename} sha256=${update.platforms[key].sha256} size=${stat.size}`);
+          }
+
+          addPlatform('windows-amd64-portable',  portableFile);
+          addPlatform('windows-amd64-installer', installerFile);
+          addPlatform('darwin-universal',         dmgFile);
+          addPlatform('linux-amd64-appimage',     appimageFile);
+          addPlatform('linux-amd64-deb',          debFile);
+
+          fs.writeFileSync('update.json', JSON.stringify(update, null, 2) + '\n');
+          console.log('update.json written with platforms:', Object.keys(update.platforms).join(', ') || '(none)');
+          NODE_EOF
+          node update_manifest.cjs
+
+          git add update.json
+          git diff --cached --quiet || \
+            git commit -m "chore: update update.json platforms for ${{ github.ref_name }} [skip ci]"
+          git push origin "$TARGET_BRANCH"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -17,13 +17,16 @@ type ListSource struct {
 }
 
 // DefaultSources is the built-in filter set for urlfilter (network + cosmetic).
-// GitHub raw mirrors are listed first — filters.adtidy.org / easylist.to often
-// time out behind Cloudflare from RU networks.
+// GitHub raw is listed first, then a jsDelivr CDN mirror of the same repo
+// content (reachable from RU networks when raw.githubusercontent.com is
+// blocked/down — a frequent cause of ads leaking through), then the official
+// host, which often times out behind Cloudflare from RU networks.
 var DefaultSources = []ListSource{
 	{
 		ID: 1, Name: "adguard-base",
 		URLs: []string{
 			"https://raw.githubusercontent.com/AdguardTeam/FiltersRegistry/master/filters/filter_2_Base/filter.txt",
+			"https://cdn.jsdelivr.net/gh/AdguardTeam/FiltersRegistry@master/filters/filter_2_Base/filter.txt",
 			"https://filters.adtidy.org/windows/filters/2.txt",
 		},
 	},
@@ -31,6 +34,7 @@ var DefaultSources = []ListSource{
 		ID: 2, Name: "adguard-tracking",
 		URLs: []string{
 			"https://raw.githubusercontent.com/AdguardTeam/FiltersRegistry/master/filters/filter_17_TrackParam/filter.txt",
+			"https://cdn.jsdelivr.net/gh/AdguardTeam/FiltersRegistry@master/filters/filter_17_TrackParam/filter.txt",
 			"https://filters.adtidy.org/windows/filters/3.txt",
 		},
 	},
@@ -38,6 +42,7 @@ var DefaultSources = []ListSource{
 		ID: 3, Name: "adguard-russian",
 		URLs: []string{
 			"https://raw.githubusercontent.com/AdguardTeam/FiltersRegistry/master/filters/filter_1_Russian/filter.txt",
+			"https://cdn.jsdelivr.net/gh/AdguardTeam/FiltersRegistry@master/filters/filter_1_Russian/filter.txt",
 			"https://filters.adtidy.org/windows/filters/1.txt",
 		},
 	},
@@ -45,6 +50,7 @@ var DefaultSources = []ListSource{
 		ID: 4, Name: "easylist",
 		URLs: []string{
 			"https://raw.githubusercontent.com/easylist/easylist/master/easylist/easylist.txt",
+			"https://cdn.jsdelivr.net/gh/easylist/easylist@master/easylist/easylist.txt",
 			"https://easylist.to/easylist/easylist.txt",
 		},
 	},
@@ -52,6 +58,7 @@ var DefaultSources = []ListSource{
 		ID: 5, Name: "easyprivacy",
 		URLs: []string{
 			"https://raw.githubusercontent.com/easylist/easylist/master/easyprivacy/easyprivacy.txt",
+			"https://cdn.jsdelivr.net/gh/easylist/easylist@master/easyprivacy/easyprivacy.txt",
 			"https://easylist.to/easylist/easyprivacy.txt",
 		},
 	},
@@ -59,6 +66,7 @@ var DefaultSources = []ListSource{
 		ID: 6, Name: "fanboy-annoyance",
 		URLs: []string{
 			"https://raw.githubusercontent.com/easylist/easylist/master/fanboy-annoyance/fanboy-annoyance.txt",
+			"https://cdn.jsdelivr.net/gh/easylist/easylist@master/fanboy-annoyance/fanboy-annoyance.txt",
 			"https://easylist.to/easylist/fanboy-annoyance.txt",
 		},
 	},
@@ -66,6 +74,7 @@ var DefaultSources = []ListSource{
 		ID: 7, Name: "adguard-annoyances",
 		URLs: []string{
 			"https://raw.githubusercontent.com/AdguardTeam/FiltersRegistry/master/filters/filter_14_Annoyances/filter.txt",
+			"https://cdn.jsdelivr.net/gh/AdguardTeam/FiltersRegistry@master/filters/filter_14_Annoyances/filter.txt",
 			"https://filters.adtidy.org/windows/filters/14.txt",
 		},
 	},
@@ -73,6 +82,7 @@ var DefaultSources = []ListSource{
 		ID: 8, Name: "adguard-mobile-ads",
 		URLs: []string{
 			"https://raw.githubusercontent.com/AdguardTeam/FiltersRegistry/master/filters/filter_11_Mobile/filter.txt",
+			"https://cdn.jsdelivr.net/gh/AdguardTeam/FiltersRegistry@master/filters/filter_11_Mobile/filter.txt",
 			"https://filters.adtidy.org/windows/filters/11.txt",
 		},
 	},

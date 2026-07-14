@@ -13,10 +13,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/AdguardTeam/urlfilter"
 	"github.com/AdguardTeam/urlfilter/rules"
 	"golang.org/x/sync/errgroup"
 
@@ -39,6 +42,14 @@ type Manager struct {
 	meta    meta
 	lastErr string
 	mitm    *mitm.Server
+
+	// Cached urlfilter engine, reused across MITM restarts (StartMITM is called
+	// on every connect). Parsing the filter lists is the expensive part; the key
+	// invalidates it when Update() rewrites a list. Own mutex so a rebuild never
+	// blocks the meta/status locks.
+	engineMu  sync.Mutex
+	engine    *urlfilter.Engine
+	engineKey string
 
 	networkBlocked  atomic.Uint64
 	cosmeticBlocked atomic.Uint64
@@ -246,11 +257,18 @@ func (m *Manager) StartMITM(listenPort int) error {
 	if err != nil {
 		return err
 	}
+	// Reuse the cached engine when the filter files are unchanged so a repeat
+	// StartMITM (every connect) skips the multi-second list parse.
+	engine, err := m.cachedEngine(paths)
+	if err != nil {
+		return err
+	}
 	srv, err := mitm.NewServer(mitm.Config{
 		ListenPort:  listenPort,
 		RootCert:    root.Certificate,
 		RootKey:     root.PrivateKey,
 		FilterPaths: paths,
+		Engine:      engine,
 		OnBlocked: func(cosmetic bool) {
 			if cosmetic {
 				m.cosmeticBlocked.Add(1)
@@ -269,6 +287,46 @@ func (m *Manager) StartMITM(listenPort int) error {
 	m.mitm = srv
 	m.mu.Unlock()
 	return nil
+}
+
+// cachedEngine returns a urlfilter engine for the given filter files, reusing
+// the last-built one when the file set is unchanged. Parsing the lists is the
+// expensive part of starting the MITM proxy; caching it keeps the post-connect
+// attach fast so the "browser briefly unfiltered" window stays short.
+func (m *Manager) cachedEngine(paths map[rules.ListID]string) (*urlfilter.Engine, error) {
+	key := engineCacheKey(paths)
+	m.engineMu.Lock()
+	defer m.engineMu.Unlock()
+	if m.engine != nil && m.engineKey == key {
+		return m.engine, nil
+	}
+	eng, err := mitm.BuildEngine(paths)
+	if err != nil {
+		return nil, err
+	}
+	m.engine = eng
+	m.engineKey = key
+	return eng, nil
+}
+
+// engineCacheKey fingerprints the filter file set (id + path + size + mtime) so
+// the cached engine is invalidated whenever Update() rewrites a list.
+func engineCacheKey(paths map[rules.ListID]string) string {
+	ids := make([]int, 0, len(paths))
+	for id := range paths {
+		ids = append(ids, int(id))
+	}
+	sort.Ints(ids)
+	var b strings.Builder
+	for _, id := range ids {
+		p := paths[rules.ListID(id)]
+		fmt.Fprintf(&b, "%d:%s:", id, p)
+		if st, err := os.Stat(p); err == nil {
+			fmt.Fprintf(&b, "%d:%d", st.Size(), st.ModTime().UnixNano())
+		}
+		b.WriteByte('|')
+	}
+	return b.String()
 }
 
 func (m *Manager) StopMITM() {

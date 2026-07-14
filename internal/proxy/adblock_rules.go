@@ -34,25 +34,35 @@ const (
 )
 
 // adBlockRuleSetSource is one downloadable sing-box binary (SRS) rule-set.
+// urls are tried in order until one yields a valid SRS — the jsDelivr CDN
+// mirror is a fallback for when raw.githubusercontent.com is blocked/down in
+// Russia (a frequent cause of "ads appear intermittently").
 type adBlockRuleSetSource struct {
 	tag      string
 	fileName string
-	url      string
+	urls     []string
 }
 
 // defaultAdBlockRuleSets are the pre-compiled SRS lists we reject on: a
 // global ad/tracker list plus a Russia-tuned ads list (matches the desktop
-// build's sources).
+// build's sources). Each source lists the github raw URL first, then a jsDelivr
+// mirror of the same content for github-outage resilience.
 var defaultAdBlockRuleSets = []adBlockRuleSetSource{
 	{
 		tag:      adBlockRuleSetTag,
 		fileName: "ads.srs",
-		url:      "https://raw.githubusercontent.com/REIJI007/AdBlock_Rule_For_Sing-box/main/adblock_reject.srs",
+		urls: []string{
+			"https://raw.githubusercontent.com/REIJI007/AdBlock_Rule_For_Sing-box/main/adblock_reject.srs",
+			"https://cdn.jsdelivr.net/gh/REIJI007/AdBlock_Rule_For_Sing-box@main/adblock_reject.srs",
+		},
 	},
 	{
 		tag:      adBlockRuleSetTagRU,
 		fileName: "ads-ru.srs",
-		url:      "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/sing-box/rule-set-geosite/geosite-category-ads-all.srs",
+		urls: []string{
+			"https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/sing-box/rule-set-geosite/geosite-category-ads-all.srs",
+			"https://cdn.jsdelivr.net/gh/runetfreedom/russia-v2ray-rules-dat@release/sing-box/rule-set-geosite/geosite-category-ads-all.srs",
+		},
 	},
 }
 
@@ -90,7 +100,7 @@ func buildAdBlockRuleSets(dataDir string) []SBRouteRuleSet {
 			Type:           "remote",
 			Tag:            src.tag,
 			Format:         "binary",
-			URL:            src.url,
+			URL:            src.urls[0],
 			DownloadDetour: "direct",
 			UpdateInterval: adBlockUpdateInterval,
 		})
@@ -159,36 +169,55 @@ func DownloadAdBlockRuleSets(ctx context.Context, dataDir string) AdBlockDownloa
 }
 
 func downloadAdBlockSRS(ctx context.Context, client *http.Client, src adBlockRuleSetSource, dir string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, src.url, nil)
+	var lastErr error
+	for _, u := range src.urls {
+		data, err := fetchAdBlockSRS(ctx, client, u)
+		if err != nil {
+			lastErr = fmt.Errorf("%s: %w", src.tag, err)
+			continue // try the next mirror (github raw is often blocked in RU)
+		}
+		// Atomic write: a half-written SRS referenced as a local rule_set would
+		// fail sing-box startup and break the connection. Write to a temp file
+		// and rename so the live path always points at a complete file — and a
+		// failed download never clobbers a previously cached copy.
+		dst := filepath.Join(dir, src.fileName)
+		tmp := dst + ".tmp"
+		if err := os.WriteFile(tmp, data, 0o600); err != nil {
+			return fmt.Errorf("%s: writing temp: %w", src.tag, err)
+		}
+		if err := os.Rename(tmp, dst); err != nil {
+			os.Remove(tmp)
+			return fmt.Errorf("%s: renaming: %w", src.tag, err)
+		}
+		return nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("%s: no URLs configured", src.tag)
+	}
+	return lastErr
+}
+
+// fetchAdBlockSRS GETs one SRS URL and returns its bytes, validating the
+// response is a plausible (non-truncated) rule-set.
+func fetchAdBlockSRS(ctx context.Context, client *http.Client, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("%s: %w", src.tag, err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("%s: HTTP %d", src.tag, resp.StatusCode)
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 16*1024*1024))
 	if err != nil {
-		return fmt.Errorf("%s: reading body: %w", src.tag, err)
+		return nil, fmt.Errorf("reading body: %w", err)
 	}
 	if len(data) < minLocalSRSBytes {
-		return fmt.Errorf("%s: response too small (%d bytes)", src.tag, len(data))
+		return nil, fmt.Errorf("response too small (%d bytes)", len(data))
 	}
-	// Atomic write: a half-written SRS referenced as a local rule_set would
-	// fail sing-box startup and break the connection. Write to a temp file and
-	// rename so the live path always points at a complete file.
-	dst := filepath.Join(dir, src.fileName)
-	tmp := dst + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return fmt.Errorf("%s: writing temp: %w", src.tag, err)
-	}
-	if err := os.Rename(tmp, dst); err != nil {
-		os.Remove(tmp)
-		return fmt.Errorf("%s: renaming: %w", src.tag, err)
-	}
-	return nil
+	return data, nil
 }

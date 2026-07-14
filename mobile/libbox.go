@@ -570,7 +570,12 @@ func fetchSubscriptionWithUA(subURL, userAgent, hwid string, extraHeaders map[st
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return subscriptionFetchResult{}, fmt.Errorf("subscription returned HTTP %d", resp.StatusCode)
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		errPreview := strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(string(errBody)), "\n", " "), "\r", "")
+		if errPreview == "" {
+			return subscriptionFetchResult{}, fmt.Errorf("subscription returned HTTP %d", resp.StatusCode)
+		}
+		return subscriptionFetchResult{}, fmt.Errorf("subscription returned HTTP %d: %s", resp.StatusCode, errPreview)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024))
@@ -608,6 +613,11 @@ func fetchSubscriptionWithUA(subURL, userAgent, hwid string, extraHeaders map[st
 // the suffix it serves a thin Shadowsocks-only list.
 func normalizeSubscriptionURL(subURL string) string {
 	if u, err := url.Parse(subURL); err == nil && u.Host == "my.impio.space" {
+		// /api/sub/raw/<token> links already serve the full config and
+		// reject a /json suffix with HTTP 400 — leave them untouched.
+		if strings.Contains(u.Path, "/raw/") {
+			return subURL
+		}
 		if !strings.HasSuffix(strings.TrimRight(u.Path, "/"), "/json") {
 			u.Path = strings.TrimRight(u.Path, "/") + "/json"
 			return u.String()

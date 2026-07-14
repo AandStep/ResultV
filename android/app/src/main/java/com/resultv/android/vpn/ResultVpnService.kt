@@ -132,7 +132,14 @@ class ResultVpnService : VpnService() {
                 worker.execute {
                     val t0 = System.currentTimeMillis()
                     try {
-                        startBrowserAdBlockIfEnabled()
+                        // Browser ad-block used to start HERE, synchronously
+                        // before BoxModule.start — building the urlfilter engine
+                        // plus a TLS self-test added 4-5s to EVERY connect. Bring
+                        // the tunnel up first (fast, feature-off parity), then
+                        // attach the MITM proxy off the critical path and re-apply
+                        // setHttpProxy via an in-place reload. openTun during
+                        // start() must therefore see filterProxyRunning=false.
+                        BoxModule.filterProxyRunning = false
                         BoxModule.start(this, config)
                         val connectedAt = System.currentTimeMillis()
                         val connected = VpnStatus.Connected(connectedAt)
@@ -154,6 +161,8 @@ class ResultVpnService : VpnService() {
                         TrafficWatcher.start()
                         // Structured per-host [CONN] lines (domain -> ip:port).
                         ConnectionWatcher.start()
+                        // Attach browser ad-block now that the tunnel is up.
+                        attachBrowserAdBlockAsync()
                     } catch (t: Throwable) {
                         Log.e(TAG, "BoxModule.start failed", t)
                         val msg = t.message ?: t.javaClass.simpleName
@@ -184,6 +193,10 @@ class ResultVpnService : VpnService() {
         RoutingRulesRepository.init(app)
         AppRoutingRepository.init(app)
         SmartListRepository.init(app)
+        // Refresh underlying IPv6 reachability so reload/always-on configs pick
+        // the effective IPv6 flag (see NetworkProbe / BuildOptionsBuilder).
+        NetworkProbe.init(app)
+        NetworkProbe.refreshAsync()
     }
 
     /** Rebuild a sing-box config from whatever profile is currently active. */
@@ -193,11 +206,40 @@ class ResultVpnService : VpnService() {
     }
 
     /**
+     * Attach the browser ad-block MITM proxy AFTER the tunnel is already up,
+     * off the connect critical path. Starting it (urlfilter engine build + TLS
+     * self-test) takes seconds; doing it before BoxModule.start() used to add
+     * that to every connect. Here we start it on the worker (so it queues
+     * behind the just-finished connect task) and, once the proxy is live, force
+     * an in-place reload so openTun() re-runs and applies setHttpProxy — the
+     * mirror image of onFilterProxyUnhealthy(), which reloads to REMOVE it.
+     *
+     * The tunnel stays up throughout; there's only a brief window right after
+     * connect where the browser isn't yet filtered. The cached urlfilter engine
+     * (Manager reuses it across connects) keeps that window short after the
+     * first connect.
+     */
+    private fun attachBrowserAdBlockAsync() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        if (!SettingsRepository.state.value.browserAdBlock) return
+        worker.execute {
+            startBrowserAdBlockIfEnabled()
+            // Only reload if the proxy actually came up (trusted cert + healthy);
+            // startBrowserAdBlockIfEnabled leaves filterProxyRunning=false otherwise.
+            if (BoxModule.filterProxyRunning && BoxModule.isRunning) {
+                val active = ProfileRepository.state.value.active ?: return@execute
+                val cfg = BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath) ?: return@execute
+                BoxModule.reload(cfg)
+            }
+        }
+    }
+
+    /**
      * Best-effort: browser ad-block is a bonus feature layered on top of
-     * the VPN tunnel, never a reason to fail the whole connect. MUST run
-     * before BoxModule.start() — see the comment on this call site above —
-     * and MUST leave BoxModule.filterProxyRunning=false on any failure (no
-     * lists downloaded yet, port in use, etc.) so openTun() never applies
+     * the VPN tunnel, never a reason to fail the whole connect. Runs AFTER
+     * BoxModule.start() (see attachBrowserAdBlockAsync) and MUST leave
+     * BoxModule.filterProxyRunning=false on any failure (no lists downloaded
+     * yet, port in use, etc.) so the follow-up reload's openTun() never applies
      * setHttpProxy to a dead proxy and breaks Chrome's HTTPS traffic.
      */
     private fun startBrowserAdBlockIfEnabled() {
