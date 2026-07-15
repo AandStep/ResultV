@@ -27,6 +27,7 @@ import (
 	"time"
 
 	_ "github.com/sagernet/gomobile" // ensure sagernet's gomobile/bind stays in go.mod for AAR builds
+	socksproxy "golang.org/x/net/proxy"
 	"resultproxy-wails/internal/config"
 	"resultproxy-wails/internal/filter"
 	"resultproxy-wails/internal/proxy"
@@ -36,6 +37,14 @@ var (
 	filterMu      sync.Mutex
 	filterManager *filter.Manager
 )
+
+// BrowserAdBlockSocksPort is the loopback port of the SOCKS inbound the mobile
+// engine config exposes when BuildOptions.BrowserAdBlock is on. The in-process
+// MITM proxy (StartFilterProxy) dials its upstream connections through this
+// inbound so filtered browser traffic re-enters the tunnel instead of leaking
+// direct (the app's own process is excluded from the VPN). Kept distinct from
+// BROWSER_ADBLOCK_PORT (8130, the MITM HTTP proxy the browser points at).
+const BrowserAdBlockSocksPort = 18130
 
 func getFilterManager(dataDir string) *filter.Manager {
 	filterMu.Lock()
@@ -650,6 +659,14 @@ type BuildOptions struct {
 	// FetchAdBlockLists; a missing list falls back to remote download and
 	// degrades to "no blocking" rather than breaking the connection.
 	AdBlock bool `json:"adblock,omitempty"`
+	// BrowserAdBlock is the MITM browser ad-blocker toggle. When on, the
+	// engine config exposes a loopback SOCKS inbound (BrowserAdBlockSocksPort)
+	// so the in-process MITM proxy can send its upstream traffic back through
+	// the tunnel — the app's own process is excluded from the VPN, so a direct
+	// dial from the MITM proxy would bypass the tunnel and break RKN-blocked
+	// sites in the browser. Kotlin sets this from the same SettingsRepository
+	// flag that gates StartFilterProxy / setHttpProxy.
+	BrowserAdBlock bool `json:"browserAdBlock,omitempty"`
 	// KillSwitchArmed wraps the proxy outbound in a single-member urltest
 	// group ("ks-test") and points route.final at it so the Android
 	// KillSwitchWatchdog can health-probe the proxy from inside the engine.
@@ -1035,6 +1052,22 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 			sb.Inbounds[i].RouteExcludeAddress = nil
 		}
 	}
+
+	// Browser ad-block: expose a loopback SOCKS inbound so the in-process MITM
+	// proxy can send upstream traffic back through the tunnel (see
+	// BrowserAdBlockSocksPort). Connections arriving here carry the origin
+	// hostname (SOCKS5 domain address), so the existing domain route rules —
+	// Smart-list, exclusions, ad-block — apply to browser traffic exactly like
+	// any other flow. Without this the MITM proxy's direct dial bypasses the
+	// tunnel entirely and RKN-blocked sites die in the browser.
+	if opts.BrowserAdBlock {
+		sb.Inbounds = append(sb.Inbounds, proxy.SBInbound{
+			Type:       "mixed",
+			Tag:        "browser-adblock-in",
+			Listen:     "127.0.0.1",
+			ListenPort: BrowserAdBlockSocksPort,
+		})
+	}
 	if sb.Route != nil {
 		var filteredRules []proxy.SBRouteRule
 		for _, r := range sb.Route.Rules {
@@ -1199,14 +1232,35 @@ func FilterCARootPath(dataDir string) (string, error) {
 // Fails if FetchFilterLists hasn't successfully populated at least one
 // list yet. Returns JSON { "started": true } on success so the Kotlin
 // caller has a uniform JSON-or-error contract like the rest of this file.
+//
+// The MITM proxy's upstream connections are routed through the engine's
+// loopback SOCKS inbound (BrowserAdBlockSocksPort) so filtered browser traffic
+// re-enters the tunnel — see the BrowserAdBlock docs. The engine config MUST
+// have been built with BuildOptions.BrowserAdBlock=true (which adds that
+// inbound); Kotlin gates both on the same setting.
 func StartFilterProxy(dataDir string, listenPort int) (string, error) {
 	if strings.TrimSpace(dataDir) == "" {
 		return "", fmt.Errorf("dataDir is required")
 	}
-	if err := getFilterManager(dataDir).StartMITM(listenPort); err != nil {
+	if err := getFilterManager(dataDir).StartMITM(listenPort, browserAdBlockUpstreamDial); err != nil {
 		return "", err
 	}
 	return `{"started":true}`, nil
+}
+
+// browserAdBlockUpstreamDial dials origin servers through the engine's loopback
+// SOCKS inbound so the MITM proxy's upstream traffic goes through the tunnel
+// instead of leaking direct (the app process is excluded from its own VPN).
+// The address is passed verbatim (hostname:port) so sing-box's SOCKS inbound
+// receives the origin domain and applies the same domain route rules
+// (Smart-list, exclusions, ad-block) as any other flow.
+func browserAdBlockUpstreamDial(network, addr string) (net.Conn, error) {
+	dialer, err := socksproxy.SOCKS5("tcp",
+		fmt.Sprintf("127.0.0.1:%d", BrowserAdBlockSocksPort), nil, socksproxy.Direct)
+	if err != nil {
+		return nil, fmt.Errorf("building socks dialer: %w", err)
+	}
+	return dialer.Dial(network, addr)
 }
 
 // StopFilterProxy stops the local MITM proxy if running. Safe to call when

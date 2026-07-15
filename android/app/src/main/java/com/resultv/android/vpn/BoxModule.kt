@@ -85,8 +85,13 @@ object BoxModule {
     @Synchronized
     fun start(service: ResultVpnService, configJson: String) {
         if (commandServer != null) {
-            Log.w(TAG, "start() called while already running; ignoring")
-            return
+            // A previous instance is still up — typically the last disconnect's
+            // teardown hadn't finished when the user reconnected. Silently
+            // returning here left the UI in Connecting forever (start "succeeds"
+            // but nothing ever flips the state to Connected). Stop the stale
+            // engine and start fresh instead.
+            Log.w(TAG, "start() called while already running; stopping stale engine first")
+            stop()
         }
         ensureSetup(service)
 

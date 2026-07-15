@@ -19,7 +19,7 @@ import (
 
 func TestManager_StartMITM_FailsWithoutCachedLists(t *testing.T) {
 	m := NewManager(t.TempDir())
-	if err := m.StartMITM(0); err == nil {
+	if err := m.StartMITM(0, nil); err == nil {
 		t.Fatal("expected StartMITM to fail before any list has been downloaded")
 	}
 }
@@ -52,7 +52,7 @@ func TestManager_StartStopMITM_Lifecycle(t *testing.T) {
 	// Port 0 lets the OS pick a free ephemeral port — good enough to prove
 	// the server starts and stops cleanly without a fixed-port collision
 	// risk in CI.
-	if err := m.StartMITM(0); err != nil {
+	if err := m.StartMITM(0, nil); err != nil {
 		t.Fatalf("StartMITM failed: %v", err)
 	}
 	if !m.IsMITMRunning() {
@@ -103,7 +103,7 @@ func TestManager_StartMITM_IdempotentRestart(t *testing.T) {
 	port := l.Addr().(*net.TCPAddr).Port
 	l.Close()
 
-	if err := m.StartMITM(port); err != nil {
+	if err := m.StartMITM(port, nil); err != nil {
 		t.Fatalf("first StartMITM failed: %v", err)
 	}
 	if !m.IsMITMRunning() {
@@ -115,7 +115,7 @@ func TestManager_StartMITM_IdempotentRestart(t *testing.T) {
 	// still held the listening socket. Post-fix, StartMITM stops any
 	// existing proxy first, so the rebind succeeds cleanly — this is the
 	// Task 7 watchdog-restart path.
-	if err := m.StartMITM(port); err != nil {
+	if err := m.StartMITM(port, nil); err != nil {
 		t.Fatalf("second StartMITM on the same port failed (expected idempotent restart to succeed): %v", err)
 	}
 	if !m.IsMITMRunning() {

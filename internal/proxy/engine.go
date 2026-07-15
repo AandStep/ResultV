@@ -609,7 +609,8 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 				})
 			}
 			dns.Rules = append(dns.Rules, SBDNSRule{
-				DomainSuffix: youTubeAdDeliverySuffixes,
+				Domain:       extraAdDeliveryDomains,
+				DomainSuffix: adDeliveryRejectSuffixes(),
 				Action:       "reject",
 			})
 			dns.Rules = append(dns.Rules, SBDNSRule{
@@ -755,10 +756,14 @@ func splitSmartDomains(domains []string) (exact []string, suffix []string) {
 			exact = append(exact, d)
 			continue
 		}
-		// Lead with a dot so sing-box's domain_suffix matches whole-label
-		// suffixes only (".instagram.com" matches "x.instagram.com" but
-		// not "fakeinstagram.com").
-		suffix = append(suffix, "."+d)
+		// Bare (no leading dot) on purpose: sing-box's matcher treats a
+		// dotless suffix as "the domain itself OR any subdomain", with a
+		// whole-label boundary ("instagram.com" matches "x.instagram.com"
+		// but not "fakeinstagram.com" — see sing/common/domain rootLabel).
+		// A dotted suffix (".instagram.com") would match ONLY subdomains,
+		// silently sending the bare SNI ("x.com", "youtube.com") to
+		// final=direct — dead behind RKN blocks.
+		suffix = append(suffix, d)
 	}
 	return exact, suffix
 }
@@ -862,7 +867,8 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 			Action:   "route",
 		})
 		rules = append(rules, SBRouteRule{
-			DomainSuffix: youTubeAdDeliverySuffixes,
+			Domain:       extraAdDeliveryDomains,
+			DomainSuffix: adDeliveryRejectSuffixes(),
 			Action:       "reject",
 		})
 		rules = append(rules, SBRouteRule{

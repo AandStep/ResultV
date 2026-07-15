@@ -3,6 +3,7 @@ module resultproxy-wails
 go 1.26.4
 
 require (
+	github.com/AdguardTeam/golibs v0.35.13
 	github.com/AdguardTeam/gomitmproxy v0.2.1
 	github.com/AdguardTeam/urlfilter v0.23.2
 	github.com/google/uuid v1.6.0
@@ -12,13 +13,13 @@ require (
 	github.com/sagernet/sing v0.8.10
 	github.com/sagernet/sing-box v1.13.12
 	github.com/sagernet/wireguard-go v0.0.2-beta.1.0.20260224074747-506b7631853c
+	golang.org/x/net v0.56.0
 	golang.org/x/sync v0.21.0
 	golang.org/x/sys v0.46.0
 )
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
-	github.com/AdguardTeam/golibs v0.35.13 // indirect
 	github.com/AliRizaAynaci/gorl/v2 v2.2.0 // indirect
 	github.com/Diniboy1123/connect-ip-go v0.0.0-20260409225322-8d7bb0a858a2 // indirect
 	github.com/OneOfOne/xxhash v1.2.8 // indirect
@@ -66,7 +67,7 @@ require (
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/gofrs/uuid/v5 v5.4.0 // indirect
 	github.com/golang-migrate/migrate/v4 v4.19.1 // indirect
-	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
+	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/nftables v0.2.1-0.20240414091927-5e242ec57806 // indirect
@@ -190,7 +191,6 @@ require (
 	golang.org/x/exp v0.0.0-20260611194520-c48552f49976 // indirect
 	golang.org/x/image v0.39.0 // indirect
 	golang.org/x/mod v0.37.0 // indirect
-	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/term v0.44.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
@@ -238,3 +238,5 @@ replace github.com/dolonet/mtg-multi => github.com/shtorm-7/mtg-multi v1.11.0-ex
 replace github.com/Diniboy1123/connect-ip-go => github.com/shtorm-7/connect-ip-go v1.0.0-extended-1.0.0
 
 replace github.com/GoAdminGroup/go-admin => github.com/shtorm-7/go-admin v1.2.26-extended-1.0.0
+
+replace github.com/AdguardTeam/gomitmproxy => ./third_party/gomitmproxy

@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -241,10 +242,15 @@ func (m *Manager) Status() Status {
 // StartMITM runs the local HTTPS filtering proxy on 127.0.0.1:listenPort.
 // Fails immediately if no filter list has been downloaded yet — Android's
 // caller (Task 4/5) must call Update() at least once before this.
-func (m *Manager) StartMITM(listenPort int) error {
-	paths := m.FilterPathsMap()
-	if len(paths) == 0 {
-		return fmt.Errorf("no cached filters; call Update first")
+//
+// upstreamDial, when non-nil, is used for every connection the proxy opens to
+// an origin server. On Android the caller passes a SOCKS5 dialer aimed at the
+// engine's loopback inbound so filtered browser traffic re-enters the tunnel
+// (the app process is excluded from its own VPN). Nil = direct dial (desktop).
+func (m *Manager) StartMITM(listenPort int, upstreamDial func(network, addr string) (net.Conn, error)) error {
+	paths, err := m.mitmFilterPaths()
+	if err != nil {
+		return err
 	}
 	// Stop any already-running proxy before starting the new one so a
 	// repeat call (e.g. Task 7's watchdog restarting on the fixed port
@@ -264,11 +270,12 @@ func (m *Manager) StartMITM(listenPort int) error {
 		return err
 	}
 	srv, err := mitm.NewServer(mitm.Config{
-		ListenPort:  listenPort,
-		RootCert:    root.Certificate,
-		RootKey:     root.PrivateKey,
-		FilterPaths: paths,
-		Engine:      engine,
+		ListenPort:   listenPort,
+		RootCert:     root.Certificate,
+		RootKey:      root.PrivateKey,
+		FilterPaths:  paths,
+		Engine:       engine,
+		UpstreamDial: upstreamDial,
 		OnBlocked: func(cosmetic bool) {
 			if cosmetic {
 				m.cosmeticBlocked.Add(1)

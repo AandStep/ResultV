@@ -32,6 +32,14 @@ type Config struct {
 	// The Manager caches it across proxy restarts to keep the browser ad-block
 	// attach fast on every connect after the first.
 	Engine *urlfilter.Engine
+	// UpstreamDial, when non-nil, is used for every connection the proxy makes
+	// to an origin server. On Android the MITM proxy runs inside the app
+	// process, which is excluded from the VPN (addDisallowedApplication), so a
+	// plain net.Dial bypasses the tunnel — fatal for RKN-blocked sites in the
+	// browser. The caller passes a SOCKS5 dialer aimed at the engine's loopback
+	// inbound so upstream traffic re-enters the tunnel. Nil = direct dial
+	// (desktop, where the process is not tunnel-excluded).
+	UpstreamDial func(network, addr string) (net.Conn, error)
 }
 
 // BuildEngine builds (and lets the caller cache) a urlfilter engine from the
@@ -46,11 +54,15 @@ type Server struct {
 	inner *filterproxy.Server
 }
 
-// NewServer builds a MITM proxy listening on 127.0.0.1:ListenPort. Traffic
-// exits directly to the internet from this process — Android's own
-// per-UID VPN routing (the TUN this app already owns) still applies to
-// this app's own outbound sockets exactly like any other app on the
-// device, so packets naturally continue through the existing tunnel.
+// NewServer builds a MITM proxy listening on 127.0.0.1:ListenPort. Upstream
+// connections use cfg.UpstreamDial when set — required on Android, where this
+// app's process is EXCLUDED from its own VPN (BoxPlatform.applyAppRouting adds
+// the package to the disallowed list so the engine's proxy dial doesn't
+// recurse into the tunnel). A plain net.Dial from here would therefore bypass
+// the tunnel entirely and every RKN-blocked site would fail in the browser
+// while the VPN is up. The caller aims UpstreamDial at the engine's loopback
+// SOCKS inbound so filtered browser traffic re-enters the tunnel. When nil
+// (desktop), gomitmproxy's default direct dialer is used.
 func NewServer(cfg Config) (*Server, error) {
 	if cfg.RootCert == nil || cfg.RootKey == nil {
 		return nil, fmt.Errorf("root CA required")
@@ -76,6 +88,9 @@ func NewServer(cfg Config) (*Server, error) {
 			ListenAddr:     addr,
 			MITMConfig:     mitmConfig,
 			MITMExceptions: defaultMITMExceptions(),
+			// Route upstream through the tunnel (see UpstreamDial doc). Nil
+			// leaves gomitmproxy's default direct dialer in place.
+			Dial: cfg.UpstreamDial,
 		},
 	})
 	if err != nil {
@@ -95,7 +110,7 @@ func NewServer(cfg Config) (*Server, error) {
 // user who happens to browse it in Chrome has no upside for an ad blocker.
 func defaultMITMExceptions() []string {
 	return []string{
-		"google.com", "googleapis.com", "gstatic.com", "youtube.com", "ytimg.com",
+		"google.com", "googleapis.com", "gstatic.com", "youtube.com", "ytimg.com", "googlevideo.com",
 		"apple.com", "icloud.com", "mzstatic.com",
 		"microsoft.com", "windows.com", "windowsupdate.com",
 		"gosuslugi.ru", "sberbank.ru", "vtb.ru", "tinkoff.ru",

@@ -98,8 +98,13 @@ class ResultVpnService : VpnService() {
                 val disconnectedMsg = getString(R.string.log_disconnected)
                 worker.execute {
                     BoxModule.filterProxyRunning = false
-                    mobile.Mobile.stopFilterProxy()
+                    // Stop the box FIRST: closeService closes libbox's dup of
+                    // the tun fd, which is what actually drops the VPN network
+                    // (and its setHttpProxy) — our closeTun() above only closed
+                    // our own pfd. If the MITM close below is ever slow, the
+                    // browser must not be left on a dead proxy meanwhile.
                     BoxModule.stop()
+                    mobile.Mobile.stopFilterProxy()
                     AppLog.info(disconnectedMsg)
                 }
                 stopSelf()
@@ -318,12 +323,22 @@ class ResultVpnService : VpnService() {
         AppLog.warning(getString(R.string.log_revoked), getString(R.string.log_source_system))
         reloadWatcher?.cancel(); reloadWatcher = null
         stopKillSwitchWatchdog()
+        // Stop the proxy watchdog BEFORE tearing the engine down — otherwise it
+        // can see the dying proxy as "unhealthy" mid-revoke and trigger an
+        // in-place reload against a VPN the OS has already pulled.
+        stopFilterProxyWatchdog()
         TrafficWatcher.stop()
         ConnectionWatcher.stop()
         closeTun()
         VpnState.set(VpnStatus.Idle)
         stopForeground(STOP_FOREGROUND_REMOVE)
-        worker.execute { BoxModule.stop() }
+        worker.execute {
+            BoxModule.filterProxyRunning = false
+            // Same order as ACTION_STOP: box first (drops the tun + its
+            // setHttpProxy), then the MITM proxy.
+            BoxModule.stop()
+            mobile.Mobile.stopFilterProxy()
+        }
         postReconnectPromptNotification()
         stopSelf()
     }
@@ -341,8 +356,10 @@ class ResultVpnService : VpnService() {
         }
         worker.execute {
             BoxModule.filterProxyRunning = false
-            mobile.Mobile.stopFilterProxy()
+            // Box first — see the ACTION_STOP comment: closing the box drops
+            // the tun (and its setHttpProxy) before the MITM proxy goes away.
             BoxModule.stop()
+            mobile.Mobile.stopFilterProxy()
         }
         worker.shutdown()
         super.onDestroy()

@@ -37,6 +37,13 @@ internal object BuildOptionsBuilder {
             // caches the SRS lists locally when present and falls back to
             // remote otherwise.
             .put("adblock", settings.adblock)
+            // Browser ad-block (MITM). When on, the engine exposes a loopback
+            // SOCKS inbound so the in-process MITM proxy routes its upstream
+            // traffic back through the tunnel — without it the MITM dials
+            // direct (this app is excluded from its own VPN) and RKN-blocked
+            // sites die in the browser. Must mirror the same flag that gates
+            // StartFilterProxy / setHttpProxy in ResultVpnService.
+            .put("browserAdBlock", settings.browserAdBlock)
             // Kill switch: armed whenever the user enabled it; panic only while
             // the watchdog has engaged (proxy down).
             .put("killSwitchArmed", settings.killSwitch)
