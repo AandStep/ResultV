@@ -1,8 +1,10 @@
 package com.resultv.android.vpn
 
 import android.content.Context
+import android.net.ConnectivityManager
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
+import android.os.Process
 import android.util.Log
 import com.resultv.android.R
 import libbox.CommandServer
@@ -21,6 +23,8 @@ import libbox.SystemProxyStatus
 import libbox.TunOptions
 import libbox.WIFIState
 import java.io.File
+import java.net.InetAddress
+import java.net.InetSocketAddress
 
 private const val TAG = "ResultV/Box"
 const val BROWSER_ADBLOCK_PORT = 8130
@@ -320,17 +324,64 @@ private class BoxPlatform(private val service: ResultVpnService) : PlatformInter
     override fun useProcFS(): Boolean = false
     override fun localDNSTransport(): LocalDNSTransport? = null
 
-    // Returning null from this method crashes the libbox wrapper —
-    // service.go:218 dereferences result.UserId without a nil check.
-    // Throw instead so the wrapper takes the (nil, err) path and the
-    // router treats the connection owner as "not found" cleanly.
+    /**
+     * Resolves the app behind a connection so sing-box `package_name` rules can
+     * match. ConnectivityManager is the only route available: SELinux blocks
+     * /proc/net/tcp for untrusted_app, which is why useProcFS() stays false.
+     *
+     * Throwing (rather than returning null) is required: returning null crashes
+     * the libbox wrapper — service.go:218 dereferences result.UserId without a
+     * nil check. Throwing takes the (nil, err) path and the router treats the
+     * owner as "not found" cleanly.
+     *
+     * Failure is fail-OPEN by construction: an unresolved owner matches no
+     * package rule, so the traffic follows the general path rather than being
+     * blocked. Two known holes, both accepted in the spec:
+     * - API < 29: getConnectionOwnerUid doesn't exist (minSdk is 26). The UI
+     *   disables the affected tabs there.
+     * - UDP: only connected sockets are resolvable per the platform contract,
+     *   so QUIC on an unconnected socket won't match.
+     */
     override fun findConnectionOwner(
         ipProtocol: Int,
         sourceAddress: String?,
         sourcePort: Int,
         destinationAddress: String?,
         destinationPort: Int,
-    ): ConnectionOwner = throw UnsupportedOperationException("connection owner lookup not supported")
+    ): ConnectionOwner {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) {
+            throw UnsupportedOperationException("connection owner lookup needs API 29")
+        }
+        val cm = service.getSystemService(ConnectivityManager::class.java)
+            ?: throw UnsupportedOperationException("no ConnectivityManager")
+        val uid = cm.getConnectionOwnerUid(
+            ipProtocol,
+            InetSocketAddress(InetAddress.getByName(sourceAddress), sourcePort),
+            InetSocketAddress(InetAddress.getByName(destinationAddress), destinationPort),
+        )
+        if (uid == Process.INVALID_UID) {
+            throw UnsupportedOperationException("connection owner not found")
+        }
+        val packages = packagesForUid(uid)
+            ?: throw UnsupportedOperationException("no packages for uid $uid")
+        val owner = ConnectionOwner()
+        owner.userId = uid
+        owner.setAndroidPackageNames(PackageNameIterator(packages))
+        return owner
+    }
+
+    /**
+     * uid → package names, cached for the tunnel's lifetime. getConnectionOwnerUid
+     * has to run per connection, but getPackagesForUid is the expensive half and
+     * its answer only changes on install/uninstall — which tears the mapping down
+     * with the next reconnect anyway.
+     */
+    private val packageCache = java.util.concurrent.ConcurrentHashMap<Int, Array<String>>()
+
+    private fun packagesForUid(uid: Int): Array<String>? =
+        packageCache.getOrPut(uid) {
+            service.packageManager.getPackagesForUid(uid) ?: return null
+        }
 
     override fun startDefaultInterfaceMonitor(listener: InterfaceUpdateListener?) {}
     override fun closeDefaultInterfaceMonitor(listener: InterfaceUpdateListener?) {}
@@ -352,6 +403,13 @@ private object EmptyStringIterator : StringIterator {
     override fun hasNext(): Boolean = false
     override fun next(): String = throw NoSuchElementException()
     override fun len(): Int = 0
+}
+
+private class PackageNameIterator(private val names: Array<String>) : StringIterator {
+    private var i = 0
+    override fun hasNext(): Boolean = i < names.size
+    override fun next(): String = names[i++]
+    override fun len(): Int = names.size
 }
 
 private class StubCommandHandler : CommandServerHandler {
