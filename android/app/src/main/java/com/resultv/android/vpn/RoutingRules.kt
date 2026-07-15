@@ -6,7 +6,6 @@ import com.resultv.android.R
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
@@ -24,19 +23,17 @@ private const val FILE_NAME = "routing_rules.json"
  */
 enum class RoutingMode { Global, Smart }
 
+/**
+ * Top-level routing state. The domain lists live in [DomainRulesState]; `mode`
+ * selects which of them is active (Global → outOfVpn, Smart → intoVpn), while
+ * `blocked` applies in both.
+ */
 data class RoutingRulesState(
     val mode: RoutingMode = RoutingMode.Global,
-    /** Domains that always bypass the proxy (resolved direct). */
-    val domainExclusions: List<String> = listOf(
-        "localhost", "127.0.0.1", "*.ru", "*.рф",
+    val domains: DomainRulesState = DomainRulesState(
+        // Same defaults as before the three-list split — fresh installs only.
+        outOfVpn = listOf("localhost", "127.0.0.1", "*.ru", "*.рф"),
     ),
-    /**
-     * MRU list of domains the user has typed at least once — drives the
-     * Rules screen's "Recently used" suggestion chips so the next paste of
-     * a familiar pattern is a single tap. Bounded to [DOMAIN_HISTORY_MAX]
-     * entries; oldest fall off when the cap is hit.
-     */
-    val domainHistory: List<String> = emptyList(),
 )
 
 /**
@@ -85,31 +82,26 @@ object RoutingRulesRepository {
     fun setMode(mode: RoutingMode) = mutate { it.copy(mode = mode) }
 
     @Synchronized
-    fun addDomain(domain: String) = mutate {
-        val trimmed = domain.trim()
-        if (trimmed.isEmpty()) return@mutate it
-        val nextHistory = (listOf(trimmed) + it.domainHistory.filterNot { d -> d == trimmed })
-            .take(DOMAIN_HISTORY_MAX)
-        if (trimmed in it.domainExclusions) it.copy(domainHistory = nextHistory)
-        else it.copy(
-            domainExclusions = it.domainExclusions + trimmed,
-            domainHistory = nextHistory,
-        )
-    }
+    fun addDomain(domain: String, action: RuleAction) =
+        mutate { it.copy(domains = it.domains.withAction(domain, action)) }
 
     @Synchronized
-    fun removeDomain(domain: String) = mutate {
-        it.copy(domainExclusions = it.domainExclusions.filterNot { d -> d == domain })
-    }
+    fun removeDomain(domain: String, action: RuleAction) =
+        mutate { it.copy(domains = it.domains.withoutAction(domain, action)) }
 
-    /**
-     * Drop one entry from the recently-used history list (e.g. user
-     * dismissed a suggestion they don't want re-suggested).
-     */
     @Synchronized
     fun forgetDomainHistory(domain: String) = mutate {
-        it.copy(domainHistory = it.domainHistory.filterNot { d -> d == domain })
+        it.copy(domains = it.domains.copy(history = it.domains.history.filterNot { d -> d == domain }))
     }
+
+    /** Domains sent to the engine as `domain_suffix` → direct (Global only). */
+    fun engineOutOfVpn(): List<String> = _state.value.domains.outOfVpn
+
+    /** Domains sent as `domain_suffix` → proxy (Smart only). */
+    fun engineIntoVpn(): List<String> = _state.value.domains.intoVpn
+
+    /** Domains sent as `domain_suffix` → reject (both modes). */
+    fun engineBlocked(): List<String> = _state.value.domains.blocked
 
     private fun mutate(block: (RoutingRulesState) -> RoutingRulesState) {
         val next = block(_state.value)
@@ -121,32 +113,22 @@ object RoutingRulesRepository {
     private fun load(f: File): RoutingRulesState {
         if (!f.exists()) return RoutingRulesState()
         return try {
-            val root = JSONObject(f.readText())
-            val mode = RoutingMode.entries.firstOrNull { it.name == root.optString("mode") }
+            val mode = RoutingMode.entries.firstOrNull { it.name == JSONObject(f.readText()).optString("mode") }
                 ?: RoutingMode.Global
-            val arr = root.optJSONArray("domainExclusions") ?: JSONArray()
-            val domains = (0 until arr.length()).map { arr.getString(it) }
-            val historyArr = root.optJSONArray("domainHistory") ?: JSONArray()
-            val history = (0 until historyArr.length()).map { historyArr.getString(it) }
-            RoutingRulesState(mode = mode, domainExclusions = domains, domainHistory = history)
+            RoutingRulesState(mode = mode, domains = decodeDomainRules(f.readText()))
         } catch (t: Throwable) {
             Log.w(TAG, "failed to read $f, starting empty", t)
             AppLog.warning(R.string.log_read_failed, f.name,
                 source = AppLog.resolve(R.string.log_source_config))
-            RoutingRulesState()
+            // Empty, NOT the fresh-install defaults: a corrupt file must not
+            // silently re-add exclusions the user may have removed.
+            RoutingRulesState(domains = DomainRulesState())
         }
     }
 
     private fun save(f: File, s: RoutingRulesState) {
         try {
-            val arr = JSONArray()
-            s.domainExclusions.forEach { arr.put(it) }
-            val historyArr = JSONArray()
-            s.domainHistory.forEach { historyArr.put(it) }
-            val root = JSONObject()
-                .put("mode", s.mode.name)
-                .put("domainExclusions", arr)
-                .put("domainHistory", historyArr)
+            val root = JSONObject(encodeDomainRules(s.domains)).put("mode", s.mode.name)
             f.writeText(root.toString())
         } catch (t: Throwable) {
             Log.e(TAG, "failed to persist routing rules", t)

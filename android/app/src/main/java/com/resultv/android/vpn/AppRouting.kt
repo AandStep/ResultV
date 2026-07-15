@@ -6,90 +6,99 @@ import com.resultv.android.R
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import org.json.JSONArray
-import org.json.JSONObject
 import java.io.File
 
 private const val TAG = "ResultV/AppRouting"
 private const val FILE_NAME = "app_routing.json"
 
-enum class AppRoutingMode { All, AllowList, DisallowList }
-
 /**
- * Global per-app routing settings. The `Allowed` / `Disallowed` lists feed
- * directly into VpnService.Builder.add{Allowed,Disallowed}Application; the
- * two modes are mutually exclusive at the OS level, so we model that as a
- * tagged union.
- *
- * `selectedPackages` carries the active list for whichever mode is set.
+ * Persistence + StateFlow around [AppRulesState]. All rule logic lives in
+ * AppRules.kt (pure, JVM-testable); this object owns only the file, the
+ * AppLog side-effects and the own-package guard.
  */
-data class AppRoutingState(
-    val mode: AppRoutingMode = AppRoutingMode.All,
-    val selectedPackages: Set<String> = emptySet(),
-)
-
 object AppRoutingRepository {
-    private val _state = MutableStateFlow(AppRoutingState())
-    val state: StateFlow<AppRoutingState> = _state.asStateFlow()
+    private val _state = MutableStateFlow(AppRulesState())
+    val state: StateFlow<AppRulesState> = _state.asStateFlow()
 
     @Volatile private var file: File? = null
+
+    /**
+     * Blocking or force-tunnelling our own package would cut the engine off
+     * from its own proxy dial. The app catalogue in RulesScreen already hides
+     * us, so this is a belt-and-braces guard for migrated/hand-edited files.
+     */
+    @Volatile private var ownPackage: String = ""
 
     @Synchronized
     fun init(ctx: Context) {
         if (file != null) return
         val f = File(ctx.filesDir, FILE_NAME)
         file = f
-        _state.value = load(f)
+        ownPackage = ctx.packageName
+        val loaded = load(f)
+        if (loaded.migratedFromAllowList) {
+            AppLog.warning(R.string.log_app_rules_allowlist_migrated)
+        }
+        _state.value = loaded.copy(migratedFromAllowList = false)
     }
 
     @Synchronized
-    fun setMode(mode: AppRoutingMode) = mutate { it.copy(mode = mode) }
-
-    @Synchronized
-    fun setSelected(packages: Set<String>) = mutate { it.copy(selectedPackages = packages) }
-
-    @Synchronized
-    fun toggle(pkg: String) = mutate {
-        val next = if (pkg in it.selectedPackages) it.selectedPackages - pkg
-        else it.selectedPackages + pkg
-        it.copy(selectedPackages = next)
+    fun setAction(pkg: String, action: RuleAction) {
+        if (pkg == ownPackage) return
+        mutate { it.withAction(pkg, action) }
     }
 
     @Synchronized
-    fun clearSelection() = mutate { it.copy(selectedPackages = emptySet()) }
+    fun clearAction(pkg: String, action: RuleAction) = mutate { it.withoutAction(pkg, action) }
 
-    private fun mutate(block: (AppRoutingState) -> AppRoutingState) {
+    /** "Clear" button: empties only the tab the user is looking at. */
+    @Synchronized
+    fun clearList(action: RuleAction) = mutate { s ->
+        s.listOf(action).fold(s) { acc, pkg -> acc.withoutAction(pkg, action) }
+    }
+
+    private fun AppRulesState.listOf(action: RuleAction): Set<String> = when (action) {
+        RuleAction.OutOfVpn -> outOfVpn
+        RuleAction.IntoVpn -> intoVpn
+        RuleAction.Block -> blocked
+    }
+
+    /** Packages handed to sing-box as `package_name` → proxy (Smart only). */
+    fun engineIntoVpn(): Set<String> = _state.value.intoVpn - ownPackage
+
+    /** Packages handed to sing-box as `package_name` → reject (both modes). */
+    fun engineBlocked(): Set<String> = _state.value.blocked - ownPackage
+
+    /**
+     * Packages excluded from the TUN at the OS level. Global only: in Smart the
+     * "out of VPN" list is not active. Blocked apps are deliberately NOT here —
+     * they must ENTER the tunnel for the reject rule to have anything to cut.
+     */
+    fun disallowedPackages(mode: RoutingMode): Set<String> =
+        if (mode == RoutingMode.Global) _state.value.outOfVpn - ownPackage else emptySet()
+
+    private fun mutate(block: (AppRulesState) -> AppRulesState) {
         val next = block(_state.value)
         if (next == _state.value) return
         _state.value = next
         file?.let { save(it, next) }
     }
 
-    private fun load(f: File): AppRoutingState {
-        if (!f.exists()) return AppRoutingState()
+    private fun load(f: File): AppRulesState {
+        if (!f.exists()) return AppRulesState()
         return try {
-            val root = JSONObject(f.readText())
-            val mode = AppRoutingMode.entries.firstOrNull { it.name == root.optString("mode") }
-                ?: AppRoutingMode.All
-            val arr = root.optJSONArray("packages") ?: JSONArray()
-            val pkgs = (0 until arr.length()).map { arr.getString(it) }.toSet()
-            AppRoutingState(mode = mode, selectedPackages = pkgs)
+            decodeAppRules(f.readText())
         } catch (t: Throwable) {
             Log.w(TAG, "failed to read $f, starting empty", t)
             AppLog.warning(R.string.log_read_failed, f.name,
                 source = AppLog.resolve(R.string.log_source_config))
-            AppRoutingState()
+            AppRulesState()
         }
     }
 
-    private fun save(f: File, s: AppRoutingState) {
+    private fun save(f: File, s: AppRulesState) {
         try {
-            val arr = JSONArray()
-            s.selectedPackages.sorted().forEach { arr.put(it) }
-            val root = JSONObject()
-                .put("mode", s.mode.name)
-                .put("packages", arr)
-            f.writeText(root.toString())
+            f.writeText(encodeAppRules(s))
         } catch (t: Throwable) {
             Log.e(TAG, "failed to persist app routing", t)
             AppLog.error(R.string.log_persist_failed, f.name,

@@ -370,6 +370,7 @@
     <!-- Persistence read/write error logging -->
     <string name="log_persist_failed">Не удалось сохранить %1$s — изменения могут потеряться после перезапуска.</string>
     <string name="log_read_failed">Не удалось прочитать %1$s — данные сброшены.</string>
+    <string name="log_app_rules_allowlist_migrated">Режим приложений «Разрешить» убран; список перенесён во вкладку «В ВПН» (режим Smart)</string>
     <string name="log_app_started">ResultV запущен.</string>
     <string name="log_smart_loaded">Списки Smart загружены (%1$s), записей: %2$d.</string>
     <string name="log_adblock_loaded">Базы блокировки загружены (%1$d/%2$d).</string>

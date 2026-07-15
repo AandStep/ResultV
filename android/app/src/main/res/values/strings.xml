@@ -406,6 +406,7 @@
     <!-- Persistence read/write error logging -->
     <string name="log_persist_failed">Failed to save %1$s — changes may be lost after restart.</string>
     <string name="log_read_failed">Failed to read %1$s — starting with empty data.</string>
+    <string name="log_app_rules_allowlist_migrated">Per-app mode "Allow" was removed; the list moved to "Into VPN" (Smart mode)</string>
     <string name="log_app_started">ResultV started.</string>
     <string name="log_smart_loaded">Smart lists loaded (%1$s): %2$d entries.</string>
     <string name="log_adblock_loaded">Block lists loaded (%1$d/%2$d).</string>
