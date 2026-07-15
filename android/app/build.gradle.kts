@@ -166,4 +166,7 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")
+    // Android's unit-test android.jar ships org.json as a throwing stub; the
+    // real implementation is needed to test the rule-file codec on the JVM.
+    testImplementation("org.json:json:20240303")
 }
