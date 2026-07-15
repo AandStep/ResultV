@@ -51,6 +51,18 @@ func indexOfAction(rules []map[string]any, action string) int {
 	return -1
 }
 
+// indexOfRuleSet returns the position of the first rule carrying a rule_set
+// matcher (the ad-block / Smart-list rules reference rule sets by tag; no
+// user rule ever carries rule_set), or -1.
+func indexOfRuleSet(rules []map[string]any) int {
+	for i, r := range rules {
+		if _, ok := r["rule_set"]; ok {
+			return i
+		}
+	}
+	return -1
+}
+
 func TestBlockedAppsEmitRejectRule(t *testing.T) {
 	rules := buildRules(t, BuildOptions{BlockedApps: "com.google.android.youtube"})
 	i := indexOfPackageRule(rules, "reject")
@@ -130,6 +142,18 @@ func TestUserRuleOrder(t *testing.T) {
 	}
 	if !(sniff < block && block < route) {
 		t.Fatalf("want sniff < block < route, got %d %d %d", sniff, block, route)
+	}
+	// User rules must sit ahead of the built-in ad-block / Smart-list rules,
+	// or a built-in rule would win the match before the user's explicit
+	// block/route decision ever gets a chance. The ad-block reject rule is
+	// the reliable anchor: it's the only rule carrying rule_set, since it
+	// references the SRS rule-set tags rather than inline domains.
+	ruleSet := indexOfRuleSet(rules)
+	if ruleSet < 0 {
+		t.Fatal("no rule_set rule emitted despite AdBlock: true")
+	}
+	if !(block < ruleSet && route < ruleSet) {
+		t.Fatalf("want block < ruleSet and route < ruleSet, got block=%d route=%d ruleSet=%d", block, route, ruleSet)
 	}
 	// The port-853 DoT reject must keep firing before an into-VPN rule could
 	// send port 853 to the proxy and re-introduce the 5s stall it prevents.
