@@ -18,7 +18,13 @@ internal object BuildOptionsBuilder {
         val smartMode = rules.mode == RoutingMode.Smart
         return JSONObject()
             .put("dnsServers", SettingsRepository.resolveDnsServers())
-            .put("excludedDomains", rules.domainExclusions.joinToString(","))
+            // "Out of VPN" domains keep the legacy transport key: the Go side
+            // already knows it, and the Global-only gate lives there.
+            .put("excludedDomains", RoutingRulesRepository.engineOutOfVpn().joinToString(","))
+            .put("intoVpnDomains", RoutingRulesRepository.engineIntoVpn().joinToString(","))
+            .put("blockedDomains", RoutingRulesRepository.engineBlocked().joinToString(","))
+            .put("intoVpnApps", AppRoutingRepository.engineIntoVpn().joinToString(","))
+            .put("blockedApps", AppRoutingRepository.engineBlocked().joinToString(","))
             // Honour the IPv6 toggle only when the underlying (non-VPN) network
             // actually routes IPv6. On carriers that advertise a v6 address but
             // blackhole transit, a dual-stack TUN makes every `direct` IPv6

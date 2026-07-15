@@ -241,50 +241,27 @@ private class BoxPlatform(private val service: ResultVpnService) : PlatformInter
     }
 
     /**
-     * Apply per-app routing settings to the VpnService.Builder. The two
-     * Allow/Disallow lists are mutually exclusive at the OS level — calling
-     * one bars the other from being called on the same Builder.
+     * Apply the "out of VPN" app list to the VpnService.Builder.
      *
-     * - Mode `All`: nothing is whitelisted/blacklisted by the user, but we
-     *   still must bypass our own package so sing-box's outbound connect
-     *   to the proxy server doesn't recurse into our tunnel.
-     * - Mode `AllowList`: only the user's selection goes through the VPN.
-     *   Our own UID is automatically excluded (it's not in the selection),
-     *   so no extra bypass call is needed.
-     * - Mode `DisallowList`: user's selection bypasses the VPN; we add our
-     *   own package to that list as well.
+     * Only the disallow half of the OS API is used now. The allow half is
+     * mutually exclusive with it and modelled nothing we still offer: "into
+     * VPN" and "block" are sing-box package_name rules instead, which is what
+     * lets all three lists coexist.
+     *
+     * Blocked apps are deliberately NOT disallowed here — they must ENTER the
+     * tunnel for the reject rule to have something to cut. Same for into-VPN
+     * apps, obviously.
+     *
+     * Our own package is always disallowed: sing-box's outbound dial to the
+     * proxy server must not recurse into our own tunnel.
      */
     private fun applyAppRouting(builder: VpnService.Builder) {
         val ownPkg = service.packageName
-        val s = AppRoutingRepository.state.value
-        when (s.mode) {
-            AppRoutingMode.All -> {
-                tryDisallow(builder, ownPkg)
-            }
-            AppRoutingMode.AllowList -> {
-                if (s.selectedPackages.isEmpty()) {
-                    // Empty allow-list would route ZERO traffic (including
-                    // ourselves). Fall back to default + own bypass.
-                    tryDisallow(builder, ownPkg)
-                    return
-                }
-                for (pkg in s.selectedPackages) {
-                    if (pkg == ownPkg) continue
-                    try {
-                        builder.addAllowedApplication(pkg)
-                    } catch (t: Throwable) {
-                        Log.w(TAG, "addAllowedApplication($pkg) failed", t)
-                        AppLog.warning(R.string.log_app_route_failed, pkg)
-                    }
-                }
-            }
-            AppRoutingMode.DisallowList -> {
-                tryDisallow(builder, ownPkg)
-                for (pkg in s.selectedPackages) {
-                    if (pkg == ownPkg) continue
-                    tryDisallow(builder, pkg)
-                }
-            }
+        tryDisallow(builder, ownPkg)
+        val mode = RoutingRulesRepository.state.value.mode
+        for (pkg in AppRoutingRepository.disallowedPackages(mode)) {
+            if (pkg == ownPkg) continue
+            tryDisallow(builder, pkg)
         }
     }
 
