@@ -677,6 +677,15 @@ type BuildOptions struct {
 	// proxy is down. The urltest group still probes the proxy (its dial is a
 	// protected socket, unaffected by route.final), so recovery is detectable.
 	KillSwitchPanic bool `json:"killSwitchPanic,omitempty"`
+	// Per-app / per-domain rule lists, comma-separated (gomobile can't bind
+	// []string across JNI). IntoVpn* are Smart-mode only; Blocked* apply in
+	// both modes. The "out of VPN" app list never arrives here — it's applied
+	// by VpnService.Builder.addDisallowedApplication on the Kotlin side, so
+	// those apps never enter the TUN at all.
+	IntoVpnDomains string `json:"intoVpnDomains,omitempty"`
+	BlockedDomains string `json:"blockedDomains,omitempty"`
+	IntoVpnApps    string `json:"intoVpnApps,omitempty"`
+	BlockedApps    string `json:"blockedApps,omitempty"`
 }
 
 // BuildSingBoxConfig converts a proxy URI directly into a sing-box JSON
@@ -769,6 +778,91 @@ func decodeOptions(optionsJson string) BuildOptions {
 		return BuildOptions{}
 	}
 	return o
+}
+
+// splitRuleCSV parses a comma-separated rule list, trimming and de-duplicating.
+func splitRuleCSV(raw string) []string {
+	var out []string
+	seen := make(map[string]struct{})
+	for _, part := range strings.Split(raw, ",") {
+		s := strings.TrimSpace(part)
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
+// splitDomainRuleCSV is splitRuleCSV plus the domain normalization the
+// excluded-domain path already applies: lowercase, strip `*.` wildcards so
+// `*.ru` becomes the `.ru` suffix match sing-box expects.
+func splitDomainRuleCSV(raw string) []string {
+	var out []string
+	seen := make(map[string]struct{})
+	for _, part := range strings.Split(raw, ",") {
+		n := strings.TrimSpace(part)
+		n = strings.ToLower(n)
+		n = strings.TrimLeft(n, "*.")
+		n = strings.TrimRight(n, "*.")
+		if n == "" {
+			continue
+		}
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		out = append(out, n)
+	}
+	return out
+}
+
+// buildUserRules renders the user's per-app / per-domain lists, restrictive
+// first (block > proxy). Empty lists emit nothing — that is what keeps the
+// connection-owner resolve off the hot path when the feature is unused, since
+// sing-box only resolves the owner if some rule asks for it.
+func buildUserRules(opts BuildOptions) []proxy.SBRouteRule {
+	var rules []proxy.SBRouteRule
+	if apps := splitRuleCSV(opts.BlockedApps); len(apps) > 0 {
+		rules = append(rules, proxy.SBRouteRule{Action: "reject", PackageName: apps})
+	}
+	if doms := splitDomainRuleCSV(opts.BlockedDomains); len(doms) > 0 {
+		rules = append(rules, proxy.SBRouteRule{Action: "reject", DomainSuffix: doms})
+	}
+	// "Into VPN" is Smart-only: in Global final=proxy already tunnels it.
+	if opts.SmartMode {
+		if apps := splitRuleCSV(opts.IntoVpnApps); len(apps) > 0 {
+			rules = append(rules, proxy.SBRouteRule{
+				Action: "route", Outbound: "proxy", PackageName: apps,
+			})
+		}
+		if doms := splitDomainRuleCSV(opts.IntoVpnDomains); len(doms) > 0 {
+			rules = append(rules, proxy.SBRouteRule{
+				Action: "route", Outbound: "proxy", DomainSuffix: doms,
+			})
+		}
+	}
+	return rules
+}
+
+// userRuleInsertIndex returns the index just past the prologue that must stay
+// ahead of user rules: sniff (domain matchers are blind before it — see the
+// note on the excluded-domain block), hijack-dns, and the port-853 DoT reject
+// (an into-VPN rule that grabbed port 853 first would re-introduce the 5s
+// stall that reject exists to prevent).
+func userRuleInsertIndex(rules []proxy.SBRouteRule) int {
+	idx := 0
+	for i, r := range rules {
+		isPortReject := r.Action == "reject" && len(r.Port) > 0
+		if r.Action == "sniff" || r.Action == "hijack-dns" || isPortReject {
+			idx = i + 1
+		}
+	}
+	return idx
 }
 
 // splitSmartList parses the newline-separated blocked-domain list sent by
@@ -1042,9 +1136,13 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 	//
 	// Additionally, strip any process_path_regex rules: on Android,
 	// SELinux (tclass=file, proc_net_tcp_udp) prevents untrusted_app from
-	// reading /proc/net/tcp, so sing-box can never resolve a process path.
+	// reading /proc/net/tcp, so sing-box can never resolve a process PATH.
 	// Our own process is already excluded via addDisallowedApplication in
 	// BoxPlatform.openTun, so the self-bypass rule is redundant anyway.
+	//
+	// This does NOT apply to package_name rules (buildUserRules): those match
+	// on the connection owner, which BoxPlatform.findConnectionOwner resolves
+	// via ConnectivityManager.getConnectionOwnerUid — no procfs involved.
 	for i := range sb.Inbounds {
 		if sb.Inbounds[i].Type == "tun" {
 			sb.Inbounds[i].StrictRoute = false
@@ -1083,13 +1181,30 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 		// per-socket `protect(fd)` automatically; we must NOT set the flag.
 		sb.Route.AutoDetect = false
 
+		// User rule lists (blocked / into-VPN) go after the sniff prologue but
+		// ahead of the built-in ad-block and Smart-list rules — sing-box takes
+		// the first match, so a built-in rule would otherwise win.
+		if extra := buildUserRules(opts); len(extra) > 0 {
+			at := userRuleInsertIndex(sb.Route.Rules)
+			merged := make([]proxy.SBRouteRule, 0, len(sb.Route.Rules)+len(extra))
+			merged = append(merged, sb.Route.Rules[:at]...)
+			merged = append(merged, extra...)
+			merged = append(merged, sb.Route.Rules[at:]...)
+			sb.Route.Rules = merged
+		}
+
 		// Domain exclusions: route matching hosts to `direct`, bypassing
 		// the proxy. MUST be appended AFTER the `sniff` action rule —
 		// sing-box only knows the destination IP at TUN ingress; the
 		// domain is populated from TLS SNI / HTTP Host once `sniff` runs,
 		// after which `domain` / `domain_suffix` matchers can fire.
 		// Putting this rule before sniff means it never matches.
-		if opts.ExcludedDomains != "" {
+		//
+		// "Out of VPN" domains are Global-only, mirroring the desktop: in Smart
+		// the user's domain list means the opposite (into VPN) and is emitted
+		// by buildUserRules above. The gate lives here rather than in Kotlin so
+		// it stays a single source of truth covered by a Go test.
+		if opts.ExcludedDomains != "" && !opts.SmartMode {
 			seen := make(map[string]struct{})
 			var normalized []string
 			for _, part := range strings.Split(opts.ExcludedDomains, ",") {

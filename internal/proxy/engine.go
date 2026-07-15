@@ -345,9 +345,13 @@ type SBRouteRule struct {
 	IPCidr           []string `json:"ip_cidr,omitempty"`
 	ProcessName      []string `json:"process_name,omitempty"`
 	ProcessPathRegex []string `json:"process_path_regex,omitempty"`
-	RuleSet          []string `json:"rule_set,omitempty"`
-	Outbound         string   `json:"outbound,omitempty"`
-	Action           string   `json:"action,omitempty"`
+	// PackageName matches Android app package names. Requires the platform
+	// interface to resolve the connection owner (libbox FindProcessInfo);
+	// desktop builds never set it.
+	PackageName []string `json:"package_name,omitempty"`
+	RuleSet     []string `json:"rule_set,omitempty"`
+	Outbound    string   `json:"outbound,omitempty"`
+	Action      string   `json:"action,omitempty"`
 }
 
 func effectiveDataDir(cfg EngineConfig) string {
