@@ -39,8 +39,6 @@ data class RoutingRulesState(
     val domainHistory: List<String> = emptyList(),
 )
 
-private const val DOMAIN_HISTORY_MAX = 24
-
 /**
  * True when [pattern] is a strict superset of [candidate] — i.e. anything
  * matched by `candidate` is also matched by `pattern`, but the two are not
