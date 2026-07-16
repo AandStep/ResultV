@@ -26,6 +26,7 @@ import (
 
 	"resultproxy-wails/internal/filter/ca"
 	"resultproxy-wails/internal/filter/mitm"
+	filterproxy "resultproxy-wails/internal/filter/mitm/vendoredproxy"
 )
 
 const metaFileName = "filters-meta.json"
@@ -51,6 +52,13 @@ type Manager struct {
 	engineMu  sync.Mutex
 	engine    *urlfilter.Engine
 	engineKey string
+
+	// Cached scriptlet index, mirroring engine/engineKey above. Re-scanning
+	// ~19MB of lists per connect would regress exactly what the engine cache
+	// protects, so the index follows the same pattern.
+	scriptletIndexMu  sync.Mutex
+	scriptletIndex    *filterproxy.ScriptletIndex
+	scriptletIndexKey string
 
 	networkBlocked  atomic.Uint64
 	cosmeticBlocked atomic.Uint64
@@ -269,13 +277,20 @@ func (m *Manager) StartMITM(listenPort int, upstreamDial func(network, addr stri
 	if err != nil {
 		return err
 	}
+	// Reuse the cached scriptlet index for the same reason — see
+	// cachedScriptletIndex.
+	scriptletIndex, err := m.cachedScriptletIndex(paths)
+	if err != nil {
+		return err
+	}
 	srv, err := mitm.NewServer(mitm.Config{
-		ListenPort:   listenPort,
-		RootCert:     root.Certificate,
-		RootKey:      root.PrivateKey,
-		FilterPaths:  paths,
-		Engine:       engine,
-		UpstreamDial: upstreamDial,
+		ListenPort:     listenPort,
+		RootCert:       root.Certificate,
+		RootKey:        root.PrivateKey,
+		FilterPaths:    paths,
+		Engine:         engine,
+		ScriptletIndex: scriptletIndex,
+		UpstreamDial:   upstreamDial,
 		OnBlocked: func(cosmetic bool) {
 			if cosmetic {
 				m.cosmeticBlocked.Add(1)
@@ -314,6 +329,27 @@ func (m *Manager) cachedEngine(paths map[rules.ListID]string) (*urlfilter.Engine
 	m.engine = eng
 	m.engineKey = key
 	return eng, nil
+}
+
+// cachedScriptletIndex returns a ScriptletIndex for the given filter files,
+// reusing the last-built one when the file set is unchanged. Mirrors
+// cachedEngine: re-scanning ~19MB of lists per connect would regress exactly
+// what that cache protects, so the index follows the same cache-key and
+// invalidation approach.
+func (m *Manager) cachedScriptletIndex(paths map[rules.ListID]string) (*filterproxy.ScriptletIndex, error) {
+	key := engineCacheKey(paths)
+	m.scriptletIndexMu.Lock()
+	defer m.scriptletIndexMu.Unlock()
+	if m.scriptletIndex != nil && m.scriptletIndexKey == key {
+		return m.scriptletIndex, nil
+	}
+	ix, err := mitm.BuildScriptletIndex(paths)
+	if err != nil {
+		return nil, err
+	}
+	m.scriptletIndex = ix
+	m.scriptletIndexKey = key
+	return ix, nil
 }
 
 // engineCacheKey fingerprints the filter file set (id + path + size + mtime) so

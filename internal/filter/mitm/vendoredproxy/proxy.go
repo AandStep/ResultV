@@ -44,6 +44,14 @@ type Config struct {
 	// the browser ad-block attach fast on every connect after the first.
 	Engine *urlfilter.Engine
 
+	// ScriptletIndex, when non-nil, is used verbatim instead of building one
+	// from FiltersPaths — mirrors Engine above. It indexes the `#%#`/`#@%#`
+	// cosmetic-JS rules that urlfilter's own parser rejects (see
+	// scriptletindex.go), so buildContentScript can still serve them to the
+	// browser. Same caching rationale as Engine: the Manager builds it once
+	// and reuses it across proxy restarts.
+	ScriptletIndex *ScriptletIndex
+
 	// If true, we will serve the content-script compressed
 	// This is useful for the case when the proxy is on a public server,
 	// as it saves some data.
@@ -82,6 +90,10 @@ type Server struct {
 	// filtering engine
 	engine *urlfilter.Engine
 
+	// scriptletIndex indexes `#%#`/`#@%#` cosmetic-JS rules; nil disables
+	// scriptlet injection (degraded mode, see NewServer).
+	scriptletIndex *ScriptletIndex
+
 	// time when the server was created
 	createdAt time.Time
 
@@ -113,6 +125,23 @@ func NewServer(config Config) (*Server, error) {
 	}
 
 	s.engine = engine
+
+	// ResultV: reuse a pre-built scriptlet index when supplied, else build
+	// from FiltersPaths. An index build error is logged and degrades to no
+	// scriptlets — it must never fail NewServer or take down the page, since
+	// scriptlet execution is a best-effort ad-block enhancement, not a
+	// requirement for the proxy to serve traffic.
+	scriptletIndex := config.ScriptletIndex
+	if scriptletIndex == nil {
+		var err error
+		scriptletIndex, err = BuildScriptletIndex(config.FiltersPaths)
+		if err != nil {
+			log.Error("failed to build scriptlet index, scriptlets disabled: %v", err)
+			scriptletIndex = nil
+		}
+	}
+	s.scriptletIndex = scriptletIndex
+
 	s.ProxyConfig.OnRequest = s.onRequest
 	s.ProxyConfig.OnResponse = s.onResponse
 	s.ProxyConfig.OnConnect = s.onConnect

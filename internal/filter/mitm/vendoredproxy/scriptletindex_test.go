@@ -8,9 +8,13 @@
 package proxy
 
 import (
+	"fmt"
+	"io"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/AdguardTeam/urlfilter/rules"
@@ -291,4 +295,107 @@ func TestScriptletIndex(t *testing.T) {
 			t.Errorf("Match(deep.x.a.com) specific = %v, want [code] (exception restricted away)", specificDeepX)
 		}
 	})
+}
+
+// testServerWithScriptletIndex builds a Server carrying an engine built from
+// an empty filter list (so GetCosmeticResult never finds anything on its
+// own) and the given ScriptletIndex, so buildContentScript's merge of the
+// index's matches into CosmeticResult.JS can be exercised end to end.
+//
+// It writes the empty list into dir rather than t.TempDir(): urlfilter's
+// engine keeps its list files open, and on Windows t.TempDir's RemoveAll
+// then fails even though the assertions pass (see
+// TestContentScript_ScriptletRuleFlowsFromListToPayload for the same
+// workaround). The caller owns dir's cleanup.
+func testServerWithScriptletIndex(t *testing.T, dir string, ix *ScriptletIndex) *Server {
+	t.Helper()
+
+	emptyList := filepath.Join(dir, "empty.txt")
+	if err := os.WriteFile(emptyList, []byte(""), 0o600); err != nil {
+		t.Fatalf("writing empty list: %v", err)
+	}
+
+	eng, err := BuildEngine(map[rules.ListID]string{1: emptyList})
+	if err != nil {
+		t.Fatalf("BuildEngine failed: %v", err)
+	}
+
+	s := testServer()
+	s.engine = eng
+	s.scriptletIndex = ix
+	return s
+}
+
+func TestBuildContentScript_MergesScriptletIndexWhenJSBitSet(t *testing.T) {
+	dir, err := os.MkdirTemp("", "scriptlet-merge-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp failed: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	list := filepath.Join(dir, "list.txt")
+	content := `example.org#%#//scriptlet('abort-current-inline-script', 'document.dispatchEvent', '/getexoloader/')`
+	if err := os.WriteFile(list, []byte(content), 0o600); err != nil {
+		t.Fatalf("writing list: %v", err)
+	}
+
+	ix, err := BuildScriptletIndex(map[rules.ListID]string{1: list})
+	if err != nil {
+		t.Fatalf("BuildScriptletIndex failed: %v", err)
+	}
+
+	s := testServerWithScriptletIndex(t, dir, ix)
+
+	url := fmt.Sprintf("http://%s/content-script.js?hostname=example.org&option=%d&ts=%d",
+		s.InjectionHost, rules.CosmeticOptionAll, s.createdAt.Unix())
+	req := httptest.NewRequest("GET", url, nil)
+	res := s.buildContentScript(NewSession("t1", req))
+	if res.StatusCode != 200 {
+		t.Fatalf("want 200, got %d", res.StatusCode)
+	}
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("reading body: %v", err)
+	}
+	if !strings.Contains(string(body), "abort-current-inline-script") {
+		t.Fatalf("content script body missing scriptlet rule:\n%s", body)
+	}
+}
+
+func TestBuildContentScript_OmitsScriptletIndexWhenJSBitUnset(t *testing.T) {
+	dir, err := os.MkdirTemp("", "scriptlet-omit-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp failed: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	list := filepath.Join(dir, "list.txt")
+	content := `example.org#%#//scriptlet('abort-current-inline-script', 'document.dispatchEvent', '/getexoloader/')`
+	if err := os.WriteFile(list, []byte(content), 0o600); err != nil {
+		t.Fatalf("writing list: %v", err)
+	}
+
+	ix, err := BuildScriptletIndex(map[rules.ListID]string{1: list})
+	if err != nil {
+		t.Fatalf("BuildScriptletIndex failed: %v", err)
+	}
+
+	s := testServerWithScriptletIndex(t, dir, ix)
+
+	url := fmt.Sprintf("http://%s/content-script.js?hostname=example.org&option=%d&ts=%d",
+		s.InjectionHost, rules.CosmeticOptionCSS, s.createdAt.Unix())
+	req := httptest.NewRequest("GET", url, nil)
+	res := s.buildContentScript(NewSession("t2", req))
+	if res.StatusCode != 200 {
+		t.Fatalf("want 200, got %d", res.StatusCode)
+	}
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("reading body: %v", err)
+	}
+	if strings.Contains(string(body), "abort-current-inline-script") {
+		t.Fatalf("content script body must not contain scriptlet rule when JS bit is unset:\n%s", body)
+	}
 }

@@ -16,9 +16,9 @@ import (
 
 	"github.com/AdguardTeam/gomitmproxy"
 	"github.com/AdguardTeam/gomitmproxy/mitm"
-	filterproxy "resultproxy-wails/internal/filter/mitm/vendoredproxy"
 	"github.com/AdguardTeam/urlfilter"
 	"github.com/AdguardTeam/urlfilter/rules"
+	filterproxy "resultproxy-wails/internal/filter/mitm/vendoredproxy"
 )
 
 // Config configures the local MITM filtering proxy.
@@ -32,6 +32,9 @@ type Config struct {
 	// The Manager caches it across proxy restarts to keep the browser ad-block
 	// attach fast on every connect after the first.
 	Engine *urlfilter.Engine
+	// ScriptletIndex, when non-nil, is reused instead of rebuilding from
+	// FilterPaths — mirrors Engine above, same caching rationale.
+	ScriptletIndex *filterproxy.ScriptletIndex
 	// UpstreamDial, when non-nil, is used for every connection the proxy makes
 	// to an origin server. On Android the MITM proxy runs inside the app
 	// process, which is excluded from the VPN (addDisallowedApplication), so a
@@ -47,6 +50,12 @@ type Config struct {
 // proxy restart.
 func BuildEngine(paths map[rules.ListID]string) (*urlfilter.Engine, error) {
 	return filterproxy.BuildEngine(paths)
+}
+
+// BuildScriptletIndex builds (and lets the caller cache) a ScriptletIndex
+// from the given filter files, mirroring BuildEngine above.
+func BuildScriptletIndex(paths map[rules.ListID]string) (*filterproxy.ScriptletIndex, error) {
+	return filterproxy.BuildScriptletIndex(paths)
 }
 
 // Server wraps urlfilter's MITM proxy.
@@ -81,9 +90,10 @@ func NewServer(cfg Config) (*Server, error) {
 
 	s := &Server{}
 	inner, err := filterproxy.NewServer(filterproxy.Config{
-		FiltersPaths:  cfg.FilterPaths,
-		Engine:        cfg.Engine,
-		InjectionHost: "injections.resultv.local",
+		FiltersPaths:   cfg.FilterPaths,
+		Engine:         cfg.Engine,
+		ScriptletIndex: cfg.ScriptletIndex,
+		InjectionHost:  "injections.resultv.local",
 		ProxyConfig: gomitmproxy.Config{
 			ListenAddr:     addr,
 			MITMConfig:     mitmConfig,

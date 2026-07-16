@@ -149,7 +149,19 @@ func (s *Server) buildContentScript(session *Session) *http.Response {
 	}
 
 	// #nosec G115 -- TODO(a.garipov):  Validate option properly.
-	cosmeticResult := s.engine.GetCosmeticResult(hostname, rules.CosmeticOption(option))
+	cosmeticOption := rules.CosmeticOption(option)
+	cosmeticResult := s.engine.GetCosmeticResult(hostname, cosmeticOption)
+
+	// ResultV: urlfilter's own parser rejects `#%#`/`#@%#` rules (see
+	// scriptletindex.go), so CosmeticResult.JS never carries them. Merge in
+	// our own index's matches — but only when the request's cosmetic option
+	// carries the JS bit, so `$jsinject` exception rules keep working.
+	if cosmeticOption&rules.CosmeticOptionJS == rules.CosmeticOptionJS {
+		generic, specific := s.scriptletIndex.Match(hostname)
+		cosmeticResult.JS.Generic = append(cosmeticResult.JS.Generic, generic...)
+		cosmeticResult.JS.Specific = append(cosmeticResult.JS.Specific, specific...)
+	}
+
 	bodyBytes := []byte(s.buildContentScriptCode(cosmeticResult))
 	contentLen := len(bodyBytes)
 
