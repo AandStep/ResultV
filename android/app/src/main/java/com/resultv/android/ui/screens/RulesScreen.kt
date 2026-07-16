@@ -38,12 +38,13 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AltRoute
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.Block
+import androidx.compose.material.icons.outlined.CallSplit
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Language
-import androidx.compose.material.icons.outlined.PlaylistAddCheck
 import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.VpnLock
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -83,10 +84,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
 import com.resultv.android.theme.Brand
 import com.resultv.android.ui.components.SettingIcon
-import com.resultv.android.vpn.AppRoutingMode
 import com.resultv.android.vpn.AppRoutingRepository
 import com.resultv.android.vpn.RoutingMode
 import com.resultv.android.vpn.RoutingRulesRepository
+import com.resultv.android.vpn.RuleAction
 import com.resultv.android.vpn.SmartListRepository
 import com.resultv.android.vpn.domainPatternShadows
 import kotlinx.coroutines.Dispatchers
@@ -101,6 +102,11 @@ fun RulesScreen() {
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     var domainInput by remember { mutableStateOf("") }
+    var domainTab by remember { mutableStateOf(RuleAction.OutOfVpn) }
+    // Mode switch changes which tabs exist — snap to the first valid one.
+    LaunchedEffect(rules.mode) {
+        if (domainTab !in tabsFor(rules.mode)) domainTab = tabsFor(rules.mode).first()
+    }
 
     Column(
         modifier = Modifier
@@ -151,18 +157,36 @@ fun RulesScreen() {
                 subtitle = stringResource(R.string.rules_section_domains_subtitle),
             )
             SectionBody {
+                RuleTabs(mode = rules.mode, selected = domainTab, onSelect = { domainTab = it })
+                Text(
+                    stringResource(hintOf(domainTab)),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Brand.SecondaryText,
+                )
+
+                val active = rules.domains.listFor(domainTab)
                 val trimmedInput = domainInput.trim()
-                val coveredBy = remember(trimmedInput, rules.domainExclusions) {
+                val coveredBy = remember(trimmedInput, active) {
                     if (trimmedInput.isEmpty()) null
-                    else rules.domainExclusions.firstOrNull {
-                        domainPatternShadows(it, trimmedInput)
-                    }
+                    else active.firstOrNull { domainPatternShadows(it, trimmedInput) }
                 }
-                val willShadow = remember(trimmedInput, rules.domainExclusions) {
+                val willShadow = remember(trimmedInput, active) {
                     if (trimmedInput.isEmpty()) emptyList()
-                    else rules.domainExclusions.filter {
-                        domainPatternShadows(trimmedInput, it)
-                    }
+                    else active.filter { domainPatternShadows(trimmedInput, it) }
+                }
+                // Domains have no shared catalogue to badge, so the cross-list
+                // invariant surfaces here instead: adding a domain another tab
+                // holds moves it, and we say so.
+                val movedFrom = remember(trimmedInput, rules.domains, domainTab) {
+                    if (trimmedInput.isEmpty()) null
+                    else rules.domains.otherListHolding(trimmedInput, domainTab)
+                }
+                if (movedFrom != null) {
+                    Text(
+                        stringResource(R.string.rules_domain_moved_from, stringResource(labelOf(movedFrom))),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Brand.SecondaryText,
+                    )
                 }
 
                 Row(
@@ -178,14 +202,14 @@ fun RulesScreen() {
                         placeholder = { Text(stringResource(R.string.rules_domain_placeholder)) },
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(onDone = {
-                            RoutingRulesRepository.addDomain(domainInput)
+                            RoutingRulesRepository.addDomain(domainInput, domainTab)
                             domainInput = ""
                             keyboard?.hide(); focusManager.clearFocus()
                         }),
                     )
                     FilledTonalButton(
                         onClick = {
-                            RoutingRulesRepository.addDomain(domainInput)
+                            RoutingRulesRepository.addDomain(domainInput, domainTab)
                             domainInput = ""
                             keyboard?.hide(); focusManager.clearFocus()
                         },
@@ -199,23 +223,23 @@ fun RulesScreen() {
                 }
 
 
-                if (rules.domainExclusions.isNotEmpty()) {
+                if (active.isNotEmpty()) {
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        rules.domainExclusions.forEach { domain ->
+                        active.forEach { domain ->
                             DomainChip(
                                 label = domain,
-                                onRemove = { RoutingRulesRepository.removeDomain(domain) },
+                                onRemove = { RoutingRulesRepository.removeDomain(domain, domainTab) },
                             )
                         }
                     }
                 }
 
-                val recentSuggestions = remember(rules.domainHistory, rules.domainExclusions) {
-                    rules.domainHistory.asSequence()
-                        .filter { it !in rules.domainExclusions }
+                val recentSuggestions = remember(rules.domains.history, active) {
+                    rules.domains.history.asSequence()
+                        .filter { it !in active }
                         .filter { it !in QuickDomains }
                         .take(6)
                         .toList()
@@ -235,7 +259,7 @@ fun RulesScreen() {
                                 QuickAddChip(
                                     label = d,
                                     already = false,
-                                    onAdd = { RoutingRulesRepository.addDomain(d) },
+                                    onAdd = { RoutingRulesRepository.addDomain(d, domainTab) },
                                 )
                             }
                         }
@@ -255,8 +279,8 @@ fun RulesScreen() {
                         QuickDomains.forEach { d ->
                             QuickAddChip(
                                 label = d,
-                                already = d in rules.domainExclusions,
-                                onAdd = { RoutingRulesRepository.addDomain(d) },
+                                already = d in active,
+                                onAdd = { RoutingRulesRepository.addDomain(d, domainTab) },
                             )
                         }
                     }
@@ -275,7 +299,7 @@ fun RulesScreen() {
                 subtitle = stringResource(R.string.rules_section_perapp_subtitle),
             )
             SectionBody {
-                PerAppRoutingSection()
+                PerAppRoutingSection(mode = rules.mode)
             }
         }
     }
@@ -375,6 +399,59 @@ private fun RoutingModeSelector(
     }
 }
 
+/**
+ * The tab pair for the current mode. Global edits the "out of VPN" list, Smart
+ * the "into VPN" one; "Block" is offered in both because blocking applies to
+ * both. The hidden list is not cleared — it's the other mode's setting.
+ */
+private fun tabsFor(mode: RoutingMode): List<RuleAction> = when (mode) {
+    RoutingMode.Global -> listOf(RuleAction.OutOfVpn, RuleAction.Block)
+    RoutingMode.Smart -> listOf(RuleAction.IntoVpn, RuleAction.Block)
+}
+
+private fun labelOf(action: RuleAction): Int = when (action) {
+    RuleAction.OutOfVpn -> R.string.rules_tab_out_of_vpn
+    RuleAction.IntoVpn -> R.string.rules_tab_into_vpn
+    RuleAction.Block -> R.string.rules_tab_block
+}
+
+private fun hintOf(action: RuleAction): Int = when (action) {
+    RuleAction.OutOfVpn -> R.string.rules_tab_out_of_vpn_hint
+    RuleAction.IntoVpn -> R.string.rules_tab_into_vpn_hint
+    RuleAction.Block -> R.string.rules_tab_block_hint
+}
+
+@Composable
+private fun RuleTabs(
+    mode: RoutingMode,
+    selected: RuleAction,
+    onSelect: (RuleAction) -> Unit,
+    enabled: (RuleAction) -> Boolean = { true },
+) {
+    val tabs = tabsFor(mode)
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        tabs.forEachIndexed { i, action ->
+            SegmentedButton(
+                selected = selected == action,
+                enabled = enabled(action),
+                onClick = { onSelect(action) },
+                shape = SegmentedButtonDefaults.itemShape(i, tabs.size),
+                icon = {
+                    Icon(
+                        imageVector = when (action) {
+                            RuleAction.OutOfVpn -> Icons.Outlined.CallSplit
+                            RuleAction.IntoVpn -> Icons.Outlined.VpnLock
+                            RuleAction.Block -> Icons.Outlined.Block
+                        },
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                    )
+                },
+            ) { Text(stringResource(labelOf(action))) }
+        }
+    }
+}
+
 private val ChipShape = RoundedCornerShape(50)
 
 @Composable
@@ -433,18 +510,30 @@ private data class InstalledApp(
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-private fun PerAppRoutingSection() {
+private fun PerAppRoutingSection(mode: RoutingMode) {
     val ctx = LocalContext.current
-    val routing by AppRoutingRepository.state.collectAsStateWithLifecycle()
+    val appRules by AppRoutingRepository.state.collectAsStateWithLifecycle()
     var apps by remember { mutableStateOf<List<InstalledApp>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
+    var tab by remember { mutableStateOf(RuleAction.OutOfVpn) }
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
 
-    // Load apps lazily — only when user picks a non-default mode.
-    LaunchedEffect(routing.mode) {
-        if (routing.mode != AppRoutingMode.All && apps.isEmpty()) {
+    // package_name rules can't match without ConnectivityManager
+    // .getConnectionOwnerUid — see BoxPlatform.findConnectionOwner.
+    val canResolveOwner = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
+    val tabEnabled: (RuleAction) -> Boolean = { it == RuleAction.OutOfVpn || canResolveOwner }
+
+    LaunchedEffect(mode, canResolveOwner) {
+        val valid = tabsFor(mode).filter(tabEnabled)
+        if (tab !in valid) tab = valid.first()
+    }
+
+    // The catalogue is the same for every tab, so load it once the section is
+    // on screen rather than per tab.
+    LaunchedEffect(Unit) {
+        if (apps.isEmpty()) {
             loading = true
             apps = withContext(Dispatchers.IO) { loadInstalledApps(ctx) }
             loading = false
@@ -460,46 +549,20 @@ private fun PerAppRoutingSection() {
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-            val modes = AppRoutingMode.entries
-            modes.forEachIndexed { i, m ->
-                SegmentedButton(
-                    selected = routing.mode == m,
-                    onClick = { AppRoutingRepository.setMode(m) },
-                    shape = SegmentedButtonDefaults.itemShape(i, modes.size),
-                    icon = {
-                        Icon(
-                            imageVector = when (m) {
-                                AppRoutingMode.All -> Icons.Outlined.Apps
-                                AppRoutingMode.AllowList -> Icons.Outlined.PlaylistAddCheck
-                                AppRoutingMode.DisallowList -> Icons.Outlined.Block
-                            },
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    },
-                ) {
-                    Text(
-                        text = stringResource(
-                            when (m) {
-                                AppRoutingMode.All -> R.string.rules_app_mode_all
-                                AppRoutingMode.AllowList -> R.string.rules_app_mode_allow
-                                AppRoutingMode.DisallowList -> R.string.rules_app_mode_block
-                            },
-                        ),
-                    )
-                }
-            }
-        }
+        RuleTabs(mode = mode, selected = tab, onSelect = { tab = it }, enabled = tabEnabled)
 
-        if (routing.mode == AppRoutingMode.All) {
+        if (!canResolveOwner) {
             Text(
-                stringResource(R.string.rules_app_mode_all_hint),
-                style = MaterialTheme.typography.bodyMedium,
+                stringResource(R.string.rules_apps_needs_q),
+                style = MaterialTheme.typography.bodySmall,
                 color = Brand.SecondaryText,
             )
-            return@Column
         }
+        Text(
+            stringResource(hintOf(tab)),
+            style = MaterialTheme.typography.bodySmall,
+            color = Brand.SecondaryText,
+        )
 
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
@@ -513,11 +576,18 @@ private fun PerAppRoutingSection() {
                     keyboard?.hide(); focusManager.clearFocus()
                 }),
             )
-            TextButton(onClick = { AppRoutingRepository.clearSelection() }) { Text(stringResource(R.string.action_clear)) }
+            TextButton(onClick = { AppRoutingRepository.clearList(tab) }) {
+                Text(stringResource(R.string.action_clear))
+            }
         }
 
+        val selectedCount = when (tab) {
+            RuleAction.OutOfVpn -> appRules.outOfVpn.size
+            RuleAction.IntoVpn -> appRules.intoVpn.size
+            RuleAction.Block -> appRules.blocked.size
+        }
         Text(
-            stringResource(R.string.rules_app_selected_count, routing.selectedPackages.size),
+            stringResource(R.string.rules_app_selected_count, selectedCount),
             style = MaterialTheme.typography.bodySmall,
             color = Brand.SecondaryText,
         )
@@ -534,10 +604,18 @@ private fun PerAppRoutingSection() {
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 items(filtered, key = { it.packageName }) { app ->
+                    val effective = appRules.actionOf(app.packageName, mode)
                     AppRow(
                         app = app,
-                        checked = app.packageName in routing.selectedPackages,
-                        onToggle = { AppRoutingRepository.toggle(app.packageName) },
+                        checked = effective == tab,
+                        // The user's ask: an app blocked in the Block tab shows
+                        // as blocked in the routing tab too. Tapping it there
+                        // moves it silently — withAction clears the block.
+                        blockedElsewhere = effective == RuleAction.Block && tab != RuleAction.Block,
+                        onToggle = {
+                            if (effective == tab) AppRoutingRepository.clearAction(app.packageName, tab)
+                            else AppRoutingRepository.setAction(app.packageName, tab)
+                        },
                     )
                 }
             }
@@ -549,6 +627,7 @@ private fun PerAppRoutingSection() {
 private fun AppRow(
     app: InstalledApp,
     checked: Boolean,
+    blockedElsewhere: Boolean,
     onToggle: () -> Unit,
 ) {
     Row(
@@ -571,6 +650,13 @@ private fun AppRow(
         }
         Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
             Text(app.label, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (blockedElsewhere) {
+                Text(
+                    "⛔ " + stringResource(R.string.rules_badge_blocked),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Brand.SecondaryText,
+                )
+            }
             Text(
                 app.packageName,
                 style = MaterialTheme.typography.bodySmall,
