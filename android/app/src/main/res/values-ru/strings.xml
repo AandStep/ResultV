@@ -88,6 +88,9 @@
     <string name="cert_wizard_safety_title">Фильтрация проходит на вашем устройстве</string>
     <string name="cert_wizard_safety_body">Сертификат создаётся прямо на телефоне, и его закрытый ключ никогда его не покидает. Реклама вырезается локально, ещё до отрисовки страницы, а соединения с сайтами остаются зашифрованными. Банковские приложения, Госуслуги, Google и YouTube исключены и никогда не перехватываются.</string>
     <string name="cert_wizard_safety_cta">Далее</string>
+    <string name="cert_wizard_direct_title">Сертификат ResultV</string>
+    <string name="cert_wizard_direct_body">Нажмите кнопку ниже и подтвердите установку — Android попросит задать имя сертификата, можно оставить предложенное. На этом настройка закончена.</string>
+    <string name="cert_wizard_direct_cta">Установить сертификат</string>
     <string name="cert_wizard_save_title">Сертификат ResultV</string>
     <string name="cert_wizard_save_body">Сертификат сохранится в папку «Загрузки». На следующем шаге вы установите его через настройки Android — сделать это самостоятельно приложениям система не разрешает.</string>
     <string name="cert_wizard_save_cta">Сохранить сертификат</string>
@@ -96,7 +99,7 @@
     <string name="cert_wizard_install_step1">Скопируйте текст ниже</string>
     <string name="cert_wizard_install_search_term">Сертификат ЦС</string>
     <string name="cert_wizard_install_step2">Откройте настройки и вставьте его в поле поиска</string>
-    <string name="cert_wizard_install_step3">Выберите «Сертификат ЦС»</string>
+    <string name="cert_wizard_install_step3">Выберите «%1$s» в результатах</string>
     <string name="cert_wizard_install_step4">Примите предупреждение безопасности — Android показывает его для любого локально установленного сертификата</string>
     <string name="cert_wizard_install_step5">Нажмите на файл resultv-ca.crt, чтобы установить его</string>
     <string name="cert_wizard_install_cta">Открыть настройки</string>

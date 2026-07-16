@@ -93,6 +93,9 @@
     <string name="cert_wizard_safety_title">Filtering happens on your device</string>
     <string name="cert_wizard_safety_body">The certificate is generated right here on your phone, and its private key never leaves it. Ads are cut out locally, before the page draws them, while connections to sites stay encrypted. Banking apps, government services, Google and YouTube are excluded and never intercepted.</string>
     <string name="cert_wizard_safety_cta">Next</string>
+    <string name="cert_wizard_direct_title">ResultV certificate</string>
+    <string name="cert_wizard_direct_body">Tap the button below and confirm the install — Android will ask you to name the certificate, and the default name is fine. That\'s the whole setup.</string>
+    <string name="cert_wizard_direct_cta">Install certificate</string>
     <string name="cert_wizard_save_title">ResultV certificate</string>
     <string name="cert_wizard_save_body">The certificate will be saved to your Downloads folder. In the next step you\'ll install it from Android settings — Android does not allow apps to do this themselves.</string>
     <string name="cert_wizard_save_cta">Save certificate</string>
@@ -101,7 +104,7 @@
     <string name="cert_wizard_install_step1">Copy the text below</string>
     <string name="cert_wizard_install_search_term">CA certificate</string>
     <string name="cert_wizard_install_step2">Open settings and paste it into the search field</string>
-    <string name="cert_wizard_install_step3">Choose “CA certificate”</string>
+    <string name="cert_wizard_install_step3">Choose “%1$s” in the results</string>
     <string name="cert_wizard_install_step4">Accept the security warning — it\'s Android\'s standard warning for any locally installed certificate</string>
     <string name="cert_wizard_install_step5">Tap the resultv-ca.crt file to install it</string>
     <string name="cert_wizard_install_cta">Open settings</string>

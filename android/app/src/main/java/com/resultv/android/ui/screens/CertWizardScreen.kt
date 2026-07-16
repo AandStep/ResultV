@@ -7,6 +7,8 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.content.res.Resources
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -42,6 +44,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.resultv.android.R
 import com.resultv.android.theme.Brand
 import com.resultv.android.vpn.CertExporter
+import com.resultv.android.vpn.CertInstaller
 import com.resultv.android.vpn.CertStore
 import com.resultv.android.vpn.CertTrustState
 import com.resultv.android.vpn.SettingsRepository
@@ -51,20 +54,23 @@ import kotlinx.coroutines.withContext
 
 private const val TAG = "ResultV/CertWizard"
 
-private enum class Step { Why, Safety, Save, Install, Done }
+private enum class Step { Why, Safety, DirectInstall, Save, ManualInstall, Done }
 
 /**
- * Linear wizard for getting our MITM root CA trusted by the system.
+ * Wizard for getting our MITM root CA trusted by the system.
  *
- * Android gives apps no way to install a CA themselves, so the best possible
- * flow is to remove every decision the user would otherwise have to make: the
- * certificate goes straight to Downloads under a known name, the Settings
- * search term is one tap to copy, and Settings is one tap to open. The user
- * only has to do the part Android reserves for them.
+ * The flow forks on the OS version, because the platform's capability does:
  *
- * Success is never a button — [Step.Done] is reached by observing that the
- * certificate actually landed in the trust store, checked on every resume
- * while the install step is showing. That works with the VPN disconnected,
+ *  - **Android 10** — `KeyChain.createInstallIntent()` still installs. One tap,
+ *    one system confirmation, done. No file, no Settings trip.
+ *  - **Android 11+** — apps can neither install a CA nor deep-link to the
+ *    screen that does, so the best possible flow is to remove every decision
+ *    around the part Android reserves for the user: the certificate goes
+ *    straight to Downloads under a known name, the Settings search term is one
+ *    tap to copy, and Settings is one tap to open.
+ *
+ * Success is never a button. [CertStore] reads the trust store on every resume
+ * while an install step is showing, which works with the VPN disconnected —
  * unlike the proxy self-test that confirms interception later.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -75,7 +81,10 @@ fun CertWizardScreen(dataDir: String, onClose: () -> Unit) {
     var step by rememberSaveable { mutableStateOf(Step.Why) }
     val snackbarHost = remember { SnackbarHostState() }
 
-    InstallWatcher(enabled = step == Step.Install, dataDir = dataDir) {
+    InstallWatcher(
+        enabled = step == Step.DirectInstall || step == Step.ManualInstall,
+        dataDir = dataDir,
+    ) {
         SettingsRepository.setCertTrustState(CertTrustState.TRUSTED)
         SettingsRepository.setBrowserAdBlock(true)
         step = Step.Done
@@ -118,8 +127,15 @@ fun CertWizardScreen(dataDir: String, onClose: () -> Unit) {
                     title = stringResource(R.string.cert_wizard_safety_title),
                     body = stringResource(R.string.cert_wizard_safety_body),
                     cta = stringResource(R.string.cert_wizard_safety_cta),
-                    onCta = { step = Step.Save },
+                    onCta = {
+                        step = if (CertInstaller.canInstallDirectly()) {
+                            Step.DirectInstall
+                        } else {
+                            Step.Save
+                        }
+                    },
                 )
+                Step.DirectInstall -> DirectInstallStep(dataDir, snackbarHost)
                 Step.Save -> {
                     val saveError = stringResource(R.string.cert_wizard_save_error)
                     IntroStep(
@@ -133,7 +149,7 @@ fun CertWizardScreen(dataDir: String, onClose: () -> Unit) {
                                     runCatching { CertExporter.saveToDownloads(context, dataDir) }
                                 }
                                 saved.fold(
-                                    onSuccess = { step = Step.Install },
+                                    onSuccess = { step = Step.ManualInstall },
                                     onFailure = {
                                         android.util.Log.w(TAG, "Saving CA to Downloads failed", it)
                                         snackbarHost.showSnackbar(saveError)
@@ -143,7 +159,7 @@ fun CertWizardScreen(dataDir: String, onClose: () -> Unit) {
                         },
                     )
                 }
-                Step.Install -> InstallStep(snackbarHost)
+                Step.ManualInstall -> ManualInstallStep(snackbarHost)
                 Step.Done -> IntroStep(
                     icon = Icons.Outlined.CheckCircle,
                     title = stringResource(R.string.cert_wizard_done_title),
@@ -156,11 +172,39 @@ fun CertWizardScreen(dataDir: String, onClose: () -> Unit) {
     }
 }
 
+/** Android 10 path: hand the certificate to the system and let it install. */
+@Composable
+private fun DirectInstallStep(dataDir: String, snackbarHost: SnackbarHostState) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val certError = stringResource(R.string.settings_browser_adblock_cert_error)
+    // KeyChain reports nothing back about what the user chose — the trust-store
+    // check on resume (InstallWatcher) is what actually decides.
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) {}
+
+    IntroStep(
+        icon = Icons.Outlined.VerifiedUser,
+        title = stringResource(R.string.cert_wizard_direct_title),
+        body = stringResource(R.string.cert_wizard_direct_body),
+        cta = stringResource(R.string.cert_wizard_direct_cta),
+        onCta = {
+            try {
+                launcher.launch(CertInstaller.buildInstallIntent(context, dataDir))
+            } catch (t: Throwable) {
+                android.util.Log.w(TAG, "Couldn't launch the system install intent", t)
+                scope.launch { snackbarHost.showSnackbar(certError) }
+            }
+        },
+    )
+}
+
 /**
  * Re-checks the trust store on every resume while [enabled], firing [onFound]
- * once. Resume is the only signal available: the user leaves for Android's
- * Settings app and comes back, and Android tells us nothing about what
- * happened there.
+ * once. Resume is the only signal available: the user leaves for a system
+ * screen and comes back, and Android tells us nothing about what happened
+ * there.
  */
 @Composable
 private fun InstallWatcher(enabled: Boolean, dataDir: String, onFound: () -> Unit) {
@@ -247,11 +291,12 @@ private fun IntroStep(
     }
 }
 
+/** Android 11+ path: the user has to drive Settings, so make that as short as possible. */
 @Composable
-private fun InstallStep(snackbarHost: SnackbarHostState) {
+private fun ManualInstallStep(snackbarHost: SnackbarHostState) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val searchTerm = rememberSystemSearchTerm()
+    val searchTerm = rememberSettingsSearchTerm()
     val copied = stringResource(R.string.cert_wizard_install_copied)
     val settingsError = stringResource(R.string.cert_wizard_install_settings_error)
 
@@ -303,19 +348,21 @@ private fun InstallStep(snackbarHost: SnackbarHostState) {
                 }
             }
             NumberedStep(2, stringResource(R.string.cert_wizard_install_step2))
-            NumberedStep(3, stringResource(R.string.cert_wizard_install_step3))
+            NumberedStep(3, stringResource(R.string.cert_wizard_install_step3, searchTerm))
             NumberedStep(4, stringResource(R.string.cert_wizard_install_step4))
             NumberedStep(5, stringResource(R.string.cert_wizard_install_step5))
         }
         Button(
             onClick = {
                 try {
+                    // Top-level Settings, not ACTION_SECURITY_SETTINGS: the
+                    // search field the instructions depend on lives on the
+                    // root page, and the security page doesn't have one.
                     context.startActivity(
-                        Intent(Settings.ACTION_SECURITY_SETTINGS)
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                     )
                 } catch (t: Throwable) {
-                    android.util.Log.w(TAG, "Couldn't open security settings", t)
+                    android.util.Log.w(TAG, "Couldn't open settings", t)
                     scope.launch { snackbarHost.showSnackbar(settingsError) }
                 }
             },
@@ -345,19 +392,37 @@ private fun NumberedStep(number: Int, text: String) {
 }
 
 /**
- * The search term in the *system* language, not the app's.
+ * The label the user must actually search for, read out of the device's own
+ * Settings app rather than guessed.
  *
- * The user pastes this into Android's Settings search, which is localized by
- * the system locale — so an app running in Russian on an English phone must
- * still hand over "CA certificate" or the search returns nothing.
+ * OEMs rename this freely — a stock phone says "CA certificate" where MIUI
+ * says something of its own — so a hardcoded per-manufacturer table would be
+ * wrong on every skin we hadn't seen. Asking the Settings package for its
+ * `ca_certificate` string returns whatever *that* build calls it, already in
+ * the system language, which is also the right language: the term gets pasted
+ * into Settings' own search, so an app running in Russian on an English phone
+ * must still hand over "CA certificate".
+ *
+ * Falls back to our own string in the system locale when Settings has no such
+ * resource (a heavily forked skin, or a renamed resource).
  */
 @Composable
-private fun rememberSystemSearchTerm(): String {
+private fun rememberSettingsSearchTerm(): String {
     val context = LocalContext.current
     return remember(context) {
-        val systemLocale = Resources.getSystem().configuration.locales[0]
-        val config = Configuration(context.resources.configuration).apply { setLocale(systemLocale) }
-        context.createConfigurationContext(config)
-            .getString(R.string.cert_wizard_install_search_term)
+        settingsAppString(context, "ca_certificate") ?: ownStringInSystemLocale(context)
     }
+}
+
+private fun settingsAppString(context: Context, name: String): String? = runCatching {
+    val res = context.packageManager.getResourcesForApplication("com.android.settings")
+    val id = res.getIdentifier(name, "string", "com.android.settings")
+    if (id == 0) null else res.getString(id).takeIf { it.isNotBlank() }
+}.getOrNull()
+
+private fun ownStringInSystemLocale(context: Context): String {
+    val systemLocale = Resources.getSystem().configuration.locales[0]
+    val config = Configuration(context.resources.configuration).apply { setLocale(systemLocale) }
+    return context.createConfigurationContext(config)
+        .getString(R.string.cert_wizard_install_search_term)
 }
