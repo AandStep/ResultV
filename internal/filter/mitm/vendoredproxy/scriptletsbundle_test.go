@@ -12,4 +12,10 @@ func TestScriptletsBundle_EmbeddedAndPlausible(t *testing.T) {
 	if !bytes.Contains(scriptletsBundle, []byte("invoke")) {
 		t.Fatal("scriptlets bundle does not export invoke")
 	}
+	if !bytes.Contains(scriptletsBundle, []byte("window.scriptlets = scriptlets")) {
+		t.Fatal("scriptlets bundle does not assign to window.scriptlets")
+	}
+	if bytes.Contains(scriptletsBundle, []byte("\nexport ")) {
+		t.Fatal("scriptlets bundle still contains ESM export statement")
+	}
 }

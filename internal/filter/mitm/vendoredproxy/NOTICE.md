@@ -37,5 +37,13 @@ Vendored from the `@adguard/scriptlets` npm package, version 2.4.3, file
 `dist/scriptlets/index.js` (via cdn.jsdelivr.net). Copyright (C) AdGuard
 Software Ltd. Licensed GPL-3.0 — same as this project.
 
-To update: download the new `dist/scriptlets/index.js`, replace the file,
-update the version here, and re-run the vendoredproxy tests.
+**Transformation applied:** The package ships no UMD build, only ES modules. The
+vendored file is the bundled `dist/scriptlets/index.js` with a single-line edit:
+the trailing `export { scriptlets };` (ES module syntax that breaks when loaded as
+a classic synchronous `<script src>` tag) has been replaced with
+`window.scriptlets = scriptlets;` so the global assignment works as intended in
+classic-script context.
+
+To update: download the new `dist/scriptlets/index.js`, replace the file, apply
+the same transformation (replace final line), update the version here, and
+re-run the vendoredproxy tests.
