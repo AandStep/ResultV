@@ -16,12 +16,24 @@ package proxy
 
 // extraAdDeliveryDomains are exact apex hosts to reject.
 var extraAdDeliveryDomains = []string{
-	"pubserv.pro", // psb-dsp.pubserv.pro — video pre-roll DSP on RU streaming sites
+	"pubserv.pro",       // psb-dsp.pubserv.pro — video pre-roll DSP on RU streaming sites
+	"foxstreetcore.com", // cs11.foxstreetcore.com — native banner creatives + click tracker (etarg/adultmasters network)
+	"ofjvnvjf.win",      // rotating popup-slider iframe host (caught 2026-07-16, hot.noodlemagazine.com)
+	"betamountwo.com",   // ad infra loaded alongside the above; empty 200 at apex, in no public list
+	"adultmasters.pro",  // banner-network landing/branding host on the same creatives
+	"nmsrv.run",         // player ad-config host, contacted at player init before pre-rolls; not referenced by page HTML
+	"kintg.site",        // paired with nmsrv.run at every player init; empty 201 at apex, in no public list
 }
 
 // extraAdDeliverySuffixes mirror extraAdDeliveryDomains for subdomain matches.
 var extraAdDeliverySuffixes = []string{
 	".pubserv.pro",
+	".foxstreetcore.com",
+	".ofjvnvjf.win",
+	".betamountwo.com",
+	".adultmasters.pro",
+	".nmsrv.run",
+	".kintg.site",
 }
 
 // adDeliveryRejectSuffixes is the full DomainSuffix payload for the plain

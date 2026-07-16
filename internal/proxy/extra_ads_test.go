@@ -9,35 +9,54 @@ package proxy
 
 import "testing"
 
-// pubserv.pro (psb-dsp.pubserv.pro) was caught live serving video pre-roll
-// ads and is absent from every connected public list (AdGuard, EasyList,
-// RU AdList, both reject SRS sets) — so it must be covered by the built-in
-// supplement in the plain (non-RuleSet) reject rules.
+// Hosts caught live serving ads while absent from every connected public
+// list (AdGuard, EasyList, RU AdList, both reject SRS sets) — each must be
+// covered by the built-in supplement in the plain (non-RuleSet) reject rules.
+// pubserv.pro: video pre-rolls on RU streaming sites; the rest were caught
+// 2026-07-16 on hot.noodlemagazine.com via the engine connection log
+// (foxstreetcore native banners, ofjvnvjf.win popup slider iframe,
+// betamountwo.com ad infra, adultmasters.pro banner network).
+var supplementTestDomains = []string{
+	"pubserv.pro",
+	"foxstreetcore.com",
+	"ofjvnvjf.win",
+	"betamountwo.com",
+	"adultmasters.pro",
+	"nmsrv.run",
+	"kintg.site",
+}
 
-func TestBuildRoute_AdBlock_RejectsExtraAdDomains(t *testing.T) {
-	route := buildRoute(EngineConfig{Mode: ProxyModeTunnel, AdBlock: true})
-	found := false
-	for _, r := range route.Rules {
+// rejectRuleCovers reports whether any plain (non-RuleSet) reject rule in the
+// list carries both the exact domain and its dot-suffix.
+func rejectRuleCovers(rules []SBRouteRule, domain string) bool {
+	for _, r := range rules {
 		if r.Action != "reject" || len(r.RuleSet) > 0 {
 			continue
 		}
 		hasSuffix, hasExact := false, false
 		for _, s := range r.DomainSuffix {
-			if s == ".pubserv.pro" {
+			if s == "."+domain {
 				hasSuffix = true
 			}
 		}
 		for _, d := range r.Domain {
-			if d == "pubserv.pro" {
+			if d == domain {
 				hasExact = true
 			}
 		}
 		if hasSuffix && hasExact {
-			found = true
+			return true
 		}
 	}
-	if !found {
-		t.Fatalf("expected a plain reject rule covering pubserv.pro (exact + suffix), rules=%+v", route.Rules)
+	return false
+}
+
+func TestBuildRoute_AdBlock_RejectsExtraAdDomains(t *testing.T) {
+	route := buildRoute(EngineConfig{Mode: ProxyModeTunnel, AdBlock: true})
+	for _, domain := range supplementTestDomains {
+		if !rejectRuleCovers(route.Rules, domain) {
+			t.Errorf("expected a plain reject rule covering %s (exact + suffix)", domain)
+		}
 	}
 }
 
@@ -47,28 +66,21 @@ func TestBuildDNS_AdBlock_RejectsExtraAdDomains(t *testing.T) {
 	if dns == nil {
 		t.Fatal("expected non-nil dns")
 	}
-	found := false
-	for _, r := range dns.Rules {
-		if r.Action != "reject" || len(r.RuleSet) > 0 {
-			continue
-		}
-		hasSuffix, hasExact := false, false
-		for _, s := range r.DomainSuffix {
-			if s == ".pubserv.pro" {
-				hasSuffix = true
-			}
-		}
-		for _, d := range r.Domain {
-			if d == "pubserv.pro" {
-				hasExact = true
-			}
-		}
-		if hasSuffix && hasExact {
-			found = true
+	// SBDNSRule and SBRouteRule are distinct structs; project the fields the
+	// checker needs so both tests share it.
+	asRouteRules := make([]SBRouteRule, len(dns.Rules))
+	for i, r := range dns.Rules {
+		asRouteRules[i] = SBRouteRule{
+			Action:       r.Action,
+			RuleSet:      r.RuleSet,
+			Domain:       r.Domain,
+			DomainSuffix: r.DomainSuffix,
 		}
 	}
-	if !found {
-		t.Fatalf("expected a plain DNS reject rule covering pubserv.pro (exact + suffix), rules=%+v", dns.Rules)
+	for _, domain := range supplementTestDomains {
+		if !rejectRuleCovers(asRouteRules, domain) {
+			t.Errorf("expected a plain DNS reject rule covering %s (exact + suffix)", domain)
+		}
 	}
 }
 

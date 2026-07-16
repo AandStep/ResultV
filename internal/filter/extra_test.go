@@ -54,8 +54,18 @@ func TestMITMFilterPaths_IncludesEmbeddedExtraRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extra list not written: %v", err)
 	}
-	if !strings.Contains(string(b), "||pubserv.pro^") {
-		t.Fatalf("extra list must block pubserv.pro, got:\n%s", b)
+	for _, rule := range []string{
+		"||pubserv.pro^",
+		"||foxstreetcore.com^",
+		"||ofjvnvjf.win^",
+		"||betamountwo.com^",
+		"||adultmasters.pro^",
+		"||nmsrv.run^",
+		"||kintg.site^",
+	} {
+		if !strings.Contains(string(b), rule) {
+			t.Errorf("extra list must contain %s, got:\n%s", rule, b)
+		}
 	}
 }
 
@@ -91,10 +101,18 @@ func TestEngine_BlocksCaughtAdHost(t *testing.T) {
 		t.Fatalf("BuildEngine failed: %v", err)
 	}
 
-	req := rules.NewRequest("https://psb-dsp.pubserv.pro/vast.xml", "https://example.com/watch", rules.TypeXmlhttprequest)
-	rule := eng.MatchRequest(req).GetBasicResult()
-	if rule == nil || rule.Whitelist {
-		t.Fatal("expected psb-dsp.pubserv.pro to be network-blocked by the embedded extra rules")
+	for _, url := range []string{
+		"https://psb-dsp.pubserv.pro/vast.xml",
+		"https://cs11.foxstreetcore.com/content/61951/3484725.jpg",
+		"https://ofjvnvjf.win/935a7fcb430a69d5/mbn/ssp/4f2cdc01",
+		"https://betamountwo.com/x.js",
+		"https://adultmasters.pro/?utm_source=site_example.com",
+	} {
+		req := rules.NewRequest(url, "https://example.com/watch", rules.TypeXmlhttprequest)
+		rule := eng.MatchRequest(req).GetBasicResult()
+		if rule == nil || rule.Whitelist {
+			t.Errorf("expected %s to be network-blocked by the embedded extra rules", url)
+		}
 	}
 
 	// Sanity: an ordinary host must not be blocked by the supplement.

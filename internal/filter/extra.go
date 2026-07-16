@@ -24,6 +24,12 @@ import (
 // when downloads fail.
 const embeddedExtraRules = `! ResultV built-in supplement (always on)
 ||pubserv.pro^
+||foxstreetcore.com^
+||ofjvnvjf.win^
+||betamountwo.com^
+||adultmasters.pro^
+||nmsrv.run^
+||kintg.site^
 `
 
 // extraListID is the urlfilter list ID for the supplement. Downloaded
