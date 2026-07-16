@@ -18,6 +18,10 @@ const contentScriptCode = `
 <script src="//{{.InjectionHostname}}/content-script.js?hostname={{.Hostname}}&option={{.Option}}&ts={{.Timestamp}}"></script>
 `
 
+// scriptletsPath is the injection-host path serving the vendored
+// @adguard/scriptlets UMD bundle. ResultV addition — not present upstream.
+const scriptletsPath = "/scriptlets.js"
+
 var contentScriptURLTmpl = template.Must(template.New("contentScriptCode").Parse(contentScriptCode))
 
 type contentScriptURLParameters struct {
@@ -63,6 +67,55 @@ func (s *Server) buildContentScriptCode(result urlfilter.CosmeticResult) string 
 	}
 
 	return data.String()
+}
+
+// injectionResponse serves requests addressed to the injection host:
+// the scriptlets runtime bundle or the per-host content script.
+// ResultV addition — not present upstream.
+func (s *Server) injectionResponse(session *Session) *http.Response {
+	if session.HTTPRequest.URL.Path == scriptletsPath {
+		return s.buildScriptletsJS(session)
+	}
+	return s.buildContentScript(session)
+}
+
+// buildScriptletsJS serves the embedded scriptlets runtime with the same
+// caching/compression treatment as the content script. ResultV addition.
+func (s *Server) buildScriptletsJS(session *Session) *http.Response {
+	r := session.HTTPRequest
+	if r.Method != http.MethodGet {
+		return newNotFoundResponse(r)
+	}
+
+	if r.Header.Get("If-Modified-Since") != "" {
+		res := proxyutil.NewResponse(http.StatusNotModified, nil, r)
+		res.Header.Set("Content-Type", "text/javascript; charset=utf-8")
+		enableCache(res)
+		return res
+	}
+
+	bodyBytes := scriptletsBundle
+	contentLen := len(bodyBytes)
+	var bodyReader io.Reader = bytes.NewReader(bodyBytes)
+
+	if s.CompressContentScript {
+		b, err := compressGzip(bodyBytes)
+		if err != nil {
+			log.Error("failed to compress scriptlets bundle: %v", err)
+			return proxyutil.NewErrorResponse(r, err)
+		}
+		contentLen = b.Len()
+		bodyReader = io.NopCloser(b)
+	}
+
+	res := proxyutil.NewResponse(http.StatusOK, bodyReader, r)
+	res.Header.Set("Content-Type", "text/javascript; charset=utf-8")
+	res.ContentLength = int64(contentLen)
+	if s.CompressContentScript {
+		res.Header.Set("Content-Encoding", "gzip")
+	}
+	enableCache(res)
+	return res
 }
 
 // buildContentScript builds the content script content
