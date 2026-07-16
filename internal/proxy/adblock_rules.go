@@ -118,9 +118,15 @@ func adBlockRuleSetTags() []string {
 }
 
 // adBlockConnectivityBypassDomains are hosts Android uses for captive-portal
-// checks and Private DNS (DoT) validation. Ad/tracker SRS lists often include
-// *.gstatic.com — blocking them makes the OS report "no internet" /
-// "Private DNS server unavailable" even when the tunnel is fine.
+// checks, Private DNS (DoT) validation and push delivery. Ad/tracker SRS lists
+// often include *.gstatic.com — blocking them makes the OS report "no internet"
+// / "Private DNS server unavailable" even when the tunnel is fine.
+//
+// The mtalk / FCM hosts are here for the same reason, found on a device: the
+// ad rule_set was rejecting com.google.android.gms' connection to
+// mtalk.google.com:5228, which kills push notifications in EVERY app while
+// ad-block is on. Google rotates GCM across alt1..alt8-mtalk, so all of them
+// must be listed — these are exact-match entries, not suffixes.
 var adBlockConnectivityBypassDomains = []string{
 	"connectivitycheck.gstatic.com",
 	"www.gstatic.com",
@@ -133,6 +139,19 @@ var adBlockConnectivityBypassDomains = []string{
 	"dns.cloudflare.com",
 	"cloudflare-dns.com",
 	"dnsotls-ds.metric.gstatic.com",
+	// FCM / GCM push (ports 5228-5230).
+	"mtalk.google.com",
+	"mtalk4.google.com",
+	"alt1-mtalk.google.com",
+	"alt2-mtalk.google.com",
+	"alt3-mtalk.google.com",
+	"alt4-mtalk.google.com",
+	"alt5-mtalk.google.com",
+	"alt6-mtalk.google.com",
+	"alt7-mtalk.google.com",
+	"alt8-mtalk.google.com",
+	"android.googleapis.com",
+	"fcm.googleapis.com",
 }
 
 // AdBlockDownloadResult reports how many ad lists were cached locally.

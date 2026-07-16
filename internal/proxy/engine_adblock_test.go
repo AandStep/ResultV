@@ -244,3 +244,33 @@ func TestBuildRoute_YouTubeOff_NoYouTubeRules(t *testing.T) {
 		}
 	}
 }
+
+// Regression: ad/tracker SRS lists include Google's push endpoints, so with
+// ad-block on the reject rule_set killed FCM/GCM — observed on device as
+//   found package name: com.google.android.gms
+//   sniffed: tls, domain: mtalk.google.com
+//   outbound/block[block]: blocked connection to 142.251.127.188:5228
+// which silently breaks notifications in EVERY app. These hosts must bypass
+// the reject the same way the captive-portal / DoT hosts already do.
+func TestAdBlockBypassesGooglePush(t *testing.T) {
+	want := []string{
+		"mtalk.google.com",
+		"mtalk4.google.com",
+		"alt1-mtalk.google.com",
+		"alt8-mtalk.google.com",
+		"android.googleapis.com",
+		"fcm.googleapis.com",
+	}
+	for _, w := range want {
+		found := false
+		for _, d := range adBlockConnectivityBypassDomains {
+			if d == w {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("push host %q missing from the ad-block bypass list", w)
+		}
+	}
+}
