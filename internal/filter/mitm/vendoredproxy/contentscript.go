@@ -14,7 +14,11 @@ import (
 )
 
 // This code is to be injected in the page
+// ResultV modification: the scriptlets runtime loads first (synchronously,
+// in <head>) so it is present before the content script executes JS rules
+// and before any page script runs.
 const contentScriptCode = `
+<script src="//{{.InjectionHostname}}/scriptlets.js?ts={{.Timestamp}}"></script>
 <script src="//{{.InjectionHostname}}/content-script.js?hostname={{.Hostname}}&option={{.Option}}&ts={{.Timestamp}}"></script>
 `
 

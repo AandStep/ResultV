@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"io"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/AdguardTeam/urlfilter/rules"
 )
 
 func TestScriptletsBundle_EmbeddedAndPlausible(t *testing.T) {
@@ -63,5 +66,25 @@ func TestInjectionResponse_FallsThroughToContentScript(t *testing.T) {
 	res := s.injectionResponse(NewSession("t3", req))
 	if res.StatusCode != 404 {
 		t.Fatalf("want 404 from buildContentScript on missing params, got %d", res.StatusCode)
+	}
+}
+
+func TestBuildInjectionCode_ScriptletsTagBeforeContentScript(t *testing.T) {
+	s := testServer()
+	req := httptest.NewRequest("GET", "https://example.org/", nil)
+	session := NewSession("t4", req)
+	session.Result = &rules.MatchingResult{}
+	code := s.buildInjectionCode(session)
+
+	iBundle := strings.Index(code, scriptletsPath)
+	iCS := strings.Index(code, "/content-script.js")
+	if iBundle == -1 {
+		t.Fatalf("injection code missing %s tag:\n%s", scriptletsPath, code)
+	}
+	if iCS == -1 {
+		t.Fatalf("injection code missing content-script tag:\n%s", code)
+	}
+	if iBundle > iCS {
+		t.Fatalf("scriptlets bundle must load before the content script:\n%s", code)
 	}
 }
