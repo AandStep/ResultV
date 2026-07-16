@@ -378,10 +378,17 @@ private class BoxPlatform(private val service: ResultVpnService) : PlatformInter
      */
     private val packageCache = java.util.concurrent.ConcurrentHashMap<Int, Array<String>>()
 
-    private fun packagesForUid(uid: Int): Array<String>? =
-        packageCache.getOrPut(uid) {
-            service.packageManager.getPackagesForUid(uid) ?: return null
-        }
+    private fun packagesForUid(uid: Int): Array<String>? {
+        packageCache[uid]?.let { return it }
+        // Deliberately NOT MutableMap.getOrPut: that resolves to the non-atomic
+        // get-then-put extension, which on this per-connection hot path lets
+        // concurrent resolvers of the same new uid each pay for the expensive
+        // getPackagesForUid — the exact cost the cache exists to avoid.
+        // A null (uid gone, or not visible to us) is not cached: it may be
+        // transient, and a poisoned entry would persist for the tunnel's life.
+        val packages = service.packageManager.getPackagesForUid(uid) ?: return null
+        return packageCache.putIfAbsent(uid, packages) ?: packages
+    }
 
     override fun startDefaultInterfaceMonitor(listener: InterfaceUpdateListener?) {}
     override fun closeDefaultInterfaceMonitor(listener: InterfaceUpdateListener?) {}
