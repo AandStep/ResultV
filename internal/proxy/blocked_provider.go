@@ -118,7 +118,7 @@ func (p *HTTPBlockedListProvider) FetchBlockedDomains(ctx context.Context, count
 		}
 		merged = append(merged, domains...)
 	}
-	merged = normalizeDomains(merged)
+	merged = compressDomainSuffixes(normalizeDomains(merged))
 	if len(merged) == 0 {
 		if lastErr != nil {
 			return nil, lastErr
@@ -328,11 +328,57 @@ func defaultPublicSourceTemplates(country string) []string {
 	}
 	if cc == "ru" {
 		sources = append(sources,
+			// Реестровые + «режут RU» списки. Re:filter domains_all ~86k записей,
+			// 1.4 MB — в лимит 8 MB LimitReader укладывается с запасом.
 			"https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Russia/inside-raw.lst",
-			"https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Russia/inside-dnsmasq-nfset.lst",
+			"https://raw.githubusercontent.com/1andrevich/Re-filter-lists/main/domains_all.lst",
+			"https://raw.githubusercontent.com/1andrevich/Re-filter-lists/main/community.lst",
+			// Точечные сервис-списки: побочные домены Discord/YouTube и сервисы,
+			// гео-блокирующие RU (Google AI Studio) — их нет в реестровых списках.
+			"https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Services/discord.lst",
+			"https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Services/youtube.lst",
+			"https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Services/google_ai.lst",
+			// Курируемый сообществом Discord-веер + Cloudflare-ECH хвосты.
+			"https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/main/lists/list-general.txt",
 		)
 	}
 	return sources
+}
+
+// compressDomainSuffixes drops entries already covered by a parent suffix in
+// the same list (cdn.discord.com is redundant next to discord.com). Keeps
+// input order. Input must be normalized (see normalizeDomains).
+//
+// Ported from the desktop tree along with the expanded RU source list: with
+// ~86k merged domains the redundant children are a meaningful chunk of both
+// the cache file and the sing-box config we hand the engine.
+func compressDomainSuffixes(domains []string) []string {
+	if len(domains) < 2 {
+		return domains
+	}
+	set := make(map[string]struct{}, len(domains))
+	for _, d := range domains {
+		set[d] = struct{}{}
+	}
+	out := make([]string, 0, len(domains))
+	for _, d := range domains {
+		covered := false
+		for h := d; ; {
+			idx := strings.Index(h, ".")
+			if idx < 0 {
+				break
+			}
+			h = h[idx+1:]
+			if _, ok := set[h]; ok {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 func (p *HTTPBlockedListProvider) countryEndpoints() []string {
