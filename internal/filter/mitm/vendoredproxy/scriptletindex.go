@@ -224,11 +224,19 @@ func (ix *ScriptletIndex) Match(hostname string) (generic, specific []string) {
 }
 
 // isWhitelisted reports whether a #@%# rule with the given content applies
-// to hostname (domain-or-subdomain match against its permitted domains).
+// to hostname (domain-or-subdomain match against its permitted domains,
+// respecting any restricted domains).
 func (ix *ScriptletIndex) isWhitelisted(hostname, content string) bool {
 	for _, r := range ix.whitelist[content] {
+		// Restricted domains take precedence: if hostname matches any
+		// restricted domain, this rule does not apply.
+		if isDomainOrSubdomainOfAny(hostname, r.restrictedDomains) {
+			continue
+		}
+
 		if len(r.permittedDomains) == 0 {
-			// A whitelist rule with no domains applies everywhere.
+			// A whitelist rule with no domains applies everywhere
+			// (unless restricted above).
 			return true
 		}
 

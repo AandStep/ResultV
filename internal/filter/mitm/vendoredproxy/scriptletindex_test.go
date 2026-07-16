@@ -264,4 +264,31 @@ func TestScriptletIndex(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("whitelist exception with restricted domain must not suppress rule on restricted host", func(t *testing.T) {
+		path := writeListFile(t, "list.txt", "a.com#%#code\na.com,~x.a.com#@%#code")
+
+		ix, err := BuildScriptletIndex(map[rules.ListID]string{1: path})
+		if err != nil {
+			t.Fatalf("BuildScriptletIndex failed: %v", err)
+		}
+
+		// On a.com, the exception applies: code should NOT run
+		_, specificA := ix.Match("a.com")
+		if len(specificA) != 0 {
+			t.Errorf("Match(a.com) specific = %v, want empty (whitelisted)", specificA)
+		}
+
+		// On x.a.com (restricted in the exception), the exception does NOT apply: code SHOULD run
+		_, specificX := ix.Match("x.a.com")
+		if len(specificX) != 1 || specificX[0] != "code" {
+			t.Errorf("Match(x.a.com) specific = %v, want [code] (exception restricted away)", specificX)
+		}
+
+		// On deep.x.a.com (subdomain of x.a.com), the exception still does NOT apply: code SHOULD run
+		_, specificDeepX := ix.Match("deep.x.a.com")
+		if len(specificDeepX) != 1 || specificDeepX[0] != "code" {
+			t.Errorf("Match(deep.x.a.com) specific = %v, want [code] (exception restricted away)", specificDeepX)
+		}
+	})
 }
