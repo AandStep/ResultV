@@ -511,6 +511,24 @@ private data class InstalledApp(
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun PerAppRoutingSection(mode: RoutingMode) {
+    // package_name rules can't match without ConnectivityManager
+    // .getConnectionOwnerUid — see BoxPlatform.findConnectionOwner.
+    val canResolveOwner = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
+    val tabEnabled: (RuleAction) -> Boolean = { it == RuleAction.OutOfVpn || canResolveOwner }
+    val validTabs = tabsFor(mode).filter(tabEnabled)
+
+    if (validTabs.isEmpty()) {
+        // Smart mode's tabs (IntoVpn, Block) both need package_name rules,
+        // which can't match below API 29 — there's nothing this section can
+        // offer on such a device, so show the explanation and stop here.
+        Text(
+            stringResource(R.string.rules_apps_needs_q),
+            style = MaterialTheme.typography.bodySmall,
+            color = Brand.SecondaryText,
+        )
+        return
+    }
+
     val ctx = LocalContext.current
     val appRules by AppRoutingRepository.state.collectAsStateWithLifecycle()
     var apps by remember { mutableStateOf<List<InstalledApp>>(emptyList()) }
@@ -520,14 +538,8 @@ private fun PerAppRoutingSection(mode: RoutingMode) {
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
 
-    // package_name rules can't match without ConnectivityManager
-    // .getConnectionOwnerUid — see BoxPlatform.findConnectionOwner.
-    val canResolveOwner = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
-    val tabEnabled: (RuleAction) -> Boolean = { it == RuleAction.OutOfVpn || canResolveOwner }
-
     LaunchedEffect(mode, canResolveOwner) {
-        val valid = tabsFor(mode).filter(tabEnabled)
-        if (tab !in valid) tab = valid.first()
+        if (tab !in validTabs) tab = validTabs.first()
     }
 
     // The catalogue is the same for every tab, so load it once the section is
