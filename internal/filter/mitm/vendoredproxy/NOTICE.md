@@ -30,3 +30,12 @@ All other files (`proxy.go`, `handlers.go`, `contentscript.go`,
 `pagestmpl.go`, `session.go`, `util.go`) are byte-for-byte identical to
 upstream v0.23.2 — verify with a `diff` against
 `$(go env GOMODCACHE)/github.com/!adguard!team/urlfilter@v0.23.2/proxy/`.
+
+## scriptlets.umd.min.js
+
+Vendored from the `@adguard/scriptlets` npm package, version 2.4.3, file
+`dist/scriptlets/index.js` (via cdn.jsdelivr.net). Copyright (C) AdGuard
+Software Ltd. Licensed GPL-3.0 — same as this project.
+
+To update: download the new `dist/scriptlets/index.js`, replace the file,
+update the version here, and re-run the vendoredproxy tests.
