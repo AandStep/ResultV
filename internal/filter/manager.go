@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/AdguardTeam/golibs/log"
 	"github.com/AdguardTeam/urlfilter"
 	"github.com/AdguardTeam/urlfilter/rules"
 	"golang.org/x/sync/errgroup"
@@ -28,6 +29,10 @@ import (
 	"resultproxy-wails/internal/filter/mitm"
 	filterproxy "resultproxy-wails/internal/filter/mitm/vendoredproxy"
 )
+
+// testScriptletIndexError is a test hook that allows injecting an error into
+// the scriptlet index build. Non-nil only in tests; see cachedScriptletIndex.
+var testScriptletIndexError error
 
 const metaFileName = "filters-meta.json"
 
@@ -278,10 +283,14 @@ func (m *Manager) StartMITM(listenPort int, upstreamDial func(network, addr stri
 		return err
 	}
 	// Reuse the cached scriptlet index for the same reason — see
-	// cachedScriptletIndex.
+	// cachedScriptletIndex. Unlike the engine (load-bearing), a scriptlet index
+	// build failure degrades gracefully: we log it and continue with a nil index
+	// (scriptlets disabled). The proxy is still functional and serves traffic
+	// without the best-effort scriptlet injection enhancement.
 	scriptletIndex, err := m.cachedScriptletIndex(paths)
 	if err != nil {
-		return err
+		log.Error("failed to build scriptlet index, scriptlets disabled: %v", err)
+		scriptletIndex = nil
 	}
 	srv, err := mitm.NewServer(mitm.Config{
 		ListenPort:     listenPort,
@@ -342,6 +351,11 @@ func (m *Manager) cachedScriptletIndex(paths map[rules.ListID]string) (*filterpr
 	defer m.scriptletIndexMu.Unlock()
 	if m.scriptletIndex != nil && m.scriptletIndexKey == key {
 		return m.scriptletIndex, nil
+	}
+	// testScriptletIndexError is a test hook that allows injecting an error
+	// into the scriptlet index build for testing degradation.
+	if testScriptletIndexError != nil {
+		return nil, testScriptletIndexError
 	}
 	ix, err := mitm.BuildScriptletIndex(paths)
 	if err != nil {

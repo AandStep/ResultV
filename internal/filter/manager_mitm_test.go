@@ -9,6 +9,7 @@ package filter
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -137,4 +138,40 @@ func TestManager_CARootPath_ReturnsExistingFile(t *testing.T) {
 	if path == "" {
 		t.Fatal("expected a non-empty certificate path")
 	}
+}
+
+func TestManager_StartMITM_DegracesWhenScriptletIndexBuildFails(t *testing.T) {
+	list := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(strings.Repeat("! test list\n", 50)))
+	}))
+	defer list.Close()
+
+	orig := DefaultSources
+	DefaultSources = []ListSource{{ID: 1, Name: "adguard-base", URLs: []string{list.URL}}}
+	defer func() { DefaultSources = orig }()
+
+	dir, err := os.MkdirTemp("", "mitm-scriptlet-degrade-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp failed: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	m := NewManager(dir)
+	if err := m.Update(context.Background(), nil); err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+
+	// Inject an error into the scriptlet index builder for this test.
+	testScriptletIndexError = fmt.Errorf("injected error for testing")
+	defer func() { testScriptletIndexError = nil }()
+
+	// Before the fix, StartMITM fails when scriptlet index build fails.
+	// After the fix, StartMITM succeeds and degrades to nil index.
+	if err := m.StartMITM(0, nil); err != nil {
+		t.Fatalf("StartMITM failed: %v (expected to degrade gracefully)", err)
+	}
+	if !m.IsMITMRunning() {
+		t.Fatal("expected MITM to be running after StartMITM, even with scriptlet index build failure")
+	}
+	m.StopMITM()
 }
