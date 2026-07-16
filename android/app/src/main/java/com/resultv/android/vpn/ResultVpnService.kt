@@ -40,7 +40,6 @@ private const val REVOKE_CHANNEL_ID = "resultv_vpn_revoke"
 
 const val ACTION_START = "com.resultv.android.START"
 const val ACTION_STOP = "com.resultv.android.STOP"
-const val EXTRA_CONFIG_JSON = "configJson"
 const val EXTRA_RECONNECT_AFTER_REVOKE = "reconnectAfterRevoke"
 const val EXTRA_IS_RELOAD = "isReload"
 
@@ -111,11 +110,13 @@ class ResultVpnService : VpnService() {
                 return START_NOT_STICKY
             }
             else -> {
-                // EXTRA_CONFIG_JSON is set on the UI-initiated path
-                // (MainActivity.connect). Always-on VPN supplies no extras
-                // and only fires the SERVICE_INTERFACE intent — fall back
-                // to rebuilding the config from the persisted active profile.
-                val config = intent?.getStringExtra(EXTRA_CONFIG_JSON) ?: buildConfigFromActiveProfile()
+                // The config is ALWAYS rebuilt here, never passed in. It used to
+                // ride in EXTRA_CONFIG_JSON on the UI-initiated path, but with
+                // the expanded Smart list it reaches ~4.6 MB and blows the ~1 MB
+                // Binder transaction limit (TransactionTooLargeException kills
+                // the app on connect). Always-on VPN already relied on this
+                // rebuild path, so this is now the only path.
+                val config = buildConfigFromActiveProfile()
                 if (config.isNullOrEmpty()) {
                     Log.e(TAG, "no config available (no extra, no active profile) — stopping")
                     stopSelf()
@@ -447,13 +448,7 @@ class ResultVpnService : VpnService() {
     }
 
     private fun triggerReload() {
-        val active = ProfileRepository.state.value.active ?: return
-        val configJson = BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath)
-        if (configJson == null) {
-            Log.w(TAG, "rebuild config for reload failed or profile empty")
-            AppLog.warning(getString(R.string.log_build_failed))
-            return
-        }
+        ProfileRepository.state.value.active ?: return
         if (!BoxModule.isRunning) {
             Log.w(TAG, "reload skipped — no running server")
             return
@@ -483,9 +478,11 @@ class ResultVpnService : VpnService() {
         renotify(buildNotification(VpnStatus.Connecting))
 
         val ctx = applicationContext
+        // No config extra: the fresh service rebuilds it from the same persisted
+        // state. Passing it here would hit the same Binder size limit as the
+        // connect path did.
         val restartIntent = Intent(ctx, ResultVpnService::class.java).apply {
             action = ACTION_START
-            putExtra(EXTRA_CONFIG_JSON, configJson)
             putExtra(EXTRA_IS_RELOAD, true)
         }
 

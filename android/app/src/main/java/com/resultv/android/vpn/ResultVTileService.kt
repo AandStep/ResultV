@@ -76,18 +76,17 @@ class ResultVTileService : TileService() {
             launchMainActivity()
             return
         }
-        // Resolve config from active profile. If there isn't one, bounce
-        // the user to the app — empty state shows the "Add server" CTA.
+        // Bounce to the app when there's no active profile — empty state shows
+        // the "Add server" CTA. The config itself is NOT built or passed here:
+        // with the expanded Smart list it reaches ~4.6 MB and would blow the
+        // ~1 MB Binder transaction limit. The service rebuilds it from the same
+        // persisted state.
         val service = ResultVpnService::class.java
-        val cfg = buildActiveProfileConfig()
-        if (cfg == null) {
+        if (!hasActiveProfile()) {
             launchMainActivity()
             return
         }
-        val intent = Intent(this, service).apply {
-            action = ACTION_START
-            putExtra(EXTRA_CONFIG_JSON, cfg)
-        }
+        val intent = Intent(this, service).apply { action = ACTION_START }
         // startForegroundService is required because the tile process is
         // background-restricted on API 26+; the service immediately calls
         // startForeground inside onStartCommand.
@@ -120,13 +119,12 @@ class ResultVTileService : TileService() {
         }
     }
 
-    private fun buildActiveProfileConfig(): String? {
+    private fun hasActiveProfile(): Boolean {
         val app = applicationContext
         ProfileRepository.init(app)
         SettingsRepository.init(app)
         RoutingRulesRepository.init(app)
-        val active = ProfileRepository.state.value.active ?: return null
-        return BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath)
+        return ProfileRepository.state.value.active != null
     }
 
     private fun syncTile(status: VpnStatus) {

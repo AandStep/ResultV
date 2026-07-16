@@ -65,9 +65,7 @@ import com.resultv.android.ui.screens.SettingsScreen
 import com.resultv.android.vpn.ACTION_START
 import com.resultv.android.vpn.ACTION_STOP
 import com.resultv.android.vpn.AppRoutingRepository
-import com.resultv.android.vpn.BuildOptionsBuilder
 import com.resultv.android.vpn.DeepLinkImporter
-import com.resultv.android.vpn.EXTRA_CONFIG_JSON
 import com.resultv.android.vpn.ProfileRepository
 import com.resultv.android.vpn.ResultVpnService
 import com.resultv.android.vpn.VpnState
@@ -100,7 +98,7 @@ private enum class Tab(
 
 class MainActivity : ComponentActivity() {
 
-    private var pendingConfig: String? = null
+    private var pendingStart: Boolean = false
 
     /**
      * Apply the user-selected locale before any resource is resolved. The
@@ -117,9 +115,10 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
         if (result.resultCode == RESULT_OK) {
-            val cfg = pendingConfig
-            pendingConfig = null
-            if (cfg != null) startService(cfg)
+            if (pendingStart) {
+                pendingStart = false
+                startService()
+            }
         } else {
             Log.w(TAG, "VPN permission denied (resultCode=${result.resultCode})")
             com.resultv.android.vpn.AppLog.warning(
@@ -229,24 +228,24 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun connect() {
-        val active = ProfileRepository.state.value.active ?: run {
+        ProfileRepository.state.value.active ?: run {
             Log.w(TAG, "no active profile to connect to")
             com.resultv.android.vpn.AppLog.warning(getString(R.string.log_no_server))
             return
         }
-        val configJson = BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath)
-            ?: run {
-                Log.e(TAG, "buildConfig failed or profile empty")
-                com.resultv.android.vpn.AppLog.error(getString(R.string.log_build_failed))
-                return
-            }
-
+        // The config is deliberately NOT built here and NOT put in the Intent.
+        // With the expanded Smart list it reaches ~4.6 MB, which blows the ~1 MB
+        // Binder transaction limit — startForegroundService then throws
+        // TransactionTooLargeException and takes the app down. Building it on the
+        // UI thread would also risk an ANR at that size. The service rebuilds it
+        // from the same persisted state (see buildConfigFromActiveProfile), which
+        // is the path always-on VPN has always used.
         val prepareIntent = VpnService.prepare(this)
         if (prepareIntent != null) {
-            pendingConfig = configJson
+            pendingStart = true
             vpnPermissionLauncher.launch(prepareIntent)
         } else {
-            startService(configJson)
+            startService()
         }
     }
 
@@ -258,11 +257,8 @@ class MainActivity : ComponentActivity() {
         startService(intent)
     }
 
-    private fun startService(configJson: String) {
-        val intent = Intent(this, ResultVpnService::class.java).apply {
-            action = ACTION_START
-            putExtra(EXTRA_CONFIG_JSON, configJson)
-        }
+    private fun startService() {
+        val intent = Intent(this, ResultVpnService::class.java).apply { action = ACTION_START }
         startForegroundService(intent)
     }
 }
