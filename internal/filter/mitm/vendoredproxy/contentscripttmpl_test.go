@@ -3,10 +3,13 @@
 package proxy
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/AdguardTeam/urlfilter"
+	"github.com/AdguardTeam/urlfilter/rules"
 )
 
 // cosmeticResultWithJS builds a CosmeticResult carrying one scriptlet rule
@@ -71,5 +74,41 @@ func TestContentScript_BalancedDelimiters(t *testing.T) {
 		if strings.Count(code, p.open) != strings.Count(code, p.close) {
 			t.Fatalf("unbalanced %s%s in generated content script", p.open, p.close)
 		}
+	}
+}
+
+func TestContentScript_ScriptletRuleFlowsFromListToPayload(t *testing.T) {
+	// urlfilter's engine keeps the list files open; on Windows t.TempDir's
+	// RemoveAll then fails even though the assertions pass. Cleanup is best-effort.
+	dir, err := os.MkdirTemp("", "scriptlet-flow-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp failed: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	list := filepath.Join(dir, "list.txt")
+	content := "! test\n" +
+		"example.org#%#//scriptlet('abort-current-inline-script', 'document.dispatchEvent', '/getexoloader/')\n"
+	if err := os.WriteFile(list, []byte(content), 0o600); err != nil {
+		t.Fatalf("writing list: %v", err)
+	}
+
+	eng, err := BuildEngine(map[rules.ListID]string{1: list})
+	if err != nil {
+		t.Fatalf("BuildEngine: %v", err)
+	}
+
+	res := eng.GetCosmeticResult("example.org", rules.CosmeticOptionAll)
+	s := testServer()
+	code := s.buildContentScriptCode(res)
+
+	// Task 4 commits to: (1) parseScriptletRule function for parsing rule text, and
+	// (2) rules must NOT be inlined as arrow function bodies. This locks the
+	// content-script template format for cosmetic rules.
+	if !strings.Contains(code, "parseScriptletRule") {
+		t.Fatal("Task 4 parseScriptletRule function missing; template not updated")
+	}
+	if strings.Contains(code, "() => { //scriptlet(") {
+		t.Fatal("scriptlet rule inlined as arrow-function body (dead code); Task 4 template changes not present")
 	}
 }
