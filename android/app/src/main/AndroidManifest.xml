@@ -79,24 +79,6 @@
             </intent-filter>
         </service>
 
-        <!-- Exposes a copy of the browser ad-block CA certificate (see
-             CertInstaller.buildShareIntent, which copies ca.crt into
-             cacheDir/share_cert/ before sharing — never files/filter/
-             directly, which also holds ca.key) via a content:// URI, so the
-             user can share/save it through Android's system share sheet and
-             install it manually via Settings -> Encryption & credentials
-             (KeyChain.createInstallIntent() only shows an informational
-             dialog on Android 7+, it does not install directly — the user
-             needs an actual file to pick in that flow). -->
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>
     </application>
 
 </manifest>

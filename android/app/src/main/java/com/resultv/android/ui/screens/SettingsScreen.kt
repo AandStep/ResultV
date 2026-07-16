@@ -2,9 +2,6 @@ package com.resultv.android.ui.screens
 
 import android.app.Activity
 import android.content.Context
-import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -35,6 +32,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.content.ContextWrapper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.resultv.android.R
 import com.resultv.android.locale.LocaleManager
 import com.resultv.android.theme.Brand
@@ -76,7 +74,7 @@ private enum class SettingsSubcategory(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenFaq: () -> Unit = {}) {
+fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {}) {
     val settings by SettingsRepository.state.collectAsStateWithLifecycle()
     var activeSheet by rememberSaveable { mutableStateOf<SettingsSubcategory?>(null) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -166,7 +164,7 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenFaq: () -> Unit = {}) {
                     SettingsSubcategory.Advanced -> AdvancedGroup(settings)
                     SettingsSubcategory.Subscriptions -> SubscriptionsGroup(settings)
                     SettingsSubcategory.Security -> SecurityGroup(settings)
-                    SettingsSubcategory.AdBlock -> AdBlockGroup(settings, onOpenFaq = onOpenFaq)
+                    SettingsSubcategory.AdBlock -> AdBlockGroup(settings, onOpenCertWizard = onOpenCertWizard)
                     SettingsSubcategory.Network -> NetworkGroup(settings)
                     SettingsSubcategory.Appearance -> AppearanceGroup(onBeforeRecreate = { activeSheet = null })
                     SettingsSubcategory.Routing -> RulesScreen()
@@ -272,7 +270,7 @@ private fun AdvancedGroup(settings: com.resultv.android.vpn.SettingsState) {
 }
 
 @Composable
-private fun AdBlockGroup(settings: com.resultv.android.vpn.SettingsState, onOpenFaq: () -> Unit) {
+private fun AdBlockGroup(settings: com.resultv.android.vpn.SettingsState, onOpenCertWizard: () -> Unit) {
     ToggleRow(
         title = stringResource(R.string.settings_adblock),
         subtitle = stringResource(R.string.settings_adblock_subtitle),
@@ -290,27 +288,32 @@ private fun AdBlockGroup(settings: com.resultv.android.vpn.SettingsState, onOpen
     )
     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
         HorizontalDivider(color = Brand.SurfaceHigh)
-        BrowserAdBlockRow(settings)
+        BrowserAdBlockRow(settings, onOpenCertWizard)
     }
-    HorizontalDivider(color = Brand.SurfaceHigh)
-    NavRow(
-        label = stringResource(R.string.settings_browser_adblock_faq_link),
-        icon = Icons.Outlined.HelpOutline,
-        iconBg = Color(0xFF06b6d4).copy(alpha = 0.18f),
-        iconTint = Color(0xFF22d3ee),
-        onClick = onOpenFaq,
-    )
 }
 
 @Composable
-private fun BrowserAdBlockRow(settings: com.resultv.android.vpn.SettingsState) {
+private fun BrowserAdBlockRow(
+    settings: com.resultv.android.vpn.SettingsState,
+    onOpenCertWizard: () -> Unit,
+) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
-    val installCertLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { /* KeyChain doesn't report success/failure to the caller; the
-           self-test in ResultVpnService.startBrowserAdBlockIfEnabled is
-           what actually confirms it worked, on the next VPN connect. */ }
+
+    // The persisted trust state only refreshes on a VPN connect, so it goes
+    // stale the moment the user installs or removes the cert outside the app.
+    // Re-reading the trust store when this section opens keeps the status line
+    // and the "Install certificate" row honest.
+    var certInstalled by remember { mutableStateOf(settings.certTrustState == com.resultv.android.vpn.CertTrustState.TRUSTED) }
+    LaunchedEffect(Unit) {
+        certInstalled = withContext(Dispatchers.IO) {
+            com.resultv.android.vpn.CertStore.isInstalled(context.filesDir.absolutePath)
+        }
+        SettingsRepository.setCertTrustState(
+            if (certInstalled) com.resultv.android.vpn.CertTrustState.TRUSTED
+            else com.resultv.android.vpn.CertTrustState.UNTRUSTED,
+        )
+    }
 
     ToggleRow(
         title = stringResource(R.string.settings_browser_adblock),
@@ -324,92 +327,33 @@ private fun BrowserAdBlockRow(settings: com.resultv.android.vpn.SettingsState) {
                 scope.launch(Dispatchers.IO) {
                     mobile.Mobile.fetchFilterLists(context.filesDir.absolutePath)
                 }
-                // Only re-show the system install dialog when we don't already
-                // have a definitive TRUSTED result from a prior self-test — a
-                // repeat toggle-off/on with an already-trusted cert must not
-                // re-prompt the user every time (see
-                // docs/superpowers/specs/2026-07-02-browser-adblock-hardening-design.md).
-                if (settings.certTrustState != com.resultv.android.vpn.CertTrustState.TRUSTED) {
-                    try {
-                        val intent = com.resultv.android.vpn.CertInstaller.buildInstallIntent(
-                            context, context.filesDir.absolutePath,
-                        )
-                        installCertLauncher.launch(intent)
-                        SettingsRepository.setBrowserAdBlock(true)
-                    } catch (e: Exception) {
-                        android.util.Log.w("SettingsScreen", "Failed to prepare ad-block cert install intent", e)
-                        Toast.makeText(
-                            context,
-                            context.getString(R.string.settings_browser_adblock_cert_error),
-                            Toast.LENGTH_LONG,
-                        ).show()
-                    }
-                } else {
-                    SettingsRepository.setBrowserAdBlock(true)
-                }
+                SettingsRepository.setBrowserAdBlock(true)
+                // Turning the feature on without a trusted cert does nothing
+                // useful, so the toggle doubles as the wizard's entry point.
+                if (!certInstalled) onOpenCertWizard()
             } else {
                 SettingsRepository.setBrowserAdBlock(false)
             }
         },
     )
     Text(
-        text = when (settings.certTrustState) {
-            com.resultv.android.vpn.CertTrustState.TRUSTED -> stringResource(R.string.cert_status_trusted)
-            com.resultv.android.vpn.CertTrustState.UNTRUSTED -> stringResource(R.string.cert_status_untrusted)
-            com.resultv.android.vpn.CertTrustState.UNKNOWN -> stringResource(R.string.cert_status_unknown)
-        },
+        text = stringResource(
+            if (certInstalled) R.string.cert_status_trusted else R.string.cert_status_untrusted,
+        ),
         style = MaterialTheme.typography.labelSmall,
-        color = when (settings.certTrustState) {
-            com.resultv.android.vpn.CertTrustState.TRUSTED -> Brand.GreenLight
-            com.resultv.android.vpn.CertTrustState.UNTRUSTED -> Brand.Danger
-            com.resultv.android.vpn.CertTrustState.UNKNOWN -> Brand.MutedText
-        },
+        color = if (certInstalled) Brand.GreenLight else Brand.MutedText,
         modifier = Modifier.padding(start = 62.dp, top = 2.dp),
     )
-    HorizontalDivider(color = Brand.SurfaceHigh)
-    NavRow(
-        label = stringResource(R.string.settings_browser_adblock_reinstall),
-        icon = Icons.Outlined.Shield,
-        iconBg = Color(0xFF22c55e).copy(alpha = 0.18f),
-        iconTint = Color(0xFF4ade80),
-        onClick = {
-            try {
-                val intent = com.resultv.android.vpn.CertInstaller.buildInstallIntent(
-                    context, context.filesDir.absolutePath,
-                )
-                installCertLauncher.launch(intent)
-            } catch (e: Exception) {
-                android.util.Log.w("SettingsScreen", "Failed to prepare ad-block cert install intent", e)
-                Toast.makeText(
-                    context,
-                    context.getString(R.string.settings_browser_adblock_cert_error),
-                    Toast.LENGTH_LONG,
-                ).show()
-            }
-        },
-    )
-    HorizontalDivider(color = Brand.SurfaceHigh)
-    NavRow(
-        label = stringResource(R.string.settings_browser_adblock_share),
-        icon = Icons.Outlined.Share,
-        iconBg = Color(0xFF22c55e).copy(alpha = 0.18f),
-        iconTint = Color(0xFF4ade80),
-        onClick = {
-            try {
-                val intent = com.resultv.android.vpn.CertInstaller.buildShareIntent(
-                    context, context.filesDir.absolutePath,
-                )
-                context.startActivity(intent)
-            } catch (e: Exception) {
-                android.util.Log.w("SettingsScreen", "Failed to prepare ad-block cert share intent", e)
-                Toast.makeText(
-                    context,
-                    context.getString(R.string.settings_browser_adblock_cert_error),
-                    Toast.LENGTH_LONG,
-                ).show()
-            }
-        },
-    )
+    if (!certInstalled) {
+        HorizontalDivider(color = Brand.SurfaceHigh)
+        NavRow(
+            label = stringResource(R.string.settings_browser_adblock_install),
+            icon = Icons.Outlined.Shield,
+            iconBg = Color(0xFF22c55e).copy(alpha = 0.18f),
+            iconTint = Color(0xFF4ade80),
+            onClick = onOpenCertWizard,
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
