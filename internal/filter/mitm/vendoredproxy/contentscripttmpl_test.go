@@ -3,10 +3,14 @@
 package proxy
 
 import (
+	"fmt"
+	"io"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"text/template"
 
 	"github.com/AdguardTeam/urlfilter"
 	"github.com/AdguardTeam/urlfilter/rules"
@@ -77,6 +81,14 @@ func TestContentScript_BalancedDelimiters(t *testing.T) {
 	}
 }
 
+// TestContentScript_ScriptletRuleFlowsFromListToPayload exercises the real
+// pipeline: a `#%#` scriptlet rule in a filter list is indexed by
+// BuildScriptletIndex (urlfilter's own engine rejects such rules at parse
+// time and never surfaces them via GetCosmeticResult), the resulting
+// ScriptletIndex is wired onto a Server the way NewServer does it, and
+// buildContentScript merges the index's match into CosmeticResult.JS. It
+// asserts the scriptlet doesn't just appear somewhere in the served file,
+// but specifically inside the payload's "js" block.
 func TestContentScript_ScriptletRuleFlowsFromListToPayload(t *testing.T) {
 	// urlfilter's engine keeps the list files open; on Windows t.TempDir's
 	// RemoveAll then fails even though the assertions pass. Cleanup is best-effort.
@@ -87,28 +99,48 @@ func TestContentScript_ScriptletRuleFlowsFromListToPayload(t *testing.T) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	list := filepath.Join(dir, "list.txt")
+	const scriptletText = `//scriptlet('abort-current-inline-script', 'document.dispatchEvent', '/getexoloader/')`
 	content := "! test\n" +
-		"example.org#%#//scriptlet('abort-current-inline-script', 'document.dispatchEvent', '/getexoloader/')\n"
+		"example.org#%#" + scriptletText + "\n"
 	if err := os.WriteFile(list, []byte(content), 0o600); err != nil {
 		t.Fatalf("writing list: %v", err)
 	}
 
-	eng, err := BuildEngine(map[rules.ListID]string{1: list})
+	ix, err := BuildScriptletIndex(map[rules.ListID]string{1: list})
 	if err != nil {
-		t.Fatalf("BuildEngine: %v", err)
+		t.Fatalf("BuildScriptletIndex: %v", err)
 	}
 
-	res := eng.GetCosmeticResult("example.org", rules.CosmeticOptionAll)
-	s := testServer()
-	code := s.buildContentScriptCode(res)
+	s := testServerWithScriptletIndex(t, dir, ix)
 
-	// Task 4 commits to: (1) parseScriptletRule function for parsing rule text, and
-	// (2) rules must NOT be inlined as arrow function bodies. This locks the
-	// content-script template format for cosmetic rules.
-	if !strings.Contains(code, "parseScriptletRule") {
-		t.Fatal("Task 4 parseScriptletRule function missing; template not updated")
+	url := fmt.Sprintf("http://%s/content-script.js?hostname=example.org&option=%d&ts=%d",
+		s.InjectionHost, rules.CosmeticOptionAll, s.createdAt.Unix())
+	req := httptest.NewRequest("GET", url, nil)
+	res := s.buildContentScript(NewSession("t-scriptlet-flow", req))
+	if res.StatusCode != 200 {
+		t.Fatalf("want 200, got %d", res.StatusCode)
 	}
-	if strings.Contains(code, "() => { //scriptlet(") {
-		t.Fatal("scriptlet rule inlined as arrow-function body (dead code); Task 4 template changes not present")
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("reading body: %v", err)
+	}
+	code := string(body)
+
+	// The template renders rule text through the "js" escaper (single quotes
+	// become \'), so compare against the escaped form.
+	wantText := template.JSEscapeString(scriptletText)
+	if !strings.Contains(code, wantText) {
+		t.Fatalf("scriptlet rule from the list did not reach the payload:\n%s", code)
+	}
+
+	// Prove the rule landed inside the "js" block specifically, not merely
+	// somewhere in the file (e.g. a comment or an unrelated block).
+	jsBlockIdx := strings.Index(code, `"js": {`)
+	if jsBlockIdx == -1 {
+		t.Fatalf("payload missing \"js\" block:\n%s", code)
+	}
+	if !strings.Contains(code[jsBlockIdx:], wantText) {
+		t.Fatalf("scriptlet rule present in payload but not inside the \"js\" block:\n%s", code)
 	}
 }
