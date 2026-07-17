@@ -97,7 +97,7 @@
     <string name="cert_wizard_direct_body">Tap the button below and confirm the install — Android will ask you to name the certificate, and the default name is fine. That\'s the whole setup.</string>
     <string name="cert_wizard_direct_cta">Install certificate</string>
     <string name="cert_wizard_save_title">ResultV certificate</string>
-    <string name="cert_wizard_save_body">The certificate will be saved to your Downloads folder. In the next step you\'ll install it from Android settings — Android does not allow apps to do this themselves.</string>
+    <string name="cert_wizard_save_body">Tap “Save certificate” and confirm — the file name and the Downloads folder are already filled in, so there\'s nothing to change. In the next step you\'ll install it from Android settings: Android does not allow apps to do this themselves.</string>
     <string name="cert_wizard_save_cta">Save certificate</string>
     <string name="cert_wizard_save_error">Couldn\'t save the certificate to Downloads. Please try again.</string>
     <string name="cert_wizard_install_title">Install the certificate</string>
@@ -106,7 +106,7 @@
     <string name="cert_wizard_install_step2">Open settings and paste it into the search field</string>
     <string name="cert_wizard_install_step3">Choose “%1$s” in the results</string>
     <string name="cert_wizard_install_step4">Accept the security warning — it\'s Android\'s standard warning for any locally installed certificate</string>
-    <string name="cert_wizard_install_step5">Tap the resultv-ca.crt file to install it</string>
+    <string name="cert_wizard_install_step5">Tap the %1$s file to install it</string>
     <string name="cert_wizard_install_cta">Open settings</string>
     <string name="cert_wizard_install_copied">Copied</string>
     <string name="cert_wizard_install_settings_error">Couldn\'t open Android settings. Open Settings → Security → Encryption &amp; credentials manually.</string>

@@ -43,6 +43,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.resultv.android.R
 import com.resultv.android.theme.Brand
+import com.resultv.android.vpn.CERT_FILE_NAME
 import com.resultv.android.vpn.CertExporter
 import com.resultv.android.vpn.CertInstaller
 import com.resultv.android.vpn.CertStore
@@ -79,6 +80,9 @@ fun CertWizardScreen(dataDir: String, onClose: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var step by rememberSaveable { mutableStateOf(Step.Why) }
+    // What the picker actually named the file — not necessarily what we asked
+    // for. The instructions have to point at the real thing.
+    var savedFileName by rememberSaveable { mutableStateOf(CERT_FILE_NAME) }
     val snackbarHost = remember { SnackbarHostState() }
 
     InstallWatcher(
@@ -136,30 +140,11 @@ fun CertWizardScreen(dataDir: String, onClose: () -> Unit) {
                     },
                 )
                 Step.DirectInstall -> DirectInstallStep(dataDir, snackbarHost)
-                Step.Save -> {
-                    val saveError = stringResource(R.string.cert_wizard_save_error)
-                    IntroStep(
-                        icon = Icons.Outlined.VerifiedUser,
-                        title = stringResource(R.string.cert_wizard_save_title),
-                        body = stringResource(R.string.cert_wizard_save_body),
-                        cta = stringResource(R.string.cert_wizard_save_cta),
-                        onCta = {
-                            scope.launch {
-                                val saved = withContext(Dispatchers.IO) {
-                                    runCatching { CertExporter.saveToDownloads(context, dataDir) }
-                                }
-                                saved.fold(
-                                    onSuccess = { step = Step.ManualInstall },
-                                    onFailure = {
-                                        android.util.Log.w(TAG, "Saving CA to Downloads failed", it)
-                                        snackbarHost.showSnackbar(saveError)
-                                    },
-                                )
-                            }
-                        },
-                    )
+                Step.Save -> SaveStep(dataDir, snackbarHost) { name ->
+                    savedFileName = name
+                    step = Step.ManualInstall
                 }
-                Step.ManualInstall -> ManualInstallStep(snackbarHost)
+                Step.ManualInstall -> ManualInstallStep(savedFileName, snackbarHost)
                 Step.Done -> IntroStep(
                     icon = Icons.Outlined.CheckCircle,
                     title = stringResource(R.string.cert_wizard_done_title),
@@ -170,6 +155,60 @@ fun CertWizardScreen(dataDir: String, onClose: () -> Unit) {
             }
         }
     }
+}
+
+/**
+ * Android 11+ path, part one: let the user save the certificate somewhere they
+ * can find it again.
+ *
+ * Only advances on a Uri coming back — a cancelled picker leaves the user on
+ * this step rather than sending them to instructions about a file that was
+ * never written.
+ */
+@Composable
+private fun SaveStep(
+    dataDir: String,
+    snackbarHost: SnackbarHostState,
+    onSaved: (savedFileName: String) -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val saveError = stringResource(R.string.cert_wizard_save_error)
+    val currentOnSaved by rememberUpdatedState(onSaved)
+
+    val picker = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val destination = result.data?.data
+        if (result.resultCode != android.app.Activity.RESULT_OK || destination == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val written = withContext(Dispatchers.IO) {
+                runCatching { CertExporter.writeTo(context, destination, dataDir) }
+            }
+            written.fold(
+                onSuccess = { currentOnSaved(it) },
+                onFailure = {
+                    android.util.Log.w(TAG, "Writing the CA to the chosen file failed", it)
+                    snackbarHost.showSnackbar(saveError)
+                },
+            )
+        }
+    }
+
+    IntroStep(
+        icon = Icons.Outlined.VerifiedUser,
+        title = stringResource(R.string.cert_wizard_save_title),
+        body = stringResource(R.string.cert_wizard_save_body),
+        cta = stringResource(R.string.cert_wizard_save_cta),
+        onCta = {
+            try {
+                picker.launch(CertExporter.buildSaveIntent())
+            } catch (t: Throwable) {
+                android.util.Log.w(TAG, "Couldn't open the save dialog", t)
+                scope.launch { snackbarHost.showSnackbar(saveError) }
+            }
+        },
+    )
 }
 
 /** Android 10 path: hand the certificate to the system and let it install. */
@@ -293,7 +332,7 @@ private fun IntroStep(
 
 /** Android 11+ path: the user has to drive Settings, so make that as short as possible. */
 @Composable
-private fun ManualInstallStep(snackbarHost: SnackbarHostState) {
+private fun ManualInstallStep(savedFileName: String, snackbarHost: SnackbarHostState) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val searchTerm = rememberSettingsSearchTerm()
@@ -350,16 +389,23 @@ private fun ManualInstallStep(snackbarHost: SnackbarHostState) {
             NumberedStep(2, stringResource(R.string.cert_wizard_install_step2))
             NumberedStep(3, stringResource(R.string.cert_wizard_install_step3, searchTerm))
             NumberedStep(4, stringResource(R.string.cert_wizard_install_step4))
-            NumberedStep(5, stringResource(R.string.cert_wizard_install_step5))
+            NumberedStep(5, stringResource(R.string.cert_wizard_install_step5, savedFileName))
         }
         Button(
             onClick = {
                 try {
-                    // Top-level Settings, not ACTION_SECURITY_SETTINGS: the
-                    // search field the instructions depend on lives on the
-                    // root page, and the security page doesn't have one.
+                    // Top-level Settings, because the search field the
+                    // instructions depend on only exists on the root page.
+                    //
+                    // CLEAR_TASK matters as much as the action does: NEW_TASK
+                    // alone resumes an existing Settings task wherever the user
+                    // last left it — typically the credentials screen they were
+                    // just poking at — so they'd land deep in Settings with no
+                    // search field, exactly where these steps don't work.
                     context.startActivity(
-                        Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        Intent(Settings.ACTION_SETTINGS).addFlags(
+                            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK,
+                        ),
                     )
                 } catch (t: Throwable) {
                     android.util.Log.w(TAG, "Couldn't open settings", t)
@@ -395,22 +441,27 @@ private fun NumberedStep(number: Int, text: String) {
  * The label the user must actually search for, read out of the device's own
  * Settings app rather than guessed.
  *
- * OEMs rename this freely — a stock phone says "CA certificate" where MIUI
- * says something of its own — so a hardcoded per-manufacturer table would be
- * wrong on every skin we hadn't seen. Asking the Settings package for its
- * `ca_certificate` string returns whatever *that* build calls it, already in
- * the system language, which is also the right language: the term gets pasted
- * into Settings' own search, so an app running in Russian on an English phone
- * must still hand over "CA certificate".
+ * OEMs rename this freely, so a hardcoded per-manufacturer table would be
+ * wrong on every skin we hadn't seen. Asking the Settings package for the
+ * string returns whatever *that* build calls it, already in the system
+ * language — which is also the right language, since the term gets pasted into
+ * Settings' own search: an app running in Russian on an English phone must
+ * still hand over "CA certificate".
  *
- * Falls back to our own string in the system locale when Settings has no such
- * resource (a heavily forked skin, or a renamed resource).
+ * Two names, because one isn't enough in practice. `ca_certificate` is the
+ * stock entry and the most precise match for the step that follows. MIUI
+ * doesn't ship it at all (verified by dumping Settings.apk on a Redmi Note 7,
+ * MIUI V125) and files the flow under `credentials_install` instead — "Install
+ * from SD card" / "Установка с SD-карты". Falling straight through to our own
+ * string there would hand the user a term their Settings search cannot find.
  */
 @Composable
 private fun rememberSettingsSearchTerm(): String {
     val context = LocalContext.current
     return remember(context) {
-        settingsAppString(context, "ca_certificate") ?: ownStringInSystemLocale(context)
+        settingsAppString(context, "ca_certificate")
+            ?: settingsAppString(context, "credentials_install")
+            ?: ownStringInSystemLocale(context)
     }
 }
 

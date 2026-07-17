@@ -92,7 +92,7 @@
     <string name="cert_wizard_direct_body">Нажмите кнопку ниже и подтвердите установку — Android попросит задать имя сертификата, можно оставить предложенное. На этом настройка закончена.</string>
     <string name="cert_wizard_direct_cta">Установить сертификат</string>
     <string name="cert_wizard_save_title">Сертификат ResultV</string>
-    <string name="cert_wizard_save_body">Сертификат сохранится в папку «Загрузки». На следующем шаге вы установите его через настройки Android — сделать это самостоятельно приложениям система не разрешает.</string>
+    <string name="cert_wizard_save_body">Нажмите «Сохранить сертификат» и подтвердите — имя файла и папка «Загрузки» уже подставлены, менять ничего не нужно. На следующем шаге вы установите его через настройки Android: сделать это самостоятельно приложениям система не разрешает.</string>
     <string name="cert_wizard_save_cta">Сохранить сертификат</string>
     <string name="cert_wizard_save_error">Не удалось сохранить сертификат в «Загрузки». Попробуйте ещё раз.</string>
     <string name="cert_wizard_install_title">Установка сертификата</string>
@@ -101,7 +101,7 @@
     <string name="cert_wizard_install_step2">Откройте настройки и вставьте его в поле поиска</string>
     <string name="cert_wizard_install_step3">Выберите «%1$s» в результатах</string>
     <string name="cert_wizard_install_step4">Примите предупреждение безопасности — Android показывает его для любого локально установленного сертификата</string>
-    <string name="cert_wizard_install_step5">Нажмите на файл resultv-ca.crt, чтобы установить его</string>
+    <string name="cert_wizard_install_step5">Нажмите на файл %1$s, чтобы установить его</string>
     <string name="cert_wizard_install_cta">Открыть настройки</string>
     <string name="cert_wizard_install_copied">Скопировано</string>
     <string name="cert_wizard_install_settings_error">Не удалось открыть настройки Android. Зайдите вручную: Настройки → Безопасность → Шифрование и учётные данные.</string>

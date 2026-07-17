@@ -1,12 +1,13 @@
 package com.resultv.android.vpn
 
-import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.provider.DocumentsContract
 import android.provider.MediaStore
-import androidx.annotation.RequiresApi
+import android.provider.OpenableColumns
 import mobile.Mobile
 import java.io.File
 
@@ -14,83 +15,76 @@ import java.io.File
 const val CERT_FILE_NAME = "resultv-ca.crt"
 
 /**
- * Drops our root CA into the public Downloads folder so the user can pick it
- * up from Android's "Install a certificate" screen.
+ * Hands the root CA to the system document picker so the user can pick it up
+ * from Android's "Install a certificate" screen afterwards.
  *
- * Q+ only, which is the same floor as browser ad-block itself
- * (VpnService.Builder.setHttpProxy) — so MediaStore's scoped-storage API is
- * always available and no storage permission is needed.
- *
- * Deliberately no picker and no share sheet: the previous flow made the user
- * choose a target and then hunt for what they'd saved, which is exactly the
- * friction the wizard exists to remove.
+ * Writing to Downloads silently via MediaStore was tried first and rejected on
+ * device: nothing visible happens, so the user is left wondering whether the
+ * step worked at all. The picker costs one tap and answers that — it opens
+ * pre-filled with [CERT_FILE_NAME] and Downloads already selected, which is
+ * also what AdGuard does.
  */
 object CertExporter {
 
     /**
-     * Writes [CERT_FILE_NAME] to Downloads, replacing an earlier copy we wrote.
+     * Intent for the system "save file" dialog, pre-filled so the user only
+     * has to confirm.
      *
-     * Without the delete, MediaStore silently renames the new file to
-     * `resultv-ca (1).crt` and the on-screen instructions stop matching what
-     * the user sees in the file list. The query is scoped to
-     * `MediaStore.Downloads` by exact display name, so it can only match a
-     * download of ours.
-     *
-     * Throws on I/O failure — callers should surface an error rather than
-     * silently advance the wizard.
+     * EXTRA_INITIAL_URI is a hint, honoured from Android 8 on and ignored
+     * elsewhere; the picker still opens somewhere sensible without it.
      */
-    @RequiresApi(Build.VERSION_CODES.Q)
-    fun saveToDownloads(context: Context, dataDir: String): Uri {
-        val resolver = context.contentResolver
-        val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
+    fun buildSaveIntent(): Intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+        addCategory(Intent.CATEGORY_OPENABLE)
+        type = "application/x-x509-ca-cert"
+        putExtra(Intent.EXTRA_TITLE, CERT_FILE_NAME)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            putExtra(
+                DocumentsContract.EXTRA_INITIAL_URI,
+                downloadsTreeUri(),
+            )
+        }
+    }
 
-        resolver.query(
-            collection,
-            arrayOf(MediaStore.Downloads._ID),
-            "${MediaStore.Downloads.DISPLAY_NAME} = ?",
-            arrayOf(CERT_FILE_NAME),
+    /**
+     * Copies the CA into the [destination] the picker returned, and reports
+     * the name it actually landed under.
+     *
+     * The name is read back rather than assumed: when Downloads already holds
+     * a `resultv-ca.crt`, the picker silently saves ours as `resultv-ca
+     * (3).crt` and tells us only through the Uri. Instructions naming
+     * [CERT_FILE_NAME] would then point at a different, older file — verified
+     * on an Android 16 emulator.
+     *
+     * Blocking I/O — call from a background thread. Throws on failure so the
+     * caller can surface an error rather than advance the wizard on a file
+     * that isn't there.
+     */
+    fun writeTo(context: Context, destination: Uri, dataDir: String): String {
+        context.contentResolver.openOutputStream(destination)?.use { out ->
+            File(Mobile.filterCARootPath(dataDir)).inputStream().use { it.copyTo(out) }
+        } ?: error("Couldn't open $destination for writing")
+        return displayName(context, destination) ?: CERT_FILE_NAME
+    }
+
+    private fun displayName(context: Context, uri: Uri): String? = runCatching {
+        context.contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
             null,
         )?.use { cursor ->
-            val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID)
-            while (cursor.moveToNext()) {
-                runCatching {
-                    resolver.delete(
-                        MediaStore.Downloads.EXTERNAL_CONTENT_URI.buildUpon()
-                            .appendPath(cursor.getLong(idColumn).toString())
-                            .build(),
-                        null,
-                        null,
-                    )
-                }
+            if (cursor.moveToFirst()) {
+                cursor.getString(cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME))
+                    ?.takeIf { it.isNotBlank() }
+            } else {
+                null
             }
         }
+    }.getOrNull()
 
-        val values = ContentValues().apply {
-            put(MediaStore.Downloads.DISPLAY_NAME, CERT_FILE_NAME)
-            put(MediaStore.Downloads.MIME_TYPE, "application/x-x509-ca-cert")
-            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-            put(MediaStore.Downloads.IS_PENDING, 1)
-        }
-        val uri = resolver.insert(collection, values)
-            ?: error("MediaStore refused to create $CERT_FILE_NAME in Downloads")
-
-        try {
-            resolver.openOutputStream(uri)?.use { out ->
-                File(Mobile.filterCARootPath(dataDir)).inputStream().use { it.copyTo(out) }
-            } ?: error("Couldn't open an output stream for $CERT_FILE_NAME")
-        } catch (t: Throwable) {
-            // Leaving the row IS_PENDING would strand an invisible placeholder
-            // in the user's Downloads that later saves would then collide with.
-            runCatching { resolver.delete(uri, null, null) }
-            throw t
-        }
-
-        resolver.update(
-            uri,
-            ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) },
-            null,
-            null,
-        )
-        return uri
-    }
+    private fun downloadsTreeUri(): Uri =
+        MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL).buildUpon()
+            .appendPath(Environment.DIRECTORY_DOWNLOADS)
+            .build()
 }

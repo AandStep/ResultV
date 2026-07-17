@@ -164,7 +164,16 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {
                     SettingsSubcategory.Advanced -> AdvancedGroup(settings)
                     SettingsSubcategory.Subscriptions -> SubscriptionsGroup(settings)
                     SettingsSubcategory.Security -> SecurityGroup(settings)
-                    SettingsSubcategory.AdBlock -> AdBlockGroup(settings, onOpenCertWizard = onOpenCertWizard)
+                    SettingsSubcategory.AdBlock -> AdBlockGroup(
+                        settings,
+                        // Dismiss the sheet first, or the wizard opens beneath
+                        // it — this sheet is a sub-window layered above the
+                        // Scaffold, so a full-screen route can't cover it.
+                        onOpenCertWizard = {
+                            activeSheet = null
+                            onOpenCertWizard()
+                        },
+                    )
                     SettingsSubcategory.Network -> NetworkGroup(settings)
                     SettingsSubcategory.Appearance -> AppearanceGroup(onBeforeRecreate = { activeSheet = null })
                     SettingsSubcategory.Routing -> RulesScreen()
