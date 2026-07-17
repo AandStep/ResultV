@@ -12,6 +12,8 @@ dist
 dist-ssr
 *.local
 release
+ResultV-main
+android/libs
 
 # Editor directories and files
 .vscode/*
@@ -60,3 +62,6 @@ build-release.sh
 .agents
 .agent-skills
 
+
+# large local AAR backups
+android/libs/*.aar.bak

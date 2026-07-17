@@ -154,7 +154,12 @@ fun RulesScreen() {
                 iconBg = Color(0xFF10b981).copy(alpha = 0.18f),
                 iconTint = Color(0xFF34d399),
                 title = stringResource(R.string.rules_section_domains_title),
-                subtitle = stringResource(R.string.rules_section_domains_subtitle),
+                subtitle = stringResource(
+                    when (rules.mode) {
+                        RoutingMode.Global -> R.string.rules_section_domains_subtitle_global
+                        RoutingMode.Smart -> R.string.rules_section_domains_subtitle_smart
+                    }
+                ),
             )
             SectionBody {
                 RuleTabs(mode = rules.mode, selected = domainTab, onSelect = { domainTab = it })

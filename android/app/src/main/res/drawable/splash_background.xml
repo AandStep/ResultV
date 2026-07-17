@@ -11,7 +11,7 @@
         android:height="240dp"
         android:gravity="center">
         <bitmap
-            android:src="@mipmap/ic_launcher_logo"
+            android:src="@mipmap/ic_splash_logo"
             android:gravity="center"
             android:tileMode="disabled" />
     </item>
