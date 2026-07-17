@@ -30,9 +30,10 @@ import (
 	filterproxy "resultproxy-wails/internal/filter/mitm/vendoredproxy"
 )
 
-// testScriptletIndexError is a test hook that allows injecting an error into
-// the scriptlet index build. Non-nil only in tests; see cachedScriptletIndex.
-var testScriptletIndexError error
+// buildScriptletIndex is a seam: tests swap it to exercise the degradation
+// path when the scriptlet index builder encounters an error (though
+// BuildScriptletIndex itself never errors in production today).
+var buildScriptletIndex = mitm.BuildScriptletIndex
 
 const metaFileName = "filters-meta.json"
 
@@ -352,12 +353,7 @@ func (m *Manager) cachedScriptletIndex(paths map[rules.ListID]string) (*filterpr
 	if m.scriptletIndex != nil && m.scriptletIndexKey == key {
 		return m.scriptletIndex, nil
 	}
-	// testScriptletIndexError is a test hook that allows injecting an error
-	// into the scriptlet index build for testing degradation.
-	if testScriptletIndexError != nil {
-		return nil, testScriptletIndexError
-	}
-	ix, err := mitm.BuildScriptletIndex(paths)
+	ix, err := buildScriptletIndex(paths)
 	if err != nil {
 		return nil, err
 	}

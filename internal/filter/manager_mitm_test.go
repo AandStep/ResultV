@@ -16,6 +16,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/AdguardTeam/urlfilter/rules"
+	filterproxy "resultproxy-wails/internal/filter/mitm/vendoredproxy"
 )
 
 func TestManager_StartMITM_FailsWithoutCachedLists(t *testing.T) {
@@ -140,7 +143,7 @@ func TestManager_CARootPath_ReturnsExistingFile(t *testing.T) {
 	}
 }
 
-func TestManager_StartMITM_DegracesWhenScriptletIndexBuildFails(t *testing.T) {
+func TestManager_StartMITM_DegradesWhenScriptletIndexBuildFails(t *testing.T) {
 	list := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(strings.Repeat("! test list\n", 50)))
 	}))
@@ -161,9 +164,12 @@ func TestManager_StartMITM_DegracesWhenScriptletIndexBuildFails(t *testing.T) {
 		t.Fatalf("Update failed: %v", err)
 	}
 
-	// Inject an error into the scriptlet index builder for this test.
-	testScriptletIndexError = fmt.Errorf("injected error for testing")
-	defer func() { testScriptletIndexError = nil }()
+	// Swap the builder function to inject an error for testing degradation.
+	origBuilder := buildScriptletIndex
+	buildScriptletIndex = func(paths map[rules.ListID]string) (*filterproxy.ScriptletIndex, error) {
+		return nil, fmt.Errorf("injected error for testing")
+	}
+	defer func() { buildScriptletIndex = origBuilder }()
 
 	// Before the fix, StartMITM fails when scriptlet index build fails.
 	// After the fix, StartMITM succeeds and degrades to nil index.
