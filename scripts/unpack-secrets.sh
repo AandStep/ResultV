@@ -13,10 +13,17 @@ if [[ ! -f secrets.enc ]]; then
     exit 1
 fi
 
-# Без --force не затираем уже существующие секреты.
-if [[ $FORCE -eq 0 && -f .env ]]; then
-    echo ".env уже существует — пропускаю распаковку. Запусти с --force, чтобы перезаписать." >&2
-    exit 0
+# Без --force не затираем НИ ОДИН уже существующий секрет.
+if [[ $FORCE -eq 0 ]]; then
+    shopt -s nullglob
+    EXISTING=(.env android/keystore.properties android/*.jks android/*.keystore)
+    shopt -u nullglob
+    for f in "${EXISTING[@]}"; do
+        if [[ -e "$f" ]]; then
+            echo "$f уже существует — пропускаю распаковку. Запусти с --force, чтобы перезаписать." >&2
+            exit 0
+        fi
+    done
 fi
 
 PASS_ARGS=()

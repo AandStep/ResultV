@@ -32,5 +32,12 @@ fi
 
 tar -cf - "${FILES[@]}" | openssl enc -aes-256-cbc -pbkdf2 -salt "${PASS_ARGS[@]}" -out secrets.enc
 
+if [[ -n "${SECRETS_PASSWORD:-}" ]]; then
+    if ! openssl enc -d -aes-256-cbc -pbkdf2 "${PASS_ARGS[@]}" -in secrets.enc | tar -tf - >/dev/null 2>&1; then
+        echo "ERROR: проверка secrets.enc не прошла — бандл битый, не коммить." >&2
+        exit 1
+    fi
+fi
+
 echo "Готово: secrets.enc"
 echo "Теперь: git add secrets.enc && git commit -m \"chore: update secrets bundle\""

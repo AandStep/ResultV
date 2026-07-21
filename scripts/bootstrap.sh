@@ -23,7 +23,8 @@ echo "==> go: $(go version)"
 if [[ -z "${JAVA_HOME:-}" ]] && ! command -v javac >/dev/null; then
     fail "JDK не найден. Установи JDK 17+ (Temurin/Android Studio JBR) и задай JAVA_HOME."
 fi
-echo "==> java: $(java -version 2>&1 | head -1)"
+JAVA_BIN="java"; [[ -n "${JAVA_HOME:-}" && -x "${JAVA_HOME}/bin/java" ]] && JAVA_BIN="${JAVA_HOME}/bin/java"
+echo "==> java: $("${JAVA_BIN}" -version 2>&1 | head -1 || echo "unknown")"
 
 # --- Android SDK ---
 if [[ -z "${ANDROID_HOME:-}" ]]; then
