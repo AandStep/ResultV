@@ -65,3 +65,8 @@ build-release.sh
 
 # large local AAR backups
 android/libs/*.aar.bak
+
+# Secrets bundle is encrypted -> safe to commit
+!secrets.enc
+!.env.example
+!android/keystore.properties.example
