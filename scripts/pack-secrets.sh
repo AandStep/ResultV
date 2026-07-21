@@ -25,7 +25,12 @@ echo "Упаковываю в secrets.enc:"
 printf '  - %s\n' "${FILES[@]}"
 echo "Задай пароль (запомни — он нужен на другом ПК):"
 
-tar -cf - "${FILES[@]}" | openssl enc -aes-256-cbc -pbkdf2 -salt -out secrets.enc
+PASS_ARGS=()
+if [[ -n "${SECRETS_PASSWORD:-}" ]]; then
+    PASS_ARGS=(-pass env:SECRETS_PASSWORD)
+fi
+
+tar -cf - "${FILES[@]}" | openssl enc -aes-256-cbc -pbkdf2 -salt "${PASS_ARGS[@]}" -out secrets.enc
 
 echo "Готово: secrets.enc"
 echo "Теперь: git add secrets.enc && git commit -m \"chore: update secrets bundle\""
