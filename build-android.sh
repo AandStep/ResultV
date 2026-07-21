@@ -5,6 +5,7 @@
 # the APK.
 #
 # Usage:
+#   На новой машине сперва: bash scripts/bootstrap.sh  (см. docs/PORTING.md)
 #   bash build-android.sh                       # debug APK (arm64-v8a)
 #   bash build-android.sh release               # release APK (requires keystore.properties)
 #   bash build-android.sh debug --install       # build + adb install on the connected device
