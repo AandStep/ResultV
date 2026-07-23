@@ -116,6 +116,39 @@ const contentScript = "/* content-script v1.0.0 Sun Sep 08 2019 */\n" +
 	"        Object.defineProperty(style.sheet, 'disabled', disabledDescriptor);\n" +
 	"    }\n" +
 	"\n" +
+	"    /* ResultV: apply ExtendedCSS rules (:has, :contains, :matches-css,\n" +
+	"       :upward, :remove, …) that a plain <style> tag cannot express. The\n" +
+	"       element-hiding ExtCSS arrays are bare selectors (need a display:none\n" +
+	"       declaration); the css ExtCSS arrays are already full rule text. */\n" +
+	"    function applyExtendedCss(cosmeticResult) {\n" +
+	"        const extCssRules = [\n" +
+	"            ...getCssRules(cosmeticResult.elementHiding.genericExtCss, 'display: none!important'),\n" +
+	"            ...getCssRules(cosmeticResult.elementHiding.specificExtCss, 'display: none!important'),\n" +
+	"            ...getCssRules(cosmeticResult.css.genericExtCss),\n" +
+	"            ...getCssRules(cosmeticResult.css.specificExtCss),\n" +
+	"        ];\n" +
+	"        if (extCssRules.length === 0) {\n" +
+	"            return;\n" +
+	"        }\n" +
+	"        if (typeof ExtendedCss === 'undefined' || !ExtendedCss || typeof ExtendedCss.ExtendedCss !== 'function') {\n" +
+	"            return;\n" +
+	"        }\n" +
+	"        const Engine = ExtendedCss.ExtendedCss;\n" +
+	"        try {\n" +
+	"            new Engine({ cssRules: extCssRules }).apply();\n" +
+	"        } catch (e) {\n" +
+	"            /* One malformed rule makes the whole batch throw; retry per-rule\n" +
+	"               so the rest still apply. */\n" +
+	"            extCssRules.forEach((rule) => {\n" +
+	"                try {\n" +
+	"                    new Engine({ cssRules: [rule] }).apply();\n" +
+	"                } catch (e2) {\n" +
+	"                    try { console.debug('resultv: extcss rule failed', rule, e2); } catch (e3) {}\n" +
+	"                }\n" +
+	"            });\n" +
+	"        }\n" +
+	"    }\n" +
+	"\n" +
 	"    /* ResultV: parse \"//scriptlet('name', 'arg')\" rule text. */\n" +
 	"    function parseScriptletRule(ruleText) {\n" +
 	"        const match = /^\\/\\/scriptlet\\((.*)\\)\\s*$/.exec(ruleText);\n" +
@@ -173,6 +206,7 @@ const contentScript = "/* content-script v1.0.0 Sun Sep 08 2019 */\n" +
 	"        // content script was already executed, doing nothing\n" +
 	"        document[contentScriptExecutionFlagToCheck] = true;\n" +
 	"        applyCosmeticResult(configuration.nonce, configuration.cosmeticResult);\n" +
+	"        applyExtendedCss(configuration.cosmeticResult);\n" +
 	"        applyJSRules(configuration.cosmeticResult.js);\n" +
 	"    }\n" +
 	"\n" +

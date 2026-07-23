@@ -14,17 +14,22 @@ import (
 )
 
 // This code is to be injected in the page
-// ResultV modification: the scriptlets runtime loads first (synchronously,
-// in <head>) so it is present before the content script executes JS rules
-// and before any page script runs.
+// ResultV modification: the scriptlets and extended-css runtimes load first
+// (synchronously, in <head>) so they are present before the content script
+// executes JS/ExtCSS rules and before any page script runs.
 const contentScriptCode = `
 <script src="//{{.InjectionHostname}}/scriptlets.js?ts={{.Timestamp}}"></script>
+<script src="//{{.InjectionHostname}}/extended-css.js?ts={{.Timestamp}}"></script>
 <script src="//{{.InjectionHostname}}/content-script.js?hostname={{.Hostname}}&option={{.Option}}&ts={{.Timestamp}}"></script>
 `
 
 // scriptletsPath is the injection-host path serving the vendored
 // @adguard/scriptlets UMD bundle. ResultV addition — not present upstream.
 const scriptletsPath = "/scriptlets.js"
+
+// extendedCSSPath is the injection-host path serving the vendored
+// @adguard/extended-css UMD bundle. ResultV addition — not present upstream.
+const extendedCSSPath = "/extended-css.js"
 
 var contentScriptURLTmpl = template.Must(template.New("contentScriptCode").Parse(contentScriptCode))
 
@@ -80,6 +85,9 @@ func (s *Server) injectionResponse(session *Session) *http.Response {
 	if session.HTTPRequest.URL.Path == scriptletsPath {
 		return s.buildScriptletsJS(session)
 	}
+	if session.HTTPRequest.URL.Path == extendedCSSPath {
+		return s.buildExtendedCSSJS(session)
+	}
 	return s.buildContentScript(session)
 }
 
@@ -106,6 +114,45 @@ func (s *Server) buildScriptletsJS(session *Session) *http.Response {
 		b, err := compressGzip(bodyBytes)
 		if err != nil {
 			log.Error("failed to compress scriptlets bundle: %v", err)
+			return proxyutil.NewErrorResponse(r, err)
+		}
+		contentLen = b.Len()
+		bodyReader = io.NopCloser(b)
+	}
+
+	res := proxyutil.NewResponse(http.StatusOK, bodyReader, r)
+	res.Header.Set("Content-Type", "text/javascript; charset=utf-8")
+	res.ContentLength = int64(contentLen)
+	if s.CompressContentScript {
+		res.Header.Set("Content-Encoding", "gzip")
+	}
+	enableCache(res)
+	return res
+}
+
+// buildExtendedCSSJS serves the embedded extended-css runtime with the same
+// caching/compression treatment as the scriptlets bundle. ResultV addition.
+func (s *Server) buildExtendedCSSJS(session *Session) *http.Response {
+	r := session.HTTPRequest
+	if r.Method != http.MethodGet {
+		return newNotFoundResponse(r)
+	}
+
+	if r.Header.Get("If-Modified-Since") != "" {
+		res := proxyutil.NewResponse(http.StatusNotModified, nil, r)
+		res.Header.Set("Content-Type", "text/javascript; charset=utf-8")
+		enableCache(res)
+		return res
+	}
+
+	bodyBytes := extendedCSSBundle
+	contentLen := len(bodyBytes)
+	var bodyReader io.Reader = bytes.NewReader(bodyBytes)
+
+	if s.CompressContentScript {
+		b, err := compressGzip(bodyBytes)
+		if err != nil {
+			log.Error("failed to compress extended-css bundle: %v", err)
 			return proxyutil.NewErrorResponse(r, err)
 		}
 		contentLen = b.Len()
@@ -160,6 +207,24 @@ func (s *Server) buildContentScript(session *Session) *http.Response {
 		generic, specific := s.scriptletIndex.Match(hostname)
 		cosmeticResult.JS.Generic = append(cosmeticResult.JS.Generic, generic...)
 		cosmeticResult.JS.Specific = append(cosmeticResult.JS.Specific, specific...)
+	}
+
+	// ResultV: merge in the cosmetic index — the domain-specific `##` rules
+	// urlfilter drops on subdomains, plus the `#?#` ExtCSS rules its parser
+	// rejects outright (see cosmeticindex.go). Gated on the same CSS bits the
+	// engine uses: specific/ExtCSS on CosmeticOptionCSS, generic ExtCSS on
+	// CosmeticOptionGenericCSS. De-duplicated so an exact-host apex, where the
+	// engine already returns the specific rule, doesn't emit it twice.
+	idxSpecific, idxGenericExt, idxSpecificExt := s.cosmeticIndex.Match(hostname)
+	if cosmeticOption&rules.CosmeticOptionCSS == rules.CosmeticOptionCSS {
+		cosmeticResult.ElementHiding.Specific = dedupAppend(
+			cosmeticResult.ElementHiding.Specific, idxSpecific)
+		cosmeticResult.ElementHiding.SpecificExtCSS = dedupAppend(
+			cosmeticResult.ElementHiding.SpecificExtCSS, idxSpecificExt)
+	}
+	if cosmeticOption&rules.CosmeticOptionGenericCSS == rules.CosmeticOptionGenericCSS {
+		cosmeticResult.ElementHiding.GenericExtCSS = dedupAppend(
+			cosmeticResult.ElementHiding.GenericExtCSS, idxGenericExt)
 	}
 
 	bodyBytes := []byte(s.buildContentScriptCode(cosmeticResult))

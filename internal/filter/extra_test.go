@@ -121,3 +121,53 @@ func TestEngine_BlocksCaughtAdHost(t *testing.T) {
 		t.Fatalf("example.org unexpectedly blocked by %s", r.String())
 	}
 }
+
+// The supplement must collapse leftover empty ad slots — the case where the
+// network layer blocks the ad request but the page keeps a reserved-height
+// container behind, which is what leaves blank gaps (measured on mail.ru:
+// div.ads-above-dzen, 300px tall, truly :empty, covered by no public list).
+func TestEmbeddedExtraRules_CollapseEmptyAdSlots(t *testing.T) {
+	for _, want := range []string{
+		`##div[class^="ads-"]:empty`,
+		`##div[class*=" ads-"]:empty`,
+		`##div[class*="ads_"]:empty`,
+		`mail.ru##.ads-above-dzen`,
+	} {
+		if !strings.Contains(embeddedExtraRules, want) {
+			t.Errorf("embeddedExtraRules missing %q", want)
+		}
+	}
+}
+
+// Every cosmetic line in the supplement must parse — a typo would be dropped
+// silently at load time and the slot would keep leaking.
+func TestEmbeddedExtraRules_CosmeticLinesParse(t *testing.T) {
+	for _, line := range strings.Split(embeddedExtraRules, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "!") || !strings.Contains(line, "##") {
+			continue
+		}
+		r, err := rules.NewCosmeticRule(line, extraListID)
+		if err != nil {
+			t.Errorf("cosmetic rule %q failed to parse: %v", line, err)
+			continue
+		}
+		if r.Content == "" {
+			t.Errorf("cosmetic rule %q parsed with empty content", line)
+		}
+	}
+}
+
+// The site-specific supplement rule must apply to the subdomain the browser
+// actually loads, not just the apex.
+func TestEmbeddedExtraRules_MailRuSlotMatchesSubdomain(t *testing.T) {
+	r, err := rules.NewCosmeticRule(`mail.ru##.ads-above-dzen`, extraListID)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	for _, host := range []string{"mail.ru", "www.mail.ru", "e.mail.ru"} {
+		if !r.Match(host) {
+			t.Errorf("rule should apply to %s", host)
+		}
+	}
+}

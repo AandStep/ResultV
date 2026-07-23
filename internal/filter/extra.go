@@ -30,6 +30,32 @@ const embeddedExtraRules = `! ResultV built-in supplement (always on)
 ||adultmasters.pro^
 ||nmsrv.run^
 ||kintg.site^
+!
+! Collapse leftover empty ad slots. The network layer blocks the ad request,
+! but the page keeps its reserved-height container behind — that container is
+! what shows up as a blank gap. The public lists cover the ad element itself,
+! not always the wrapper (measured on mail.ru: div.ads-above-dzen, 300px tall,
+! genuinely :empty, matched by no rule in any of the 9 subscribed lists).
+!
+! The :empty matcher keeps this safe and self-correcting: it matches only
+! elements with no child nodes at all (whitespace counts as a child), and the
+! moment real content lands the selector stops matching and the element
+! reappears. Plain CSS, so these apply through the injected <style> tag
+! without needing the ExtCSS runtime.
+!
+! ^= anchors to the start of the whole class attribute, so the space-prefixed
+! variant is needed to catch the token mid-attribute (class="wrap ads-slot").
+##div[class^="ads-"]:empty
+##div[class*=" ads-"]:empty
+##div[class*="ads_"]:empty
+##div[class*="_ads"]:empty
+##div[class*="-ads"]:empty
+##div[id^="ads-"]:empty
+##div[class*="adfox"]:empty
+##div[id*="adfox"]:empty
+!
+! Site-specific slots the public lists miss.
+mail.ru##.ads-above-dzen
 `
 
 // extraListID is the urlfilter list ID for the supplement. Downloaded

@@ -35,6 +35,9 @@ type Config struct {
 	// ScriptletIndex, when non-nil, is reused instead of rebuilding from
 	// FilterPaths — mirrors Engine above, same caching rationale.
 	ScriptletIndex *filterproxy.ScriptletIndex
+	// CosmeticIndex, when non-nil, is reused instead of rebuilding from
+	// FilterPaths — mirrors ScriptletIndex above, same caching rationale.
+	CosmeticIndex *filterproxy.CosmeticIndex
 	// UpstreamDial, when non-nil, is used for every connection the proxy makes
 	// to an origin server. On Android the MITM proxy runs inside the app
 	// process, which is excluded from the VPN (addDisallowedApplication), so a
@@ -56,6 +59,12 @@ func BuildEngine(paths map[rules.ListID]string) (*urlfilter.Engine, error) {
 // from the given filter files, mirroring BuildEngine above.
 func BuildScriptletIndex(paths map[rules.ListID]string) (*filterproxy.ScriptletIndex, error) {
 	return filterproxy.BuildScriptletIndex(paths)
+}
+
+// BuildCosmeticIndex builds (and lets the caller cache) a CosmeticIndex from
+// the given filter files, mirroring BuildScriptletIndex above.
+func BuildCosmeticIndex(paths map[rules.ListID]string) (*filterproxy.CosmeticIndex, error) {
+	return filterproxy.BuildCosmeticIndex(paths)
 }
 
 // Server wraps urlfilter's MITM proxy.
@@ -93,6 +102,7 @@ func NewServer(cfg Config) (*Server, error) {
 		FiltersPaths:   cfg.FilterPaths,
 		Engine:         cfg.Engine,
 		ScriptletIndex: cfg.ScriptletIndex,
+		CosmeticIndex:  cfg.CosmeticIndex,
 		InjectionHost:  "injections.resultv.local",
 		ProxyConfig: gomitmproxy.Config{
 			ListenAddr:     addr,

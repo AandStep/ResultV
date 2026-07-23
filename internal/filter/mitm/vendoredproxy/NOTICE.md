@@ -47,3 +47,25 @@ classic-script context.
 To update: download the new `dist/scriptlets/index.js`, replace the file, apply
 the same transformation (replace final line), update the version here, and
 re-run the vendoredproxy tests.
+
+## extendedcss.umd.min.js
+
+Vendored from the `@adguard/extended-css` npm package, version 2.2.0, file
+`dist/extended-css.umd.min.js` (via cdn.jsdelivr.net). Copyright (C) AdGuard
+Software Ltd. Licensed GPL-3.0 — same as this project.
+
+This build ships as UMD and assigns the global itself: loaded as a classic
+`<script src>` tag it exposes `window.ExtendedCss`, whose `.ExtendedCss` class
+the content script instantiates with `{ cssRules: [...] }` and `.apply()`. The
+content script needs this runtime because urlfilter emits ExtendedCSS cosmetic
+rules (`:has`, `:contains`, `:matches-css`, `:upward`, `:remove`, …) into the
+`*ExtCss` arrays of `CosmeticResult`, which a plain `<style>` tag cannot express
+— without it those rules were silently dropped, leaving blank ad placeholders.
+
+**Transformation applied:** none, except stripping the trailing
+`//# sourceMappingURL=` comment (it referenced a jsDelivr-hosted map we do not
+vendor).
+
+To update: download the new `dist/extended-css.umd.min.js`, strip the trailing
+sourceMappingURL comment, replace the file, update the version here, and re-run
+the vendoredproxy tests.

@@ -52,6 +52,12 @@ type Config struct {
 	// and reuses it across proxy restarts.
 	ScriptletIndex *ScriptletIndex
 
+	// CosmeticIndex, when non-nil, is used verbatim instead of building one
+	// from FiltersPaths — mirrors ScriptletIndex above. It supplements
+	// urlfilter's engine with the domain-specific-on-subdomain and ExtCSS
+	// rules the engine misses (see cosmeticindex.go). Same caching rationale.
+	CosmeticIndex *CosmeticIndex
+
 	// If true, we will serve the content-script compressed
 	// This is useful for the case when the proxy is on a public server,
 	// as it saves some data.
@@ -93,6 +99,10 @@ type Server struct {
 	// scriptletIndex indexes `#%#`/`#@%#` cosmetic-JS rules; nil disables
 	// scriptlet injection (degraded mode, see NewServer).
 	scriptletIndex *ScriptletIndex
+
+	// cosmeticIndex supplements the engine with subdomain-specific and ExtCSS
+	// element-hiding rules; nil disables that supplement (degraded mode).
+	cosmeticIndex *CosmeticIndex
 
 	// time when the server was created
 	createdAt time.Time
@@ -141,6 +151,20 @@ func NewServer(config Config) (*Server, error) {
 		}
 	}
 	s.scriptletIndex = scriptletIndex
+
+	// ResultV: reuse a pre-built cosmetic index when supplied, else build from
+	// FiltersPaths. Like the scriptlet index, a build error degrades to nil
+	// (engine-only cosmetics) rather than failing NewServer.
+	cosmeticIndex := config.CosmeticIndex
+	if cosmeticIndex == nil {
+		var err error
+		cosmeticIndex, err = BuildCosmeticIndex(config.FiltersPaths)
+		if err != nil {
+			log.Error("failed to build cosmetic index, subdomain/ExtCSS cosmetics disabled: %v", err)
+			cosmeticIndex = nil
+		}
+	}
+	s.cosmeticIndex = cosmeticIndex
 
 	s.ProxyConfig.OnRequest = s.onRequest
 	s.ProxyConfig.OnResponse = s.onResponse

@@ -35,6 +35,10 @@ import (
 // BuildScriptletIndex itself never errors in production today).
 var buildScriptletIndex = mitm.BuildScriptletIndex
 
+// buildCosmeticIndex is a seam mirroring buildScriptletIndex, for the same
+// test-degradation reason.
+var buildCosmeticIndex = mitm.BuildCosmeticIndex
+
 const metaFileName = "filters-meta.json"
 
 type meta struct {
@@ -65,6 +69,11 @@ type Manager struct {
 	scriptletIndexMu  sync.Mutex
 	scriptletIndex    *filterproxy.ScriptletIndex
 	scriptletIndexKey string
+
+	// Cached cosmetic index, mirroring scriptletIndex above.
+	cosmeticIndexMu  sync.Mutex
+	cosmeticIndex    *filterproxy.CosmeticIndex
+	cosmeticIndexKey string
 
 	networkBlocked  atomic.Uint64
 	cosmeticBlocked atomic.Uint64
@@ -293,6 +302,13 @@ func (m *Manager) StartMITM(listenPort int, upstreamDial func(network, addr stri
 		log.Error("failed to build scriptlet index, scriptlets disabled: %v", err)
 		scriptletIndex = nil
 	}
+	// Same graceful-degradation contract as the scriptlet index: a build
+	// failure disables the subdomain/ExtCSS supplement but keeps the proxy up.
+	cosmeticIndex, err := m.cachedCosmeticIndex(paths)
+	if err != nil {
+		log.Error("failed to build cosmetic index, subdomain/ExtCSS cosmetics disabled: %v", err)
+		cosmeticIndex = nil
+	}
 	srv, err := mitm.NewServer(mitm.Config{
 		ListenPort:     listenPort,
 		RootCert:       root.Certificate,
@@ -300,6 +316,7 @@ func (m *Manager) StartMITM(listenPort int, upstreamDial func(network, addr stri
 		FilterPaths:    paths,
 		Engine:         engine,
 		ScriptletIndex: scriptletIndex,
+		CosmeticIndex:  cosmeticIndex,
 		UpstreamDial:   upstreamDial,
 		OnBlocked: func(cosmetic bool) {
 			if cosmetic {
@@ -359,6 +376,25 @@ func (m *Manager) cachedScriptletIndex(paths map[rules.ListID]string) (*filterpr
 	}
 	m.scriptletIndex = ix
 	m.scriptletIndexKey = key
+	return ix, nil
+}
+
+// cachedCosmeticIndex returns a CosmeticIndex for the given filter files,
+// reusing the last-built one when the file set is unchanged (mirrors
+// cachedScriptletIndex).
+func (m *Manager) cachedCosmeticIndex(paths map[rules.ListID]string) (*filterproxy.CosmeticIndex, error) {
+	key := engineCacheKey(paths)
+	m.cosmeticIndexMu.Lock()
+	defer m.cosmeticIndexMu.Unlock()
+	if m.cosmeticIndex != nil && m.cosmeticIndexKey == key {
+		return m.cosmeticIndex, nil
+	}
+	ix, err := buildCosmeticIndex(paths)
+	if err != nil {
+		return nil, err
+	}
+	m.cosmeticIndex = ix
+	m.cosmeticIndexKey = key
 	return ix, nil
 }
 
