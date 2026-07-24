@@ -8,6 +8,7 @@
 package filter
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -140,6 +141,31 @@ func TestManager_CARootPath_ReturnsExistingFile(t *testing.T) {
 	}
 	if path == "" {
 		t.Fatal("expected a non-empty certificate path")
+	}
+}
+
+func TestManager_SetCASeed_ReproducesCA(t *testing.T) {
+	dir1 := t.TempDir()
+	dir2 := t.TempDir()
+
+	m1 := NewManager(dir1)
+	m1.SetCASeed("stable-seed-xyz")
+	p1, err := m1.CARootPath()
+	if err != nil {
+		t.Fatalf("m1 CARootPath: %v", err)
+	}
+	cert1, _ := os.ReadFile(p1)
+
+	m2 := NewManager(dir2)
+	m2.SetCASeed("stable-seed-xyz")
+	p2, err := m2.CARootPath()
+	if err != nil {
+		t.Fatalf("m2 CARootPath: %v", err)
+	}
+	cert2, _ := os.ReadFile(p2)
+
+	if !bytes.Equal(cert1, cert2) {
+		t.Fatal("same seed via manager produced different CA certs")
 	}
 }
 

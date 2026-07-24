@@ -77,6 +77,11 @@ type Manager struct {
 
 	networkBlocked  atomic.Uint64
 	cosmeticBlocked atomic.Uint64
+
+	// caSeed, when non-empty, makes root CA generation deterministic so a
+	// reinstalled app recreates the exact CA already trusted by the system.
+	// Guarded by mu. Set once at startup via SetCASeed before any CA access.
+	caSeed string
 }
 
 // Status is exposed to the Android UI via the gomobile bind (Task 4).
@@ -433,10 +438,22 @@ func (m *Manager) IsMITMRunning() bool {
 	return m.mitm != nil
 }
 
+// SetCASeed records the stable device seed used for deterministic CA
+// generation. Call before the first CARootPath()/StartMITM() so the CA is
+// created deterministically rather than randomly.
+func (m *Manager) SetCASeed(seed string) {
+	m.mu.Lock()
+	m.caSeed = seed
+	m.mu.Unlock()
+}
+
 // CARootPath returns the path to the (PEM-encoded) root CA certificate so
 // the Android side can read it and hand it to KeyChain.createInstallIntent.
 func (m *Manager) CARootPath() (string, error) {
-	root, err := ca.EnsureRoot(m.FilterDir(), "")
+	m.mu.RLock()
+	seed := m.caSeed
+	m.mu.RUnlock()
+	root, err := ca.EnsureRoot(m.FilterDir(), seed)
 	if err != nil {
 		return "", err
 	}

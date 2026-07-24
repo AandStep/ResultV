@@ -1343,6 +1343,20 @@ func FilterCARootPath(dataDir string) (string, error) {
 	return getFilterManager(dataDir).CARootPath()
 }
 
+// SetFilterCASeed records a stable, device-scoped seed (the Android side
+// passes Settings.Secure.ANDROID_ID) so the root CA is generated
+// deterministically. Reinstalling the app then recreates the byte-identical
+// CA already trusted by the system, avoiding a re-install prompt and
+// duplicate trust-store entries. Must be called before the first
+// FilterCARootPath/StartFilterProxy. A blank seed leaves generation random.
+func SetFilterCASeed(dataDir, seed string) error {
+	if strings.TrimSpace(dataDir) == "" {
+		return fmt.Errorf("dataDir is required")
+	}
+	getFilterManager(dataDir).SetCASeed(seed)
+	return nil
+}
+
 // StartFilterProxy starts the local MITM proxy on 127.0.0.1:listenPort.
 // Fails if FetchFilterLists hasn't successfully populated at least one
 // list yet. Returns JSON { "started": true } on success so the Kotlin
