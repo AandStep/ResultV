@@ -321,13 +321,15 @@ func defaultPublicSourceTemplates(country string) []string {
 	if cc == "" {
 		return nil
 	}
-	base := "https://raw.githubusercontent.com/citizenlab/test-lists/master/lists/"
-	sources := []string{
-		base + "global.csv",
-		base + cc + ".csv",
-	}
 	if cc == "ru" {
-		sources = append(sources,
+		// RU has proper RKN-registry-based blocklists, so we do NOT use the
+		// citizenlab test-lists here. Those are censorship-MEASUREMENT probe
+		// lists (sites to test, including popular controls) — for RU they inject
+		// ~2000 domestic/allowed domains (ok.ru, mail.ru, vk.com, yandex.ru,
+		// dzen.ru, even state media like kremlin.ru / tass.ru / ria.ru). As a
+		// blocklist that both routed those sites through the proxy and, on
+		// Android, matched their apps into the Smart per-app allowlist.
+		return []string{
 			// Реестровые + «режут RU» списки. Re:filter domains_all ~86k записей,
 			// 1.4 MB — в лимит 8 MB LimitReader укладывается с запасом.
 			"https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Russia/inside-raw.lst",
@@ -340,9 +342,16 @@ func defaultPublicSourceTemplates(country string) []string {
 			"https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Services/google_ai.lst",
 			// Курируемый сообществом Discord-веер + Cloudflare-ECH хвосты.
 			"https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/main/lists/list-general.txt",
-		)
+		}
 	}
-	return sources
+	// Other countries have no curated list here — fall back to the citizenlab
+	// per-country test-list. Imperfect (it is a probe list, not a blocklist),
+	// but the only per-country source available.
+	base := "https://raw.githubusercontent.com/citizenlab/test-lists/master/lists/"
+	return []string{
+		base + "global.csv",
+		base + cc + ".csv",
+	}
 }
 
 // compressDomainSuffixes drops entries already covered by a parent suffix in
