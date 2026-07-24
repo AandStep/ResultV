@@ -287,7 +287,14 @@ func (m *Manager) StartMITM(listenPort int, upstreamDial func(network, addr stri
 	// no-ops when nothing is running, so it must be called outside any m.mu
 	// critical section here.
 	m.StopMITM()
-	root, err := ca.EnsureRoot(m.FilterDir(), "")
+	// Use the same deterministic seed as CARootPath so a fresh install that
+	// reaches StartMITM before the cert wizard still materializes the
+	// reproducible CA (empty seed here would write a random CA to disk, which
+	// every later EnsureRoot then reloads — defeating reinstall reproduction).
+	m.mu.RLock()
+	seed := m.caSeed
+	m.mu.RUnlock()
+	root, err := ca.EnsureRoot(m.FilterDir(), seed)
 	if err != nil {
 		return err
 	}
