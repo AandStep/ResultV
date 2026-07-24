@@ -84,10 +84,14 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
 import com.resultv.android.theme.Brand
 import com.resultv.android.ui.components.SettingIcon
+import com.resultv.android.vpn.AppInventory
+import com.resultv.android.vpn.AppMeta
 import com.resultv.android.vpn.AppRoutingRepository
+import com.resultv.android.vpn.AppTunnelMembership
 import com.resultv.android.vpn.RoutingMode
 import com.resultv.android.vpn.RoutingRulesRepository
 import com.resultv.android.vpn.RuleAction
+import com.resultv.android.vpn.SmartAppMatcher
 import com.resultv.android.vpn.SmartListRepository
 import com.resultv.android.vpn.domainPatternShadows
 import kotlinx.coroutines.Dispatchers
@@ -557,6 +561,22 @@ private fun PerAppRoutingSection(mode: RoutingMode) {
         }
     }
 
+    // Apps the engine puts in the tunnel on its own in Smart: matched against
+    // the blocklist brands, plus browsers. Recomputed when the list refreshes
+    // so the badges follow a freshly downloaded blocklist.
+    val smartSnapshot by SmartListRepository.state.collectAsStateWithLifecycle()
+    var autoIn by remember { mutableStateOf<Set<String>>(emptySet()) }
+    LaunchedEffect(mode, apps, smartSnapshot.domains) {
+        autoIn = if (mode != RoutingMode.Smart || apps.isEmpty()) {
+            emptySet()
+        } else withContext(Dispatchers.IO) {
+            val meta = apps.map { AppMeta(it.packageName, it.label) }
+            val matched = SmartAppMatcher.matchedPackages(meta, smartSnapshot.domains)
+            val browsers = AppInventory.browserPackages(ctx)
+            matched + browsers
+        }
+    }
+
     val filtered = remember(apps, query) {
         if (query.isBlank()) apps
         else apps.filter {
@@ -621,19 +641,40 @@ private fun PerAppRoutingSection(mode: RoutingMode) {
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 items(filtered, key = { it.packageName }) { app ->
-                    val effective = appRules.actionOf(app.packageName, mode)
-                    AppRow(
-                        app = app,
-                        checked = effective == tab,
-                        // The user's ask: an app blocked in the Block tab shows
-                        // as blocked in the routing tab too. Tapping it there
-                        // moves it silently — withAction clears the block.
-                        blockedElsewhere = effective == RuleAction.Block && tab != RuleAction.Block,
-                        onToggle = {
-                            if (effective == tab) AppRoutingRepository.clearAction(app.packageName, tab)
-                            else AppRoutingRepository.setAction(app.packageName, tab)
-                        },
-                    )
+                    val smartMembershipTab = mode == RoutingMode.Smart && tab == RuleAction.IntoVpn
+                    if (smartMembershipTab) {
+                        val auto = app.packageName in autoIn
+                        val inVpn = AppTunnelMembership.isInSmart(
+                            app.packageName, autoIn, emptySet(), appRules
+                        )
+                        val blocked = app.packageName in appRules.blocked
+                        AppRow(
+                            app = app,
+                            checked = inVpn,
+                            blockedElsewhere = blocked,
+                            autoBadge = auto && inVpn,
+                            onToggle = {
+                                AppRoutingRepository.setSmartMembership(
+                                    app.packageName, wantIn = !inVpn, isAuto = auto
+                                )
+                            },
+                        )
+                    } else {
+                        val effective = appRules.actionOf(app.packageName, mode)
+                        AppRow(
+                            app = app,
+                            checked = effective == tab,
+                            // The user's ask: an app blocked in the Block tab shows
+                            // as blocked in the routing tab too. Tapping it there
+                            // moves it silently — withAction clears the block.
+                            blockedElsewhere = effective == RuleAction.Block && tab != RuleAction.Block,
+                            autoBadge = false,
+                            onToggle = {
+                                if (effective == tab) AppRoutingRepository.clearAction(app.packageName, tab)
+                                else AppRoutingRepository.setAction(app.packageName, tab)
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -645,6 +686,7 @@ private fun AppRow(
     app: InstalledApp,
     checked: Boolean,
     blockedElsewhere: Boolean,
+    autoBadge: Boolean,
     onToggle: () -> Unit,
 ) {
     Row(
@@ -667,6 +709,13 @@ private fun AppRow(
         }
         Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
             Text(app.label, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (autoBadge) {
+                Text(
+                    "✓ " + stringResource(R.string.rules_badge_auto_vpn),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Brand.GreenLight,
+                )
+            }
             if (blockedElsewhere) {
                 Text(
                     "⛔ " + stringResource(R.string.rules_badge_blocked),

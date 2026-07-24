@@ -323,6 +323,7 @@
     <string name="rules_tab_into_vpn">В ВПН</string>
     <string name="rules_tab_block">Запретить</string>
     <string name="rules_badge_blocked">запрещён</string>
+    <string name="rules_badge_auto_vpn">авто: через VPN</string>
     <string name="rules_apps_needs_q">Нужен Android 10 или новее — это устройство не определяет, какому приложению принадлежит соединение.</string>
     <string name="rules_domain_moved_from">Перенесён сюда из «%1$s»</string>
     <string name="rules_tab_out_of_vpn_hint">Эти приложения идут мимо туннеля.</string>

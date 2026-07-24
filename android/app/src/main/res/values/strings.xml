@@ -353,6 +353,7 @@
     <string name="rules_tab_into_vpn">Into VPN</string>
     <string name="rules_tab_block">Block</string>
     <string name="rules_badge_blocked">blocked</string>
+    <string name="rules_badge_auto_vpn">auto: through VPN</string>
     <string name="rules_apps_needs_q">Needs Android 10 or newer — this device can\'t tell which app a connection belongs to.</string>
     <string name="rules_domain_moved_from">Moved here from “%1$s”</string>
     <string name="rules_tab_out_of_vpn_hint">These apps skip the tunnel entirely.</string>
