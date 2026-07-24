@@ -51,6 +51,23 @@ object AppRoutingRepository {
     @Synchronized
     fun clearAction(pkg: String, action: RuleAction) = mutate { it.withoutAction(pkg, action) }
 
+    /** UI toggle for Smart per-app membership (auto ∪ manual − exclusions). */
+    @Synchronized
+    fun setSmartMembership(pkg: String, wantIn: Boolean, isAuto: Boolean) {
+        if (pkg == ownPackage) return
+        mutate { AppTunnelMembership.setSmartMembership(it, pkg, wantIn, isAuto) }
+    }
+
+    /** Packages handed to VpnService.Builder.addAllowedApplication (Smart only). */
+    fun smartAllowlist(matched: Set<String>, browsers: Set<String>): Set<String> =
+        AppTunnelMembership.smartAllowlist(
+            matched = matched,
+            browsers = browsers,
+            intoVpn = _state.value.intoVpn,
+            outOfVpn = _state.value.outOfVpn,
+            ownPackage = ownPackage,
+        )
+
     /** "Clear" button: empties only the tab the user is looking at. */
     @Synchronized
     fun clearList(action: RuleAction) = mutate { s ->

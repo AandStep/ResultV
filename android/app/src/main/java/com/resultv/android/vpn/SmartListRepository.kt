@@ -156,6 +156,9 @@ object SmartListRepository {
         return s.domains.joinToString("\n")
     }
 
+    /** Snapshot of blocked domains, for per-app brand matching (Smart membership). */
+    fun currentDomains(): List<String> = _state.value.domains
+
     // ───────────────────────── Internals ─────────────────────────
 
     private fun parseSnapshot(rawJson: String): Snapshot {
