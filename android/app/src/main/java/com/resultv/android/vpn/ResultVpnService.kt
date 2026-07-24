@@ -116,7 +116,9 @@ class ResultVpnService : VpnService() {
                 // Binder transaction limit (TransactionTooLargeException kills
                 // the app on connect). Always-on VPN already relied on this
                 // rebuild path, so this is now the only path.
+                val tCfg = System.currentTimeMillis()
                 val config = buildConfigFromActiveProfile()
+                Log.i(TAG, "connect timing: buildConfig=${System.currentTimeMillis() - tCfg}ms, size=${config?.length ?: 0}")
                 if (config.isNullOrEmpty()) {
                     Log.e(TAG, "no config available (no extra, no active profile) — stopping")
                     stopSelf()
@@ -148,6 +150,7 @@ class ResultVpnService : VpnService() {
                         BoxModule.filterProxyRunning = false
                         BoxModule.start(this, config)
                         val connectedAt = System.currentTimeMillis()
+                        Log.i(TAG, "connect timing: BoxModule.start=${connectedAt - t0}ms")
                         val connected = VpnStatus.Connected(connectedAt)
                         VpnState.set(connected)
                         if (!isReload) {

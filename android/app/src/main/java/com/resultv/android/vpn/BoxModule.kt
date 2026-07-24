@@ -101,17 +101,21 @@ object BoxModule {
 
         protectWarned = false
 
-        // Dump config in chunks (logcat caps lines around 4 KB).
-        Log.i(TAG, "── config begin ──")
-        configJson.chunked(3500).forEach { Log.i(TAG, it) }
-        Log.i(TAG, "── config end ──")
+        // Log the config SIZE only. With the Smart blocklist the config reaches
+        // several MB; dumping it to logcat in ~3.5 KB chunks fired hundreds of
+        // Log.i calls and blocked on logd backpressure — the bulk of the
+        // multi-second Smart connect stall. Set a breakpoint if the full config
+        // is ever needed.
+        Log.i(TAG, "config: ${configJson.length} chars")
 
         val platform = BoxPlatform(service)
         val handler = StubCommandHandler()
         val server = Libbox.newCommandServer(handler, platform)
         server.start()
         // OverrideOptions is empty — no per-app routing yet.
+        val tStart = System.currentTimeMillis()
         server.startOrReloadService(configJson, OverrideOptions())
+        Log.i(TAG, "startOrReloadService=${System.currentTimeMillis() - tStart}ms")
         commandServer = server
         Log.i(TAG, "BoxModule started")
     }
@@ -124,10 +128,8 @@ object BoxModule {
             return
         }
         
-        Log.i(TAG, "── config reload begin ──")
-        configJson.chunked(3500).forEach { Log.i(TAG, it) }
-        Log.i(TAG, "── config reload end ──")
-        
+        Log.i(TAG, "reload config: ${configJson.length} chars")
+
         server.startOrReloadService(configJson, OverrideOptions())
         Log.i(TAG, "BoxModule reloaded")
         AppLog.info(R.string.log_engine_reloaded, source = EngineLog.ENGINE)
@@ -282,10 +284,12 @@ private class BoxPlatform(private val service: ResultVpnService) : PlatformInter
      * the tunnel still carries traffic.
      */
     private fun applySmartAllowlist(builder: VpnService.Builder, ownPkg: String): Boolean {
+        val tMatch = System.currentTimeMillis()
         val apps = AppInventory.installedApps(service)
         val browsers = AppInventory.browserPackages(service)
         val matched = SmartAppMatcher.matchedPackages(apps, SmartListRepository.currentDomains())
         val allow = AppRoutingRepository.smartAllowlist(matched = matched, browsers = browsers)
+        Log.i(TAG, "Smart allowlist compute=${System.currentTimeMillis() - tMatch}ms (apps=${apps.size})")
         if (allow.isEmpty()) {
             Log.w(TAG, "Smart allowlist empty — falling back to denylist")
             return false
