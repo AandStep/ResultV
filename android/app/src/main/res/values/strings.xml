@@ -114,6 +114,9 @@
     <string name="cert_wizard_done_body">Browser ad blocking is active. Banners will disappear as soon as you connect the VPN.</string>
     <string name="cert_wizard_done_cta">Done</string>
     <string name="cert_wizard_close">Close</string>
+    <string name="cert_stale_banner_title">Old certificates found</string>
+    <string name="cert_stale_banner_body">%1$d leftover \"ResultV AdBlock Root CA\" certificate(s) from a previous install are still in your system trust store. Remove the extras to keep things tidy.</string>
+    <string name="cert_stale_banner_action">Open trusted credentials</string>
     <string name="settings_group_advanced_desc">Startup, TUN and traffic filtering options.</string>
     <string name="settings_data_usage_title">Data usage</string>
     <string name="settings_data_usage_desc">Accumulated VPN traffic since install</string>

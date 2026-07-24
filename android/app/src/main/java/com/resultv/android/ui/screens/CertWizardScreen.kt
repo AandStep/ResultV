@@ -112,46 +112,48 @@ fun CertWizardScreen(dataDir: String, onClose: () -> Unit) {
             )
         },
     ) { padding ->
-        AnimatedContent(
-            targetState = step,
-            transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(160)) },
-            label = "cert-wizard-step",
-            modifier = Modifier.padding(padding),
-        ) { current ->
-            when (current) {
-                Step.Why -> IntroStep(
-                    icon = Icons.Outlined.Shield,
-                    title = stringResource(R.string.cert_wizard_why_title),
-                    body = stringResource(R.string.cert_wizard_why_body),
-                    cta = stringResource(R.string.cert_wizard_why_cta),
-                    onCta = { step = Step.Safety },
-                )
-                Step.Safety -> IntroStep(
-                    icon = Icons.Outlined.Lock,
-                    title = stringResource(R.string.cert_wizard_safety_title),
-                    body = stringResource(R.string.cert_wizard_safety_body),
-                    cta = stringResource(R.string.cert_wizard_safety_cta),
-                    onCta = {
-                        step = if (CertInstaller.canInstallDirectly()) {
-                            Step.DirectInstall
-                        } else {
-                            Step.Save
-                        }
-                    },
-                )
-                Step.DirectInstall -> DirectInstallStep(dataDir, snackbarHost)
-                Step.Save -> SaveStep(dataDir, snackbarHost) { name ->
-                    savedFileName = name
-                    step = Step.ManualInstall
+        Column(modifier = Modifier.padding(padding)) {
+            StaleCertBanner(dataDir)
+            AnimatedContent(
+                targetState = step,
+                transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(160)) },
+                label = "cert-wizard-step",
+            ) { current ->
+                when (current) {
+                    Step.Why -> IntroStep(
+                        icon = Icons.Outlined.Shield,
+                        title = stringResource(R.string.cert_wizard_why_title),
+                        body = stringResource(R.string.cert_wizard_why_body),
+                        cta = stringResource(R.string.cert_wizard_why_cta),
+                        onCta = { step = Step.Safety },
+                    )
+                    Step.Safety -> IntroStep(
+                        icon = Icons.Outlined.Lock,
+                        title = stringResource(R.string.cert_wizard_safety_title),
+                        body = stringResource(R.string.cert_wizard_safety_body),
+                        cta = stringResource(R.string.cert_wizard_safety_cta),
+                        onCta = {
+                            step = if (CertInstaller.canInstallDirectly()) {
+                                Step.DirectInstall
+                            } else {
+                                Step.Save
+                            }
+                        },
+                    )
+                    Step.DirectInstall -> DirectInstallStep(dataDir, snackbarHost)
+                    Step.Save -> SaveStep(dataDir, snackbarHost) { name ->
+                        savedFileName = name
+                        step = Step.ManualInstall
+                    }
+                    Step.ManualInstall -> ManualInstallStep(savedFileName, snackbarHost)
+                    Step.Done -> IntroStep(
+                        icon = Icons.Outlined.CheckCircle,
+                        title = stringResource(R.string.cert_wizard_done_title),
+                        body = stringResource(R.string.cert_wizard_done_body),
+                        cta = stringResource(R.string.cert_wizard_done_cta),
+                        onCta = onClose,
+                    )
                 }
-                Step.ManualInstall -> ManualInstallStep(savedFileName, snackbarHost)
-                Step.Done -> IntroStep(
-                    icon = Icons.Outlined.CheckCircle,
-                    title = stringResource(R.string.cert_wizard_done_title),
-                    body = stringResource(R.string.cert_wizard_done_body),
-                    cta = stringResource(R.string.cert_wizard_done_cta),
-                    onCta = onClose,
-                )
             }
         }
     }
@@ -237,6 +239,52 @@ private fun DirectInstallStep(dataDir: String, snackbarHost: SnackbarHostState) 
             }
         },
     )
+}
+
+/**
+ * Warns when the system trust store holds leftover "ResultV" CAs from earlier
+ * installs. Android does not let an app delete a user CA programmatically, so
+ * this points the user at Settings and lets them clean up.
+ */
+@Composable
+private fun StaleCertBanner(dataDir: String) {
+    val context = LocalContext.current
+    var count by remember { mutableStateOf(0) }
+
+    LaunchedEffect(dataDir) {
+        count = withContext(Dispatchers.IO) { CertStore.staleEntryCount(dataDir) }
+    }
+
+    if (count <= 0) return
+
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer,
+        ),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(
+                text = stringResource(R.string.cert_stale_banner_title),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = stringResource(R.string.cert_stale_banner_body, count),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = {
+                runCatching {
+                    context.startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))
+                }
+            }) {
+                Text(stringResource(R.string.cert_stale_banner_action))
+            }
+        }
+    }
 }
 
 /**

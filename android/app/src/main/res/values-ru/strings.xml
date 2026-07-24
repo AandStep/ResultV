@@ -109,6 +109,9 @@
     <string name="cert_wizard_done_body">Блокировка рекламы в браузере активна. Баннеры исчезнут, как только вы подключите VPN.</string>
     <string name="cert_wizard_done_cta">Готово</string>
     <string name="cert_wizard_close">Закрыть</string>
+    <string name="cert_stale_banner_title">Найдены старые сертификаты</string>
+    <string name="cert_stale_banner_body">%1$d старых сертификатов «ResultV AdBlock Root CA» от прошлой установки остались в системном хранилище доверия. Удалите лишние, чтобы не копить их.</string>
+    <string name="cert_stale_banner_action">Открыть доверенные сертификаты</string>
     <string name="settings_group_advanced_desc">Параметры запуска, TUN и фильтрации трафика.</string>
     <string name="settings_data_usage_title">Статистика трафика</string>
     <string name="settings_data_usage_desc">Накопленный VPN-трафик с момента установки</string>
