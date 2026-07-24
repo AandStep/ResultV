@@ -35,7 +35,7 @@ import (
 // upstream dial diverted to a local stub) and require Close() to return
 // within seconds, not minutes.
 func TestClose_ReturnsPromptlyWithActiveTunnel(t *testing.T) {
-	root, err := ca.EnsureRoot(t.TempDir())
+	root, err := ca.EnsureRoot(t.TempDir(), "")
 	if err != nil {
 		t.Fatalf("ca.EnsureRoot: %v", err)
 	}

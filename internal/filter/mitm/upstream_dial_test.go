@@ -37,7 +37,7 @@ func TestUpstreamDial_UsedForOriginConnections(t *testing.T) {
 	}))
 	defer origin.Close()
 
-	root, err := ca.EnsureRoot(t.TempDir())
+	root, err := ca.EnsureRoot(t.TempDir(), "")
 	if err != nil {
 		t.Fatalf("ca.EnsureRoot: %v", err)
 	}

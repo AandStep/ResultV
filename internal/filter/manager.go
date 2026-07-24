@@ -282,7 +282,7 @@ func (m *Manager) StartMITM(listenPort int, upstreamDial func(network, addr stri
 	// no-ops when nothing is running, so it must be called outside any m.mu
 	// critical section here.
 	m.StopMITM()
-	root, err := ca.EnsureRoot(m.FilterDir())
+	root, err := ca.EnsureRoot(m.FilterDir(), "")
 	if err != nil {
 		return err
 	}
@@ -436,7 +436,7 @@ func (m *Manager) IsMITMRunning() bool {
 // CARootPath returns the path to the (PEM-encoded) root CA certificate so
 // the Android side can read it and hand it to KeyChain.createInstallIntent.
 func (m *Manager) CARootPath() (string, error) {
-	root, err := ca.EnsureRoot(m.FilterDir())
+	root, err := ca.EnsureRoot(m.FilterDir(), "")
 	if err != nil {
 		return "", err
 	}
