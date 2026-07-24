@@ -49,6 +49,51 @@ object CertStore {
         false
     }
 
+    /** Subject CommonName of our root CA — must match the Go side's caCN. */
+    private const val CA_COMMON_NAME = "ResultV AdBlock Root CA"
+
+    /**
+     * Records the stable device seed so the Go side regenerates the exact same
+     * root CA after a reinstall. Safe to call repeatedly; forwards a blank seed
+     * unchanged (Go then keeps random generation).
+     */
+    fun applySeed(dataDir: String, seed: String) {
+        runCatching { Mobile.setFilterCASeed(dataDir, seed) }
+            .onFailure { Log.w(TAG, "Couldn't set CA seed", it) }
+    }
+
+    /**
+     * How many user-installed CAs carry our CommonName but are NOT byte-equal
+     * to the CA we currently use. These are stale leftovers from earlier random
+     * generations, piling up in the system trust store across reinstalls.
+     *
+     * Blocking KeyStore + filesystem I/O — call from a background thread.
+     * Returns 0 on any error, matching [isInstalled]'s fail-safe stance.
+     */
+    fun staleEntryCount(dataDir: String): Int = try {
+        val ours = loadOurCa(dataDir)
+        val store = KeyStore.getInstance("AndroidCAStore").apply { load(null, null) }
+        store.aliases().asSequence()
+            .filter { it.startsWith("user:") }
+            .count { alias ->
+                val cert = store.getCertificate(alias) as? X509Certificate
+                cert != null &&
+                    isResultVCommonName(cert.subjectX500Principal.name) &&
+                    !cert.encoded.contentEquals(ours)
+            }
+    } catch (t: Throwable) {
+        Log.w(TAG, "Couldn't count stale CA entries", t)
+        0
+    }
+
+    /**
+     * True when an X.500 subject DN names our root CA. Pure and testable — the
+     * trust-store iteration around it is Android-only and untested, like
+     * [isInstalled].
+     */
+    fun isResultVCommonName(subjectDn: String?): Boolean =
+        subjectDn?.split(",")?.any { it.trim() == "CN=$CA_COMMON_NAME" } ?: false
+
     private fun loadOurCa(dataDir: String): ByteArray =
         File(Mobile.filterCARootPath(dataDir)).inputStream().use { stream ->
             CertificateFactory.getInstance("X.509").generateCertificate(stream).encoded

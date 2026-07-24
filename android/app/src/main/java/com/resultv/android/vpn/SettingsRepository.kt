@@ -108,6 +108,7 @@ object SettingsRepository {
         hwidSource = runCatching {
             Settings.Secure.getString(app.contentResolver, Settings.Secure.ANDROID_ID)
         }.getOrNull().orEmpty()
+        CertStore.applySeed(app.filesDir.absolutePath, hwidSource)
         prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         _state.value = SettingsState(
             dnsPreset = prefs.getString(K_DNS_PRESET, "Cloudflare") ?: "Cloudflare",
