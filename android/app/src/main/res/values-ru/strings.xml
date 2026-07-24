@@ -385,6 +385,7 @@
     <string name="log_adblock_update_failed">Не удалось обновить базы блокировки: %1$s</string>
     <string name="log_smart_updated">Списки Smart обновлены (%1$s), записей: %2$d.</string>
     <string name="log_smart_update_failed">Не удалось обновить списки Smart: %1$s</string>
+    <string name="log_smart_allowlist">Smart: приложений через VPN — %1$d</string>
 
     <!-- Persistence read/write error logging -->
     <string name="log_persist_failed">Не удалось сохранить %1$s — изменения могут потеряться после перезапуска.</string>

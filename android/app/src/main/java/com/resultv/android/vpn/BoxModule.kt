@@ -261,12 +261,54 @@ private class BoxPlatform(private val service: ResultVpnService) : PlatformInter
      */
     private fun applyAppRouting(builder: VpnService.Builder) {
         val ownPkg = service.packageName
-        tryDisallow(builder, ownPkg)
         val mode = RoutingRulesRepository.state.value.mode
+        if (mode == RoutingMode.Smart && applySmartAllowlist(builder, ownPkg)) return
+
+        // Global (or Smart fallback): denylist. Own package + "out of VPN" apps.
+        tryDisallow(builder, ownPkg)
         for (pkg in AppRoutingRepository.disallowedPackages(mode)) {
             if (pkg == ownPkg) continue
             tryDisallow(builder, pkg)
         }
+    }
+
+    /**
+     * Smart membership: put ONLY blocked-associated apps, browsers and the
+     * manual "в VPN" list into the tunnel (minus "out of VPN"). Everything else
+     * stays out, so VPN-hostile apps (gov, banks) never see tun0.
+     *
+     * Returns false when the computed allowlist is empty (blocklist not yet
+     * downloaded, no browser) — the caller then falls back to the denylist so
+     * the tunnel still carries traffic.
+     */
+    private fun applySmartAllowlist(builder: VpnService.Builder, ownPkg: String): Boolean {
+        val apps = AppInventory.installedApps(service)
+        val browsers = AppInventory.browserPackages(service)
+        val matched = SmartAppMatcher.matchedPackages(apps, SmartListRepository.currentDomains())
+        val allow = AppRoutingRepository.smartAllowlist(matched = matched, browsers = browsers)
+        if (allow.isEmpty()) {
+            Log.w(TAG, "Smart allowlist empty — falling back to denylist")
+            return false
+        }
+        var added = 0
+        for (pkg in allow) {
+            if (pkg == ownPkg) continue
+            try {
+                builder.addAllowedApplication(pkg)
+                added++
+            } catch (t: Throwable) {
+                // App uninstalled between enumeration and establish, etc.
+                Log.w(TAG, "addAllowedApplication($pkg) failed", t)
+                AppLog.warning(R.string.log_app_route_failed, pkg)
+            }
+        }
+        if (added == 0) {
+            Log.w(TAG, "Smart allowlist added 0 apps — falling back to denylist")
+            return false
+        }
+        Log.i(TAG, "Smart allowlist: $added app(s) in tunnel")
+        AppLog.info(R.string.log_smart_allowlist, added, source = EngineLog.ENGINE)
+        return true
     }
 
     /**
