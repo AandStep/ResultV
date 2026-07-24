@@ -2,67 +2,79 @@ package com.resultv.android.vpn
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SmartAppMatcherTest {
 
+    // Real registrable domains that ARE blocked in the RU list (verified against
+    // the merged Re-filter/Antizapret sources). Vendor domains like google.com,
+    // yandex.ru, ozon.ru, tinkoff.ru are deliberately NOT here — they are not
+    // blocked, so their apps must never be auto-matched.
     private val blocked = setOf(
-        "instagram.com", "youtube.com", "tiktok.com", "x.com", "t.me",
+        "instagram.com", "youtube.com", "tiktok.com", "x.com", "twitter.com",
+        "facebook.com", "telegram.org", "t.me",
     )
 
-    @Test fun brandsFrom_takesSecondLevelLabelMinLen3() {
-        val brands = SmartAppMatcher.brandsFrom(
-            listOf("youtube.com", "www.instagram.com", "t.me", ".x.com", "")
-        )
-        assertTrue("youtube" in brands)
-        assertTrue("instagram" in brands)
-        assertFalse("t" in brands)   // too short → alias territory
-        assertFalse("x" in brands)   // too short → alias territory
-        assertFalse("com" in brands)
+    @Test fun registrableDomain_reversesFirstTwoLabels() {
+        assertEquals("instagram.com", SmartAppMatcher.registrableDomain("com.instagram.android"))
+        assertEquals("ozon.ru", SmartAppMatcher.registrableDomain("ru.ozon.app.android"))
+        assertNull(SmartAppMatcher.registrableDomain("singlelabel"))
     }
 
-    @Test fun matches_byPackageSegment() {
+    @Test fun matches_targetApps_byRegistrableDomain() {
         val out = SmartAppMatcher.matchedPackages(
-            listOf(AppMeta("com.google.android.youtube", "YouTube")), blocked
+            listOf(
+                "com.instagram.android",   // instagram.com
+                "com.twitter.android",     // twitter.com (blocked)
+                "com.facebook.katana",     // facebook.com
+                "org.telegram.messenger",  // telegram.org
+            ),
+            blocked,
         )
-        assertEquals(setOf("com.google.android.youtube"), out)
+        assertEquals(
+            setOf("com.instagram.android", "com.twitter.android",
+                "com.facebook.katana", "org.telegram.messenger"),
+            out,
+        )
     }
 
-    @Test fun matches_byLabel_whenPackageObfuscated() {
-        // TikTok's package carries no brand token; its label does.
+    @Test fun matches_youtubeAndTiktok_viaAlias() {
+        // Their package's registrable domain (google.com / zhiliaoapp.com) is not
+        // blocked; the curated alias maps them to youtube.com / tiktok.com.
         val out = SmartAppMatcher.matchedPackages(
-            listOf(AppMeta("com.zhiliaoapp.musically", "TikTok")), blocked
+            listOf("com.google.android.youtube", "com.zhiliaoapp.musically"),
+            blocked,
         )
+        assertTrue("com.google.android.youtube" in out)
         assertTrue("com.zhiliaoapp.musically" in out)
     }
 
-    @Test fun matches_byAlias_forRebrandsAndShortNames() {
-        // com.twitter.android ↔ x.com, org.telegram.messenger ↔ t.me:
-        // neither package nor label yields a ≥3-char brand in the list.
+    @Test fun doesNotMatch_reportedFalsePositives() {
+        // Regression for the on-device over-matching: none of these vendors'
+        // registrable domains are blocked, so none may be auto-tunnelled.
         val apps = listOf(
-            AppMeta("com.twitter.android", "X"),
-            AppMeta("org.telegram.messenger", "Telegram"),
+            "ru.ozon.app.android",              // ozon.ru
+            "com.idamob.tinkoff.android",       // idamob.com
+            "ru.yandex.mail",                   // yandex.ru
+            "ru.yandex.yandexnavi",             // yandex.ru
+            "ru.mts.mymts",                     // mts.ru
+            "com.google.android.apps.photos",   // google.com (NOT blocked)
+            "com.google.android.apps.docs",     // google.com
+            "com.wildberries.ru.app",           // wildberries.ru
         )
         val out = SmartAppMatcher.matchedPackages(apps, blocked)
-        assertTrue("com.twitter.android" in out)
-        assertTrue("org.telegram.messenger" in out)
+        assertTrue("expected no matches, got $out", out.isEmpty())
     }
 
-    @Test fun noMatch_forUnrelatedApp() {
+    @Test fun aliasRespectsBlocklist_noMatchWhenDomainNotBlocked() {
+        // If the region's list does not block tiktok.com, the aliased app must
+        // not be forced into the tunnel.
         val out = SmartAppMatcher.matchedPackages(
-            listOf(AppMeta("ru.gosuslugi.app", "Госуслуги")), blocked
+            listOf("com.zhiliaoapp.musically"),
+            setOf("instagram.com"),  // tiktok.com absent
         )
-        assertTrue(out.isEmpty())
-    }
-
-    @Test fun structuralSegmentsDoNotMatch() {
-        // "android"/"com" must never be treated as brands even if a blocked
-        // domain happened to be e.g. "android.com".
-        val out = SmartAppMatcher.matchedPackages(
-            listOf(AppMeta("com.example.weather", "Weather")),
-            setOf("com.com", "android.com"),
-        )
-        assertTrue(out.isEmpty())
+        assertFalse("com.zhiliaoapp.musically" in out)
     }
 }

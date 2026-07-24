@@ -85,7 +85,6 @@ import com.resultv.android.R
 import com.resultv.android.theme.Brand
 import com.resultv.android.ui.components.SettingIcon
 import com.resultv.android.vpn.AppInventory
-import com.resultv.android.vpn.AppMeta
 import com.resultv.android.vpn.AppRoutingRepository
 import com.resultv.android.vpn.AppTunnelMembership
 import com.resultv.android.vpn.RoutingMode
@@ -570,8 +569,7 @@ private fun PerAppRoutingSection(mode: RoutingMode) {
         autoIn = if (mode != RoutingMode.Smart || apps.isEmpty()) {
             emptySet()
         } else withContext(Dispatchers.IO) {
-            val meta = apps.map { AppMeta(it.packageName, it.label) }
-            val matched = SmartAppMatcher.matchedPackages(meta, smartSnapshot.domains)
+            val matched = SmartAppMatcher.matchedPackages(apps.map { it.packageName }, smartSnapshot.domains)
             val browsers = AppInventory.browserPackages(ctx)
             matched + browsers
         }

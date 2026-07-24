@@ -15,28 +15,39 @@ private const val TAG = "ResultV/AppInventory"
  */
 object AppInventory {
 
-    /** Installed apps as (package, label). Excludes our own package. */
-    fun installedApps(ctx: Context): List<AppMeta> {
-        val pm = ctx.packageManager
+    /**
+     * Installed app package names (excluding our own). Deliberately does NOT
+     * resolve labels: [SmartAppMatcher] keys on the package's reverse-DNS
+     * domain, and getApplicationLabel loads each app's resources — hundreds of
+     * those on the openTun hot path was the 3-5s Smart connect stall.
+     */
+    fun installedApps(ctx: Context): List<String> {
         val own = ctx.packageName
-        return pm.getInstalledApplications(PackageManager.GET_META_DATA)
+        return ctx.packageManager
+            .getInstalledApplications(0)
             .asSequence()
-            .filter { it.packageName != own }
-            .map { AppMeta(it.packageName, pm.getApplicationLabel(it).toString()) }
+            .map { it.packageName }
+            .filter { it != own }
             .toList()
     }
 
     /**
-     * Packages that can handle a plain http(s) VIEW intent — i.e. browsers.
-     * They must ride the VPN so arbitrary blocked sites open. Best-effort:
-     * a query failure yields an empty set (matcher/manual list still apply).
+     * Real web browsers only — apps that handle an arbitrary http URL.
+     *
+     * The probe URI is host-LESS (`http://`) on purpose: a browser accepts any
+     * web URL, while a deep-link app scopes its intent filter to a concrete host
+     * (ozon.ru, wildberries.ru …) and will not resolve a hostless one. Combined
+     * with MATCH_DEFAULT_ONLY this excludes the link-handling apps that a
+     * `http://example.com` + MATCH_ALL query wrongly pulled in (Ozon, WB, mail,
+     * banks — which then leaked into the tunnel as "browsers"). Best-effort: a
+     * query failure yields an empty set.
      */
     fun browserPackages(ctx: Context): Set<String> {
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("http://example.com"))
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("http://"))
             .addCategory(Intent.CATEGORY_BROWSABLE)
         return try {
             ctx.packageManager
-                .queryIntentActivities(intent, PackageManager.MATCH_ALL)
+                .queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
                 .mapNotNull { it.activityInfo?.packageName }
                 .filter { it != ctx.packageName }
                 .toSet()
