@@ -166,50 +166,47 @@ func TestBuildRoute_AdBlock_BypassesConnectivityDomainsBeforeReject(t *testing.T
 	}
 }
 
-func TestBuildAdBlockRuleSets_LocalWhenCachedElseRemoteViaDirect(t *testing.T) {
+func TestBuildAdBlockRuleSets_LocalWhenCachedElseOmitted(t *testing.T) {
 	dir := t.TempDir()
 
-	// No cached files yet → every list is a remote rule_set fetched via direct.
-	for _, rs := range buildAdBlockRuleSets(dir) {
-		if rs.Type != "remote" {
-			t.Fatalf("expected remote rule_set with no cache, got %q", rs.Type)
-		}
-		if rs.DownloadDetour != "direct" {
-			t.Fatalf("remote rule_set must download via direct (pre-tunnel), got %q", rs.DownloadDetour)
-		}
-		if rs.Format != "binary" {
-			t.Fatalf("expected binary SRS format, got %q", rs.Format)
-		}
+	// No cached files yet → nothing is emitted (a remote rule_set would be
+	// fatal on a cold start; the SRS is warmed out-of-band and applied on
+	// the next reload).
+	if got := buildAdBlockRuleSets(dir); len(got) != 0 {
+		t.Fatalf("expected no rule_sets with an empty cache, got %+v", got)
 	}
 
-	// A cached SRS of sufficient size flips that list to a local rule_set.
+	// A valid cached SRS flips that list to a local rule_set.
 	sub := filepath.Join(dir, adBlockRuleSetsSubdir)
 	if err := os.MkdirAll(sub, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	blob := make([]byte, minLocalSRSBytes+1)
-	if err := os.WriteFile(filepath.Join(sub, defaultAdBlockRuleSets[0].fileName), blob, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(sub, defaultAdBlockRuleSets[0].fileName), validSRSBytes(t), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	got := buildAdBlockRuleSets(dir)
+	if len(got) != 1 {
+		t.Fatalf("expected exactly the one cached rule_set, got %+v", got)
+	}
 	if got[0].Type != "local" || got[0].Path == "" {
 		t.Fatalf("expected a local rule_set for the cached file, got %+v", got[0])
 	}
 }
 
-func TestBuildAdBlockRuleSets_TruncatedCacheStaysRemote(t *testing.T) {
+func TestBuildAdBlockRuleSets_TruncatedCacheOmitted(t *testing.T) {
 	dir := t.TempDir()
 	sub := filepath.Join(dir, adBlockRuleSetsSubdir)
 	if err := os.MkdirAll(sub, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	// A short / half-written file must NOT be referenced as local — that would
-	// fail sing-box startup and break the connection.
+	// A short / half-written file must NOT be referenced as local (that would
+	// fail sing-box startup) and must NOT emit a remote fallback either — it is
+	// simply skipped this session.
 	if err := os.WriteFile(filepath.Join(sub, defaultAdBlockRuleSets[0].fileName), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := buildAdBlockRuleSets(dir); got[0].Type != "remote" {
-		t.Fatalf("truncated cache must fall back to remote, got %+v", got[0])
+	if got := buildAdBlockRuleSets(dir); len(got) != 0 {
+		t.Fatalf("truncated cache must be omitted, got %+v", got)
 	}
 }
 

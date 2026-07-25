@@ -8,6 +8,7 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -15,6 +16,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/sagernet/sing-box/common/srs"
 )
 
 // Ad-blocking is implemented as pure sing-box routing: DNS + route `reject`
@@ -25,7 +28,6 @@ import (
 const (
 	adBlockRuleSetTag     = "ads"    // global ad/tracker list
 	adBlockRuleSetTagRU   = "ads-ru" // Russia-tuned ads list
-	adBlockUpdateInterval = "24h"
 	adBlockRuleSetsSubdir = "adblock"
 	// minLocalSRSBytes guards against referencing a truncated / half-written
 	// SRS as a `local` rule_set — sing-box fails startup on a corrupt rule_set,
@@ -73,39 +75,79 @@ func adBlockRuleSetsDir(dataDir string) string {
 }
 
 // buildAdBlockRuleSets returns the sing-box rule_set definitions for the ad
-// lists. A locally cached SRS (written by DownloadAdBlockRuleSets) is
-// preferred — instant and offline; when it is absent or truncated we emit a
-// remote rule_set that sing-box downloads itself via the `direct` outbound and
-// caches in cache_file.
+// lists — ONLY for SRS files already cached locally and validated
+// (localAdBlockSRSUsable). A list with no usable cache is omitted entirely.
 //
-// download_detour MUST be "direct": the download has to bypass the proxy (the
-// tunnel may not be up yet, and routing it through the proxy would add a
-// startup dependency). A failed remote fetch is non-fatal in sing-box — the
-// rule simply starts empty and updates in the background — so a dead URL
-// degrades to "no blocking", never a broken connection.
+// There is deliberately no `remote` rule_set: sing-box must download a remote
+// rule_set synchronously on a cold start (no cache_file yet) and its failure
+// ABORTS engine startup — exactly the fresh-install "initialize rule-set" crash
+// this replaces. The SRS is instead warmed out-of-band by DownloadAdBlockRuleSets
+// (jsDelivr mirror + HTTP/2, no QUIC) and applied on the next connect/reload.
+// Reject rules must reference availableAdBlockRuleSetTags so they never point at
+// a tag with no definition (which also fails startup).
 func buildAdBlockRuleSets(dataDir string) []SBRouteRuleSet {
 	out := make([]SBRouteRuleSet, 0, len(defaultAdBlockRuleSets))
 	for _, src := range defaultAdBlockRuleSets {
 		localPath := filepath.Join(adBlockRuleSetsDir(dataDir), src.fileName)
-		if st, err := os.Stat(localPath); err == nil && st.Size() >= minLocalSRSBytes {
+		if localAdBlockSRSUsable(localPath) {
 			out = append(out, SBRouteRuleSet{
 				Type:   "local",
 				Tag:    src.tag,
 				Format: "binary",
 				Path:   localPath,
 			})
-			continue
 		}
-		out = append(out, SBRouteRuleSet{
-			Type:           "remote",
-			Tag:            src.tag,
-			Format:         "binary",
-			URL:            src.urls[0],
-			DownloadDetour: "direct",
-			UpdateInterval: adBlockUpdateInterval,
-		})
 	}
 	return out
+}
+
+// availableAdBlockRuleSetTags returns the tags whose SRS is cached and usable
+// locally, in defaultAdBlockRuleSets order. Reject rules reference ONLY these:
+// a rule_set tag with no matching definition fails sing-box startup. Empty when
+// nothing is cached — the caller then omits the rule_set-based reject rule.
+func availableAdBlockRuleSetTags(dataDir string) []string {
+	tags := make([]string, 0, len(defaultAdBlockRuleSets))
+	for _, src := range defaultAdBlockRuleSets {
+		localPath := filepath.Join(adBlockRuleSetsDir(dataDir), src.fileName)
+		if localAdBlockSRSUsable(localPath) {
+			tags = append(tags, src.tag)
+		}
+	}
+	return tags
+}
+
+// validateSRS parses data with sing-box's own rule-set reader — the exact code
+// path the engine uses at load time. A nil return therefore guarantees sing-box
+// will accept the file. It catches the field failure mode a bare size check
+// cannot: a truncated download whose zlib stream fails its checksum on read
+// ("restore cached rule-set: read rule[0] zlib invalid checksum"), which
+// otherwise bricks ad-block startup.
+func validateSRS(data []byte) error {
+	if _, err := srs.Read(bytes.NewReader(data), false); err != nil {
+		return fmt.Errorf("invalid SRS: %w", err)
+	}
+	return nil
+}
+
+// localAdBlockSRSUsable reports whether the cached SRS at path can be referenced
+// as a `local` rule_set. A corrupt-but-large file (e.g. a truncated download
+// written before validation existed) fails sing-box startup, so on a failed
+// validation we delete it (best effort) and report false — the caller falls
+// back to a remote rule_set and the next refresh writes a clean copy.
+func localAdBlockSRSUsable(path string) bool {
+	st, err := os.Stat(path)
+	if err != nil || st.Size() < minLocalSRSBytes {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	if err := validateSRS(data); err != nil {
+		_ = os.Remove(path) // self-heal: drop the corrupt copy so remote takes over
+		return false
+	}
+	return true
 }
 
 // adBlockRuleSetTags returns the rule_set tags the reject rules reference.
@@ -237,6 +279,12 @@ func fetchAdBlockSRS(ctx context.Context, client *http.Client, url string) ([]by
 	}
 	if len(data) < minLocalSRSBytes {
 		return nil, fmt.Errorf("response too small (%d bytes)", len(data))
+	}
+	// Validate before returning: a corrupt/truncated body (or an HTML error page
+	// the CDN served with a 200) must never reach disk as a local rule_set, and
+	// a failed validation here lets downloadAdBlockSRS fail over to the mirror.
+	if err := validateSRS(data); err != nil {
+		return nil, err
 	}
 	return data, nil
 }
