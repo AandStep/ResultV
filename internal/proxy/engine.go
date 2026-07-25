@@ -617,10 +617,12 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 				DomainSuffix: adDeliveryRejectSuffixes(),
 				Action:       "reject",
 			})
-			dns.Rules = append(dns.Rules, SBDNSRule{
-				RuleSet: adBlockRuleSetTags(),
-				Action:  "reject",
-			})
+			if tags := availableAdBlockRuleSetTags(effectiveDataDir(cfg)); len(tags) > 0 {
+				dns.Rules = append(dns.Rules, SBDNSRule{
+					RuleSet: tags,
+					Action:  "reject",
+				})
+			}
 		}
 
 		return dns
@@ -875,10 +877,12 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 			DomainSuffix: adDeliveryRejectSuffixes(),
 			Action:       "reject",
 		})
-		rules = append(rules, SBRouteRule{
-			RuleSet: adBlockRuleSetTags(),
-			Action:  "reject",
-		})
+		if tags := availableAdBlockRuleSetTags(effectiveDataDir(cfg)); len(tags) > 0 {
+			rules = append(rules, SBRouteRule{
+				RuleSet: tags,
+				Action:  "reject",
+			})
+		}
 	}
 
 	// Smart mode: domains in SmartBlockedDomains go through the proxy.

@@ -32,8 +32,26 @@ func sameStringSet(a, b []string) bool {
 	return true
 }
 
+// seedAdBlockSRS writes a valid SRS for every default ad list into dataDir so
+// buildRoute/buildDNS emit their local rule_sets and the reject rules reference
+// the full tag set.
+func seedAdBlockSRS(t *testing.T, dataDir string) {
+	t.Helper()
+	dir := adBlockRuleSetsDir(dataDir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, src := range defaultAdBlockRuleSets {
+		if err := os.WriteFile(filepath.Join(dir, src.fileName), validSRSBytes(t), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestBuildRoute_AdBlock_AddsRejectAfterSniffAndDefinesRuleSets(t *testing.T) {
-	cfg := EngineConfig{Mode: ProxyModeTunnel, AdBlock: true, DataDir: t.TempDir()}
+	dir := t.TempDir()
+	seedAdBlockSRS(t, dir)
+	cfg := EngineConfig{Mode: ProxyModeTunnel, AdBlock: true, DataDir: dir}
 	route := buildRoute(cfg)
 	if route == nil {
 		t.Fatal("expected non-nil route")
@@ -78,6 +96,29 @@ func TestBuildRoute_AdBlockOff_NoRejectRules(t *testing.T) {
 	}
 }
 
+// TestBuildRoute_AdBlock_NoCache_OmitsRuleSetReject: with ad-block on but no SRS
+// cached, the rule_set-based reject rule (and its rule_set defs) must be absent
+// — otherwise the config references an undefined rule_set and startup fails.
+// The static domain-based ad reject (extraAdDeliveryDomains) still applies.
+func TestBuildRoute_AdBlock_NoCache_OmitsRuleSetReject(t *testing.T) {
+	route := buildRoute(EngineConfig{Mode: ProxyModeTunnel, AdBlock: true, DataDir: t.TempDir()})
+	if len(route.RuleSet) != 0 {
+		t.Fatalf("expected no rule_set defs with an empty cache, got %+v", route.RuleSet)
+	}
+	staticReject := false
+	for _, r := range route.Rules {
+		if r.Action == "reject" && len(r.RuleSet) > 0 {
+			t.Fatalf("did not expect a rule_set reject with an empty cache, rule=%+v", r)
+		}
+		if r.Action == "reject" && len(r.Domain) > 0 && r.Domain[0] == extraAdDeliveryDomains[0] {
+			staticReject = true
+		}
+	}
+	if !staticReject {
+		t.Fatal("expected the static ad-delivery reject rule to remain")
+	}
+}
+
 // TestBuildRoute_TunnelRejectsDoTPort853 pins Bug D: Android "Private DNS"
 // (DoT, port 853) must be reject-routed so it can't stall on the direct
 // outbound in Smart mode — Android then falls back to plaintext DNS, which is
@@ -102,7 +143,9 @@ func TestBuildRoute_TunnelRejectsDoTPort853(t *testing.T) {
 }
 
 func TestBuildDNS_AdBlock_AddsRejectRule(t *testing.T) {
-	cfg := EngineConfig{Mode: ProxyModeTunnel, AdBlock: true, Proxy: ProxyConfig{Type: "vless"}}
+	dir := t.TempDir()
+	seedAdBlockSRS(t, dir)
+	cfg := EngineConfig{Mode: ProxyModeTunnel, AdBlock: true, DataDir: dir, Proxy: ProxyConfig{Type: "vless"}}
 	dns := buildDNS(cfg)
 	if dns == nil {
 		t.Fatal("expected non-nil dns")
@@ -119,7 +162,9 @@ func TestBuildDNS_AdBlock_AddsRejectRule(t *testing.T) {
 }
 
 func TestBuildDNS_AdBlock_BypassesConnectivityDomainsBeforeReject(t *testing.T) {
-	cfg := EngineConfig{Mode: ProxyModeTunnel, AdBlock: true, Proxy: ProxyConfig{Type: "vless"}}
+	dir := t.TempDir()
+	seedAdBlockSRS(t, dir)
+	cfg := EngineConfig{Mode: ProxyModeTunnel, AdBlock: true, DataDir: dir, Proxy: ProxyConfig{Type: "vless"}}
 	dns := buildDNS(cfg)
 	if dns == nil {
 		t.Fatal("expected non-nil dns")
@@ -145,7 +190,9 @@ func TestBuildDNS_AdBlock_BypassesConnectivityDomainsBeforeReject(t *testing.T) 
 }
 
 func TestBuildRoute_AdBlock_BypassesConnectivityDomainsBeforeReject(t *testing.T) {
-	route := buildRoute(EngineConfig{Mode: ProxyModeTunnel, AdBlock: true})
+	dir := t.TempDir()
+	seedAdBlockSRS(t, dir)
+	route := buildRoute(EngineConfig{Mode: ProxyModeTunnel, AdBlock: true, DataDir: dir})
 	rejectIdx, bypassIdx := -1, -1
 	for i, r := range route.Rules {
 		if r.Action == "reject" && sameStringSet(r.RuleSet, adBlockRuleSetTags()) {
