@@ -26,6 +26,8 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import mobile.Mobile
 import java.util.concurrent.Executors
 
@@ -37,6 +39,13 @@ private const val NOTIFICATION_ID = 1
 // this one, so they must not share IDs.
 private const val REVOKE_NOTIFICATION_ID = 2
 private const val REVOKE_CHANNEL_ID = "resultv_vpn_revoke"
+
+// How long Connect waits for the ad-block SRS + smart-list caches to warm
+// before building the config. The engine never blocks on a network download
+// (rule_sets are local-only); this only decides whether the very first connect
+// already has the lists or picks them up a moment later via reload. The
+// app-start prefetch usually makes this near-instant.
+private const val CONNECT_LIST_WAIT_MS = 4000L
 
 const val ACTION_START = "com.resultv.android.START"
 const val ACTION_STOP = "com.resultv.android.STOP"
@@ -110,76 +119,83 @@ class ResultVpnService : VpnService() {
                 return START_NOT_STICKY
             }
             else -> {
-                // The config is ALWAYS rebuilt here, never passed in. It used to
-                // ride in EXTRA_CONFIG_JSON on the UI-initiated path, but with
-                // the expanded Smart list it reaches ~4.6 MB and blows the ~1 MB
-                // Binder transaction limit (TransactionTooLargeException kills
-                // the app on connect). Always-on VPN already relied on this
-                // rebuild path, so this is now the only path.
-                val tCfg = System.currentTimeMillis()
-                val config = buildConfigFromActiveProfile()
-                Log.i(TAG, "connect timing: buildConfig=${System.currentTimeMillis() - tCfg}ms, size=${config?.length ?: 0}")
-                if (config.isNullOrEmpty()) {
-                    Log.e(TAG, "no config available (no extra, no active profile) — stopping")
+                // Need an active profile to connect. Cheap check up front so we
+                // can promise foreground immediately, then do the (possibly slow)
+                // list warm-up + config build off the main thread. The config is
+                // ALWAYS rebuilt (never passed in): with the expanded Smart list
+                // it reaches ~4.6 MB and blows the ~1 MB Binder limit.
+                if (ProfileRepository.state.value.active == null) {
+                    Log.e(TAG, "no active profile — stopping")
                     stopSelf()
                     return START_NOT_STICKY
                 }
+                // A reload is an internal stop+start of a fresh service instance —
+                // triggerReload already logged "Applying changes…"; suppress the
+                // duplicate connect/connected pair. The flag rides on the restart
+                // intent because the new instance can't see the old's fields.
+                val isReload = intent?.getBooleanExtra(EXTRA_IS_RELOAD, false) ?: false
                 VpnState.set(VpnStatus.Connecting)
                 startForeground(NOTIFICATION_ID, buildNotification(VpnStatus.Connecting))
-                // A reload is an internal stop+start of a fresh service
-                // instance — triggerReload already logged "Applying changes…",
-                // so suppress the duplicate connect/connected pair here. The
-                // flag rides on the restart intent because the new instance
-                // can't see the old instance's fields.
-                val isReload = intent?.getBooleanExtra(EXTRA_IS_RELOAD, false) ?: false
                 if (!isReload) {
                     val serverName = ProfileRepository.state.value.active?.name ?: ""
                     AppLog.info(getString(R.string.log_connecting, serverName))
                 }
                 val connectedMsg = getString(R.string.log_connected)
-                worker.execute {
-                    val t0 = System.currentTimeMillis()
-                    try {
-                        // Browser ad-block used to start HERE, synchronously
-                        // before BoxModule.start — building the urlfilter engine
-                        // plus a TLS self-test added 4-5s to EVERY connect. Bring
-                        // the tunnel up first (fast, feature-off parity), then
-                        // attach the MITM proxy off the critical path and re-apply
-                        // setHttpProxy via an in-place reload. openTun during
-                        // start() must therefore see filterProxyRunning=false.
-                        BoxModule.filterProxyRunning = false
-                        BoxModule.start(this, config)
-                        val connectedAt = System.currentTimeMillis()
-                        Log.i(TAG, "connect timing: BoxModule.start=${connectedAt - t0}ms")
-                        val connected = VpnStatus.Connected(connectedAt)
-                        VpnState.set(connected)
-                        if (!isReload) {
-                            AppLog.success(connectedMsg)
-                            AppLog.info(
-                                R.string.log_connect_timing,
-                                connectedAt - t0,
-                                source = AppLog.resolve(R.string.log_source_proxy),
-                            )
+                scope.launch {
+                    // Warm the ad-block SRS + smart-list caches so the config we
+                    // build references LOCAL files. Bounded so a slow/blocked
+                    // source never holds the tunnel back. Skipped on reloads
+                    // (lists already loaded; a reload must stay fast).
+                    val listsReady = if (isReload) true else warmListsBeforeConnect()
+                    val tCfg = System.currentTimeMillis()
+                    val config = buildConfigFromActiveProfile()
+                    Log.i(TAG, "connect timing: buildConfig=${System.currentTimeMillis() - tCfg}ms, size=${config?.length ?: 0}")
+                    if (config.isNullOrEmpty()) {
+                        Log.e(TAG, "no config available — stopping")
+                        withContext(Dispatchers.Main) { stopSelf() }
+                        return@launch
+                    }
+                    worker.execute {
+                        val t0 = System.currentTimeMillis()
+                        try {
+                            // openTun during start() must see filterProxyRunning=false
+                            // (browser ad-block attaches after, off the critical path).
+                            BoxModule.filterProxyRunning = false
+                            BoxModule.start(this@ResultVpnService, config)
+                            val connectedAt = System.currentTimeMillis()
+                            Log.i(TAG, "connect timing: BoxModule.start=${connectedAt - t0}ms")
+                            val connected = VpnStatus.Connected(connectedAt)
+                            VpnState.set(connected)
+                            if (!isReload) {
+                                AppLog.success(connectedMsg)
+                                AppLog.info(
+                                    R.string.log_connect_timing,
+                                    connectedAt - t0,
+                                    source = AppLog.resolve(R.string.log_source_proxy),
+                                )
+                            }
+                            renotify(buildNotification(connected))
+                            startReloadWatcher()
+                            startKillSwitchWatchdog()
+                            // Subscribe to libbox status stream so HomeScreen's
+                            // traffic cards show real uplink/downlink.
+                            TrafficWatcher.start()
+                            // Structured per-host [CONN] lines (domain -> ip:port).
+                            ConnectionWatcher.start()
+                            // Attach browser ad-block now that the tunnel is up.
+                            attachBrowserAdBlockAsync()
+                            // Fallback: connected before the lists finished warming.
+                            // Finish warming them and apply on the fly — no reconnect.
+                            if (!listsReady) scheduleListReadyReload()
+                        } catch (t: Throwable) {
+                            Log.e(TAG, "BoxModule.start failed", t)
+                            val msg = t.message ?: t.javaClass.simpleName
+                            VpnState.set(VpnStatus.Error(msg))
+                            AppLog.error(getString(R.string.log_conn_failed, msg))
+                            closeTun()
+                            stopForeground(STOP_FOREGROUND_REMOVE)
+                            stopSelf()
                         }
-                        renotify(buildNotification(connected))
-                        startReloadWatcher()
-                        startKillSwitchWatchdog()
-                        // Subscribe to libbox status stream so HomeScreen's
-                        // traffic cards show real uplink/downlink instead of
-                        // the placeholder zeros.
-                        TrafficWatcher.start()
-                        // Structured per-host [CONN] lines (domain -> ip:port).
-                        ConnectionWatcher.start()
-                        // Attach browser ad-block now that the tunnel is up.
-                        attachBrowserAdBlockAsync()
-                    } catch (t: Throwable) {
-                        Log.e(TAG, "BoxModule.start failed", t)
-                        val msg = t.message ?: t.javaClass.simpleName
-                        VpnState.set(VpnStatus.Error(msg))
-                        AppLog.error(getString(R.string.log_conn_failed, msg))
-                        closeTun()
-                        stopForeground(STOP_FOREGROUND_REMOVE)
-                        stopSelf()
                     }
                 }
                 return START_STICKY
@@ -202,6 +218,9 @@ class ResultVpnService : VpnService() {
         RoutingRulesRepository.init(app)
         AppRoutingRepository.init(app)
         SmartListRepository.init(app)
+        // Needed so warmListsBeforeConnect can warm the ad-block SRS cache on the
+        // always-on path too (MainActivity, which normally inits it, never ran).
+        AdBlockRepository.init(app)
         // Refresh underlying IPv6 reachability so reload/always-on configs pick
         // the effective IPv6 flag (see NetworkProbe / BuildOptionsBuilder).
         NetworkProbe.init(app)
@@ -212,6 +231,46 @@ class ResultVpnService : VpnService() {
     private fun buildConfigFromActiveProfile(): String? {
         val active = ProfileRepository.state.value.active ?: return null
         return BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath)
+    }
+
+    /**
+     * Warm the ad-block + smart-list caches before building the connect config,
+     * bounded by CONNECT_LIST_WAIT_MS so a blocked/slow source never holds the
+     * tunnel back. Returns true if the enabled lists finished in time.
+     * ensureLoaded() coalesces with the app-start prefetch, so this is usually
+     * near-instant. Only warms a list whose feature is on.
+     */
+    private suspend fun warmListsBeforeConnect(): Boolean =
+        withTimeoutOrNull(CONNECT_LIST_WAIT_MS) {
+            if (SettingsRepository.state.value.adblock) AdBlockRepository.ensureLoaded()
+            if (RoutingRulesRepository.state.value.mode == RoutingMode.Smart) {
+                SmartListRepository.ensureLoaded()
+            }
+            true
+        } ?: false
+
+    /**
+     * Fallback for a connect that came up before the lists finished downloading
+     * (CONNECT_LIST_WAIT_MS elapsed). Finish warming them WITHOUT a deadline,
+     * then rebuild the config and reload in place so ad-block + the full smart
+     * list activate — no user reconnect. Reloads at most once, and only if a
+     * list actually became available. The existing reloadWatcher does not observe
+     * the list repos, so this cannot double-fire with it.
+     */
+    private fun scheduleListReadyReload() {
+        scope.launch {
+            val ab = if (SettingsRepository.state.value.adblock) AdBlockRepository.ensureLoaded() else null
+            val sl = if (RoutingRulesRepository.state.value.mode == RoutingMode.Smart) {
+                SmartListRepository.ensureLoaded()
+            } else null
+            val gotAdBlock = ab?.hasLists == true
+            val gotSmart = sl != null && !sl.isEmpty && sl.source != "builtin"
+            if (!BoxModule.isRunning || (!gotAdBlock && !gotSmart)) return@launch
+            val active = ProfileRepository.state.value.active ?: return@launch
+            val cfg = BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath) ?: return@launch
+            Log.i(TAG, "lists ready post-connect — reloading (adblock=$gotAdBlock smart=$gotSmart)")
+            worker.execute { BoxModule.reload(cfg) }
+        }
     }
 
     /**
