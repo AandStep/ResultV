@@ -23,6 +23,26 @@ private const val META_FILE = "smart-list.meta.json"
 private const val REFRESH_INTERVAL_MS = 24L * 60 * 60 * 1000
 
 /**
+ * Whether a freshly-fetched smart-list result (source [nextSource]) should
+ * replace the current snapshot (source [curSource], [curEmpty]).
+ *
+ * Guards Problem #2: a transient failure to reach the antizapret list makes the
+ * engine fall back to the small builtin list (source "builtin"). Applying it as
+ * the Smart routing list collapses the per-app allowlist and kills traffic — so
+ * a builtin result must NOT overwrite an already-loaded real ("remote"/"cache")
+ * list; it is treated as "not ready yet". On a cold start (no real list yet)
+ * builtin IS accepted — some blocking beats none.
+ */
+internal fun shouldReplaceSmartSnapshot(
+    curSource: String,
+    curEmpty: Boolean,
+    nextSource: String,
+): Boolean {
+    if (nextSource == "builtin" && !curEmpty && curSource != "builtin") return false
+    return true
+}
+
+/**
  * Holds the Antizapret-style blocked-domain list used by Smart routing.
  *
  * Engine side ([mobile.Mobile.fetchSmartList]) handles the actual download
@@ -127,6 +147,11 @@ object SmartListRepository {
             val next = _state.value.copy(lastError = "could not parse engine response")
             _state.value = next
             return@withLock next
+        }
+        val cur = _state.value
+        if (!shouldReplaceSmartSnapshot(cur.source, cur.isEmpty, parsed.source)) {
+            Log.i(TAG, "ignoring builtin smart-list (${parsed.domains.size}); keeping ${cur.source} (${cur.domains.size})")
+            return@withLock cur
         }
         // Sync the volatile field so subsequent refresh() calls pass the
         // detected country directly (skipping geo-detection on every call).
