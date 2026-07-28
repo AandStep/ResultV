@@ -775,17 +775,27 @@ func splitSmartDomains(domains []string) (exact []string, suffix []string) {
 }
 
 func buildRoute(cfg EngineConfig) *SBRoute {
+	// Smart list source: a compiled local SRS rule-set is preferred (Android;
+	// keeps the config ~10 KB instead of ~4.6 MB). Inline SmartBlockedDomains
+	// is the fallback and is what desktop still uses.
+	smartDataDir := effectiveDataDir(cfg)
+	smartSRS := cfg.SmartMode && localSmartSRSUsable(SmartSRSPath(smartDataDir))
+
 	final := "proxy"
 	// Smart mode flips the default: only listed domains hit the proxy,
-	// the rest goes direct. When Smart is on but the blocked list is still
-	// empty (first connect / fetch pending), keep Global behaviour so the
-	// tunnel isn't a no-op.
-	if cfg.SmartMode && len(cfg.SmartBlockedDomains) > 0 {
+	// the rest goes direct. When Smart is on but no list is available at all
+	// (first connect / fetch pending), keep Global behaviour so the tunnel
+	// isn't a no-op.
+	if cfg.SmartMode && (smartSRS || len(cfg.SmartBlockedDomains) > 0) {
 		final = "direct"
 	}
 	route := &SBRoute{
 		Final:      final,
 		AutoDetect: !cfg.IsAndroid && runtime.GOOS != "android",
+	}
+
+	if smartSRS {
+		route.RuleSet = append(route.RuleSet, buildSmartRuleSet(smartDataDir)...)
 	}
 
 	// Ad-block rule-sets (binary SRS): cached-local if present, else remote
@@ -885,16 +895,20 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		}
 	}
 
-	// Smart mode: domains in SmartBlockedDomains go through the proxy.
-	// MUST come after the sniff rule above so the domain matcher sees a
-	// populated host. Everything else falls through to Final=direct.
+	// Smart mode: listed domains go through the proxy. MUST come after the
+	// sniff rule above so the domain matcher sees a populated host. Everything
+	// else falls through to Final=direct.
 	//
-	// We split entries with a leading dot (or a 2-label form that
-	// implicitly matches subdomains) into `domain_suffix` and keep exact
-	// FQDNs in `domain` — sing-box's matcher is hash-based and handles
-	// 10k+ entries cheaply, but the split keeps the rule honest and
-	// debuggable.
-	if cfg.SmartMode && len(cfg.SmartBlockedDomains) > 0 {
+	// Prefer the compiled SRS rule-set: it carries the same matcher semantics
+	// (bare suffix matches the domain itself AND its subdomains) without
+	// putting 150k domains in the config.
+	if smartSRS {
+		rules = append(rules, SBRouteRule{
+			Action:   "route",
+			RuleSet:  []string{smartRuleSetTag},
+			Outbound: "proxy",
+		})
+	} else if cfg.SmartMode && len(cfg.SmartBlockedDomains) > 0 {
 		exactDomains, domainSuffixes := splitSmartDomains(cfg.SmartBlockedDomains)
 		if len(exactDomains)+len(domainSuffixes) > 0 {
 			rules = append(rules, SBRouteRule{

@@ -83,3 +83,85 @@ func TestBuildSmartRuleSet_OnlyWhenUsable(t *testing.T) {
 		t.Fatalf("unexpected rule_set: %+v", got[0])
 	}
 }
+
+func TestBuildRoute_SmartSRS_PreferredOverInline(t *testing.T) {
+	dir := t.TempDir()
+	if err := CompileSmartSRS([]string{"x.com", "instagram.com"}, SmartSRSPath(dir)); err != nil {
+		t.Fatal(err)
+	}
+	route := buildRoute(EngineConfig{
+		Mode:      ProxyModeTunnel,
+		IsAndroid: true,
+		DataDir:   dir,
+		SmartMode: true,
+		// Deliberately ALSO passed inline — SRS must win, and the config must
+		// not carry 150k domains twice.
+		SmartBlockedDomains: []string{"x.com", "instagram.com"},
+	})
+	if route.Final != "direct" {
+		t.Fatalf("smart with SRS should use final=direct, got %q", route.Final)
+	}
+	var haveSet bool
+	for _, rs := range route.RuleSet {
+		if rs.Tag == smartRuleSetTag && rs.Type == "local" && rs.Format == "binary" {
+			haveSet = true
+		}
+	}
+	if !haveSet {
+		t.Fatalf("expected a local smart rule_set, got %+v", route.RuleSet)
+	}
+	var smartRule *SBRouteRule
+	for i := range route.Rules {
+		for _, tag := range route.Rules[i].RuleSet {
+			if tag == smartRuleSetTag {
+				smartRule = &route.Rules[i]
+			}
+		}
+	}
+	if smartRule == nil {
+		t.Fatal("expected a route rule referencing the smart rule_set")
+	}
+	if smartRule.Outbound != "proxy" {
+		t.Fatalf("smart rule_set must route to proxy, got %q", smartRule.Outbound)
+	}
+	for _, r := range route.Rules {
+		if len(r.DomainSuffix) > 0 && r.Outbound == "proxy" && len(r.RuleSet) == 0 {
+			t.Fatalf("inline smart domains must NOT be emitted when SRS is present: %+v", r)
+		}
+	}
+}
+
+func TestBuildRoute_SmartInlineStillWorksWithoutSRS(t *testing.T) {
+	// Desktop path: no SRS on disk, domains passed inline.
+	route := buildRoute(EngineConfig{
+		Mode:                ProxyModeTunnel,
+		DataDir:             t.TempDir(),
+		SmartMode:           true,
+		SmartBlockedDomains: []string{"instagram.com"},
+	})
+	if route.Final != "direct" {
+		t.Fatalf("inline smart should still use final=direct, got %q", route.Final)
+	}
+	var found bool
+	for _, r := range route.Rules {
+		for _, s := range r.DomainSuffix {
+			if s == "instagram.com" && r.Outbound == "proxy" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("inline smart domains must still be emitted when no SRS exists")
+	}
+}
+
+func TestBuildRoute_SmartNoListAtAll_StaysGlobal(t *testing.T) {
+	route := buildRoute(EngineConfig{
+		Mode:      ProxyModeTunnel,
+		DataDir:   t.TempDir(),
+		SmartMode: true,
+	})
+	if route.Final != "proxy" {
+		t.Fatalf("smart with no list must keep Global final=proxy, got %q", route.Final)
+	}
+}
