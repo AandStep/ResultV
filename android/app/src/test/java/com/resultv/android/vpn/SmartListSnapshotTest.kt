@@ -25,4 +25,28 @@ class SmartListSnapshotTest {
         assertTrue(shouldReplaceSmartSnapshot(curSource = "remote", curEmpty = false, nextSource = "cache"))
         assertTrue(shouldReplaceSmartSnapshot(curSource = "builtin", curEmpty = false, nextSource = "remote"))
     }
+
+    @Test
+    fun `snapshot is empty only when it has no entries`() {
+        assertTrue(SmartListRepository.Snapshot().isEmpty)
+        assertFalse(SmartListRepository.Snapshot(count = 42, ready = true).isEmpty)
+    }
+
+    @Test
+    fun `a ready seed with no fetch is not empty`() {
+        // The bundled seed installs an SRS without any successful fetch, so
+        // readiness must come from the SRS on disk, not from the fetch count.
+        val seeded = SmartListRepository.Snapshot(count = 0, ready = true)
+        assertFalse(seeded.isEmpty)
+    }
+
+    @Test
+    fun `staleness is driven by fetchedAt`() {
+        assertTrue(SmartListRepository.Snapshot(count = 1, ready = true, fetchedAt = 0L).isStale)
+        assertFalse(
+            SmartListRepository.Snapshot(
+                count = 1, ready = true, fetchedAt = System.currentTimeMillis(),
+            ).isStale
+        )
+    }
 }
