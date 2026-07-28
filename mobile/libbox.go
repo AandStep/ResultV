@@ -1038,7 +1038,22 @@ func MatchSmartApps(packagesCSV, dataDir string) (string, error) {
 	if err != nil {
 		return "", nil // no usable list yet — caller falls back
 	}
-	packages := strings.Split(packagesCSV, ",")
+	// proxy.MatchSmartPackages deliberately does NOT trim its inputs (fidelity
+	// with the Kotlin original), so CSV/whitespace hygiene is owned here — same
+	// trim-and-drop-empty rule splitSmartList applies to the domain list. This
+	// matters beyond cosmetics: DefaultSmartAliases is an exact map lookup, so
+	// an untrimmed " com.google.android.youtube " would miss the alias and fall
+	// through to the naive two-label heuristic (computing "google.com" instead
+	// of "youtube.com") — a silent false negative on exactly the apps the alias
+	// table exists to catch.
+	var packages []string
+	for _, p := range strings.Split(packagesCSV, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		packages = append(packages, p)
+	}
 	return strings.Join(proxy.MatchSmartPackages(packages, matcher.Match), ","), nil
 }
 

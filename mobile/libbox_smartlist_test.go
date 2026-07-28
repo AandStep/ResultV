@@ -1,6 +1,7 @@
 package mobile
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"strings"
@@ -40,12 +41,28 @@ func TestInstallSmartSRSSeed_InstallsThenSkips(t *testing.T) {
 }
 
 func TestInstallSmartSRSSeed_RejectsGarbage(t *testing.T) {
-	dir := t.TempDir()
-	if _, err := InstallSmartSRSSeed(dir, []byte("this is not an SRS file at all")); err == nil {
-		t.Fatal("expected an error for a non-SRS payload")
+	cases := []struct {
+		name string
+		data []byte
+	}{
+		// Below minSmartSRSBytes (32): exercises the trivial size guard only.
+		{"tooSmall", []byte("this is not an SRS file at all")}, // 30 bytes
+		// At/above minSmartSRSBytes but still not a valid rule-set: this is the
+		// case that actually proves validateSRS runs BEFORE the write. A
+		// regression that reordered validation after os.WriteFile would pass
+		// the tooSmall case above undetected.
+		{"largeButInvalid", bytes.Repeat([]byte("not a real srs file, just padding to clear the size guard "), 3)},
 	}
-	if _, err := os.Stat(proxy.SmartSRSPath(dir)); !os.IsNotExist(err) {
-		t.Fatal("garbage seed must not reach disk")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if _, err := InstallSmartSRSSeed(dir, tc.data); err == nil {
+				t.Fatal("expected an error for a non-SRS payload")
+			}
+			if _, err := os.Stat(proxy.SmartSRSPath(dir)); !os.IsNotExist(err) {
+				t.Fatal("garbage seed must not reach disk")
+			}
+		})
 	}
 }
 
@@ -99,5 +116,60 @@ func TestMatchSmartApps_NoSRSReturnsEmpty(t *testing.T) {
 	}
 	if strings.TrimSpace(got) != "" {
 		t.Fatalf("expected empty result, got %q", got)
+	}
+}
+
+// TestMatchSmartApps_TrimsWhitespacePaddedAliasedPackage guards the exact bug
+// a missing per-entry trim causes: proxy.MatchSmartPackages deliberately does
+// NOT trim (fidelity with the Kotlin original — see Task 3), so CSV hygiene is
+// MatchSmartApps's job. DefaultSmartAliases does an exact map lookup on the
+// package name; an untrimmed " com.google.android.youtube " misses that
+// lookup and falls through to the naive two-label heuristic, which computes
+// "google.com" instead of "youtube.com" — a silent false negative on exactly
+// the apps the alias table exists to catch.
+func TestMatchSmartApps_TrimsWhitespacePaddedAliasedPackage(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := InstallSmartSRSSeed(dir, writeSeedSRS(t, []string{"youtube.com"})); err != nil {
+		t.Fatal(err)
+	}
+	got, err := MatchSmartApps(" com.google.android.youtube ", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "com.google.android.youtube" {
+		t.Fatalf("MatchSmartApps(%q) = %q, want the trimmed aliased package to match via youtube.com",
+			" com.google.android.youtube ", got)
+	}
+}
+
+// TestMatchSmartApps_CSVHygiene locks in the empty/blank-token handling that
+// splitSmartList already does for the domain list — MatchSmartApps must apply
+// the same trim-and-drop-empty rule to the packages CSV so no empty package
+// name ever reaches proxy.MatchSmartPackages.
+func TestMatchSmartApps_CSVHygiene(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := InstallSmartSRSSeed(dir, writeSeedSRS(t, []string{"instagram.com"})); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name string
+		csv  string
+		want string
+	}{
+		{"empty", "", ""},
+		{"trailingComma", "com.instagram.android,", "com.instagram.android"},
+		{"repeatedCommas", "com.instagram.android,,,ru.sberbank.online", "com.instagram.android"},
+		{"leadingComma", ",com.instagram.android", "com.instagram.android"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := MatchSmartApps(tc.csv, dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("MatchSmartApps(%q) = %q, want %q", tc.csv, got, tc.want)
+			}
+		})
 	}
 }
