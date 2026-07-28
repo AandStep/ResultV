@@ -63,10 +63,6 @@ func MatchSmartPackages(packages []string, match func(string) bool) []string {
 	out := make([]string, 0, 16)
 	seen := make(map[string]struct{}, len(packages))
 	for _, pkg := range packages {
-		pkg = strings.TrimSpace(pkg)
-		if pkg == "" {
-			continue
-		}
 		if _, dup := seen[pkg]; dup {
 			continue
 		}
