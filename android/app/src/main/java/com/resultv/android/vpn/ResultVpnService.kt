@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import mobile.Mobile
 import java.util.concurrent.Executors
 
@@ -38,6 +39,14 @@ private const val NOTIFICATION_ID = 1
 // this one, so they must not share IDs.
 private const val REVOKE_NOTIFICATION_ID = 2
 private const val REVOKE_CHANNEL_ID = "resultv_vpn_revoke"
+
+// Defensive bound on awaitSmartSeedInstall()'s wait — a LOCAL DISK op (asset
+// read + SRS validate + JNI write), never a network timeout. This is NOT a
+// revival of the removed CONNECT_LIST_WAIT_MS bug: that one wrapped a
+// blocking network JNI fetch that a coroutine timeout could never actually
+// cancel. A local disk op should finish in low milliseconds; this only
+// guards against a pathological stall.
+private const val SEED_INSTALL_WAIT_MS = 2000L
 
 const val ACTION_START = "com.resultv.android.START"
 const val ACTION_STOP = "com.resultv.android.STOP"
@@ -112,10 +121,11 @@ class ResultVpnService : VpnService() {
             }
             else -> {
                 // Need an active profile to connect. Cheap check up front so we
-                // can promise foreground immediately, then do the (possibly slow)
-                // list warm-up + config build off the main thread. The config is
-                // ALWAYS rebuilt (never passed in): with the expanded Smart list
-                // it reaches ~4.6 MB and blows the ~1 MB Binder limit.
+                // can promise foreground immediately, then build the config off
+                // the main thread. Connect never blocks on a list download (see
+                // the scope.launch below) — the config is ALWAYS rebuilt (never
+                // passed in) because it can be too large for the ~1 MB Binder
+                // limit.
                 if (ProfileRepository.state.value.active == null) {
                     Log.e(TAG, "no active profile — stopping")
                     stopSelf()
@@ -134,18 +144,30 @@ class ResultVpnService : VpnService() {
                 }
                 val connectedMsg = getString(R.string.log_connected)
                 scope.launch {
-                    // Connect NEVER waits on a list. The Smart rule-set is
-                    // already on disk (bundled seed on a fresh install, or a
-                    // previous download) and ad-block rule_sets are local-only,
-                    // so the config we build below references local files.
+                    // Connect NEVER waits on a list DOWNLOAD. The Smart
+                    // rule-set is already on disk (bundled seed on a fresh
+                    // install, or a previous download) and ad-block rule_sets
+                    // are local-only, so the config we build below references
+                    // local files.
                     //
                     // This used to be a bounded warm-up, but the bound was a
                     // lie: coroutine cancellation cannot interrupt the blocking
                     // JNI fetch it wrapped, so a fresh install waited out 7
                     // sequential downloads (5-13s). Refresh happens in the
                     // background and applies via scheduleListReadyReload().
+                    //
+                    // One LOCAL-DISK wait remains: awaitSmartSeedInstall()
+                    // below. On the always-on cold-start path,
+                    // ensureReposReady()'s SmartListRepository.init() call and
+                    // this connect run in nearly the same call stack, so
+                    // without it the config build can race the bundled-seed
+                    // asset write and silently fall back to Global routing
+                    // (every app in the tunnel) for that first connect.
+                    if (!isReload) {
+                        kickBackgroundListRefresh()
+                        awaitSmartSeedInstall()
+                    }
                     val listsReady = if (isReload) true else listsAlreadyOnDisk()
-                    if (!isReload) kickBackgroundListRefresh()
                     val tCfg = System.currentTimeMillis()
                     val config = buildConfigFromActiveProfile()
                     Log.i(TAG, "connect timing: buildConfig=${System.currentTimeMillis() - tCfg}ms, size=${config?.length ?: 0}")
@@ -232,6 +254,29 @@ class ResultVpnService : VpnService() {
     private fun buildConfigFromActiveProfile(): String? {
         val active = ProfileRepository.state.value.active ?: return null
         return BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath)
+    }
+
+    /**
+     * Await the bundled Smart-seed install kicked off by
+     * SmartListRepository.init(), but only when Smart mode needs it. LOCAL
+     * DISK ONLY — an asset read, an SRS validation, and a JNI write, never a
+     * network call — so this is NOT a revival of the removed
+     * CONNECT_LIST_WAIT_MS bug (that one wrapped a blocking NETWORK fetch
+     * that a coroutine timeout could never actually cancel; this one bounds
+     * a local disk op that should finish in low milliseconds and is expected
+     * to already be done by the time a normal in-app connect reaches here).
+     *
+     * Needed for the always-on VPN cold start, where ensureReposReady()'s
+     * SmartListRepository.init() call and this connect run in nearly the
+     * same call stack: without waiting, buildConfigFromActiveProfile() can
+     * race the seed write and the engine falls back to Global routing
+     * (every app in the tunnel, unfiltered) for that first connect.
+     * scheduleListReadyReload() would eventually self-heal it, but only
+     * after a window where VPN-hostile apps were already tunneled.
+     */
+    private suspend fun awaitSmartSeedInstall() {
+        if (RoutingRulesRepository.state.value.mode != RoutingMode.Smart) return
+        withTimeoutOrNull(SEED_INSTALL_WAIT_MS) { SmartListRepository.awaitSeedInstall() }
     }
 
     /**

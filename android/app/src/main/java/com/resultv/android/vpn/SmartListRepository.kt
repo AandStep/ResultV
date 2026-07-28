@@ -5,6 +5,7 @@ import android.util.Log
 import com.resultv.android.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -79,6 +80,9 @@ object SmartListRepository {
     @Volatile private var country: String = ""
     @Volatile private var dataDir: String = ""
     @Volatile private var metaFile: File? = null
+    // The in-flight (or already-finished) bundled-seed install kicked off by
+    // init(), so a connect can await it — see awaitSeedInstall().
+    @Volatile private var seedInstallJob: Job? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val fetchLock = Mutex()
@@ -96,7 +100,20 @@ object SmartListRepository {
         metaFile = f
         _state.value = loadMeta(f).copy(ready = srsReady())
         val appCtx = ctx.applicationContext
-        scope.launch { installSeedIfNeeded(appCtx) }
+        seedInstallJob = scope.launch { installSeedIfNeeded(appCtx) }
+    }
+
+    /**
+     * Await the bundled-seed install kicked off by [init], if it's still in
+     * flight. LOCAL DISK ONLY — an asset read, an SRS validation, and a JNI
+     * install call, never a network request. [installSeedIfNeeded] catches
+     * every Throwable internally, so this Job always completes normally
+     * (never hangs), whether the seed installs, was already unnecessary
+     * (a real list already on disk), or failed. A no-op if [init] was never
+     * called.
+     */
+    suspend fun awaitSeedInstall() {
+        seedInstallJob?.join()
     }
 
     /** Pin the smart-list country (ISO alpha-2). Triggers a refresh if changed. */
