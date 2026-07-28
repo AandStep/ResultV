@@ -1,26 +1,89 @@
 package com.resultv.android.vpn
 
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.util.Log
+import androidx.core.content.ContextCompat
 
 private const val TAG = "ResultV/AppInventory"
 
 /**
  * Thin PackageManager adapter for tunnel-membership computation. Kept Context-
- * bound and free of routing logic so SmartAppMatcher / AppTunnelMembership stay
- * pure and JVM-testable.
+ * bound and free of routing logic so SmartAppMembership / AppTunnelMembership
+ * stay pure and JVM-testable.
  *
  * Results are memoized for the process lifetime: both queries are binder IPCs
  * that ran on the openTun hot path on EVERY connect. The set of installed apps
- * only changes on install/uninstall, which [invalidate] handles.
+ * only changes on install/uninstall — [init] wires that up automatically via
+ * [invalidate].
  */
 object AppInventory {
 
     @Volatile private var cachedApps: List<String>? = null
     @Volatile private var cachedBrowsers: Set<String>? = null
+    @Volatile private var receiverRegistered = false
+
+    /**
+     * Registers a package-add/remove receiver so the memoized caches below
+     * can never outlive their validity for the life of the process.
+     *
+     * Without this, a user installing an app associated with a blocked
+     * domain while Smart mode's VPN service is running would have that app
+     * silently routed OUTSIDE the tunnel — unprotected — until the process
+     * restarts: ResultVpnService has no `android:process`, so it shares the
+     * JVM with MainActivity and can outlive it by a long margin as a
+     * foreground service.
+     *
+     * Idempotent and safe to call from multiple entry points — mirrors every
+     * other `*Repository.init(ctx)` in this codebase (SmartListRepository,
+     * SettingsRepository, ...). Call from both MainActivity.onCreate and
+     * ResultVpnService.ensureReposReady: the always-on-VPN path starts the
+     * service directly and never runs MainActivity.
+     *
+     * Registered against applicationContext and deliberately NEVER
+     * unregistered: the caches are scoped to the process, so the receiver
+     * must be too. Tying registration/unregistration to an Activity or to
+     * the VpnService's onCreate/onDestroy would reopen the same bug for
+     * installs that land while disconnected — the receiver would be torn
+     * down exactly when it's needed to keep the cache honest for the NEXT
+     * connect. There's no Application subclass in this app to hang a single
+     * process-wide registration off of, so AppInventory does it itself.
+     *
+     * Registration failure is caught and logged, never thrown: worst case we
+     * are back to today's staleness, which must not block app startup.
+     */
+    @Synchronized
+    fun init(ctx: Context) {
+        if (receiverRegistered) return
+        receiverRegistered = true
+        try {
+            val filter = IntentFilter().apply {
+                addAction(Intent.ACTION_PACKAGE_ADDED)
+                addAction(Intent.ACTION_PACKAGE_REMOVED)
+                addAction(Intent.ACTION_PACKAGE_FULLY_REMOVED)
+                addDataScheme("package")
+            }
+            ContextCompat.registerReceiver(
+                ctx.applicationContext,
+                object : BroadcastReceiver() {
+                    override fun onReceive(context: Context, intent: Intent) {
+                        Log.i(TAG, "package change (${intent.action}) — invalidating app cache")
+                        invalidate()
+                    }
+                },
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
+        } catch (t: Throwable) {
+            // Fail-safe: no receiver just means the caches can go stale again,
+            // exactly as before this fix. Never break startup for this.
+            Log.w(TAG, "package-change receiver registration failed", t)
+        }
+    }
 
     /** Drop the memoized lists (call on package install/uninstall). */
     @Synchronized
@@ -31,7 +94,7 @@ object AppInventory {
 
     /**
      * Installed app package names (excluding our own). Deliberately does NOT
-     * resolve labels: [SmartAppMatcher] keys on the package's reverse-DNS
+     * resolve labels: [SmartAppMembership] keys on the package's reverse-DNS
      * domain, and getApplicationLabel loads each app's resources — hundreds of
      * those on the openTun hot path was the 3-5s Smart connect stall.
      */

@@ -217,6 +217,7 @@ class ResultVpnService : VpnService() {
         SettingsRepository.init(app)
         RoutingRulesRepository.init(app)
         AppRoutingRepository.init(app)
+        AppInventory.init(app)
         SmartListRepository.init(app)
         // Needed so warmListsBeforeConnect can warm the ad-block SRS cache on the
         // always-on path too (MainActivity, which normally inits it, never ran).

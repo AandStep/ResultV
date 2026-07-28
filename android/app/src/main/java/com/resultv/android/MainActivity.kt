@@ -64,6 +64,7 @@ import com.resultv.android.ui.screens.RulesScreen
 import com.resultv.android.ui.screens.SettingsScreen
 import com.resultv.android.vpn.ACTION_START
 import com.resultv.android.vpn.ACTION_STOP
+import com.resultv.android.vpn.AppInventory
 import com.resultv.android.vpn.AppRoutingRepository
 import com.resultv.android.vpn.DeepLinkImporter
 import com.resultv.android.vpn.ProfileRepository
@@ -145,6 +146,7 @@ class MainActivity : ComponentActivity() {
         AppRoutingRepository.init(applicationContext)
         com.resultv.android.vpn.RoutingRulesRepository.init(applicationContext)
         com.resultv.android.vpn.SettingsRepository.init(applicationContext)
+        AppInventory.init(applicationContext)
         // Probe underlying IPv6 reachability early so the effective IPv6 flag is
         // ready by the time the user taps connect (see NetworkProbe / BuildOptions).
         com.resultv.android.vpn.NetworkProbe.init(applicationContext)
