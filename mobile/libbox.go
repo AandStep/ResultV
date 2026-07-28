@@ -887,15 +887,23 @@ func splitSmartList(raw string) []string {
 // FetchSmartList resolves the user's country and downloads the
 // Antizapret-style blocked-domain list for that country. The list is
 // cached in dataDir/smart-blocked.json (managed by the existing
-// blocked_provider) and returned as a JSON-encoded result the Kotlin side
-// can render:
+// blocked_provider), compiled into a local binary SRS rule-set
+// (dataDir/smart/smart.srs), and the result is returned as JSON metadata the
+// Kotlin side can render:
 //
 //	{
-//	  "domains":   ["instagram.com", "x.com", …],   // normalised, dedup'd
-//	  "country":   "ru",                              // resolved alpha-2
-//	  "source":    "remote" | "cache" | "builtin",
-//	  "error":     ""                                 // non-empty on soft failure
+//	  "country":  "ru",                              // resolved alpha-2
+//	  "source":   "remote" | "cache" | "builtin",
+//	  "count":    150000,                             // domains resolved (not returned)
+//	  "srsReady": true,                                // whether a usable SRS is on disk
+//	  "error":    ""                                   // non-empty on soft failure
 //	}
+//
+// The domain list itself is never returned across the binding: it used to be
+// a JSON array Kotlin parsed with org.json (4.6 MB, ~150k entries, on the
+// main thread) and re-serialised into the connect config. The compiled SRS on
+// disk is now the single source of truth for both routing and per-app
+// membership (see MatchSmartApps).
 //
 // country may be empty to force auto-detection via the embedded provider;
 // pass a 2-letter ISO code (e.g. "ru") to skip auto-detect (faster, no
@@ -937,11 +945,33 @@ func FetchSmartList(country string, dataDir string) (string, error) {
 		result = proxy.ResolveBlockedDomains(context.Background(), provider, cachePath)
 	}
 
+	// Compile the resolved list into a local binary SRS so the connect path
+	// references a ~70 KB file instead of shipping ~150k domains through the
+	// config (4.6 MB, marshalled + JNI'd + re-parsed on EVERY connect).
+	srsReady := false
+	if len(result.Domains) > 0 {
+		if err := proxy.CompileSmartSRS(result.Domains, proxy.SmartSRSPath(dataDir)); err != nil {
+			// Non-fatal: a previously compiled SRS (or the bundled seed) stays
+			// in place and the connect path keeps using it.
+			result.Err = err
+		} else {
+			srsReady = true
+		}
+	}
+	if !srsReady {
+		srsReady = proxy.SmartSRSReady(dataDir)
+	}
+
+	// NOTE: the domain list is deliberately NOT returned. It used to come back
+	// as a JSON array the Kotlin side parsed with org.json (4.6 MB, ~150k
+	// entries, on the main thread at app start) and then re-serialised into the
+	// config. The SRS on disk is now the single source of truth.
 	out := map[string]interface{}{
-		"domains": result.Domains,
-		"country": result.Country,
-		"source":  result.Source,
-		"error":   "",
+		"country":  result.Country,
+		"source":   result.Source,
+		"count":    len(result.Domains),
+		"srsReady": srsReady,
+		"error":    "",
 	}
 	if result.Err != nil {
 		out["error"] = result.Err.Error()
@@ -951,6 +981,65 @@ func FetchSmartList(country string, dataDir string) (string, error) {
 		return "", fmt.Errorf("marshaling smart list: %w", err)
 	}
 	return string(data), nil
+}
+
+// SmartListStatus reports whether a usable compiled Smart rule-set is on disk,
+// without touching the network. The Kotlin side calls this at startup to decide
+// whether it still needs to install the bundled seed.
+func SmartListStatus(dataDir string) (string, error) {
+	if strings.TrimSpace(dataDir) == "" {
+		return "", fmt.Errorf("dataDir is required")
+	}
+	out := map[string]interface{}{
+		"srsReady": proxy.SmartSRSReady(dataDir),
+		"path":     proxy.SmartSRSPath(dataDir),
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("marshaling smart status: %w", err)
+	}
+	return string(data), nil
+}
+
+// InstallSmartSRSSeed installs the APK-bundled Smart rule-set when no usable one
+// is cached yet, so a fresh install gets correct Smart routing on its very first
+// connect instead of falling back to Global while a download runs.
+//
+// Returns false (and no error) when a usable SRS already exists: a freshly
+// downloaded list must never be overwritten by the older bundled seed.
+func InstallSmartSRSSeed(dataDir string, data []byte) (bool, error) {
+	if strings.TrimSpace(dataDir) == "" {
+		return false, fmt.Errorf("dataDir is required")
+	}
+	if proxy.SmartSRSReady(dataDir) {
+		return false, nil
+	}
+	if err := proxy.InstallSmartSRS(dataDir, data); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// MatchSmartApps returns the comma-separated subset of packagesCSV that is
+// associated with a blocked resource (Smart tunnel membership).
+//
+// The blocklist stays in Go: the caller sends ~200 package names (~8 KB) and
+// gets the matched subset back, instead of Kotlin holding 150k domains and
+// rebuilding a HashSet on every connect. A missing rule-set is not an error —
+// it yields an empty result and the caller falls back to its denylist.
+func MatchSmartApps(packagesCSV, dataDir string) (string, error) {
+	if strings.TrimSpace(dataDir) == "" {
+		return "", fmt.Errorf("dataDir is required")
+	}
+	if strings.TrimSpace(packagesCSV) == "" {
+		return "", nil
+	}
+	matcher, err := proxy.LoadSmartDomainMatcher(proxy.SmartSRSPath(dataDir))
+	if err != nil {
+		return "", nil // no usable list yet — caller falls back
+	}
+	packages := strings.Split(packagesCSV, ",")
+	return strings.Join(proxy.MatchSmartPackages(packages, matcher.Match), ","), nil
 }
 
 // FetchAdBlockLists downloads the ad-blocking rule-set SRS files into

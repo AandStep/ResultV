@@ -176,3 +176,33 @@ func LoadSmartDomainMatcher(path string) (*domain.Matcher, error) {
 	smartMatcherCache.matcher = m
 	return m, nil
 }
+
+// SmartSRSReady reports whether a usable compiled Smart rule-set is cached.
+func SmartSRSReady(dataDir string) bool {
+	return localSmartSRSUsable(SmartSRSPath(dataDir))
+}
+
+// InstallSmartSRS validates data as a sing-box rule-set and installs it as the
+// cached Smart list. Used for the APK-bundled seed. Validation happens BEFORE
+// anything reaches disk: an invalid local rule_set fails sing-box startup.
+func InstallSmartSRS(dataDir string, data []byte) error {
+	if len(data) < minSmartSRSBytes {
+		return fmt.Errorf("smart SRS seed: too small (%d bytes)", len(data))
+	}
+	if err := validateSRS(data); err != nil {
+		return fmt.Errorf("smart SRS seed: %w", err)
+	}
+	path := SmartSRSPath(dataDir)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("smart SRS seed: creating dir: %w", err)
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return fmt.Errorf("smart SRS seed: writing temp: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("smart SRS seed: renaming: %w", err)
+	}
+	return nil
+}
