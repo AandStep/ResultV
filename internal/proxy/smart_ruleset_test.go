@@ -124,9 +124,16 @@ func TestBuildRoute_SmartSRS_PreferredOverInline(t *testing.T) {
 	if smartRule.Outbound != "proxy" {
 		t.Fatalf("smart rule_set must route to proxy, got %q", smartRule.Outbound)
 	}
+	// Tighten check to specific test domains, not just any domain_suffix rule
+	// with outbound="proxy". This keeps the test immune to other rules like
+	// YouTube core domains → proxy.
 	for _, r := range route.Rules {
-		if len(r.DomainSuffix) > 0 && r.Outbound == "proxy" && len(r.RuleSet) == 0 {
-			t.Fatalf("inline smart domains must NOT be emitted when SRS is present: %+v", r)
+		if r.Outbound == "proxy" && len(r.RuleSet) == 0 {
+			for _, suffix := range r.DomainSuffix {
+				if suffix == "x.com" || suffix == "instagram.com" {
+					t.Fatalf("inline smart domains must NOT be emitted when SRS is present: %+v", r)
+				}
+			}
 		}
 	}
 }
@@ -163,5 +170,63 @@ func TestBuildRoute_SmartNoListAtAll_StaysGlobal(t *testing.T) {
 	})
 	if route.Final != "proxy" {
 		t.Fatalf("smart with no list must keep Global final=proxy, got %q", route.Final)
+	}
+}
+
+func TestBuildRoute_SmartSRS_WithAdBlock_RuleOrder(t *testing.T) {
+	// Coverage for SmartMode:true + AdBlock:true interaction with SRS.
+	// Rule order is load-bearing: ad-block rules must precede the smart rule.
+	dir := t.TempDir()
+	if err := CompileSmartSRS([]string{"blocked.example.com"}, SmartSRSPath(dir)); err != nil {
+		t.Fatal(err)
+	}
+	route := buildRoute(EngineConfig{
+		Mode:                ProxyModeTunnel,
+		IsAndroid:           true,
+		DataDir:             dir,
+		SmartMode:           true,
+		AdBlock:             true,
+		SmartBlockedDomains: []string{"blocked.example.com"},
+	})
+
+	// Verify the smart rule_set rule is emitted.
+	var smartRuleIdx int = -1
+	for i, r := range route.Rules {
+		for _, tag := range r.RuleSet {
+			if tag == smartRuleSetTag {
+				smartRuleIdx = i
+			}
+		}
+	}
+	if smartRuleIdx == -1 {
+		t.Fatal("expected a route rule referencing the smart rule_set")
+	}
+
+	// Verify ad-block reject rules precede the smart rule.
+	// Ad-block emits reject rules for its tag-based matches; find one.
+	var adBlockRejectIdx int = -1
+	for i, r := range route.Rules {
+		if r.Action == "reject" && len(r.RuleSet) > 0 {
+			adBlockRejectIdx = i
+			break
+		}
+	}
+	if adBlockRejectIdx != -1 && adBlockRejectIdx >= smartRuleIdx {
+		t.Fatalf("ad-block reject rule (index %d) must precede smart rule (index %d)", adBlockRejectIdx, smartRuleIdx)
+	}
+
+	// Verify smart rule uses the SRS tag.
+	smartRule := &route.Rules[smartRuleIdx]
+	if smartRule.Outbound != "proxy" {
+		t.Fatalf("smart rule must route to proxy, got %q", smartRule.Outbound)
+	}
+	var hasSRSTag bool
+	for _, tag := range smartRule.RuleSet {
+		if tag == smartRuleSetTag {
+			hasSRSTag = true
+		}
+	}
+	if !hasSRSTag {
+		t.Fatalf("smart rule must reference %q tag, got %v", smartRuleSetTag, smartRule.RuleSet)
 	}
 }
