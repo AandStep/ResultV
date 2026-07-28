@@ -142,6 +142,126 @@ func TestMatchSmartApps_TrimsWhitespacePaddedAliasedPackage(t *testing.T) {
 	}
 }
 
+// TestShouldCompileSmartSRS pins the decision predicate that guards
+// FetchSmartList's SRS compile step (CRITICAL finding: a failed refresh must
+// not silently destroy a good rule-set with the 7-domain builtin fallback).
+func TestShouldCompileSmartSRS(t *testing.T) {
+	cases := []struct {
+		name             string
+		source           string
+		hasDomains       bool
+		existingSRSReady bool
+		want             bool
+	}{
+		{"builtin_over_existing_good_srs_is_refused", "builtin", true, true, false},
+		{"builtin_installed_when_nothing_on_disk", "builtin", true, false, true},
+		{"remote_always_compiles_over_existing", "remote", true, true, true},
+		{"remote_compiles_when_nothing_on_disk", "remote", true, false, true},
+		{"cache_always_compiles_over_existing", "cache", true, true, true},
+		{"no_domains_never_compiles", "remote", false, true, false},
+		{"no_domains_never_compiles_builtin", "builtin", false, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := shouldCompileSmartSRS(tc.source, tc.hasDomains, tc.existingSRSReady)
+			if got != tc.want {
+				t.Fatalf("shouldCompileSmartSRS(%q, %v, %v) = %v, want %v",
+					tc.source, tc.hasDomains, tc.existingSRSReady, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCompileSmartResult_BuiltinDoesNotOverwriteExistingSRS is the CRITICAL
+// regression case: FetchSmartList used to compile whatever
+// ResolveBlockedDomains returned, including the tiny "builtin" fallback
+// (defaultBlockedDomains(), 7 domains) that ResolveBlockedDomains produces
+// when both the network fetch and the on-disk smart-blocked.json cache are
+// unavailable — exactly the fresh-install case the bundled seed SRS exists to
+// serve. That silently overwrote a good (509 KB seed or previously
+// downloaded) rule-set with ~200 bytes. Assert the on-disk bytes are
+// byte-for-byte unchanged after a builtin result arrives.
+func TestCompileSmartResult_BuiltinDoesNotOverwriteExistingSRS(t *testing.T) {
+	dir := t.TempDir()
+	path := proxy.SmartSRSPath(dir)
+	if err := proxy.CompileSmartSRS([]string{"instagram.com", "youtube.com", "x.com"}, path); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := proxy.BlockedDomainsResolveResult{
+		Domains: []string{"instagram.com", "facebook.com", "twitter.com", "x.com", "t.me", "discord.com", "netflix.com"},
+		Source:  "builtin",
+	}
+	srsReady := compileSmartResult(&result, dir)
+	if !srsReady {
+		t.Fatal("existing SRS should still be reported ready even though the builtin result was refused")
+	}
+	if result.Err != nil {
+		t.Fatalf("refusing to compile is not an error condition: %v", result.Err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("a builtin fallback result must not overwrite an existing usable SRS")
+	}
+}
+
+// TestCompileSmartResult_BuiltinInstalledWhenNoSRSExists covers the cold-start
+// side of the same guard: some blocking beats none, so the builtin fallback
+// must still be installed when there is no usable SRS on disk at all — this
+// mirrors the existing Kotlin seed-install guard's behaviour.
+func TestCompileSmartResult_BuiltinInstalledWhenNoSRSExists(t *testing.T) {
+	dir := t.TempDir()
+	result := proxy.BlockedDomainsResolveResult{
+		Domains: []string{"instagram.com", "facebook.com", "twitter.com"},
+		Source:  "builtin",
+	}
+	srsReady := compileSmartResult(&result, dir)
+	if !srsReady {
+		t.Fatal("builtin result must be compiled when no usable SRS exists yet")
+	}
+	if !proxy.SmartSRSReady(dir) {
+		t.Fatal("expected a usable SRS on disk after compiling the builtin fallback")
+	}
+}
+
+// TestCompileSmartResult_RemoteAlwaysOverwrites locks in that "remote" (and by
+// extension "cache") results are never subject to the builtin guard: they
+// always compile and replace whatever was on disk, exactly as before this fix.
+func TestCompileSmartResult_RemoteAlwaysOverwrites(t *testing.T) {
+	dir := t.TempDir()
+	path := proxy.SmartSRSPath(dir)
+	if err := proxy.CompileSmartSRS([]string{"instagram.com"}, path); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := proxy.BlockedDomainsResolveResult{
+		Domains: []string{"instagram.com", "youtube.com", "x.com", "vk.com"},
+		Source:  "remote",
+	}
+	srsReady := compileSmartResult(&result, dir)
+	if !srsReady {
+		t.Fatal("remote result should compile successfully")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(before, after) {
+		t.Fatal("a remote result must overwrite the existing SRS, even though a usable one already existed")
+	}
+}
+
 // TestMatchSmartApps_CSVHygiene locks in the empty/blank-token handling that
 // splitSmartList already does for the domain list — MatchSmartApps must apply
 // the same trim-and-drop-empty rule to the packages CSV so no empty package

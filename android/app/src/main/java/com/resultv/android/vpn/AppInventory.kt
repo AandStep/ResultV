@@ -59,7 +59,6 @@ object AppInventory {
     @Synchronized
     fun init(ctx: Context) {
         if (receiverRegistered) return
-        receiverRegistered = true
         try {
             val filter = IntentFilter().apply {
                 addAction(Intent.ACTION_PACKAGE_ADDED)
@@ -78,9 +77,16 @@ object AppInventory {
                 filter,
                 ContextCompat.RECEIVER_NOT_EXPORTED,
             )
+            // Only mark registered on success: setting this unconditionally
+            // before the try block meant a thrown registerReceiver call left
+            // receiverRegistered stuck true, so no later init() call would
+            // ever retry — package-change invalidation would be dead for the
+            // rest of the process's life instead of just until the next call.
+            receiverRegistered = true
         } catch (t: Throwable) {
             // Fail-safe: no receiver just means the caches can go stale again,
-            // exactly as before this fix. Never break startup for this.
+            // exactly as before this fix. Never break startup for this, and
+            // leave receiverRegistered=false so a later init() call can retry.
             Log.w(TAG, "package-change receiver registration failed", t)
         }
     }

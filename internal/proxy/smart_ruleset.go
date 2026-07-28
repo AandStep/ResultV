@@ -76,15 +76,32 @@ func CompileSmartSRS(domains []string, path string) error {
 	if err := validateSRS(buf.Bytes()); err != nil {
 		return fmt.Errorf("smart SRS: self-validation: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("smart SRS: creating dir: %w", err)
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, buf.Bytes(), 0o600); err != nil {
+	// CompileSmartSRS (refresh(), inside fetchLock) and InstallSmartSRS
+	// (installSeedIfNeeded, outside fetchLock) run on independent coroutine
+	// scopes with nothing serialising them. A shared fixed temp name
+	// (path+".tmp") let one writer's os.WriteFile(O_TRUNC) interleave with
+	// another's, publishing a mixed buffer via rename. os.CreateTemp mints a
+	// unique name per call, so concurrent writers can never collide.
+	tmp, err := os.CreateTemp(dir, "smart-*.srs")
+	if err != nil {
+		return fmt.Errorf("smart SRS: creating temp: %w", err)
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(buf.Bytes()); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
 		return fmt.Errorf("smart SRS: writing temp: %w", err)
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("smart SRS: closing temp: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
 		return fmt.Errorf("smart SRS: renaming: %w", err)
 	}
 	return nil
@@ -109,19 +126,25 @@ func localSmartSRSUsable(path string) bool {
 	return true
 }
 
-// buildSmartRuleSet returns the sing-box rule_set definition for the Smart list,
-// or nothing when no usable SRS is cached (caller then falls back to the inline
-// SmartBlockedDomains path, which is what desktop still uses).
-func buildSmartRuleSet(dataDir string) []SBRouteRuleSet {
-	path := SmartSRSPath(dataDir)
-	if !localSmartSRSUsable(path) {
+// buildSmartRuleSet returns the sing-box rule_set definition for the Smart
+// list, or nothing when no usable SRS is cached (caller then falls back to
+// the inline SmartBlockedDomains path, which is what desktop still uses).
+//
+// validated must be the caller's already-computed localSmartSRSUsable(path)
+// result — buildRoute needs that same answer to decide route.Final, so
+// re-deriving it here would read and fully parse the ~509 KB SRS (zlib
+// inflate + succinct-set rebuild) a second time on every config build
+// (connect, browser-ad-block reload, kill-switch reload, every
+// triggerReload).
+func buildSmartRuleSet(dataDir string, validated bool) []SBRouteRuleSet {
+	if !validated {
 		return nil
 	}
 	return []SBRouteRuleSet{{
 		Type:   "local",
 		Tag:    smartRuleSetTag,
 		Format: "binary",
-		Path:   path,
+		Path:   SmartSRSPath(dataDir),
 	}}
 }
 
@@ -193,15 +216,29 @@ func InstallSmartSRS(dataDir string, data []byte) error {
 		return fmt.Errorf("smart SRS seed: %w", err)
 	}
 	path := SmartSRSPath(dataDir)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("smart SRS seed: creating dir: %w", err)
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	// See the matching comment in CompileSmartSRS: this and that function run
+	// on independent, unsynchronised coroutine scopes and must not share a
+	// fixed temp file name.
+	tmp, err := os.CreateTemp(dir, "smart-*.srs")
+	if err != nil {
+		return fmt.Errorf("smart SRS seed: creating temp: %w", err)
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
 		return fmt.Errorf("smart SRS seed: writing temp: %w", err)
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("smart SRS seed: closing temp: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
 		return fmt.Errorf("smart SRS seed: renaming: %w", err)
 	}
 	return nil

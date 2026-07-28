@@ -45,8 +45,15 @@ func TestCompileSmartSRS_AtomicNoPartialFile(t *testing.T) {
 	if !localSmartSRSUsable(path) {
 		t.Fatal("previous good SRS must survive a failed compile")
 	}
-	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
-		t.Fatal("temp file must not be left behind")
+	// CompileSmartSRS now writes via os.CreateTemp(dir, "smart-*.srs") instead
+	// of a fixed path+".tmp" name (see the collision fix), so check the glob
+	// pattern rather than the old literal name.
+	leftovers, err := filepath.Glob(filepath.Join(filepath.Dir(path), "smart-*.srs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leftovers) != 0 {
+		t.Fatalf("temp file(s) must not be left behind: %v", leftovers)
 	}
 }
 
@@ -69,13 +76,22 @@ func TestLocalSmartSRSUsable_RejectsAndRemovesCorrupt(t *testing.T) {
 
 func TestBuildSmartRuleSet_OnlyWhenUsable(t *testing.T) {
 	dir := t.TempDir()
-	if got := buildSmartRuleSet(dir); len(got) != 0 {
-		t.Fatalf("no SRS on disk should yield no rule_set, got %+v", got)
+	// buildSmartRuleSet no longer re-validates the SRS itself — buildRoute
+	// computes localSmartSRSUsable once and passes the answer in, so a
+	// config build only reads/parses the (potentially ~509 KB) SRS a single
+	// time. Exercise both sides of that precomputed decision directly.
+	if got := buildSmartRuleSet(dir, false); len(got) != 0 {
+		t.Fatalf("validated=false should yield no rule_set, got %+v", got)
 	}
 	if err := CompileSmartSRS([]string{"x.com"}, SmartSRSPath(dir)); err != nil {
 		t.Fatal(err)
 	}
-	got := buildSmartRuleSet(dir)
+	// Even with a usable SRS on disk, validated=false must still suppress it —
+	// the caller's decision is authoritative, not disk state.
+	if got := buildSmartRuleSet(dir, false); len(got) != 0 {
+		t.Fatalf("validated=false must yield no rule_set even with a usable SRS on disk, got %+v", got)
+	}
+	got := buildSmartRuleSet(dir, true)
 	if len(got) != 1 {
 		t.Fatalf("expected 1 rule_set, got %d", len(got))
 	}

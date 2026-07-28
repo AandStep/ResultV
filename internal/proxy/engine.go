@@ -795,7 +795,7 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	}
 
 	if smartSRS {
-		route.RuleSet = append(route.RuleSet, buildSmartRuleSet(smartDataDir)...)
+		route.RuleSet = append(route.RuleSet, buildSmartRuleSet(smartDataDir, smartSRS)...)
 	}
 
 	// Ad-block rule-sets (binary SRS): cached-local if present, else remote

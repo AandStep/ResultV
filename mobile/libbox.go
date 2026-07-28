@@ -884,6 +884,57 @@ func splitSmartList(raw string) []string {
 	return out
 }
 
+// shouldCompileSmartSRS decides whether a freshly resolved domain result
+// should be compiled to disk as the Smart SRS.
+//
+// "builtin" is defaultBlockedDomains() — a 7-domain emergency fallback that
+// ResolveBlockedDomains returns when BOTH the network fetch and the on-disk
+// smart-blocked.json cache are unavailable. That is exactly the fresh-install
+// case the APK-bundled seed SRS exists to serve: first launch calls
+// FetchSmartList over a possibly-censored network with no tunnel up yet, so a
+// fetch failure there is likely, not theoretical. Compiling it unconditionally
+// would silently replace a 509 KB seed (or a previously downloaded list) with
+// ~200 bytes, even though the existing SRS is still perfectly good.
+//
+// So: a builtin result must never overwrite an existing usable SRS. It must
+// still be installed when there is no usable SRS at all — some blocking beats
+// none, mirroring the Kotlin-side seed-install guard's cold-start behaviour.
+// remote/cache results always compile: they only appear when the resolver
+// actually produced a real list.
+func shouldCompileSmartSRS(source string, hasDomains bool, existingSRSReady bool) bool {
+	if !hasDomains {
+		return false
+	}
+	if source == "builtin" && existingSRSReady {
+		return false
+	}
+	return true
+}
+
+// compileSmartResult installs result.Domains as the compiled Smart SRS on
+// disk, applying the shouldCompileSmartSRS guard, and returns whether a usable
+// SRS exists on disk afterwards. A compile failure is recorded on result.Err
+// but is non-fatal: a previously compiled SRS (or the bundled seed) stays in
+// place and the connect path keeps using it.
+func compileSmartResult(result *proxy.BlockedDomainsResolveResult, dataDir string) bool {
+	existingReady := proxy.SmartSRSReady(dataDir)
+	srsReady := false
+	if shouldCompileSmartSRS(result.Source, len(result.Domains) > 0, existingReady) {
+		if err := proxy.CompileSmartSRS(result.Domains, proxy.SmartSRSPath(dataDir)); err != nil {
+			result.Err = err
+		} else {
+			srsReady = true
+		}
+	}
+	if !srsReady {
+		// Either we skipped compiling (builtin-over-good-SRS) or the compile
+		// above failed — either way, report what's actually usable on disk
+		// rather than what this call attempted.
+		srsReady = proxy.SmartSRSReady(dataDir)
+	}
+	return srsReady
+}
+
 // FetchSmartList resolves the user's country and downloads the
 // Antizapret-style blocked-domain list for that country. The list is
 // cached in dataDir/smart-blocked.json (managed by the existing
@@ -948,19 +999,7 @@ func FetchSmartList(country string, dataDir string) (string, error) {
 	// Compile the resolved list into a local binary SRS so the connect path
 	// references a ~70 KB file instead of shipping ~150k domains through the
 	// config (4.6 MB, marshalled + JNI'd + re-parsed on EVERY connect).
-	srsReady := false
-	if len(result.Domains) > 0 {
-		if err := proxy.CompileSmartSRS(result.Domains, proxy.SmartSRSPath(dataDir)); err != nil {
-			// Non-fatal: a previously compiled SRS (or the bundled seed) stays
-			// in place and the connect path keeps using it.
-			result.Err = err
-		} else {
-			srsReady = true
-		}
-	}
-	if !srsReady {
-		srsReady = proxy.SmartSRSReady(dataDir)
-	}
+	srsReady := compileSmartResult(&result, dataDir)
 
 	// NOTE: the domain list is deliberately NOT returned. It used to come back
 	// as a JSON array the Kotlin side parsed with org.json (4.6 MB, ~150k
