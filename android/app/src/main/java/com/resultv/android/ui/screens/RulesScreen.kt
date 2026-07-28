@@ -90,7 +90,7 @@ import com.resultv.android.vpn.AppTunnelMembership
 import com.resultv.android.vpn.RoutingMode
 import com.resultv.android.vpn.RoutingRulesRepository
 import com.resultv.android.vpn.RuleAction
-import com.resultv.android.vpn.SmartAppMatcher
+import com.resultv.android.vpn.SmartAppMembership
 import com.resultv.android.vpn.SmartListRepository
 import com.resultv.android.vpn.domainPatternShadows
 import kotlinx.coroutines.Dispatchers
@@ -565,11 +565,13 @@ private fun PerAppRoutingSection(mode: RoutingMode) {
     // so the badges follow a freshly downloaded blocklist.
     val smartSnapshot by SmartListRepository.state.collectAsStateWithLifecycle()
     var autoIn by remember { mutableStateOf<Set<String>>(emptySet()) }
-    LaunchedEffect(mode, apps, smartSnapshot.domains) {
+    LaunchedEffect(mode, apps, smartSnapshot.count, smartSnapshot.ready) {
         autoIn = if (mode != RoutingMode.Smart || apps.isEmpty()) {
             emptySet()
         } else withContext(Dispatchers.IO) {
-            val matched = SmartAppMatcher.matchedPackages(apps.map { it.packageName }, smartSnapshot.domains)
+            val matched = SmartAppMembership.matchedPackages(
+                ctx.filesDir.absolutePath, apps.map { it.packageName },
+            )
             val browsers = AppInventory.browserPackages(ctx)
             matched + browsers
         }

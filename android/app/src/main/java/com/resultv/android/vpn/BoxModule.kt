@@ -287,7 +287,9 @@ private class BoxPlatform(private val service: ResultVpnService) : PlatformInter
         val tMatch = System.currentTimeMillis()
         val apps = AppInventory.installedApps(service)
         val browsers = AppInventory.browserPackages(service)
-        val matched = SmartAppMatcher.matchedPackages(apps, SmartListRepository.currentDomains())
+        val matched = SmartAppMembership.matchedPackages(
+            service.filesDir.absolutePath, apps,
+        )
         val allow = AppRoutingRepository.smartAllowlist(matched = matched, browsers = browsers)
         Log.i(TAG, "Smart allowlist compute=${System.currentTimeMillis() - tMatch}ms (apps=${apps.size})")
         if (allow.isEmpty()) {

@@ -35,10 +35,12 @@ internal object BuildOptionsBuilder {
             .put("bypassLAN", settings.bypassLan)
             .put("logLevel", settings.logLevel)
             .put("smartMode", smartMode)
-            // Hand the engine the resolved blocked-domain list. Empty when
-            // Smart is off OR when the first download hasn't completed yet
-            // — engine keeps Global routing (final=proxy) until the list arrives.
-            .put("smartBlockedDomainsList", if (smartMode) SmartListRepository.toEngineList() else "")
+            // The blocked-domain list is NOT sent here. It lives on disk as a
+            // compiled binary rule-set (dataDir/smart/smart.srs) that the engine
+            // references by path. Inlining ~150k domains made this payload
+            // ~4.6 MB and cost ~2s per connect (marshal + 3 JNI crossings + a
+            // full sing-box re-parse). The engine keeps Global routing
+            // (final=proxy) whenever no usable rule-set is on disk.
             // Ad-block (DNS+route reject via rule_set). AdBlockRepository
             // caches the SRS lists locally when present and falls back to
             // remote otherwise.

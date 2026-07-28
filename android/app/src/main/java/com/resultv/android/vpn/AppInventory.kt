@@ -12,8 +12,22 @@ private const val TAG = "ResultV/AppInventory"
  * Thin PackageManager adapter for tunnel-membership computation. Kept Context-
  * bound and free of routing logic so SmartAppMatcher / AppTunnelMembership stay
  * pure and JVM-testable.
+ *
+ * Results are memoized for the process lifetime: both queries are binder IPCs
+ * that ran on the openTun hot path on EVERY connect. The set of installed apps
+ * only changes on install/uninstall, which [invalidate] handles.
  */
 object AppInventory {
+
+    @Volatile private var cachedApps: List<String>? = null
+    @Volatile private var cachedBrowsers: Set<String>? = null
+
+    /** Drop the memoized lists (call on package install/uninstall). */
+    @Synchronized
+    fun invalidate() {
+        cachedApps = null
+        cachedBrowsers = null
+    }
 
     /**
      * Installed app package names (excluding our own). Deliberately does NOT
@@ -22,13 +36,16 @@ object AppInventory {
      * those on the openTun hot path was the 3-5s Smart connect stall.
      */
     fun installedApps(ctx: Context): List<String> {
+        cachedApps?.let { return it }
         val own = ctx.packageName
-        return ctx.packageManager
+        val apps = ctx.packageManager
             .getInstalledApplications(0)
             .asSequence()
             .map { it.packageName }
             .filter { it != own }
             .toList()
+        cachedApps = apps
+        return apps
     }
 
     /**
@@ -43,9 +60,10 @@ object AppInventory {
      * query failure yields an empty set.
      */
     fun browserPackages(ctx: Context): Set<String> {
+        cachedBrowsers?.let { return it }
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse("http://"))
             .addCategory(Intent.CATEGORY_BROWSABLE)
-        return try {
+        val found = try {
             ctx.packageManager
                 .queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
                 .mapNotNull { it.activityInfo?.packageName }
@@ -55,5 +73,7 @@ object AppInventory {
             Log.w(TAG, "browser query failed", t)
             emptySet()
         }
+        cachedBrowsers = found
+        return found
     }
 }
