@@ -27,7 +27,6 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import mobile.Mobile
 import java.util.concurrent.Executors
 
@@ -39,13 +38,6 @@ private const val NOTIFICATION_ID = 1
 // this one, so they must not share IDs.
 private const val REVOKE_NOTIFICATION_ID = 2
 private const val REVOKE_CHANNEL_ID = "resultv_vpn_revoke"
-
-// How long Connect waits for the ad-block SRS + smart-list caches to warm
-// before building the config. The engine never blocks on a network download
-// (rule_sets are local-only); this only decides whether the very first connect
-// already has the lists or picks them up a moment later via reload. The
-// app-start prefetch usually makes this near-instant.
-private const val CONNECT_LIST_WAIT_MS = 4000L
 
 const val ACTION_START = "com.resultv.android.START"
 const val ACTION_STOP = "com.resultv.android.STOP"
@@ -142,11 +134,18 @@ class ResultVpnService : VpnService() {
                 }
                 val connectedMsg = getString(R.string.log_connected)
                 scope.launch {
-                    // Warm the ad-block SRS + smart-list caches so the config we
-                    // build references LOCAL files. Bounded so a slow/blocked
-                    // source never holds the tunnel back. Skipped on reloads
-                    // (lists already loaded; a reload must stay fast).
-                    val listsReady = if (isReload) true else warmListsBeforeConnect()
+                    // Connect NEVER waits on a list. The Smart rule-set is
+                    // already on disk (bundled seed on a fresh install, or a
+                    // previous download) and ad-block rule_sets are local-only,
+                    // so the config we build below references local files.
+                    //
+                    // This used to be a bounded warm-up, but the bound was a
+                    // lie: coroutine cancellation cannot interrupt the blocking
+                    // JNI fetch it wrapped, so a fresh install waited out 7
+                    // sequential downloads (5-13s). Refresh happens in the
+                    // background and applies via scheduleListReadyReload().
+                    val listsReady = if (isReload) true else listsAlreadyOnDisk()
+                    if (!isReload) kickBackgroundListRefresh()
                     val tCfg = System.currentTimeMillis()
                     val config = buildConfigFromActiveProfile()
                     Log.i(TAG, "connect timing: buildConfig=${System.currentTimeMillis() - tCfg}ms, size=${config?.length ?: 0}")
@@ -219,8 +218,9 @@ class ResultVpnService : VpnService() {
         AppRoutingRepository.init(app)
         AppInventory.init(app)
         SmartListRepository.init(app)
-        // Needed so warmListsBeforeConnect can warm the ad-block SRS cache on the
-        // always-on path too (MainActivity, which normally inits it, never ran).
+        // Needed so listsAlreadyOnDisk / kickBackgroundListRefresh can see the
+        // ad-block SRS cache on the always-on path too (MainActivity, which
+        // normally inits it, never ran).
         AdBlockRepository.init(app)
         // Refresh underlying IPv6 reachability so reload/always-on configs pick
         // the effective IPv6 flag (see NetworkProbe / BuildOptionsBuilder).
@@ -235,28 +235,36 @@ class ResultVpnService : VpnService() {
     }
 
     /**
-     * Warm the ad-block + smart-list caches before building the connect config,
-     * bounded by CONNECT_LIST_WAIT_MS so a blocked/slow source never holds the
-     * tunnel back. Returns true if the enabled lists finished in time.
-     * ensureLoaded() coalesces with the app-start prefetch, so this is usually
-     * near-instant. Only warms a list whose feature is on.
+     * Whether the enabled lists are already usable from disk. Pure local checks
+     * (a stat + an SRS validation) — no network, no blocking, microseconds.
      */
-    private suspend fun warmListsBeforeConnect(): Boolean =
-        withTimeoutOrNull(CONNECT_LIST_WAIT_MS) {
-            if (SettingsRepository.state.value.adblock) AdBlockRepository.ensureLoaded()
-            if (RoutingRulesRepository.state.value.mode == RoutingMode.Smart) {
-                SmartListRepository.ensureLoaded()
-            }
-            true
-        } ?: false
+    private fun listsAlreadyOnDisk(): Boolean {
+        val needAdBlock = SettingsRepository.state.value.adblock
+        val needSmart = RoutingRulesRepository.state.value.mode == RoutingMode.Smart
+        if (needAdBlock && !AdBlockRepository.state.value.hasLists) return false
+        if (needSmart && !SmartListRepository.isReady()) return false
+        return true
+    }
 
     /**
-     * Fallback for a connect that came up before the lists finished downloading
-     * (CONNECT_LIST_WAIT_MS elapsed). Finish warming them WITHOUT a deadline,
-     * then rebuild the config and reload in place so ad-block + the full smart
-     * list activate — no user reconnect. Reloads at most once, and only if a
-     * list actually became available. The existing reloadWatcher does not observe
-     * the list repos, so this cannot double-fire with it.
+     * Kick a TTL-respecting refresh of the enabled lists in the background. Never
+     * awaited by the connect path — a fresh list applies via the reload in
+     * [scheduleListReadyReload] (or simply on the next connect).
+     */
+    private fun kickBackgroundListRefresh() {
+        if (SettingsRepository.state.value.adblock) AdBlockRepository.ensureLoadedAsync()
+        if (RoutingRulesRepository.state.value.mode == RoutingMode.Smart) {
+            SmartListRepository.ensureLoadedAsync()
+        }
+    }
+
+    /**
+     * Fallback for a connect that came up before a background list refresh
+     * finished. Waits (without a deadline) for whatever [kickBackgroundListRefresh]
+     * kicked off, then rebuilds the config and reloads in place so ad-block +
+     * the full smart list activate — no user reconnect. Reloads at most once,
+     * and only if a list actually became available. The existing reloadWatcher
+     * does not observe the list repos, so this cannot double-fire with it.
      */
     private fun scheduleListReadyReload() {
         scope.launch {
@@ -265,7 +273,7 @@ class ResultVpnService : VpnService() {
                 SmartListRepository.ensureLoaded()
             } else null
             val gotAdBlock = ab?.hasLists == true
-            val gotSmart = sl != null && !sl.isEmpty && sl.source != "builtin"
+            val gotSmart = sl != null && sl.ready && sl.source != "builtin"
             if (!BoxModule.isRunning || (!gotAdBlock && !gotSmart)) return@launch
             val active = ProfileRepository.state.value.active ?: return@launch
             val cfg = BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath) ?: return@launch
