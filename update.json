@@ -1,12 +1,12 @@
 {
   "version": "3.2.7",
   "releaseTitle": {
-    "ru": "Расширение списков Smart режима и правила маршрутизации от провайдеров",
-    "en": "Expanding Smart Mode lists and routing rules from providers"
+    "ru": "Небольшие фиксы для Smart режима",
+    "en": "Small fixes for Smart mode"
   },
   "releaseNotes": {
-    "ru": "Ресурсы Smart режима была рассширены до 80 тысяч для РФ. Теперь из подписок также получаются правила маршрутизации на странице умные правила, помимо подписок есть возможность по ссылке добавлять сторонние правила",
-    "en": "Smart mode resources have been expanded to 80,000 for the Russian Federation. Subscriptions now also generate routing rules on the Smart Rules page, In addition to subscriptions, third-party rules can be added via a link."
+    "ru": "Исправлено попадание российских сайтов в VPN в Smart режиме: из списков убран источник, из-за которого туда приходило около 20 тысяч российских доменов. Теперь исключения работают в Smart режиме — добавленный в исключения домен всегда идёт напрямую, даже если он есть в списках.",
+    "en": "Fixed Russian sites being routed through the VPN in Smart mode: the list source that added about 20,000 Russian domains has been removed. Exclusions now work in Smart mode — a domain added to exclusions always goes direct, even if it appears in the lists."
   },
   "downloadUrl": "https://result-proxy.ru/",
   "platforms": {
