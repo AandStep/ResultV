@@ -190,11 +190,10 @@ func (r *Router) ShouldProxy(hostname string, mode RoutingMode, whitelist []stri
 			return true, "Nested exception: [" + strings.Join(result.MatchingRules, ", ") + "]"
 		}
 		blocked := r.IsBlockedDomain(hostname)
-		// An explicit exclusion wins over the block-list, mirroring buildRoute's
-		// rule order. The block-list is large and third-party-sourced, so the
-		// user's own exclusion has to be the final word — otherwise a
-		// false-positive entry is impossible to work around.
 		if result.IsWhitelisted {
+			if blocked {
+				return true, "Blocked resource in Smart mode"
+			}
 			return false, "Bypass (Whitelisted)"
 		}
 		if blocked {
