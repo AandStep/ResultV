@@ -12,28 +12,28 @@
   "platforms": {
     "windows-amd64-portable": {
       "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.8/ResultV.exe",
-      "sha256": "e4b60777862b6c7e31220542bdd78dd6bd49634edea08de6bcc7d8dc0f12379e",
-      "size": 54503936
+      "sha256": "d18c6816495479f8ab87e4704359a3a825ae034d06349a8be8ba657c94365dc1",
+      "size": 54504960
     },
     "windows-amd64-installer": {
       "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.8/ResultV-amd64-installer.exe",
-      "sha256": "46780c3289a8cb57ebcef190dac02cf0b1a8ba5d0a1ede0aab2867c0f800ee44",
-      "size": 26543824
+      "sha256": "39f6fcaa34a8074fb27dae8829d93eb8a53204640f653d24a4413ace4d250f22",
+      "size": 26543979
     },
     "darwin-universal": {
       "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.8/ResultV.dmg",
-      "sha256": "299e4bd2a6b9167e2a66abe1c5fde9444d1fd158a50525156f524798b2f3a456",
-      "size": 59731529
+      "sha256": "bb3b988f2e6657f067a30e72f0f6caced29c6931efc99d1cd8862c93875f952b",
+      "size": 59731854
     },
     "linux-amd64-appimage": {
       "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.8/ResultV-3.2.8-x86_64.AppImage",
-      "sha256": "5250da36db4800f03b8ff7981dc8b274f317a53c05186c32a8e702ab34ee6176",
-      "size": 93194744
+      "sha256": "cc733dbd4f71a0e4083322f465e5eb46d0b65567f86d37daf81cc84aacd12ed7",
+      "size": 93198840
     },
     "linux-amd64-deb": {
       "url": "https://github.com/AandStep/ResultV/releases/download/v3.2.8/resultv_3.2.8_amd64.deb",
-      "sha256": "b864fecb9f607450d132e2944c250a8d50261e5200ab576d4baa9d7fc06a639e",
-      "size": 25513826
+      "sha256": "b9d7a88224d6fe82c0a5cc108a96559724c819ad60683079a1abd0cdfb1919df",
+      "size": 25513856
     }
   }
 }
