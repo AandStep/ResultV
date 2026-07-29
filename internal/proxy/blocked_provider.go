@@ -494,13 +494,18 @@ func defaultPublicSourceTemplates(country string) []string {
 	if cc == "" {
 		return nil
 	}
-	base := "https://raw.githubusercontent.com/citizenlab/test-lists/master/lists/"
-	sources := []string{
-		base + "global.csv",
-		base + cc + ".csv",
-	}
 	if cc == "ru" {
-		sources = append(sources,
+		// NO citizenlab/test-lists here. That corpus is a censorship-MEASUREMENT
+		// list — sites researchers probe for blocking — not a "blocked, send via
+		// VPN" list. Its global.csv+ru.csv contributed ~20k .ru entries to the
+		// block-list (kremlin.ru, ria.ru, 1tv.ru, fsb.ru as research targets;
+		// yandex.ru, mail.ru, vk.com, ok.ru, 2ip.ru as probe endpoints). Since
+		// buildRoute emits the block-list as domain_suffix, a bare 2LD like
+		// yandex.ru swallowed every subdomain, so Smart mode dragged Russian
+		// traffic — including mc.yandex.ru and other counters embedded in nearly
+		// every RU page — through the tunnel. RU is covered by the registry and
+		// service lists below, which is what "blocked" actually means here.
+		return []string{
 			// Реестровые + «режут RU» списки. Re:filter domains_all ~86k записей,
 			// 1.4 MB — в лимит 8 MB LimitReader укладывается с запасом.
 			"https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Russia/inside-raw.lst",
@@ -513,9 +518,15 @@ func defaultPublicSourceTemplates(country string) []string {
 			"https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Services/google_ai.lst",
 			// Курируемый сообществом Discord-веер + Cloudflare-ECH хвосты.
 			"https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/main/lists/list-general.txt",
-		)
+		}
 	}
-	return sources
+	// Countries other than RU have no curated registry source, so citizenlab
+	// stays their only input despite its noise.
+	base := "https://raw.githubusercontent.com/citizenlab/test-lists/master/lists/"
+	return []string{
+		base + "global.csv",
+		base + cc + ".csv",
+	}
 }
 
 // (Previously this file also defined countryEndpoints and

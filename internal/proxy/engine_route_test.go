@@ -175,20 +175,23 @@ func TestBuildRoute_SmartMode_NestedExceptionTunneled(t *testing.T) {
 	}
 }
 
-// TestBuildRoute_SmartMode_BlockedWinsOverWhitelist encodes Router.ShouldProxy's
-// precedence: a blocked domain under an odd (single) whitelist match still
-// tunnels. In first-match routing that means the blocked rule must precede the
-// whitelist direct rule.
-func TestBuildRoute_SmartMode_BlockedWinsOverWhitelist(t *testing.T) {
+// TestBuildRoute_SmartMode_WhitelistWinsOverBlocked pins the user's exclusion
+// list above the fetched block-list in Smart mode. The block-list is ~80k
+// third-party entries and is provably noisy (it shipped yandex.ru, mail.ru,
+// vk.com, 2ip.ru), so the user needs a way to pull a domain back out of the
+// tunnel. While the blocked rule preceded the whitelist rule, first-match
+// routing made the exclusion dead in Smart mode — the only mode where the
+// block-list applies — and the domain tunneled no matter what the user did.
+func TestBuildRoute_SmartMode_WhitelistWinsOverBlocked(t *testing.T) {
 	cfg := EngineConfig{
 		Mode:           ProxyModeTunnel,
 		RoutingMode:    ModeSmart,
 		Proxy:          ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
-		Whitelist:      []string{".com"},
-		BlockedDomains: []string{"instagram.com"},
+		Whitelist:      []string{"2ip.ru"},
+		BlockedDomains: []string{"2ip.ru", "instagram.com"},
 	}
 	route := buildRoute(cfg)
-	blockedIdx, comDirectIdx := -1, -1
+	blockedIdx, excludedIdx := -1, -1
 	for i, r := range route.Rules {
 		if r.Outbound == "proxy" {
 			for _, d := range r.DomainSuffix {
@@ -199,21 +202,21 @@ func TestBuildRoute_SmartMode_BlockedWinsOverWhitelist(t *testing.T) {
 		}
 		if r.Outbound == "direct" {
 			for _, d := range r.DomainSuffix {
-				if d == "com" {
-					comDirectIdx = i
+				if d == "2ip.ru" {
+					excludedIdx = i
 				}
 			}
 		}
 	}
 	if blockedIdx == -1 {
-		t.Fatalf("expected blocked instagram.com → proxy rule, rules=%+v", route.Rules)
+		t.Fatalf("expected block-list → proxy rule, rules=%+v", route.Rules)
 	}
-	if comDirectIdx == -1 {
-		t.Fatalf("expected whitelist com → direct rule, rules=%+v", route.Rules)
+	if excludedIdx == -1 {
+		t.Fatalf("expected whitelist 2ip.ru → direct rule, rules=%+v", route.Rules)
 	}
-	if blockedIdx > comDirectIdx {
-		t.Fatalf("blocked rule (idx=%d) must precede whitelist direct rule (idx=%d) so blocked wins, rules=%+v",
-			blockedIdx, comDirectIdx, route.Rules)
+	if excludedIdx > blockedIdx {
+		t.Fatalf("whitelist direct rule (idx=%d) must precede block-list rule (idx=%d) so the user's exclusion wins, rules=%+v",
+			excludedIdx, blockedIdx, route.Rules)
 	}
 }
 

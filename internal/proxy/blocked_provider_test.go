@@ -255,8 +255,6 @@ func TestCompressDomainSuffixes(t *testing.T) {
 func TestDefaultPublicSourceTemplatesRU(t *testing.T) {
 	sources := defaultPublicSourceTemplates("ru")
 	wantContains := []string{
-		"citizenlab/test-lists/master/lists/global.csv",
-		"citizenlab/test-lists/master/lists/ru.csv",
 		"itdoginfo/allow-domains/main/Russia/inside-raw.lst",
 		"1andrevich/Re-filter-lists/main/domains_all.lst",
 		"1andrevich/Re-filter-lists/main/community.lst",
@@ -282,6 +280,18 @@ func TestDefaultPublicSourceTemplatesRU(t *testing.T) {
 			t.Error("dnsmasq duplicate source must be removed")
 		}
 	}
+	// citizenlab/test-lists is a censorship-MEASUREMENT corpus (sites to probe),
+	// not a "blocked, route via VPN" list. Its global.csv+ru.csv dragged ~20k .ru
+	// domains — kremlin.ru, ria.ru, 1tv.ru, yandex.ru, mail.ru, vk.com, 2ip.ru —
+	// into the block-list, so Smart mode tunneled Russian traffic. RU has proper
+	// registry sources below; citizenlab must not be one of them.
+	for _, s := range sources {
+		if strings.Contains(s, "citizenlab") {
+			t.Errorf("ru sources must not include citizenlab test-lists, got %q", s)
+		}
+	}
+	// Other countries have no registry source of their own — citizenlab stays
+	// their only input, so dropping it for RU must not touch them.
 	if got := defaultPublicSourceTemplates("de"); len(got) != 2 {
 		t.Errorf("non-ru countries keep citizenlab only, got %v", got)
 	}
