@@ -12,6 +12,7 @@ export namespace config {
 	    iconUrl?: string;
 	    source?: string;
 	    allowInsecure?: boolean;
+	    removedRoutingListUrls?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Subscription(source);
@@ -30,6 +31,7 @@ export namespace config {
 	        this.iconUrl = source["iconUrl"];
 	        this.source = source["source"];
 	        this.allowInsecure = source["allowInsecure"];
+	        this.removedRoutingListUrls = source["removedRoutingListUrls"];
 	    }
 	}
 	export class AppSettings {
@@ -52,11 +54,11 @@ export namespace config {
 	    subscriptionUserAgent?: string;
 	    dnsLeakProtection?: boolean;
 	    routingListUpdateHours?: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new AppSettings(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.autostart = source["autostart"];
@@ -126,11 +128,11 @@ export namespace config {
 	    cidrCount?: number;
 	    lastError?: string;
 	    subscriptionId?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RoutingList(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -153,11 +155,11 @@ export namespace config {
 	    appForceVPN: string[];
 	    customBlockedDomains: string[];
 	    routingLists: RoutingList[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RoutingRules(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.mode = source["mode"];
@@ -167,7 +169,7 @@ export namespace config {
 	        this.customBlockedDomains = source["customBlockedDomains"];
 	        this.routingLists = this.convertValues(source["routingLists"], RoutingList);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -222,6 +224,7 @@ export namespace config {
 		    return a;
 		}
 	}
+	
 	
 	
 	
@@ -296,39 +299,7 @@ export namespace logger {
 }
 
 export namespace main {
-
-	export class SubscriptionPreview {
-	    proxies: config.ProxyEntry[];
-	    routingLists: config.RoutingList[];
-
-	    static createFrom(source: any = {}) {
-	        return new SubscriptionPreview(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.proxies = this.convertValues(source["proxies"], config.ProxyEntry);
-	        this.routingLists = this.convertValues(source["routingLists"], config.RoutingList);
-	    }
-
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
+	
 	export class AdBlockStatusDTO {
 	    enabled: boolean;
 	    filterCount: number;
@@ -370,6 +341,38 @@ export namespace main {
 	        this.networkBlockActive = source["networkBlockActive"];
 	        this.needsReconnect = source["needsReconnect"];
 	    }
+	}
+	export class SubscriptionPreview {
+	    proxies: config.ProxyEntry[];
+	    routingLists: config.RoutingList[];
+	
+	    static createFrom(source: any = {}) {
+	        return new SubscriptionPreview(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.proxies = this.convertValues(source["proxies"], config.ProxyEntry);
+	        this.routingLists = this.convertValues(source["routingLists"], config.RoutingList);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }
