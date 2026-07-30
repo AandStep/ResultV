@@ -423,6 +423,7 @@
     <!-- Ad-block and Smart list update logging -->
     <string name="log_adblock_updated">Block lists updated (%1$d/%2$d).</string>
     <string name="log_adblock_update_failed">Block list update failed: %1$s</string>
+    <string name="log_adblock_cache_reset">Corrupt block-list cache detected — cleared and restarting the engine.</string>
     <string name="log_smart_updated">Smart lists updated (%1$s): %2$d entries.</string>
     <string name="log_smart_update_failed">Smart list update failed: %1$s</string>
     <string name="log_smart_allowlist">Smart: %1$d app(s) routed through VPN</string>

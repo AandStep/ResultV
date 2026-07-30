@@ -114,10 +114,47 @@ object BoxModule {
         server.start()
         // OverrideOptions is empty — no per-app routing yet.
         val tStart = System.currentTimeMillis()
-        server.startOrReloadService(configJson, OverrideOptions())
+        startOrRecover(service, server, configJson)
         Log.i(TAG, "startOrReloadService=${System.currentTimeMillis() - tStart}ms")
         commandServer = server
         Log.i(TAG, "BoxModule started")
+    }
+
+    /**
+     * Start the engine, recovering once from a corrupt cached ad-block rule-set.
+     *
+     * A truncated ad-list download can poison sing-box-cache.db so that every
+     * subsequent connect fails at startup with
+     *   "restore cached rule-set: read rule[0] zlib invalid checksum"
+     * — a sticky state the user can't clear without wiping app data. When we see
+     * that specific failure we delete the cache file and retry startup exactly
+     * once; the engine then rebuilds the rule-set from a fresh (validated)
+     * download. Any other failure, or a second failure after clearing, is
+     * rethrown unchanged so callers surface it as before.
+     */
+    private fun startOrRecover(ctx: Context, server: CommandServer, configJson: String) {
+        try {
+            server.startOrReloadService(configJson, OverrideOptions())
+        } catch (t: Throwable) {
+            if (!EngineErrors.isCorruptRuleSetCacheError(t.message)) throw t
+            Log.w(TAG, "corrupt rule-set cache — clearing and retrying start once", t)
+            AppLog.warning(R.string.log_adblock_cache_reset,
+                source = AppLog.resolve(R.string.log_source_adblock))
+            clearSingBoxCache(ctx)
+            server.startOrReloadService(configJson, OverrideOptions())
+        }
+    }
+
+    /**
+     * Delete sing-box's cache_file so a poisoned rule-set blob is rebuilt from a
+     * fresh download on the next start. Best effort: a missing or unlink-failed
+     * cache is logged, not fatal.
+     */
+    private fun clearSingBoxCache(ctx: Context) {
+        val cache = File(ctx.filesDir, EngineErrors.SINGBOX_CACHE_FILE)
+        if (cache.exists() && !cache.delete()) {
+            Log.w(TAG, "could not delete corrupt cache at ${cache.absolutePath}")
+        }
     }
 
     @Synchronized
