@@ -928,6 +928,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	m.applySystemDNSOverride(isEndpointProtocol, dnsServers)
 	m.applyTunnelAdapterDNS(mode, tunIPv4)
 	dnsDur = time.Since(tDNS)
+	dnsTimings := m.takeDNSTimings()
 
 	m.captureLiveServerIP(&proxy)
 	m.clearPendingLocked()
@@ -971,6 +972,9 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	m.log.Info(fmt.Sprintf("[PROXY] Тайминг подключения: resolve=%dms start=%dms probe=%dms dns=%dms total=%dms",
 		resolveDur.Milliseconds(), startDur.Milliseconds(), probeDur.Milliseconds(),
 		dnsDur.Milliseconds(), time.Since(connectStart).Milliseconds()))
+	if dnsTimings != "" {
+		m.log.Info("[PROXY] Тайминг DNS: " + dnsTimings)
+	}
 
 	return ConnectResultDTO{
 		Success:     true,
@@ -1063,6 +1067,16 @@ func (m *Manager) applyTunnelAdapterDNS(mode ProxyMode, tunIPv4 string) {
 		return
 	}
 	m.log.Success("[СИСТЕМА] Системный DNS направлен в туннель (резолв через VPN)")
+}
+
+// takeDNSTimings returns the per-step breakdown of the last system DNS override
+// for the connect log, or "" when the platform impl doesn't record one.
+func (m *Manager) takeDNSTimings() string {
+	src, ok := m.sysDNS.(dnsTimingSource)
+	if !ok {
+		return ""
+	}
+	return src.TakeDNSTimings()
 }
 
 // resolvePinnedServerIP resolves a domain server address to a single IP once,

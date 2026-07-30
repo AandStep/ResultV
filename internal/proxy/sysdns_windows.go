@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"resultproxy-wails/internal/system"
 )
@@ -48,6 +49,7 @@ type dnsSnapshot struct {
 
 type windowsSystemDNS struct {
 	snapshotPath string
+	timings      dnsPhaseTimings
 }
 
 func newSystemDNS() SystemDNS {
@@ -71,7 +73,11 @@ func (w *windowsSystemDNS) Override(servers []string) error {
 		return ErrDNSRequiresAdmin
 	}
 
-	adapters, err := listAdapterDNS()
+	w.timings.reset()
+
+	tList := time.Now()
+	adapters, listPS, err := listAdapterDNS()
+	w.timings.recordList(time.Since(tList), listPS)
 	if err != nil {
 		return fmt.Errorf("enumerate adapter dns: %w", err)
 	}
@@ -80,7 +86,10 @@ func (w *windowsSystemDNS) Override(servers []string) error {
 	// before applying, Restore() at next start is a no-op on adapters that
 	// were never touched. If we crash mid-apply, Restore reads the snapshot
 	// and reverts what we did touch — also safe.
-	if err := writeSnapshot(w.snapshotPath, adapters); err != nil {
+	tSnapshot := time.Now()
+	err = writeSnapshot(w.snapshotPath, adapters)
+	w.timings.recordSnapshot(time.Since(tSnapshot))
+	if err != nil {
 		return fmt.Errorf("save dns snapshot: %w", err)
 	}
 
@@ -89,11 +98,20 @@ func (w *windowsSystemDNS) Override(servers []string) error {
 		if skipAdapterDNS(a.InterfaceAlias) {
 			continue
 		}
-		if err := setAdapterDNS(a.InterfaceIndex, servers); err != nil && firstErr == nil {
-			firstErr = fmt.Errorf("set dns on %q: %w", a.InterfaceAlias, err)
+		tSet := time.Now()
+		usedPS, setErr := setAdapterDNS(a.InterfaceIndex, servers)
+		w.timings.recordSet(time.Since(tSet), usedPS)
+		if setErr != nil && firstErr == nil {
+			firstErr = fmt.Errorf("set dns on %q: %w", a.InterfaceAlias, setErr)
 		}
 	}
 	return firstErr
+}
+
+// TakeDNSTimings returns the per-step breakdown of the last override and clears
+// it. Implements dnsTimingSource. See dnsPhaseTimings.
+func (w *windowsSystemDNS) TakeDNSTimings() string {
+	return w.timings.take()
 }
 
 // OverrideTunnelAdapter sets the resolver on the sing-tun adapter (located by
@@ -108,7 +126,10 @@ func (w *windowsSystemDNS) OverrideTunnelAdapter(adapterIP, dnsIP string) error 
 	if err != nil {
 		return err
 	}
-	return setAdapterDNS(idx, []string{dnsIP})
+	tSet := time.Now()
+	usedPS, err := setAdapterDNS(idx, []string{dnsIP})
+	w.timings.recordTun(time.Since(tSet), usedPS)
+	return err
 }
 
 // findInterfaceIndexByIP returns the OS interface index of the adapter that
@@ -160,9 +181,9 @@ func (w *windowsSystemDNS) Restore() error {
 		}
 		var err error
 		if len(a.ServerAddresses) == 0 {
-			err = resetAdapterDNS(a.InterfaceIndex)
+			_, err = resetAdapterDNS(a.InterfaceIndex)
 		} else {
-			err = setAdapterDNS(a.InterfaceIndex, a.ServerAddresses)
+			_, err = setAdapterDNS(a.InterfaceIndex, a.ServerAddresses)
 		}
 		if err != nil {
 			// TUN is torn down before Restore runs; a stale snapshot may still
@@ -213,29 +234,37 @@ func writeSnapshot(path string, adapters []adapterDNS) error {
 // PowerShell costs a process spawn per call. Worst case is therefore today's
 // speed, never a broken leak-protection feature. Whether native or PowerShell
 // ran is visible via the "dns=Xms" figure in the connect timing line.
-func listAdapterDNS() ([]adapterDNS, error) {
+// listAdapterDNS enumerates per-adapter DNS. The bool reports whether the
+// PowerShell fallback was used — it costs 300-700 ms, so the connect log
+// surfaces it (see dnsPhaseTimings).
+func listAdapterDNS() ([]adapterDNS, bool, error) {
 	if adapters, err := listAdapterDNSNative(); err == nil {
-		return adapters, nil
+		return adapters, false, nil
 	}
-	return listAdapterDNSPowerShell()
+	adapters, err := listAdapterDNSPowerShell()
+	return adapters, true, err
 }
 
-func setAdapterDNS(ifIdx int, servers []string) error {
+// setAdapterDNS applies servers to one adapter. The bool reports whether the
+// PowerShell fallback was used.
+func setAdapterDNS(ifIdx int, servers []string) (bool, error) {
 	if err := setAdapterDNSNative(ifIdx, servers); err == nil && verifyAdapterDNS(ifIdx, servers) {
-		return nil
+		return false, nil
 	}
-	return setAdapterDNSPowerShell(ifIdx, servers)
+	return true, setAdapterDNSPowerShell(ifIdx, servers)
 }
 
-func resetAdapterDNS(ifIdx int) error {
+// resetAdapterDNS reverts one adapter to DHCP. The bool reports whether the
+// PowerShell fallback was used.
+func resetAdapterDNS(ifIdx int) (bool, error) {
 	// Reset reverts to DHCP, whose servers we can't predict, so there's nothing
 	// to verify by value — trust the native status and fall back on error only.
 	// A silent reset miss is recoverable (snapshot restore at next start) and is
 	// not a leak.
 	if err := resetAdapterDNSNative(ifIdx); err == nil {
-		return nil
+		return false, nil
 	}
-	return resetAdapterDNSPowerShell(ifIdx)
+	return true, resetAdapterDNSPowerShell(ifIdx)
 }
 
 func listAdapterDNSPowerShell() ([]adapterDNS, error) {
