@@ -28,11 +28,9 @@ fi
 echo "==> wails build (linux/amd64) version=$VERSION"
 # webkit2_41 selects libwebkit2gtk-4.1 (Ubuntu 22.04+/24.04, Debian 12+).
 # Drop the tag if you target distros that still ship webkit2gtk-4.0.
-#
-# with_grpc selects sing-box's full gRPC transport (google.golang.org/grpc) over
-# the default lite one. Required: the lite implementation mangles the
-# service_name we emit for Xray gRPC nodes (see internal/proxy/grpc_servicename.go).
-BUILD_TAGS="${WAILS_TAGS:-webkit2_41} with_grpc"
+# Feature tags (with_grpc, with_quic, …) come from wails.json ("build:tags");
+# wails merges them with the platform tag passed here.
+BUILD_TAGS="${WAILS_TAGS:-webkit2_41}"
 if [ -n "$LDFLAGS" ]; then
   wails build -clean -platform linux/amd64 -tags "$BUILD_TAGS" -ldflags "$LDFLAGS"
 else

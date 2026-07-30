@@ -54,11 +54,24 @@ jobs:
           npm ci
           npm run build
 
+      # Compile with the same feature tags the released binaries use, so CI
+      # exercises the code that actually ships. Some behaviour is tag-dependent
+      # (e.g. the gRPC transport, see internal/proxy/grpc_transport_full.go), and
+      # without this vet/test would check a build nobody runs. Read straight from
+      # wails.json so the two can never drift; node is already set up above.
+      - name: Resolve build tags
+        id: tags
+        shell: bash
+        run: |
+          tags=$(node -e 'process.stdout.write(require("./wails.json")["build:tags"])')
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "build tags: $tags"
+
       # unsafeptr trips on legitimate Windows-callback patterns (e.g.,
       # converting LPARAM to a struct pointer). The kernel guarantees pointer
       # lifetime for the message handler, so the warning is a false positive.
       - name: go vet
-        run: go vet -unsafeptr=false ./...
+        run: go vet -unsafeptr=false -tags "${{ steps.tags.outputs.tags }}" ./...
 
       - name: go test
-        run: go test ./... -count=1
+        run: go test -tags "${{ steps.tags.outputs.tags }}" ./... -count=1

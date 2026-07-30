@@ -90,14 +90,13 @@ jobs:
           if ($manifestOverride) {
             $ldflags = "$ldflags -X resultproxy-wails/internal/updater.ManifestURLOverride=$manifestOverride".Trim()
           }
-          # with_grpc selects sing-box's full gRPC transport (google.golang.org/grpc)
-          # over the default lite one. Required: the lite implementation mangles the
-          # service_name we emit for Xray gRPC nodes (see internal/proxy/grpc_servicename.go).
-          # Costs ~0.1 MB — grpc-go is already linked in via other dependencies.
+          # Build tags live in wails.json ("build:tags") so every build path —
+          # this workflow, build-linux.sh, build-macos.sh and a bare `wails build`
+          # on a dev machine — compiles the same feature set.
           if ($ldflags) {
-            wails build -clean -nsis -platform windows/amd64 -tags with_grpc -ldflags $ldflags
+            wails build -clean -nsis -platform windows/amd64 -ldflags $ldflags
           } else {
-            wails build -clean -nsis -platform windows/amd64 -tags with_grpc
+            wails build -clean -nsis -platform windows/amd64
           }
 
       - name: Copy libcronet.dll next to portable exe

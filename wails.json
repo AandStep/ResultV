@@ -2,7 +2,7 @@
   "$schema": "https://wails.io/schemas/config.v2.json",
   "name": "ResultV",
   "outputfilename": "ResultV",
-  "build:tags": "with_gvisor,with_utls,with_clash_api,with_quic,with_wireguard,with_naive_outbound,with_purego",
+  "build:tags": "with_gvisor,with_utls,with_clash_api,with_quic,with_wireguard,with_naive_outbound,with_purego,with_grpc",
   "info": {
     "productString": "ResultV",
     "productVersion": "3.2.8",
