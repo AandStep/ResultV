@@ -34,10 +34,13 @@ if [ -n "${MANIFEST_URL_OVERRIDE:-}" ]; then
 fi
 
 echo "==> wails build (darwin/universal)"
+# with_grpc selects sing-box's full gRPC transport (google.golang.org/grpc) over
+# the default lite one. Required: the lite implementation mangles the
+# service_name we emit for Xray gRPC nodes (see internal/proxy/grpc_servicename.go).
 if [ -n "$LDFLAGS" ]; then
-  wails build -clean -platform darwin/universal -ldflags "$LDFLAGS"
+  wails build -clean -platform darwin/universal -tags with_grpc -ldflags "$LDFLAGS"
 else
-  wails build -clean -platform darwin/universal
+  wails build -clean -platform darwin/universal -tags with_grpc
 fi
 
 if [ ! -d "$APP_PATH" ]; then

@@ -587,6 +587,14 @@ func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 		if serviceName == "" {
 			serviceName = getStringField(extra, "service_name", "")
 		}
+		// Translate Xray's serviceName semantics into an explicit gRPC path.
+		// sing-box misreads an old-school name that carries an inner slash
+		// ("host-name/hash", the scheme several providers use), which breaks
+		// every connection on such a node. Only correct with the full gRPC
+		// transport — see xrayGRPCServiceName.
+		if grpcFullTransport {
+			serviceName = xrayGRPCServiceName(serviceName)
+		}
 		// Default idle/ping timeouts when the config omits them. sing-box's gRPC
 		// client only arms HTTP/2 keepalive PINGs when idle_timeout > 0 (see
 		// v2raygrpc/client.go WithKeepaliveParams); with both unset a half-open
