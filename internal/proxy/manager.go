@@ -729,6 +729,14 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	if routingMode == ModeSmart && m.router != nil {
 		engineCfg.BlockedDomains = m.router.GetBlockedDomains()
 		engineCfg.BlockedCIDRs = m.router.GetBlockedCIDRs()
+		// Pre-compile the block-list into a binary rule-set so the engine does
+		// not have to parse and index ~78k domain_suffix entries out of the
+		// config on every connect. Not fatal: buildRoute falls back to inline.
+		if path, err := CompileSmartRuleSet(engineCfg.DataDir, engineCfg.BlockedDomains); err != nil {
+			m.log.Warning(fmt.Sprintf("[SMART] Rule-set не скомпилирован, используется инлайн-список: %v", err))
+		} else {
+			engineCfg.SmartRuleSetPath = path
+		}
 	}
 	if err := m.prepareAdBlock(&engineCfg, adBlock, actualLocalPort); err != nil {
 		m.mu.Unlock()
@@ -845,9 +853,30 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	startDur = time.Since(tStart)
 	m.emitStatus()
 
+	// The DNS override and the post-start probe are independent: the probe
+	// dials the local inbound (127.0.0.1) and never touches the OS resolver.
+	// Running them one after the other added the full DNS cost (~1.5s of a
+	// ~3.5s connect) to every connect, so the override goes to its own
+	// goroutine and we join it on both the success and the abort path below.
+	// Neither applySystemDNSOverride nor applyTunnelAdapterDNS touches manager
+	// state beyond m.sysDNS and the logger, so running them off the lock is safe.
+	tDNS := time.Now()
+	dnsDone := make(chan struct{})
+	go func() {
+		defer close(dnsDone)
+		m.applySystemDNSOverride(isEndpointProtocol, dnsServers)
+		m.applyTunnelAdapterDNS(mode, tunIPv4)
+	}()
+
 	tProbe := time.Now()
 	proxyExtra := parseExtra(proxy)
 	if code, reason := runPostStartProbe(connectCtx, proxyTypeLower, proxy.IP, proxy.Port, actualLocalPort, mode, proxyExtra); code != "" {
+		// The override is already in flight — let it finish, then undo it.
+		// Without this an aborted connect leaves the machine pointing at our
+		// resolvers with no session behind them.
+		<-dnsDone
+		m.revertDNSOverride()
+		_ = m.takeDNSTimings()
 		_ = m.engine.Stop()
 		m.mu.Lock()
 		m.clearPendingLocked()
@@ -924,9 +953,8 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	// WG/AWG endpoint protocols are skipped — wireguard manages DNS via
 	// peer config and would race with us. Health-probe domains intentionally
 	// keep going through the proxy regardless.
-	tDNS := time.Now()
-	m.applySystemDNSOverride(isEndpointProtocol, dnsServers)
-	m.applyTunnelAdapterDNS(mode, tunIPv4)
+	// Started right after the engine came up, in parallel with the probe above.
+	<-dnsDone
 	dnsDur = time.Since(tDNS)
 	dnsTimings := m.takeDNSTimings()
 
@@ -1067,6 +1095,21 @@ func (m *Manager) applyTunnelAdapterDNS(mode ProxyMode, tunIPv4 string) {
 		return
 	}
 	m.log.Success("[СИСТЕМА] Системный DNS направлен в туннель (резолв через VPN)")
+}
+
+// revertDNSOverride undoes applySystemDNSOverride/applyTunnelAdapterDNS after a
+// connect aborts past the point where the override was already applied. Since
+// the override now runs in parallel with the post-start probe, a failed probe
+// can leave the machine pointing at our resolvers with no session behind them.
+// The tunnel adapter needs no separate reset — it disappears with the engine —
+// so restoring the snapshot covers everything that outlives the failed attempt.
+func (m *Manager) revertDNSOverride() {
+	if m.sysDNS == nil {
+		return
+	}
+	if err := m.sysDNS.Restore(); err != nil {
+		m.log.Warning(fmt.Sprintf("[СИСТЕМА] Не удалось вернуть системный DNS после неудачного подключения: %v", err))
+	}
 }
 
 // takeDNSTimings returns the per-step breakdown of the last system DNS override
@@ -1292,6 +1335,14 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 	if routingMode == ModeSmart && m.router != nil {
 		engineCfg.BlockedDomains = m.router.GetBlockedDomains()
 		engineCfg.BlockedCIDRs = m.router.GetBlockedCIDRs()
+		// Pre-compile the block-list into a binary rule-set so the engine does
+		// not have to parse and index ~78k domain_suffix entries out of the
+		// config on every connect. Not fatal: buildRoute falls back to inline.
+		if path, err := CompileSmartRuleSet(engineCfg.DataDir, engineCfg.BlockedDomains); err != nil {
+			m.log.Warning(fmt.Sprintf("[SMART] Rule-set не скомпилирован, используется инлайн-список: %v", err))
+		} else {
+			engineCfg.SmartRuleSetPath = path
+		}
 	}
 	if err := m.prepareAdBlock(&engineCfg, adBlock, actualLocalPort); err != nil {
 		return ConnectResultDTO{

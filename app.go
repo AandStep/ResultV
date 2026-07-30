@@ -3150,6 +3150,17 @@ func (a *App) refreshSmartBlockedOnce(cachePath, cidrCachePath string) {
 		} else {
 			a.log.Info(fmt.Sprintf("[SMART] Списки обновлены, записей: %d", len(res.Domains)))
 		}
+		// Compile the fresh list into a binary rule-set off the connect path, so
+		// the next connect finds it ready instead of paying ~140ms for the
+		// compile. Best-effort: the manager compiles on demand anyway.
+		if len(res.Domains) > 0 {
+			domains := append([]string(nil), res.Domains...)
+			go func() {
+				if _, err := proxy.CompileSmartRuleSet(a.getUserDataPath(), domains); err != nil {
+					a.log.Warning(fmt.Sprintf("[SMART] Не удалось скомпилировать rule-set: %v", err))
+				}
+			}()
+		}
 	}
 
 	cidrRes := proxy.ResolveBlockedCIDRs(ctx, a.smartProvider, cidrCachePath)

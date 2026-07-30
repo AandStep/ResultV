@@ -1498,3 +1498,68 @@ func TestRoutingListMissingCacheSkipped(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildRoute_SmartMode_UsesRuleSetWhenCompiled verifies that a compiled
+// block-list is referenced by tag instead of being inlined as domain_suffix,
+// and that it keeps its position ahead of the whitelist direct rule (the
+// ordering that makes an explicit "route via VPN" win — see
+// TestBuildRoute_SmartMode_BlockedWinsOverWhitelist).
+func TestBuildRoute_SmartMode_UsesRuleSetWhenCompiled(t *testing.T) {
+	cfg := EngineConfig{
+		Mode:             ProxyModeTunnel,
+		RoutingMode:      ModeSmart,
+		Proxy:            ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		Whitelist:        []string{".com"},
+		BlockedDomains:   []string{"instagram.com"},
+		SmartRuleSetPath: filepath.Join("C:", "data", "routing", "smart-deadbeefdeadbeef.srs"),
+	}
+	route := buildRoute(cfg)
+
+	blockedIdx, comDirectIdx := -1, -1
+	for i, r := range route.Rules {
+		if r.Outbound == "proxy" {
+			for _, tag := range r.RuleSet {
+				if tag == smartRuleSetTag {
+					blockedIdx = i
+				}
+			}
+			for _, d := range r.DomainSuffix {
+				if d == "instagram.com" {
+					t.Fatalf("blocked domains must not be inlined when a rule-set is compiled, rules=%+v", route.Rules)
+				}
+			}
+		}
+		if r.Outbound == "direct" {
+			for _, d := range r.DomainSuffix {
+				if d == "com" {
+					comDirectIdx = i
+				}
+			}
+		}
+	}
+	if blockedIdx == -1 {
+		t.Fatalf("expected a rule referencing %q, rules=%+v", smartRuleSetTag, route.Rules)
+	}
+	if comDirectIdx == -1 {
+		t.Fatalf("expected whitelist com → direct rule, rules=%+v", route.Rules)
+	}
+	if blockedIdx > comDirectIdx {
+		t.Fatalf("rule-set rule (idx=%d) must precede whitelist direct rule (idx=%d)", blockedIdx, comDirectIdx)
+	}
+
+	var declared bool
+	for _, rs := range route.RuleSet {
+		if rs.Tag == smartRuleSetTag {
+			declared = true
+			if rs.Type != "local" || rs.Format != "binary" {
+				t.Fatalf("rule-set must be a local binary set, got type=%q format=%q", rs.Type, rs.Format)
+			}
+			if rs.LocalOptions.Path != cfg.SmartRuleSetPath {
+				t.Fatalf("rule-set path = %q, want %q", rs.LocalOptions.Path, cfg.SmartRuleSetPath)
+			}
+		}
+	}
+	if !declared {
+		t.Fatalf("route.rule_set must declare %q, got %+v", smartRuleSetTag, route.RuleSet)
+	}
+}

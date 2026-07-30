@@ -87,6 +87,13 @@ type EngineConfig struct {
 	// buildRoute routes these through the proxy while everything else goes
 	// direct (Final="direct"). Ignored in Global/Whitelist modes.
 	BlockedDomains []string
+	// SmartRuleSetPath is the path to the block-list compiled into a binary
+	// sing-box rule-set (see CompileSmartRuleSet). When set, buildRoute
+	// references it by tag instead of inlining tens of thousands of
+	// domain_suffix entries into the config. Empty means "not compiled" and
+	// buildRoute falls back to the inline form — the compile step must never be
+	// able to block a connect.
+	SmartRuleSetPath string
 	// BlockedCIDRs is the IP-subnet block-list (Telegram MTProto data-center
 	// ranges, from Router.GetBlockedCIDRs). Telegram's native clients dial
 	// these IPs directly without a domain/SNI, so domain rules can't catch
@@ -1052,12 +1059,30 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	// "send this via VPN". The block-list domains are already normalized
 	// suffixes. App-whitelist (process) direct rules above keep priority, so
 	// an excluded app's traffic stays direct even for blocked domains.
+	//
+	// A pre-compiled binary rule-set is preferred when the caller supplied one:
+	// inlining ~78k suffixes costs ~160 ms of config marshal/parse/index per
+	// connect. Same rule, same position — only the matcher's storage differs.
 	if cfg.RoutingMode == ModeSmart && len(cfg.BlockedDomains) > 0 {
-		rules = append(rules, SBRouteRule{
-			Action:       "route",
-			DomainSuffix: append([]string(nil), cfg.BlockedDomains...),
-			Outbound:     "proxy",
-		})
+		if cfg.SmartRuleSetPath != "" {
+			route.RuleSet = append(route.RuleSet, SBRuleSet{
+				Type:         "local",
+				Tag:          smartRuleSetTag,
+				Format:       "binary",
+				LocalOptions: SBLocalRuleSet{Path: cfg.SmartRuleSetPath},
+			})
+			rules = append(rules, SBRouteRule{
+				Action:   "route",
+				RuleSet:  []string{smartRuleSetTag},
+				Outbound: "proxy",
+			})
+		} else {
+			rules = append(rules, SBRouteRule{
+				Action:       "route",
+				DomainSuffix: append([]string(nil), cfg.BlockedDomains...),
+				Outbound:     "proxy",
+			})
+		}
 	}
 
 	// Smart mode: tunnel IP-only blocked ranges (Telegram MTProto data centers).
