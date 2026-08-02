@@ -2797,6 +2797,36 @@ func (a *App) setLastSelectedProxy(proxyID string) error {
 	return nil
 }
 
+// autoMemberProbe is one row of the AUTO-group diagnostic table.
+type autoMemberProbe struct {
+	Name   string
+	Addr   string
+	Type   string
+	RTTms  int64
+	OK     bool
+	Reason string
+}
+
+// formatAutoMemberTable renders the per-member probe results for an AUTO group.
+// It exists because the AUTO row shows a single aggregate number while its
+// members are hidden from the UI (filteredProxies) — without this table there is
+// no way to tell which member produced an implausible reading.
+func formatAutoMemberTable(autoLabel string, rows []autoMemberProbe) []string {
+	out := make([]string, 0, len(rows)+1)
+	out = append(out, fmt.Sprintf("[PROXY] AUTO «%s»: опрошено узлов: %d", autoLabel, len(rows)))
+	for i, r := range rows {
+		status := r.Reason
+		if r.OK {
+			status = fmt.Sprintf("%dms", r.RTTms)
+		} else if status == "" {
+			status = "недоступен"
+		}
+		out = append(out, fmt.Sprintf("[PROXY]   %d. %s [%s] %s — %s",
+			i+1, r.Name, r.Type, r.Addr, status))
+	}
+	return out
+}
+
 // resolveAutoProxy turns an AUTO-group head into its best-pinging member.
 // For non-AUTO entries it returns the input unchanged.
 //
@@ -2827,6 +2857,7 @@ func (a *App) resolveAutoProxy(p *config.ProxyEntry) *config.ProxyEntry {
 	pinged := 0
 	reachable := 0
 
+	var rows []autoMemberProbe
 	for _, memberID := range parsed.Members {
 		if memberID == "" {
 			continue
@@ -2834,8 +2865,22 @@ func (a *App) resolveAutoProxy(p *config.ProxyEntry) *config.ProxyEntry {
 		for i := range cfg.Proxies {
 			if cfg.Proxies[i].ID == memberID {
 				member := &cfg.Proxies[i]
+				// SECTION rows carry no address (normalizeSectionEntry blanks
+				// IP/Port); probing them dials ":0". The frontend sweep already
+				// skips them — the backend must too.
+				if strings.EqualFold(member.Type, "SECTION") {
+					break
+				}
 				pinged++
 				pingRes := a.PingProxy(member.IP, member.Port, member.Type)
+				rows = append(rows, autoMemberProbe{
+					Name:   strings.TrimSpace(member.Name),
+					Addr:   fmt.Sprintf("%s:%d", member.IP, member.Port),
+					Type:   strings.ToUpper(member.Type),
+					RTTms:  pingRes.LatencyMs,
+					OK:     pingRes.Reachable,
+					Reason: pingRes.Reason,
+				})
 				if pingRes.Reachable {
 					reachable++
 					if pingRes.LatencyMs < bestPing {
@@ -2851,6 +2896,11 @@ func (a *App) resolveAutoProxy(p *config.ProxyEntry) *config.ProxyEntry {
 	autoLabel := strings.TrimSpace(p.Name)
 	if autoLabel == "" {
 		autoLabel = "AUTO"
+	}
+	if a.log != nil {
+		for _, line := range formatAutoMemberTable(autoLabel, rows) {
+			a.log.Info(line)
+		}
 	}
 	if best != nil {
 		// Surface the AUTO routing decision so the user can see WHY the
