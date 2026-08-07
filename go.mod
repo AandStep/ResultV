@@ -245,9 +245,3 @@ replace github.com/dolonet/mtg-multi => github.com/shtorm-7/mtg-multi v1.11.0-ex
 replace github.com/Diniboy1123/connect-ip-go => github.com/shtorm-7/connect-ip-go v1.0.0-extended-1.1.0
 
 replace github.com/GoAdminGroup/go-admin => github.com/shtorm-7/go-admin v1.2.26-extended-1.0.0
-
-// ВРЕМЕННО, ТОЛЬКО ДЛЯ ДИАГНОСТИКИ — НЕ КОММИТИТЬ И НЕ ВЫПУСКАТЬ.
-// Локальная копия sing-tun v0.8.11 с логированием ошибки, из-за которой
-// WintunEndpoint.dispatchLoop молча умирает и туннель перестаёт получать
-// пакеты. Удалить эту строку сразу после того, как ошибка станет известна.
-replace github.com/sagernet/sing-tun => C:/sing-tun-diag
