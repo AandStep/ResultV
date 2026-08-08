@@ -94,6 +94,29 @@ type singBoxLogWriter struct {
 
 var ansiEscapeRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
+// engineSecretRE matches the UAPI-style "key=value" pairs that carry secret
+// material. sing-box-extended reports IpcSet failures by dumping the entire
+// ipcConf into the error text (transport/wireguard/endpoint.go:270, still true
+// in 2.6.1), so a single failed WireGuard/AmneziaWG setup would otherwise write
+// the private key — and the AWG 3.0 header-protection key — straight into the
+// user-visible log.
+//
+// This fixes the cause for every way IpcSet can fail, not just the ones we
+// validate for: a malformed private_key, a bad allowed_ip, an out-of-range
+// knob. Validation narrows the set of failures; only redaction makes the ones
+// that remain safe to print.
+//
+// public_key is deliberately absent: it is not secret, and keeping it visible
+// leaves the dump diagnosable.
+var engineSecretRE = regexp.MustCompile(`(?i)\b(private_key|pre_shared_key|preshared_key|header_protection_key)=\S*`)
+
+func redactEngineSecrets(msg string) string {
+	if !strings.Contains(msg, "_key=") {
+		return msg
+	}
+	return engineSecretRE.ReplaceAllString(msg, "$1=<скрыто>")
+}
+
 func (w *singBoxLogWriter) WriteMessage(level sblog.Level, message string) {
 	if level > sblog.LevelWarn {
 		return
@@ -116,7 +139,7 @@ func (w *singBoxLogWriter) WriteMessage(level sblog.Level, message string) {
 		return
 	}
 
-	msg := "[SING-BOX] " + clean
+	msg := "[SING-BOX] " + redactEngineSecrets(clean)
 	if level <= sblog.LevelError {
 		w.log.Error(msg)
 	} else if level == sblog.LevelWarn {
@@ -221,6 +244,17 @@ func (e *SingBoxEngine) Start(ctx context.Context, cfg EngineConfig) error {
 
 	if e.running.Load() {
 		return fmt.Errorf("engine already running")
+	}
+
+	// Only the AmneziaWG validator runs here, not the whole validateEngineConfig
+	// suite: the others have never executed on this branch (there is no Manager
+	// to call them), so switching them on wholesale could start rejecting
+	// profiles that connect fine today. This one has to run — it is what stops a
+	// subscription from injecting arbitrary device keys through a line break in
+	// i1-i5, and what turns an unusable AmneziaWG config into a legible error
+	// instead of an opaque "setup wireguard" failure.
+	if err := validateAmneziaOptions(parseExtra(cfg.Proxy)); err != nil {
+		return err
 	}
 
 	dataDir := cfg.DataDir

@@ -744,9 +744,10 @@ func parseJSONWireGuardOutbound(outbound, settings map[string]interface{}, name,
 			}
 			// AmneziaWG 3.0 knobs. Kept as strings because every one of them
 			// is either a key or a range ("a" or "a-b"), and the range form
-			// must survive to the UAPI verbatim. The tunnel drops these (see
-			// awg3DeviceKnobs) but the handshake probe honours them, so losing
-			// them at parse time would break ping against an AWG 3.0 server.
+			// must survive verbatim — badoption.Range on the config path and
+			// UintRange.FromString on the probe path both parse it themselves.
+			// Since 2.6.1 the tunnel carries these too (see awg3DeviceKnobs),
+			// so dropping them here would weaken the tunnel, not just ping.
 			for _, k := range awg3DeviceKnobs {
 				if v := asString(am[k]); v != "" && v != "0" {
 					amOut[k] = v

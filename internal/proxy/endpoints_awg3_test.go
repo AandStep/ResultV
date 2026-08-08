@@ -96,49 +96,34 @@ func TestBuiltConfigCarriesAWG3Knobs(t *testing.T) {
 	}
 }
 
-// Header protection needs every S1-S4 padding to be at least the nonce size.
-// Emitting the key anyway would fail IpcSet, and sing-box reports that failure
-// by dumping the whole IPC string — private_key included — into the app log.
-// So a config that asks for the impossible loses the key and gets a warning.
-func TestHeaderProtectionKeyDroppedWhenPaddingTooSmall(t *testing.T) {
-	const key = "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM="
-	cases := []struct {
-		name string
-		s    map[string]interface{}
-		want bool // key survives?
-	}{
-		{"all at the minimum", map[string]interface{}{"s1": 12, "s2": 12, "s3": 12, "s4": 12}, true},
-		{"all comfortably above", map[string]interface{}{"s1": 15, "s2": 88, "s3": 32, "s4": 16}, true},
-		{"one below", map[string]interface{}{"s1": 15, "s2": 15, "s3": 11, "s4": 15}, false},
-		{"s4 unset", map[string]interface{}{"s1": 15, "s2": 15, "s3": 15}, false},
-		{"none set at all", map[string]interface{}{}, false},
+// The config path no longer second-guesses the key: validateAmneziaOptions
+// refuses the bad combination by name before the engine starts, so quietly
+// dropping it here would only turn a legible error into a handshake timeout.
+// The rejection itself is covered by TestHeaderProtectionRequiresAllPaddings-
+// AtNonceSize; this pins the other half — that nothing swallows it silently.
+func TestConfigPathDoesNotSilentlyDropHeaderProtectionKey(t *testing.T) {
+	extra := map[string]interface{}{
+		"amnezia": map[string]interface{}{
+			// Deliberately unusable: s3 is below the nonce size.
+			"s1": 15, "s2": 15, "s3": 11, "s4": 15,
+			"header_protection_key": awgTestKey,
+		},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			am := map[string]interface{}{"header_protection_key": key}
-			for k, v := range tc.s {
-				am[k] = v
-			}
-			extra := map[string]interface{}{"amnezia": am}
 
-			// A nil block is the correct answer when the key was the only knob
-			// and it got dropped: the entry degrades to plain WireGuard rather
-			// than emitting an empty "amnezia":{}.
-			got := amneziaFromExtra(extra)
-			survived := got != nil && got.HeaderProtectionKey != ""
-			if survived != tc.want {
-				t.Errorf("key survived = %v, want %v (%+v)", survived, tc.want, got)
-			}
-			if tc.want && got == nil {
-				t.Fatal("amnezia block went missing entirely")
-			}
-
-			// Whenever it is dropped the user must be told, and never otherwise.
-			reported := slices.Contains(unsupportedAmneziaKnobs(extra), "header_protection_key")
-			if reported == tc.want {
-				t.Errorf("reported = %v but key survived = %v", reported, tc.want)
-			}
-		})
+	am := amneziaFromExtra(extra)
+	if am == nil {
+		t.Fatal("amnezia block went missing entirely")
+	}
+	if am.HeaderProtectionKey != awgTestKey {
+		t.Errorf("key was dropped instead of being rejected upstream: %+v", am)
+	}
+	// And it must not be reported as a "dropped knob" — it is an error now.
+	if slices.Contains(unsupportedAmneziaKnobs(extra), "header_protection_key") {
+		t.Error("an unusable key should be a hard error, not a dropped-knob warning")
+	}
+	// The guard that actually stops it:
+	if err := validateAmneziaOptions(extra); err == nil {
+		t.Error("validation accepted a key with s3 below the nonce size")
 	}
 }
 

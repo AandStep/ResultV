@@ -66,26 +66,61 @@ func TestWriteAmneziaUAPIOmitsUnsetAWG3Knobs(t *testing.T) {
 	}
 }
 
-// HeaderCipherKey.FromHex only takes hex, but `awg genkey` prints base64 like
-// every other WireGuard key, so both spellings have to reach the UAPI as hex.
-func TestAmneziaKeyHexAcceptsBase64AndHex(t *testing.T) {
-	const wantHex = "6805c549c1c0e6d000f66530a756810d5f5c01b1e3d6649fc1d7352124ec666f"
+// The probe takes base64 and nothing else, matching the core and the config
+// path. It used to accept hex too, which was a bug rather than a kindness: a
+// 64-character hex key is also valid base64 (decoding to 48 bytes, not 32), so
+// it passed the probe and then failed IpcSet — a green ping on a dead tunnel.
+func TestAmneziaKeyHexTakesBase64Only(t *testing.T) {
 	const asBase64 = "aAXFScHA5tAA9mUwp1aBDV9cAbHj1mSfwdc1ISTsZm8="
+	const wantHex = "6805c549c1c0e6d000f66530a756810d5f5c01b1e3d6649fc1d7352124ec666f"
 
 	if got := amneziaKeyHex(asBase64); got != wantHex {
 		t.Errorf("base64 key: got %q, want %q", got, wantHex)
 	}
-	if got := amneziaKeyHex(wantHex); got != wantHex {
-		t.Errorf("hex key: got %q, want %q", got, wantHex)
+	// The hex spelling of that very key must now be refused, not silently
+	// re-encoded — the tunnel would reject it, so the probe must agree.
+	if got := amneziaKeyHex(wantHex); got != "" {
+		t.Errorf("hex key should be rejected, got %q", got)
 	}
-	if got := amneziaKeyHex(strings.ToUpper(wantHex)); got != wantHex {
-		t.Errorf("uppercase hex key: got %q, want %q", got, wantHex)
+	if got := amneziaKeyHex(strings.ToUpper(wantHex)); got != "" {
+		t.Errorf("uppercase hex key should be rejected, got %q", got)
+	}
+	// Valid base64 of the wrong length is the other half of the same trap.
+	if got := amneziaKeyHex("AwMDAwMD"); got != "" {
+		t.Errorf("short key should be rejected, got %q", got)
 	}
 	if got := amneziaKeyHex(""); got != "" {
 		t.Errorf("empty key: got %q, want empty", got)
 	}
 	if got := amneziaKeyHex("not a key"); got != "" {
 		t.Errorf("garbage key: got %q, want empty", got)
+	}
+}
+
+// The probe and the tunnel must agree about which keys are acceptable —
+// disagreement is what produced the green-ping/dead-tunnel bug.
+func TestProbeAndConfigAgreeOnKeyFormat(t *testing.T) {
+	cases := []struct {
+		name string
+		key  string
+		ok   bool
+	}{
+		{"base64 32 bytes", awgTestKey, true},
+		{"hex spelling", "6805c549c1c0e6d000f66530a756810d5f5c01b1e3d6649fc1d7352124ec666f", false},
+		{"short base64", "AwMDAwMD", false},
+		{"garbage", "not a key!!", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			probeAccepts := amneziaKeyHex(tc.key) != ""
+			configAccepts := validateAWGHeaderProtectionKey(tc.key) == nil
+			if probeAccepts != configAccepts {
+				t.Fatalf("probe accepts = %v but config accepts = %v", probeAccepts, configAccepts)
+			}
+			if probeAccepts != tc.ok {
+				t.Errorf("accepted = %v, want %v", probeAccepts, tc.ok)
+			}
+		})
 	}
 }
 

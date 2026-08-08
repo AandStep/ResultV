@@ -243,6 +243,16 @@ func writeAmneziaUAPI(b *strings.Builder, extra map[string]any) {
 	if !ok {
 		return
 	}
+	// This builder never passes through validateAmneziaOptions — PingEntry is
+	// reached straight from the UI with a raw profile. The same line-break
+	// injection applies here, so refuse the block outright rather than emit a
+	// UAPI string a subscription got to write extra device keys into. A probe
+	// that silently skips one knob would lie about what the tunnel will do.
+	for _, v := range amRaw {
+		if strings.ContainsAny(amneziaScalar(v), "\r\n") {
+			return
+		}
+	}
 	intKeys := []string{"jc", "jmin", "jmax", "s1", "s2", "s3", "s4"}
 	for _, k := range intKeys {
 		if v, ok := amRaw[k]; ok {
@@ -288,23 +298,26 @@ func writeAmneziaUAPI(b *strings.Builder, extra map[string]any) {
 	}
 }
 
-// amneziaKeyHex normalizes a header-protection key to the lowercase hex the
-// UAPI expects. `awg genkey` emits base64 like every other WireGuard key, but
-// HeaderCipherKey.FromHex only accepts hex, so accept either spelling.
+// amneziaKeyHex converts a base64 header-protection key to the lowercase hex
+// the UAPI expects, matching what the core does on the config path
+// (base64-decode, then hex-encode).
+//
+// base64 only, deliberately. This used to accept hex as well, which looked
+// generous and was a bug: the core accepts base64 only, and a 64-character hex
+// key is *also* valid base64 (it decodes to 48 bytes, not 32). So a hex key
+// gave a green ping and a dead tunnel. One input, one format — any divergence
+// between what the probe validates and what the tunnel will do reproduces that
+// whole class of bug.
 func amneziaKeyHex(v any) string {
 	s := amneziaScalar(v)
 	if s == "" {
 		return ""
 	}
-	if len(s) == 64 {
-		if _, err := hex.DecodeString(s); err == nil {
-			return strings.ToLower(s)
-		}
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil || len(raw) != awgKeySize {
+		return ""
 	}
-	if h, err := keyToHex(s); err == nil {
-		return h
-	}
-	return ""
+	return hex.EncodeToString(raw)
 }
 
 // amneziaScalar renders an AmneziaWG knob value (which may arrive as a number

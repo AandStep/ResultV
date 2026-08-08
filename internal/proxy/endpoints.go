@@ -231,46 +231,36 @@ func amneziaFromExtra(extra map[string]interface{}) *SBWireGuardAmnezia {
 	return am
 }
 
-// minHeaderProtectionPadding mirrors wireguard-go's HeaderCipherNonceSize. The
-// S1-S4 crypto padding doubles as the per-packet nonce for header protection,
-// so all four must be at least this large or mergeWithDevice refuses the whole
-// device with "S%d must be more then 12 to use headerProtection".
-//
-// Guarding this matters more than it looks. Before 2.6.1 header_protection_key
-// could not reach the tunnel at all, so the combination was unreachable; now it
-// is one subscription field away, and sing-box reports the resulting IpcSet
-// failure as E.Cause(err, "setup wireguard: \n", ipcConf) — which spills the
-// entire IPC string, private_key and preshared_key in hex, into the app log
-// (still true in 2.6.1, transport/wireguard/endpoint.go:270).
-//
-// Dropping the key does not cost a working tunnel: a server that demands header
-// protection will not answer an unprotected peer either way. It costs an opaque
-// failure and a leaked private key.
-const minHeaderProtectionPadding = 12
-
 // headerProtectionUsable reports whether an amnezia block may carry
 // header_protection_key — the key is present and every S1-S4 padding is large
-// enough to serve as its nonce.
+// enough to serve as its nonce (see awgHeaderCipherNonceSize).
+//
+// The config path does not use this: validateAmneziaOptions rejects the bad
+// combination outright, with a message naming the offending padding. Silently
+// dropping the key there would trade a clear error for a mysterious handshake
+// timeout, since a server demanding header protection will not answer an
+// unprotected peer anyway.
+//
+// The probe path does use it, because PingEntry is reached straight from the UI
+// and never passes through validation. There the question is not "is this
+// config acceptable" but "can this probe produce a meaningful answer" — and a
+// device that refuses to start would just report probe_error.
 func headerProtectionUsable(m map[string]interface{}) bool {
 	if strings.TrimSpace(stringFromExtraValue(m["header_protection_key"])) == "" {
 		return false
 	}
 	for _, k := range []string{"s1", "s2", "s3", "s4"} {
-		if intFromAny(m[k]) < minHeaderProtectionPadding {
+		if intFromAny(m[k]) < awgHeaderCipherNonceSize {
 			return false
 		}
 	}
 	return true
 }
 
-// amneziaHeaderProtectionKey returns the base64 header-protection key, or ""
-// when the surrounding config cannot legally use it. The core base64-decodes
-// this itself, so it must not be pre-converted to hex here — unlike the probe's
-// UAPI path, which needs hex.
+// amneziaHeaderProtectionKey returns the base64 header-protection key as-is.
+// The core base64-decodes it itself, so it must not be pre-converted to hex
+// here — unlike the probe's UAPI path, which hands wireguard-go hex directly.
 func amneziaHeaderProtectionKey(m map[string]interface{}) string {
-	if !headerProtectionUsable(m) {
-		return ""
-	}
 	return strings.TrimSpace(stringFromExtraValue(m["header_protection_key"]))
 }
 
@@ -333,12 +323,9 @@ func unsupportedAmneziaKnobs(extra map[string]interface{}) []string {
 	if intFromAny(m["itime"]) > 0 {
 		out = append(out, "itime")
 	}
-	// Not unsupported by the engine — unusable as configured. Same user-visible
-	// outcome (the knob is dropped), and worth surfacing because the server
-	// almost certainly expects header protection to be on.
-	if stringFromExtraValue(m["header_protection_key"]) != "" && !headerProtectionUsable(m) {
-		out = append(out, "header_protection_key")
-	}
+	// header_protection_key is deliberately absent: an unusable one is a hard
+	// error from validateAmneziaOptions now, not a knob we quietly drop, so
+	// reporting it here would describe a connection that never happened.
 	return out
 }
 
