@@ -24,7 +24,7 @@ import (
 // the clear.
 func TestEngineLogRedactsWireGuardKeys(t *testing.T) {
 	log := logger.New()
-	w := &singBoxLogWriter{log: log}
+	w := newSingBoxLogWriter(log, ProxyConfig{})
 
 	const priv = "e8bd3f19a0c74d2b5f6a1c8e93b47d05a2f6c1e84b9d70f3a5c2e6b18d4f90a7"
 	const hdr = "7b1e4c9a2f6d80b3e5a7c14f9d2b6e08a3f5c7d19b4e60a2c8f3d5b7e9a1c04f"
@@ -82,6 +82,93 @@ func TestRedactEngineSecretsCoversEverySecretKey(t *testing.T) {
 				t.Fatalf("redactEngineSecrets(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+// A provider's backend address is not the user's to leak. sing-box narrates it
+// constantly — "lookup <domain>", "open connection ... using outbound" — so the
+// writer masks it for subscription servers.
+func TestEngineLogRedactsSubscriptionServerAddress(t *testing.T) {
+	log := logger.New()
+	w := newSingBoxLogWriter(log, ProxyConfig{
+		IP:              "backend-07.provider.example",
+		Port:            443,
+		SubscriptionURL: "https://provider.example/sub",
+	})
+
+	w.WriteMessage(sblog.LevelError, "dns: lookup backend-07.provider.example: no such host")
+
+	entries := log.GetAll()
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(entries))
+	}
+	got := entries[0].Msg
+
+	if strings.Contains(got, "backend-07.provider.example") {
+		t.Fatalf("provider backend address leaked: %s", got)
+	}
+	if !strings.Contains(got, "<сервер>") {
+		t.Errorf("address should be replaced, not deleted: %s", got)
+	}
+	// The rest of the message has to survive or the log stops being useful.
+	if !strings.Contains(got, "no such host") {
+		t.Errorf("lost the diagnosis: %s", got)
+	}
+}
+
+// A manually added server is the user's own and its address is already on
+// screen; masking it would only make their own logs harder to read.
+func TestEngineLogKeepsManualServerAddress(t *testing.T) {
+	log := logger.New()
+	w := newSingBoxLogWriter(log, ProxyConfig{IP: "203.0.113.9", Port: 443})
+
+	w.WriteMessage(sblog.LevelError, "dial tcp 203.0.113.9:443: i/o timeout")
+
+	entries := log.GetAll()
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(entries))
+	}
+	if !strings.Contains(entries[0].Msg, "203.0.113.9") {
+		t.Errorf("manual server address should stay visible: %s", entries[0].Msg)
+	}
+}
+
+// Both redactions have to survive each other: the secret masking runs on the
+// already-server-masked string, and neither may swallow the other's work.
+func TestServerAndSecretRedactionCompose(t *testing.T) {
+	log := logger.New()
+	w := newSingBoxLogWriter(log, ProxyConfig{
+		IP:              "backend-07.provider.example",
+		SubscriptionURL: "https://provider.example/sub",
+	})
+
+	w.WriteMessage(sblog.LevelError,
+		"setup wireguard: \nprivate_key=deadbeefcafe\nendpoint=backend-07.provider.example:51820")
+
+	got := log.GetAll()[0].Msg
+	if strings.Contains(got, "deadbeefcafe") {
+		t.Errorf("private key leaked: %s", got)
+	}
+	if strings.Contains(got, "backend-07.provider.example") {
+		t.Errorf("server address leaked: %s", got)
+	}
+}
+
+// Known gap, pinned so it is a decision rather than a surprise: the desktop
+// writer also masks the pinned resolved IPs, but this branch has no server-pin
+// machinery to supply them, so an address sing-box resolved on its own still
+// appears. Closing it means plumbing resolution results into ProxyConfig.
+func TestResolvedIPIsNotYetRedacted(t *testing.T) {
+	log := logger.New()
+	w := newSingBoxLogWriter(log, ProxyConfig{
+		IP:              "backend-07.provider.example",
+		SubscriptionURL: "https://provider.example/sub",
+	})
+
+	w.WriteMessage(sblog.LevelError, "dial tcp 198.51.100.77:443: i/o timeout")
+
+	if !strings.Contains(log.GetAll()[0].Msg, "198.51.100.77") {
+		t.Skip("resolved IPs are now redacted — update this test and the comment on newSingBoxLogWriter")
 	}
 }
 

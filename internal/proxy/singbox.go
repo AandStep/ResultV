@@ -90,6 +90,39 @@ type SingBoxEngine struct {
 
 type singBoxLogWriter struct {
 	log *logger.Logger
+	// redact holds server identifiers that must never surface in logs for
+	// subscription servers — sing-box errors like "lookup <domain>: ..." or
+	// "open connection ... using outbound" would otherwise leak the provider's
+	// backend address. Empty for manual servers.
+	redact []string
+}
+
+// newSingBoxLogWriter builds a log writer that hides the server's address when
+// the active proxy comes from a subscription. Manual servers keep full detail:
+// the user owns them and the address is already visible in the UI.
+//
+// Narrower than the desktop version, which also masks the pinned resolved IPs.
+// This branch has no server-pin machinery, so ProxyConfig carries no
+// ResolvedIP/ResolvedIPs and only the configured address can be masked — a
+// message quoting an IP sing-box resolved itself would still get through.
+func newSingBoxLogWriter(log *logger.Logger, proxy ProxyConfig) *singBoxLogWriter {
+	w := &singBoxLogWriter{log: log}
+	if proxy.SubscriptionURL == "" {
+		return w
+	}
+	if tok := strings.TrimSpace(proxy.IP); tok != "" {
+		w.redact = append(w.redact, tok)
+	}
+	return w
+}
+
+func (w *singBoxLogWriter) redactServer(msg string) string {
+	for _, tok := range w.redact {
+		if strings.Contains(msg, tok) {
+			msg = strings.ReplaceAll(msg, tok, "<сервер>")
+		}
+	}
+	return msg
 }
 
 var ansiEscapeRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -139,7 +172,7 @@ func (w *singBoxLogWriter) WriteMessage(level sblog.Level, message string) {
 		return
 	}
 
-	msg := "[SING-BOX] " + redactEngineSecrets(clean)
+	msg := "[SING-BOX] " + redactEngineSecrets(w.redactServer(clean))
 	if level <= sblog.LevelError {
 		w.log.Error(msg)
 	} else if level == sblog.LevelWarn {
@@ -305,7 +338,7 @@ func (e *SingBoxEngine) Start(ctx context.Context, cfg EngineConfig) error {
 	instance, err := box.New(box.Options{
 		Context:           boxCtx,
 		Options:           options,
-		PlatformLogWriter: &singBoxLogWriter{log: e.log},
+		PlatformLogWriter: newSingBoxLogWriter(e.log, cfg.Proxy),
 	})
 	if err != nil {
 		cancel()
