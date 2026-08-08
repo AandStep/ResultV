@@ -715,7 +715,7 @@ func parseJSONWireGuardOutbound(outbound, settings map[string]interface{}, name,
 	if amRaw := pick("amnezia", ""); amRaw != nil {
 		if am, ok := asMap(amRaw); ok {
 			amOut := map[string]interface{}{}
-			intKeys := []string{"jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "itime"}
+			intKeys := []string{"jc", "jmin", "jmax", "s1", "s2", "s3", "s4"}
 			for _, k := range intKeys {
 				if v, ok := am[k]; ok && v != nil {
 					amOut[k] = asInt(v)
@@ -736,10 +736,24 @@ func parseJSONWireGuardOutbound(outbound, settings map[string]interface{}, name,
 					}
 				}
 			}
-			strKeys := []string{"i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3"}
+			strKeys := []string{"i1", "i2", "i3", "i4", "i5"}
 			for _, k := range strKeys {
 				if v := asString(am[k]); v != "" {
 					amOut[k] = v
+				}
+			}
+			// AmneziaWG 3.0 device knobs. Providers spell them either
+			// snake_case or in .conf style (HeaderProtectionKey), so match
+			// on the normalized form.
+			for _, k := range awg3Keys {
+				for rawKey, rawVal := range am {
+					if normalizeAWGKey(rawKey) != normalizeAWGKey(k) {
+						continue
+					}
+					if v := asString(rawVal); v != "" {
+						amOut[k] = v
+					}
+					break
 				}
 			}
 			if len(amOut) > 0 {
@@ -1367,7 +1381,7 @@ func parseAmneziaWGURI(uri string) (config.ProxyEntry, error) {
 	// capitalized keys (Jc, Jmin, S1, H1, …) while other generators
 	// use lowercase (jc, jmin, s1, h1, …).
 	amnezia := map[string]interface{}{}
-	amneziaIntKeys := []string{"jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "itime"}
+	amneziaIntKeys := []string{"jc", "jmin", "jmax", "s1", "s2", "s3", "s4"}
 	for _, k := range amneziaIntKeys {
 		if v := strings.TrimSpace(getQueryParamCI(params, k)); v != "" {
 			if n, convErr := strconv.ParseInt(v, 10, 64); convErr == nil {
@@ -1384,10 +1398,25 @@ func parseAmneziaWGURI(uri string) (config.ProxyEntry, error) {
 			amnezia[k] = v
 		}
 	}
-	amneziaStringKeys := []string{"i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3"}
+	amneziaStringKeys := []string{"i1", "i2", "i3", "i4", "i5"}
 	for _, k := range amneziaStringKeys {
 		if v := strings.TrimSpace(getQueryParamCI(params, k)); v != "" {
 			amnezia[k] = v
+		}
+	}
+	// AmneziaWG 3.0 device knobs. getQueryParamCI only folds case, but these
+	// keys also vary by separator (HeaderProtectionKey in links generated
+	// from an .conf vs header_protection_key in JSON-shaped links), so match
+	// on the normalized form.
+	for _, k := range awg3Keys {
+		for rawKey, vals := range params {
+			if len(vals) == 0 || normalizeAWGKey(rawKey) != normalizeAWGKey(k) {
+				continue
+			}
+			if v := strings.TrimSpace(vals[0]); v != "" {
+				amnezia[k] = v
+			}
+			break
 		}
 	}
 	if len(amnezia) > 0 {

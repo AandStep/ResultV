@@ -355,15 +355,29 @@ type SBWireGuardAmnezia struct {
 	H2    string `json:"h2,omitempty"`
 	H3    string `json:"h3,omitempty"`
 	H4    string `json:"h4,omitempty"`
-	I1    string `json:"i1,omitempty"`
-	I2    string `json:"i2,omitempty"`
-	I3    string `json:"i3,omitempty"`
-	I4    string `json:"i4,omitempty"`
-	I5    string `json:"i5,omitempty"`
-	J1    string `json:"j1,omitempty"`
-	J2    string `json:"j2,omitempty"`
-	J3    string `json:"j3,omitempty"`
-	ITime int64  `json:"itime,omitempty"`
+	I1 string `json:"i1,omitempty"`
+	I2 string `json:"i2,omitempty"`
+	I3 string `json:"i3,omitempty"`
+	I4 string `json:"i4,omitempty"`
+	I5 string `json:"i5,omitempty"`
+	// J1-J3 and ITime are deliberately absent: the wireguard-go fork behind
+	// the engine has never had those device keys in its UAPI (device/uapi.go
+	// stops at i5 and its default branch returns "invalid UAPI device key").
+	// sing-box-extended used to declare and emit them anyway, which made
+	// IpcSet fail outright; it dropped them in v1.13.16-extended-2.6.1.
+
+	// AmneziaWG 3.0, available since sing-box-extended
+	// v1.13.16-extended-2.6.1. HeaderProtectionKey is base64 like the other
+	// WireGuard keys — upstream decodes it and hex-encodes it for the UAPI.
+	// The rest are emitted as strings ("n" or "low-high") so upstream can
+	// parse them into *Xbadoption.Range and randomize per use.
+	HeaderProtectionKey    string `json:"header_protection_key,omitempty"`
+	ContentPaddingAddition string `json:"content_padding_addition,omitempty"`
+	RekeyAfterTime         string `json:"rekey_after_time,omitempty"`
+	RekeyTimeout           string `json:"rekey_timeout,omitempty"`
+	RejectAfterTime        string `json:"reject_after_time,omitempty"`
+	KeepaliveTimeout       string `json:"keepalive_timeout,omitempty"`
+	MaxHandshakeAttempts   string `json:"max_handshake_attempts,omitempty"`
 }
 
 type SBUTLS struct {

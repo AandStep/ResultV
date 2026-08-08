@@ -16,8 +16,10 @@
 package proxy
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -53,6 +55,123 @@ func validateEngineConfig(cfg EngineConfig) (string, error) {
 		return ConnectErrorInvalidConfig, err
 	}
 	return "", nil
+}
+
+// awgHeaderCipherNonceSize mirrors device.HeaderCipherNonceSize in the
+// wireguard-go fork. The header cipher uses the S1-S4 crypto padding as its
+// nonce, so every padding must be at least this large once a header
+// protection key is in play.
+const awgHeaderCipherNonceSize = 12
+
+// validateAmneziaOptions checks the AmneziaWG 3.0 knobs before they reach the
+// engine. Without it the failures surface as an opaque "setup wireguard"
+// error carrying the whole ipcConf, which tells the user nothing.
+func validateAmneziaOptions(extra map[string]interface{}) error {
+	m := amneziaBlock(extra)
+	if m == nil {
+		return nil
+	}
+	// sing-box-extended writes I1-I5 into ipcConf verbatim, and ipcConf is
+	// newline-separated "key=value". A subscription that smuggles a line
+	// break through one of these slots would get to set arbitrary WireGuard
+	// device keys, so reject them outright.
+	for _, slot := range []string{"i1", "i2", "i3", "i4", "i5"} {
+		if strings.ContainsAny(stringFromExtraValue(m[slot]), "\r\n") {
+			return fmt.Errorf("amneziawg %s must not contain line breaks", slot)
+		}
+	}
+
+	knobs := awg3FromExtra(m)
+	if len(knobs) == 0 {
+		return nil
+	}
+	for _, name := range awg3Keys {
+		value, ok := knobs[name]
+		if !ok {
+			continue
+		}
+		// Values arrive from remote subscriptions and are written straight
+		// into ipcConf. A line break would let a subscription add arbitrary
+		// device keys of its own.
+		if strings.ContainsAny(value, "\r\n") {
+			return fmt.Errorf("amneziawg %s must not contain line breaks", name)
+		}
+		if name == "header_protection_key" {
+			if err := validateAWGHeaderProtectionKey(value); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := validateAWGRange(value); err != nil {
+			return fmt.Errorf("amneziawg %s: %w", name, err)
+		}
+	}
+
+	if _, ok := knobs["header_protection_key"]; !ok {
+		return nil
+	}
+	am := amneziaFromExtra(extra)
+	if am == nil {
+		return nil
+	}
+	for _, p := range []struct {
+		name  string
+		value int
+	}{{"s1", am.S1}, {"s2", am.S2}, {"s3", am.S3}, {"s4", am.S4}} {
+		if p.value < awgHeaderCipherNonceSize {
+			return fmt.Errorf(
+				"amneziawg header_protection_key requires %s to be at least %d, got %d",
+				p.name, awgHeaderCipherNonceSize, p.value)
+		}
+	}
+	return nil
+}
+
+// validateAWGHeaderProtectionKey mirrors what sing-box-extended does with the
+// value: base64-decode it and hand the bytes to wireguard-go, which requires
+// exactly HeaderCipherKeySize (32) of them.
+func validateAWGHeaderProtectionKey(value string) error {
+	const keySize = 32
+	raw, err := base64.StdEncoding.DecodeString(value)
+	if err != nil {
+		return fmt.Errorf("amneziawg header_protection_key is not valid base64: %w", err)
+	}
+	if len(raw) != keySize {
+		return fmt.Errorf("amneziawg header_protection_key must decode to %d bytes, got %d", keySize, len(raw))
+	}
+	return nil
+}
+
+// validateAWGRange accepts the "a" and "a-b" forms wireguard-go's
+// UintRange.FromString parses.
+func validateAWGRange(value string) error {
+	parse := func(part string) (uint64, error) {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return 0, fmt.Errorf("empty bound in %q", value)
+		}
+		n, err := strconv.ParseUint(part, 10, 32)
+		if err != nil {
+			return 0, fmt.Errorf("invalid value %q", value)
+		}
+		return n, nil
+	}
+	low, high, isRange := strings.Cut(value, "-")
+	lowN, err := parse(low)
+	if err != nil {
+		return err
+	}
+	if !isRange {
+		return nil
+	}
+	highN, err := parse(high)
+	if err != nil {
+		return err
+	}
+	if lowN > highN {
+		return fmt.Errorf("range %q is inverted", value)
+	}
+	return nil
 }
 
 func validateRouteFinalTarget(cfg SingBoxConfig) error {
@@ -119,6 +238,9 @@ func validateProtocolRequiredFields(proxyCfg ProxyConfig) error {
 		}
 		if len(stringListFromExtra(extra, "allowed_ips", "allowedIps")) == 0 {
 			return fmt.Errorf("%s requires allowed_ips", strings.ToLower(pt))
+		}
+		if err := validateAmneziaOptions(extra); err != nil {
+			return err
 		}
 	case "HYSTERIA2":
 		if strings.TrimSpace(getStringField(extra, "password", strings.TrimSpace(proxyCfg.Password))) == "" {

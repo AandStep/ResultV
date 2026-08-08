@@ -151,8 +151,13 @@
     "awgGroupHandshake": "Handshake junk (Jc/Jmin/Jmax)",
     "awgGroupSizes": "Packet sizes S1–S4",
     "awgGroupHeaders": "Magic headers H1–H4",
-    "awgGroupSpecial": "AWG 2.0: special junk I1–I5 / Itime",
-    "awgGroupHandshakeJunk": "AWG 2.0: handshake junk J1–J3"
+    "awgGroupSpecial": "AWG 2.0: signature packets I1–I5",
+    "awgGroupProtection": "AWG 3.0: header protection",
+    "awgGroupTimings": "AWG 3.0: timings (seconds, \"n\" or \"low-high\")",
+    "awgHeaderProtectionKey": "Header protection key",
+    "awgHexKeyHint": "base64, like private_key; requires S1–S4 ≥ 12",
+    "awgContentPadding": "Content padding addition",
+    "awgMaxHandshakes": "Max handshake attempts"
   },
   "settings": {
     "title": "Application Settings",

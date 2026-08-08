@@ -151,8 +151,13 @@
     "awgGroupHandshake": "Junk пакеты handshake (Jc/Jmin/Jmax)",
     "awgGroupSizes": "Размеры пакетов S1–S4",
     "awgGroupHeaders": "Магические заголовки H1–H4",
-    "awgGroupSpecial": "AWG 2.0: special junk I1–I5 / Itime",
-    "awgGroupHandshakeJunk": "AWG 2.0: handshake junk J1–J3"
+    "awgGroupSpecial": "AWG 2.0: signature-пакеты I1–I5",
+    "awgGroupProtection": "AWG 3.0: защита заголовков",
+    "awgGroupTimings": "AWG 3.0: тайминги (сек, «n» или «от-до»)",
+    "awgHeaderProtectionKey": "Header protection key",
+    "awgHexKeyHint": "base64, как private_key; требует S1–S4 ≥ 12",
+    "awgContentPadding": "Content padding addition",
+    "awgMaxHandshakes": "Максимум handshake-попыток"
   },
   "settings": {
     "title": "Настройки приложения",

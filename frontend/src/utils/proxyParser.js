@@ -531,9 +531,24 @@ const parseWireGuardConf = (content) => {
         return Number.isFinite(n) ? n : 0;
     };
     const amnezia = {};
-    const amneziaIntKeys = ["jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "itime"];
+    // j1-j3 and itime are intentionally absent: the wireguard-go fork behind
+    // the engine has no UAPI device key for them, so emitting any of them
+    // makes IpcSet fail and the endpoint never starts.
+    const amneziaIntKeys = ["jc", "jmin", "jmax", "s1", "s2", "s3", "s4"];
     const amneziaHeaderKeys = ["h1", "h2", "h3", "h4"];
-    const amneziaStringKeys = ["i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3"];
+    const amneziaStringKeys = ["i1", "i2", "i3", "i4", "i5"];
+    // AmneziaWG 3.0 device knobs. .conf keys arrive lowercased with the
+    // separators dropped (HeaderProtectionKey -> headerprotectionkey), so map
+    // them back onto their canonical snake_case names.
+    const amneziaAWG3Keys = {
+        headerprotectionkey: "header_protection_key",
+        contentpaddingaddition: "content_padding_addition",
+        rekeyaftertime: "rekey_after_time",
+        rekeytimeout: "rekey_timeout",
+        rejectaftertime: "reject_after_time",
+        keepalivetimeout: "keepalive_timeout",
+        maxhandshakeattempts: "max_handshake_attempts",
+    };
     for (const key of amneziaIntKeys) {
         if (iface[key] != null && String(iface[key]).trim() !== "") {
             const n = toInt(iface[key]);
@@ -559,6 +574,11 @@ const parseWireGuardConf = (content) => {
     for (const key of amneziaStringKeys) {
         if (iface[key] != null && String(iface[key]).trim() !== "") {
             amnezia[key] = String(iface[key]).trim();
+        }
+    }
+    for (const [confKey, canonical] of Object.entries(amneziaAWG3Keys)) {
+        if (iface[confKey] != null && String(iface[confKey]).trim() !== "") {
+            amnezia[canonical] = String(iface[confKey]).trim();
         }
     }
     const hasAmnezia = Object.keys(amnezia).length > 0;
