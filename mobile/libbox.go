@@ -1028,6 +1028,24 @@ func compileSmartResult(result *proxy.BlockedDomainsResolveResult, dataDir strin
 // country may be empty to force auto-detection via the embedded provider;
 // pass a 2-letter ISO code (e.g. "ru") to skip auto-detect (faster, no
 // IP-geolocation request).
+// smartCIDRCachePath is where the IP-subnet block-list is cached, next to the
+// domain cache. Separate file on purpose: the two lists refresh independently
+// and a corrupt one must not take the other down with it.
+func smartCIDRCachePath(dataDir string) string {
+	return filepath.Join(dataDir, "smart-blocked-cidrs.json")
+}
+
+// smartBlockedCIDRs resolves the IP-subnet block-list for a connect, without
+// touching the network. Returns nil outside Smart mode: in Global everything
+// already goes through the proxy, so the rule would be dead weight in the
+// config, and an empty dataDir means we have nowhere to read a cache from.
+func smartBlockedCIDRs(smartMode bool, dataDir string) []string {
+	if !smartMode || strings.TrimSpace(dataDir) == "" {
+		return nil
+	}
+	return proxy.LoadCachedBlockedCIDRs(smartCIDRCachePath(dataDir)).CIDRs
+}
+
 func FetchSmartList(country string, dataDir string) (string, error) {
 	if strings.TrimSpace(dataDir) == "" {
 		return "", fmt.Errorf("dataDir is required for smart-list cache")
@@ -1070,16 +1088,25 @@ func FetchSmartList(country string, dataDir string) (string, error) {
 	// config (4.6 MB, marshalled + JNI'd + re-parsed on EVERY connect).
 	srsReady := compileSmartResult(&result, dataDir)
 
+	// Refresh the IP-subnet half of the block-list too. Runs after the domains
+	// so it never delays what the caller is actually waiting for, and its error
+	// is deliberately dropped: ResolveBlockedCIDRs always yields a usable set,
+	// so a failed refresh just means Telegram routing stays on the previous
+	// cache (or the builtin ranges) for another cycle.
+	cidrRes := proxy.ResolveBlockedCIDRs(context.Background(), provider, smartCIDRCachePath(dataDir))
+
 	// NOTE: the domain list is deliberately NOT returned. It used to come back
 	// as a JSON array the Kotlin side parsed with org.json (4.6 MB, ~150k
 	// entries, on the main thread at app start) and then re-serialised into the
 	// config. The SRS on disk is now the single source of truth.
 	out := map[string]interface{}{
-		"country":  result.Country,
-		"source":   result.Source,
-		"count":    len(result.Domains),
-		"srsReady": srsReady,
-		"error":    "",
+		"country":    result.Country,
+		"source":     result.Source,
+		"count":      len(result.Domains),
+		"srsReady":   srsReady,
+		"cidrCount":  len(cidrRes.CIDRs),
+		"cidrSource": cidrRes.Source,
+		"error":      "",
 	}
 	if result.Err != nil {
 		out["error"] = result.Err.Error()
@@ -1324,6 +1351,11 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 		SmartMode:           opts.SmartMode,
 		SmartBlockedDomains: splitSmartList(opts.SmartBlockedDomainsList),
 		AdBlock:             opts.AdBlock,
+		// Read from the cache, never fetched here: connect must not wait on a
+		// subnet download, and the resolver always returns a usable set — the
+		// builtin Telegram ranges at worst. Same reasoning as the bundled SRS
+		// seed. FetchSmartList refreshes it in the background of a list update.
+		SmartBlockedCIDRs: smartBlockedCIDRs(opts.SmartMode, dataDir),
 		// Desktop's DNSLeakProtection (toggles strict_route) is forced off
 		// on Android — VpnService can't manipulate routes outside its TUN,
 		// and AutoRoute already catches all egress traffic, so DNS bypass

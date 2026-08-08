@@ -95,6 +95,13 @@ type EngineConfig struct {
 	// Empty + SmartMode=true means the user enabled Smart but no list was
 	// fetched yet — fall back to Global (final=proxy) until the list arrives.
 	SmartBlockedDomains []string
+	// SmartBlockedCIDRs is the IP-subnet half of the Smart block-list
+	// (Telegram MTProto data centers, Discord voice), from
+	// LoadCachedBlockedCIDRs / ResolveBlockedCIDRs. Telegram's native client
+	// dials these addresses directly — no domain, no TLS SNI — so no
+	// domain-suffix rule and no rule-set can ever match them; only an ip_cidr
+	// rule on the destination pulls that traffic into the tunnel. Smart-only.
+	SmartBlockedCIDRs []string
 }
 
 type Engine interface {
@@ -932,6 +939,20 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 				Outbound:     "proxy",
 			})
 		}
+	}
+
+	// Smart mode: tunnel the IP-only blocked ranges. These carry no domain and
+	// no SNI, so neither the rule-set above nor the domain-suffix fallback can
+	// match them — an ip_cidr rule on the destination is the only way to pull
+	// the native Telegram client through the proxy. Sits after the domain rules
+	// and before the self-direct bypass, so the tunnel's own endpoint stays
+	// direct even if it ever shared a range with one of these.
+	if cfg.SmartMode && len(cfg.SmartBlockedCIDRs) > 0 {
+		rules = append(rules, SBRouteRule{
+			Action:   "route",
+			IPCidr:   append([]string(nil), cfg.SmartBlockedCIDRs...),
+			Outbound: "proxy",
+		})
 	}
 
 	isEndpointProtocol := strings.EqualFold(strings.TrimSpace(cfg.Proxy.Type), "wireguard") ||
