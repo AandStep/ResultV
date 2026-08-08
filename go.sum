@@ -4294,6 +4294,8 @@ github.com/shtorm-7/sing-box-extended v1.13.16-extended-2.6.1 h1:/cIgAvyn/k9zJ+A
 github.com/shtorm-7/sing-box-extended v1.13.16-extended-2.6.1/go.mod h1:xTidTWQzIX6XVh9cA292cU3kkGoNdleACZGWTwItxnk=
 github.com/shtorm-7/sing-mux v0.3.4-extended-1.1.0 h1:rSDID4on/Z9OherBpvsvKqyuj7dM2b4q+YBJFcpLGpI=
 github.com/shtorm-7/sing-mux v0.3.4-extended-1.1.0/go.mod h1:1qHy7cnbDQSY2OWL7CybproWC0t5Ia/DIuNHAzB6ZCA=
+github.com/shtorm-7/sing-vmess v0.2.8-extended-1.0.0 h1:OjvqZOhYSi9eIJGYC0iPDPqvgo/asujvhAGkFzbZ5/Y=
+github.com/shtorm-7/sing-vmess v0.2.8-extended-1.0.0/go.mod h1:P11scgTxMxVVQ8dlM27yNm3Cro40mD0+gHbnqrNGDuY=
 github.com/shtorm-7/tailscale v1.92.4-sing-box-1.13-mod.7-extended-1.0.2 h1:hSMjh97OszszOd8HrzpaYUQH9dWRRBluJCbwQyz8ZOk=
 github.com/shtorm-7/tailscale v1.92.4-sing-box-1.13-mod.7-extended-1.0.2/go.mod h1:TYIIqO5sZpWq873rLIeO2usszSMUpR3h6WdqVVs65ug=
 github.com/shtorm-7/wireguard-go v0.0.2-beta.1-extended-1.5.0 h1:7YhTkPhDUK81OV9mRMH26Efobh0VCGlig/HgHAlsf5U=
@@ -4329,8 +4331,6 @@ github.com/spiffe/go-spiffe/v2 v2.5.0/go.mod h1:P+NxobPc6wXhVtINNtFjNWGBTreew1GB
 github.com/spiffe/go-spiffe/v2 v2.6.0/go.mod h1:gm2SeUoMZEtpnzPNs2Csc0D/gX33k1xIx7lEzqblHEs=
 github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 h1:uOfcYT+3QungH6tIGSVCR/Y3KJmgJiHcojJbMTPDZAI=
 github.com/standard-webhooks/standard-webhooks/libraries v0.0.1/go.mod h1:L1MQhA6x4dn9r007T033lsaZMv9EmBAdXyU/+EF40fo=
-github.com/starifly/sing-vmess v0.2.7-mod.9 h1:xobAmejSbBQ0A3f/EtJ9cJd3m6gK7dDPccPdeGz7tXY=
-github.com/starifly/sing-vmess v0.2.7-mod.9/go.mod h1:5aYoOtYksAyS0NXDm0qKeTYW1yoE1bJVcv+XLcVoyJs=
 github.com/stoewer/go-strcase v1.3.0/go.mod h1:fAH5hQ5pehh+j3nZfvwdk2RgEgQjAoM8wodgtPmh1xo=
 github.com/stoewer/go-strcase v1.3.1/go.mod h1:fAH5hQ5pehh+j3nZfvwdk2RgEgQjAoM8wodgtPmh1xo=
 github.com/streadway/amqp v0.0.0-20190404075320-75d898a42a94/go.mod h1:AZpEONHx3DKn8O/DFsRAY58/XVQiIPMTMB1SddzLXVw=

@@ -51,6 +51,10 @@ build/windows/installer/tmp/*
 # Local test artifacts
 /ResultV_test.exe
 /test.html
+# Scratch binaries built next to the package under test. One of these
+# (internal/proxy/scratch_quic.exe, 8.8 MB) was committed and had to be
+# removed; it stays in history regardless, so keep them out from now on.
+internal/**/*.exe
 
 # Secrets and private build tools
 .env
