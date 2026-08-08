@@ -66,6 +66,16 @@ object SmartListRepository {
         val lastError: String = "",
         /** A usable compiled rule-set exists on disk (seeded or downloaded). */
         val ready: Boolean = false,
+        /**
+         * Size and provenance of the IP-subnet half of the block-list — the
+         * Telegram MTProto and Discord voice ranges that carry no domain and
+         * so can never appear in [count]. Reported separately because it has
+         * its own cache and its own fallback: [cidrSource] "builtin" means the
+         * remote list never arrived and only the static Telegram ranges are in
+         * play, which the domain count would happily hide.
+         */
+        val cidrCount: Int = 0,
+        val cidrSource: String = "",
     ) {
         /** No usable list — Smart routing must fall back to Global. */
         val isEmpty: Boolean get() = !ready
@@ -185,7 +195,27 @@ object SmartListRepository {
         AppLog.info(R.string.log_smart_updated,
             parsed.country.uppercase().ifBlank { "?" }, parsed.count,
             source = AppLog.resolve(R.string.log_source_smart))
+        logCidrSnapshot(parsed)
         parsed
+    }
+
+    /**
+     * Report the IP-subnet half separately. Worth its own line rather than a
+     * number tacked onto the domain count: these ranges are the only thing that
+     * routes Telegram's native client, which dials MTProto by IP and so never
+     * appears in the domain list at all. A "builtin" source means the remote
+     * list never arrived — Telegram still works off the static ranges, but
+     * Discord voice does not, and nothing else in the UI would say so.
+     */
+    private fun logCidrSnapshot(s: Snapshot) {
+        if (s.cidrCount <= 0) return
+        if (s.cidrSource == "builtin") {
+            AppLog.warning(R.string.log_smart_cidrs_builtin, s.cidrCount,
+                source = AppLog.resolve(R.string.log_source_smart))
+        } else {
+            AppLog.info(R.string.log_smart_cidrs, s.cidrCount,
+                source = AppLog.resolve(R.string.log_source_smart))
+        }
     }
 
     /** Fire-and-forget refresh for UI use (Rules toggle, manual refresh). */
@@ -247,6 +277,8 @@ object SmartListRepository {
             fetchedAt = System.currentTimeMillis(),
             lastError = o.optString("error"),
             ready = o.optBoolean("srsReady", false) || srsReady(),
+            cidrCount = o.optInt("cidrCount", 0),
+            cidrSource = o.optString("cidrSource"),
         )
     }
 
@@ -261,6 +293,8 @@ object SmartListRepository {
                 source = o.optString("source"),
                 fetchedAt = o.optLong("fetchedAt", 0L),
                 lastError = o.optString("lastError"),
+                cidrCount = o.optInt("cidrCount", 0),
+                cidrSource = o.optString("cidrSource"),
             )
         } catch (t: Throwable) {
             Log.w(TAG, "failed to read $f, starting empty", t)
@@ -280,6 +314,8 @@ object SmartListRepository {
                 .put("source", s.source)
                 .put("fetchedAt", s.fetchedAt)
                 .put("lastError", s.lastError)
+                .put("cidrCount", s.cidrCount)
+                .put("cidrSource", s.cidrSource)
             f.writeText(o.toString())
         } catch (t: Throwable) {
             Log.e(TAG, "failed to persist smart-list meta", t)

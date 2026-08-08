@@ -426,6 +426,8 @@
     <string name="log_adblock_update_failed">Block list update failed: %1$s</string>
     <string name="log_adblock_cache_reset">Corrupt block-list cache detected — cleared and restarting the engine.</string>
     <string name="log_smart_updated">Smart lists updated (%1$s): %2$d entries.</string>
+    <string name="log_smart_cidrs">Smart: %1$d IP ranges (Telegram, Discord voice).</string>
+    <string name="log_smart_cidrs_builtin">Smart: using %1$d builtin IP ranges — the remote list is unavailable, so Telegram still routes but Discord voice does not.</string>
     <string name="log_smart_update_failed">Smart list update failed: %1$s</string>
     <string name="log_smart_allowlist">Smart: %1$d app(s) routed through VPN</string>
 
