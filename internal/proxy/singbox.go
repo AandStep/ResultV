@@ -149,6 +149,22 @@ func (w *singBoxLogWriter) redactServer(msg string) string {
 
 var ansiEscapeRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
+// engineSecretRE matches the UAPI-style "key=value" pairs that carry secret
+// material. sing-box-extended reports IpcSet failures by dumping the entire
+// ipcConf into the error text (transport/wireguard/endpoint.go), so a single
+// failed WireGuard/AmneziaWG setup would otherwise write the private key —
+// and the AWG 3.0 header-protection key — straight into the user-visible log.
+// public_key is deliberately absent: it is not secret and keeps the dump
+// diagnosable.
+var engineSecretRE = regexp.MustCompile(`(?i)\b(private_key|pre_shared_key|preshared_key|header_protection_key)=\S*`)
+
+func redactEngineSecrets(msg string) string {
+	if !strings.Contains(msg, "_key=") {
+		return msg
+	}
+	return engineSecretRE.ReplaceAllString(msg, "$1=<скрыто>")
+}
+
 func (w *singBoxLogWriter) WriteMessage(level sblog.Level, message string) {
 	if level > sblog.LevelWarn {
 		return
@@ -175,7 +191,7 @@ func (w *singBoxLogWriter) WriteMessage(level sblog.Level, message string) {
 		clean = ansiEscapeRE.ReplaceAllString(message, "")
 	}
 
-	msg := "[SING-BOX] " + w.redactServer(clean)
+	msg := "[SING-BOX] " + redactEngineSecrets(w.redactServer(clean))
 	if level <= sblog.LevelError {
 		w.log.Error(msg)
 	} else if level == sblog.LevelWarn {
