@@ -95,21 +95,26 @@ func TestAmneziaWGURIRoundTripAWG2Fields(t *testing.T) {
 	if a.I1 != "<b 0x01>" || a.I5 != "<wt 1000>" {
 		t.Fatalf("I*: %+v", a)
 	}
-	if a.J1 != "<b 0xAA>" || a.J3 != "<c>" {
-		t.Fatalf("J*: %+v", a)
-	}
-	if a.ITime != 300 {
-		t.Fatalf("itime: %d", a.ITime)
-	}
+	// J1-J3 and ITime survive the URI parse (above — they stay in Extra so the
+	// UI can report them) but must NOT reach the endpoint. SBWireGuardAmnezia
+	// has no fields for them at all since 2.6.1 removed them from the core, so
+	// the invariant is now checked on the marshalled JSON below.
 
 	j, err := json.Marshal(ep)
 	if err != nil {
 		t.Fatal(err)
 	}
 	js := string(j)
-	for _, want := range []string{`"jc":5`, `"jmin":10`, `"jmax":50`, `"s1":16`, `"h1":"1"`, `"itime":300`} {
+	for _, want := range []string{`"jc":5`, `"jmin":10`, `"jmax":50`, `"s1":16`, `"h1":"1"`} {
 		if !strings.Contains(js, want) {
 			t.Fatalf("missing %q in marshalled JSON: %s", want, js)
+		}
+	}
+	// This JSON becomes the IPC string verbatim, so the unsupported keys must
+	// be absent from it, not merely zeroed on the struct.
+	for _, unwanted := range []string{`"itime"`, `"j1"`, `"j2"`, `"j3"`} {
+		if strings.Contains(js, unwanted) {
+			t.Fatalf("marshalled JSON still carries %s: %s", unwanted, js)
 		}
 	}
 	// Round-trip the JSON to verify string fields survive marshal/unmarshal
@@ -117,14 +122,13 @@ func TestAmneziaWGURIRoundTripAWG2Fields(t *testing.T) {
 	var rt struct {
 		Amnezia struct {
 			I1 string `json:"i1"`
-			J1 string `json:"j1"`
 		} `json:"amnezia"`
 	}
 	if err := json.Unmarshal(j, &rt); err != nil {
 		t.Fatal(err)
 	}
-	if rt.Amnezia.I1 != a.I1 || rt.Amnezia.J1 != a.J1 {
-		t.Fatalf("string round-trip mismatch: i1=%q j1=%q", rt.Amnezia.I1, rt.Amnezia.J1)
+	if rt.Amnezia.I1 != a.I1 {
+		t.Fatalf("string round-trip mismatch: i1=%q", rt.Amnezia.I1)
 	}
 }
 
@@ -146,11 +150,18 @@ func TestAmneziaWGURICaseInsensitiveCapitalKeys(t *testing.T) {
 		t.Fatalf("expected endpoint with amnezia, got %+v", cfg.Endpoints)
 	}
 	a := cfg.Endpoints[0].Amnezia
-	if a.JC != 4 || a.S1 != 15 || a.H1 != "7" || a.ITime != 120 {
+	if a.JC != 4 || a.S1 != 15 || a.H1 != "7" {
 		t.Fatalf("capitalized keys: %+v", a)
 	}
-	if a.I1 != "<b 0x01>" || a.J1 != "<c>" {
+	if a.I1 != "<b 0x01>" {
 		t.Fatalf("capitalized string keys: %+v", a)
+	}
+	// Capitalized J1/Itime are parsed out of the URI just the same, and dropped
+	// at the endpoint just the same — there is no field to hold them.
+	if amJSON, err := json.Marshal(a); err != nil {
+		t.Fatal(err)
+	} else if strings.Contains(string(amJSON), `"j1"`) || strings.Contains(string(amJSON), `"itime"`) {
+		t.Fatalf("unsupported knobs reached the endpoint: %s", amJSON)
 	}
 	// Jmin > Jmax should be normalized (swap).
 	if a.JMin != 10 || a.JMax != 20 {

@@ -742,6 +742,16 @@ func parseJSONWireGuardOutbound(outbound, settings map[string]interface{}, name,
 					amOut[k] = v
 				}
 			}
+			// AmneziaWG 3.0 knobs. Kept as strings because every one of them
+			// is either a key or a range ("a" or "a-b"), and the range form
+			// must survive to the UAPI verbatim. The tunnel drops these (see
+			// awg3DeviceKnobs) but the handshake probe honours them, so losing
+			// them at parse time would break ping against an AWG 3.0 server.
+			for _, k := range awg3DeviceKnobs {
+				if v := asString(am[k]); v != "" && v != "0" {
+					amOut[k] = v
+				}
+			}
 			if len(amOut) > 0 {
 				extra["amnezia"] = amOut
 				hasAmnezia = true
@@ -1387,6 +1397,18 @@ func parseAmneziaWGURI(uri string) (config.ProxyEntry, error) {
 	amneziaStringKeys := []string{"i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3"}
 	for _, k := range amneziaStringKeys {
 		if v := strings.TrimSpace(getQueryParamCI(params, k)); v != "" {
+			amnezia[k] = v
+		}
+	}
+	// AmneziaWG 3.0 knobs. getQueryParamCI folds case but not separators, and
+	// AmneziaVPN spells these in the .conf as CamelCase without underscores
+	// (HeaderProtectionKey, RekeyAfterTime), so try that form too.
+	for _, k := range awg3DeviceKnobs {
+		v := strings.TrimSpace(getQueryParamCI(params, k))
+		if v == "" {
+			v = strings.TrimSpace(getQueryParamCI(params, strings.ReplaceAll(k, "_", "")))
+		}
+		if v != "" && v != "0" {
 			amnezia[k] = v
 		}
 	}

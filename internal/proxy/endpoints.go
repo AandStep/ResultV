@@ -171,50 +171,197 @@ func intListFromExtra(extra map[string]interface{}, key string) []int {
 	}
 }
 
-func amneziaFromExtra(extra map[string]interface{}) *SBWireGuardAmnezia {
+// amneziaMapFromExtra pulls the "amnezia" sub-object out of an entry's Extra,
+// accepting both an already-decoded map and a raw JSON blob.
+func amneziaMapFromExtra(extra map[string]interface{}) map[string]interface{} {
 	v, ok := extra["amnezia"]
 	if !ok || v == nil {
 		return nil
 	}
-	m, ok := v.(map[string]interface{})
-	if !ok {
-		if raw, ok := v.(json.RawMessage); ok && len(raw) > 0 {
-			var mm map[string]interface{}
-			if json.Unmarshal(raw, &mm) == nil {
-				m = mm
-			}
+	if m, ok := v.(map[string]interface{}); ok {
+		return m
+	}
+	if raw, ok := v.(json.RawMessage); ok && len(raw) > 0 {
+		var mm map[string]interface{}
+		if json.Unmarshal(raw, &mm) == nil {
+			return mm
 		}
 	}
+	return nil
+}
+
+func amneziaFromExtra(extra map[string]interface{}) *SBWireGuardAmnezia {
+	m := amneziaMapFromExtra(extra)
 	if m == nil {
 		return nil
 	}
 	am := &SBWireGuardAmnezia{
-		JC:    intFromAny(m["jc"]),
-		JMin:  intFromAny(m["jmin"]),
-		JMax:  intFromAny(m["jmax"]),
-		S1:    intFromAny(m["s1"]),
-		S2:    intFromAny(m["s2"]),
-		S3:    intFromAny(m["s3"]),
-		S4:    intFromAny(m["s4"]),
-		H1:    amneziaHeaderString(m["h1"]),
-		H2:    amneziaHeaderString(m["h2"]),
-		H3:    amneziaHeaderString(m["h3"]),
-		H4:    amneziaHeaderString(m["h4"]),
-		I1:    stringFromExtraValue(m["i1"]),
-		I2:    stringFromExtraValue(m["i2"]),
-		I3:    stringFromExtraValue(m["i3"]),
-		I4:    stringFromExtraValue(m["i4"]),
-		I5:    stringFromExtraValue(m["i5"]),
-		J1:    stringFromExtraValue(m["j1"]),
-		J2:    stringFromExtraValue(m["j2"]),
-		J3:    stringFromExtraValue(m["j3"]),
-		ITime: int64(intFromAny(m["itime"])),
+		JC: intFromAny(m["jc"]),
+		JMin: intFromAny(m["jmin"]),
+		JMax: intFromAny(m["jmax"]),
+		S1:   intFromAny(m["s1"]),
+		S2:   intFromAny(m["s2"]),
+		S3:   intFromAny(m["s3"]),
+		S4:   intFromAny(m["s4"]),
+		H1:   amneziaHeaderString(m["h1"]),
+		H2:   amneziaHeaderString(m["h2"]),
+		H3:   amneziaHeaderString(m["h3"]),
+		H4:   amneziaHeaderString(m["h4"]),
+		I1:   stringFromExtraValue(m["i1"]),
+		I2:   stringFromExtraValue(m["i2"]),
+		I3:   stringFromExtraValue(m["i3"]),
+		I4:   stringFromExtraValue(m["i4"]),
+		I5:   stringFromExtraValue(m["i5"]),
+
+		HeaderProtectionKey:    amneziaHeaderProtectionKey(m),
+		ContentPaddingAddition: amneziaRangeString(m["content_padding_addition"]),
+		RekeyAfterTime:         amneziaRangeString(m["rekey_after_time"]),
+		RekeyTimeout:           amneziaRangeString(m["rekey_timeout"]),
+		RejectAfterTime:        amneziaRangeString(m["reject_after_time"]),
+		KeepaliveTimeout:       amneziaRangeString(m["keepalive_timeout"]),
+		MaxHandshakeAttempts:   amneziaRangeString(m["max_handshake_attempts"]),
 	}
+	// J1-J3 / ITime are simply never read into the struct: there is nowhere to
+	// put them since 2.6.1 dropped the option fields. unsupportedAmneziaKnobs
+	// still reports them from the raw extra so the user learns they were lost.
 	if *am == (SBWireGuardAmnezia{}) {
 		return nil
 	}
 	normalizeAmnezia(am)
 	return am
+}
+
+// minHeaderProtectionPadding mirrors wireguard-go's HeaderCipherNonceSize. The
+// S1-S4 crypto padding doubles as the per-packet nonce for header protection,
+// so all four must be at least this large or mergeWithDevice refuses the whole
+// device with "S%d must be more then 12 to use headerProtection".
+//
+// Guarding this matters more than it looks. Before 2.6.1 header_protection_key
+// could not reach the tunnel at all, so the combination was unreachable; now it
+// is one subscription field away, and sing-box reports the resulting IpcSet
+// failure as E.Cause(err, "setup wireguard: \n", ipcConf) — which spills the
+// entire IPC string, private_key and preshared_key in hex, into the app log
+// (still true in 2.6.1, transport/wireguard/endpoint.go:270).
+//
+// Dropping the key does not cost a working tunnel: a server that demands header
+// protection will not answer an unprotected peer either way. It costs an opaque
+// failure and a leaked private key.
+const minHeaderProtectionPadding = 12
+
+// headerProtectionUsable reports whether an amnezia block may carry
+// header_protection_key — the key is present and every S1-S4 padding is large
+// enough to serve as its nonce.
+func headerProtectionUsable(m map[string]interface{}) bool {
+	if strings.TrimSpace(stringFromExtraValue(m["header_protection_key"])) == "" {
+		return false
+	}
+	for _, k := range []string{"s1", "s2", "s3", "s4"} {
+		if intFromAny(m[k]) < minHeaderProtectionPadding {
+			return false
+		}
+	}
+	return true
+}
+
+// amneziaHeaderProtectionKey returns the base64 header-protection key, or ""
+// when the surrounding config cannot legally use it. The core base64-decodes
+// this itself, so it must not be pre-converted to hex here — unlike the probe's
+// UAPI path, which needs hex.
+func amneziaHeaderProtectionKey(m map[string]interface{}) string {
+	if !headerProtectionUsable(m) {
+		return ""
+	}
+	return strings.TrimSpace(stringFromExtraValue(m["header_protection_key"]))
+}
+
+// amneziaRangeString renders an AmneziaWG 3.0 range knob the way upstream's
+// *badoption.Range[uint32] expects it. Its UnmarshalJSON takes a bare number,
+// "N", or "low-high", so a string is always safe — and a literal 0 means
+// "unset" to AmneziaWG, which must stay out of the config entirely.
+func amneziaRangeString(v interface{}) string {
+	s := strings.TrimSpace(stringFromExtraValue(v))
+	if s == "" || s == "0" {
+		return ""
+	}
+	return s
+}
+
+// awg3DeviceKnobs are the AmneziaWG 3.0 device-level knobs, in the order the
+// user-facing ordering, and the order they are written to the IPC string.
+//
+// Supported end to end since sing-box-extended v1.13.16-extended-2.6.1: the
+// fork (wireguard-go extended-1.5.0) implements every one of these, and 2.6.1
+// finally widened option.WireGuardAmnezia and taught
+// transport/wireguard/endpoint.go to write them. Before 2.6.1 the fork had them
+// but the core could not express them, so they reached the handshake probe —
+// which builds its own UAPI — but never the tunnel.
+var awg3DeviceKnobs = []string{
+	"header_protection_key",
+	"content_padding_addition",
+	"rekey_after_time",
+	"rekey_timeout",
+	"reject_after_time",
+	"keepalive_timeout",
+	"max_handshake_attempts",
+}
+
+// unsupportedAmneziaKnobs lists, in a stable order, the AmneziaWG knobs present
+// in extra that the engine cannot honour. Pure — intended for user-facing
+// warnings. Returns nil when there is nothing to report.
+//
+// Only the junk-packet knobs remain: no wireguard-go fork ever implemented
+// j1-j3 / itime, and 2.6.1 removed the matching option fields from the core, so
+// they now have nowhere to go on either side. Emitting them would be actively
+// harmful — the root decoder runs with DisallowUnknownFields, so one unknown
+// key fails the whole config rather than a single endpoint.
+//
+// Dropping them costs DPI resistance, not connectivity: junk packets are
+// outbound decoration, unlike H1-H4 / S1-S4 which the peer needs to classify
+// and de-pad packets. The warning exists so a config that genuinely depends on
+// them is visible rather than silently degraded.
+func unsupportedAmneziaKnobs(extra map[string]interface{}) []string {
+	m := amneziaMapFromExtra(extra)
+	if m == nil {
+		return nil
+	}
+	var out []string
+	for _, k := range []string{"j1", "j2", "j3"} {
+		if stringFromExtraValue(m[k]) != "" {
+			out = append(out, k)
+		}
+	}
+	if intFromAny(m["itime"]) > 0 {
+		out = append(out, "itime")
+	}
+	// Not unsupported by the engine — unusable as configured. Same user-visible
+	// outcome (the knob is dropped), and worth surfacing because the server
+	// almost certainly expects header protection to be on.
+	if stringFromExtraValue(m["header_protection_key"]) != "" && !headerProtectionUsable(m) {
+		out = append(out, "header_protection_key")
+	}
+	return out
+}
+
+// UnsupportedAmneziaKnobs reports the AmneziaWG knobs in a marshaled
+// config.ProxyEntry's Extra that the engine will drop, as a comma-separated
+// list ("j1,itime"). Empty when there is nothing to warn about, including for
+// non-AmneziaWG entries.
+func UnsupportedAmneziaKnobs(entryJSON string) string {
+	var entry struct {
+		Type  string          `json:"type"`
+		Extra json.RawMessage `json:"extra"`
+	}
+	if json.Unmarshal([]byte(entryJSON), &entry) != nil {
+		return ""
+	}
+	if strings.ToUpper(strings.TrimSpace(entry.Type)) != "AMNEZIAWG" {
+		return ""
+	}
+	var extra map[string]interface{}
+	if len(entry.Extra) == 0 || json.Unmarshal(entry.Extra, &extra) != nil {
+		return ""
+	}
+	return strings.Join(unsupportedAmneziaKnobs(extra), ",")
 }
 
 // amneziaHeaderString returns the H1-H4 value as a string in the form
@@ -235,37 +382,42 @@ func amneziaHeaderString(v interface{}) string {
 	return ""
 }
 
+// wireguard-go extended-1.5.0 tightened the UAPI parsers: jc/jmin/jmax now go
+// through ParseUint(_, 10, 32) and s1-s4 through ParseUint(_, 10, 16), where
+// -1.4.3 used Atoi and only rejected non-positive values. A knob past those
+// bounds no longer degrades — it fails the whole IpcSet and the endpoint never
+// starts, so clamp instead of forwarding a value we know will be rejected.
+const (
+	maxAmneziaPadding = 1<<16 - 1
+	maxAmneziaJunk    = 1<<32 - 1
+)
+
+// clampKnob folds a knob into [0, max]. Takes int64 so the uint32 ceiling is
+// representable on 32-bit builds (armeabi-v7a), where int is 32 bits wide.
+func clampKnob(v int, max int64) int {
+	if v < 0 {
+		return 0
+	}
+	if int64(v) > max {
+		return int(max)
+	}
+	return v
+}
+
 func normalizeAmnezia(am *SBWireGuardAmnezia) {
 	if am == nil {
 		return
 	}
-	if am.JC < 0 {
-		am.JC = 0
-	}
-	if am.JMin < 0 {
-		am.JMin = 0
-	}
-	if am.JMax < 0 {
-		am.JMax = 0
-	}
+	am.JC = clampKnob(am.JC, maxAmneziaJunk)
+	am.JMin = clampKnob(am.JMin, maxAmneziaJunk)
+	am.JMax = clampKnob(am.JMax, maxAmneziaJunk)
 	if am.JMin > 0 && am.JMax > 0 && am.JMin > am.JMax {
 		am.JMin, am.JMax = am.JMax, am.JMin
 	}
-	if am.S1 < 0 {
-		am.S1 = 0
-	}
-	if am.S2 < 0 {
-		am.S2 = 0
-	}
-	if am.S3 < 0 {
-		am.S3 = 0
-	}
-	if am.S4 < 0 {
-		am.S4 = 0
-	}
-	if am.ITime < 0 {
-		am.ITime = 0
-	}
+	am.S1 = clampKnob(am.S1, maxAmneziaPadding)
+	am.S2 = clampKnob(am.S2, maxAmneziaPadding)
+	am.S3 = clampKnob(am.S3, maxAmneziaPadding)
+	am.S4 = clampKnob(am.S4, maxAmneziaPadding)
 	const maxJunkLen = 4096
 	clip := func(s string) string {
 		if len(s) > maxJunkLen {
@@ -278,7 +430,4 @@ func normalizeAmnezia(am *SBWireGuardAmnezia) {
 	am.I3 = clip(am.I3)
 	am.I4 = clip(am.I4)
 	am.I5 = clip(am.I5)
-	am.J1 = clip(am.J1)
-	am.J2 = clip(am.J2)
-	am.J3 = clip(am.J3)
 }

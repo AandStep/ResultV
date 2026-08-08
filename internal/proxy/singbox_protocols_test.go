@@ -18,6 +18,7 @@ package proxy
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/sagernet/sing-box/include"
@@ -102,8 +103,15 @@ func TestAmneziaWGEndpointConfigIncludesAmneziaSection(t *testing.T) {
 	if ep.Amnezia.JC != 7 || ep.Amnezia.JMin != 10 || ep.Amnezia.JMax != 20 {
 		t.Fatalf("unexpected amnezia jitter values: %+v", ep.Amnezia)
 	}
-	if ep.Amnezia.ITime != 42 {
-		t.Fatalf("unexpected amnezia itime: %+v", ep.Amnezia)
+	// itime is deliberately dropped: no released wireguard-go fork parses it,
+	// and 2.6.1 removed the option field, so emitting it would now fail the
+	// whole config through DisallowUnknownFields. See unsupportedAmneziaKnobs.
+	amJSON, err := json.Marshal(ep.Amnezia)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(amJSON), `"itime"`) {
+		t.Fatalf("itime should have been dropped: %s", amJSON)
 	}
 }
 

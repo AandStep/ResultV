@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "github.com/sagernet/gomobile" // ensure sagernet's gomobile/bind stays in go.mod for AAR builds
@@ -71,7 +72,10 @@ func Version() string {
 // Reason values: "timeout", "connection_refused", "network_unreachable",
 // "no_route_to_host", "connection_closed", "error".
 //
-// CheckType is "tcp", "udp", "tcp_fallback" (Hysteria2 fallback path).
+// CheckType is "tcp", "udp", "tcp_fallback" (Hysteria2 fallback path),
+// "quic_handshake", "wg_handshake" (keyed WireGuard/AmneziaWG Noise probe) or
+// "wg_liveness" (the keyless fallback used while a tunnel is up — see
+// SetTunnelActive).
 type PingResult struct {
 	Reachable bool   `json:"reachable"`
 	LatencyMs int64  `json:"latencyMs"`
@@ -120,6 +124,60 @@ func DecodeDeepLink(rawURL string) (string, error) {
 // pre-check before calling DecodeDeepLink.
 func IsDeepLink(rawURL string) bool {
 	return proxy.IsDeepLink(rawURL)
+}
+
+// tunnelActive mirrors the Android VpnService lifecycle: true from the moment
+// a connect starts until the tunnel is torn down. Kotlin keeps it in sync via
+// SetTunnelActive; nothing else writes it.
+var tunnelActive atomic.Bool
+
+// SetTunnelActive tells the bindings whether the VPN tunnel is currently up.
+//
+// It gates the keyed WireGuard/AmneziaWG handshake probe used by PingEntry.
+// That probe speaks Noise with the profile's OWN private key, so to the server
+// it is indistinguishable from the live tunnel — the same peer, sharing one
+// handshake slot. Running it against a connected server:
+//
+//   - hijacks the peer's endpoint (wireguard-go re-points a peer to the source
+//     address of any authenticated handshake, and the probe's socket is a
+//     throwaway ephemeral port that closes immediately), so the tunnel keeps
+//     sending but stops receiving;
+//   - trips the HandshakeInitationRate flood guard, silently dropping whichever
+//     initiation lands second;
+//   - overwrites the peer's handshake state and replay timestamp, which can
+//     reject the tunnel's own initiation outright.
+//
+// Must be called on every connect and disconnect. Defaults to false so a
+// process that never connects still gets real handshake RTTs.
+func SetTunnelActive(active bool) {
+	tunnelActive.Store(active)
+}
+
+// keyedWGProbeAllowed reports whether PingEntry may use the keyed handshake
+// probe rather than the keyless liveness fallback.
+func keyedWGProbeAllowed() bool {
+	return !tunnelActive.Load()
+}
+
+// UnsupportedAWGKnobs reports which AmneziaWG parameters in a profile's
+// marshaled ProxyEntry the engine has to drop, as a comma-separated list
+// ("j1,j2,itime"). Empty when there is nothing to report.
+//
+// Only the junk-packet knobs are left. No wireguard-go fork ever implemented
+// J1-J3 / Itime, and sing-box-extended 2.6.1 removed the matching option fields
+// in response, so they have nowhere to go on either side — and emitting one now
+// fails the whole config through DisallowUnknownFields, not just the endpoint.
+// See unsupportedAmneziaKnobs.
+//
+// The AmneziaWG 3.0 knobs used to be listed here too, back when the fork
+// implemented them but the core could not express them. 2.6.1 closed that gap,
+// so they are passed through to the tunnel now and are no longer reported.
+//
+// Kotlin calls this on connect so the user is told the server asked for
+// obfuscation the engine can't provide, instead of silently getting a weaker
+// tunnel.
+func UnsupportedAWGKnobs(entryJSON string) string {
+	return proxy.UnsupportedAmneziaKnobs(entryJSON)
 }
 
 // Ping probes a proxy server with a protocol-appropriate check and
@@ -193,8 +251,19 @@ func PingEntry(entryJSON string) (string, error) {
 	)
 	switch ptUpper {
 	case "WIREGUARD", "AMNEZIAWG":
-		latency, reachable, reason = proxy.PingWireGuardHandshake(entryJSON)
-		checkType = "wg_handshake"
+		if entry.IP == "" || entry.Port <= 0 {
+			return "", fmt.Errorf("ping entry: missing ip/port")
+		}
+		if keyedWGProbeAllowed() {
+			latency, reachable, reason = proxy.PingWireGuardHandshake(entryJSON)
+			checkType = "wg_handshake"
+		} else {
+			// Tunnel is up — the keyed probe would attack the live session
+			// (see SetTunnelActive). Fall back to the keyless ICMP/UDP
+			// liveness check the desktop uses for these transports.
+			latency, reachable, reason = proxy.PingWireGuard(entry.IP, entry.Port)
+			checkType = "wg_liveness"
+		}
 	case "HYSTERIA2":
 		if entry.IP == "" || entry.Port <= 0 {
 			return "", fmt.Errorf("ping entry: missing ip/port")

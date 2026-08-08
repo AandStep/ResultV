@@ -267,15 +267,29 @@ type SBWireGuardAmnezia struct {
 	H2    string `json:"h2,omitempty"`
 	H3    string `json:"h3,omitempty"`
 	H4    string `json:"h4,omitempty"`
-	I1    string `json:"i1,omitempty"`
-	I2    string `json:"i2,omitempty"`
-	I3    string `json:"i3,omitempty"`
-	I4    string `json:"i4,omitempty"`
-	I5    string `json:"i5,omitempty"`
-	J1    string `json:"j1,omitempty"`
-	J2    string `json:"j2,omitempty"`
-	J3    string `json:"j3,omitempty"`
-	ITime int64  `json:"itime,omitempty"`
+	I1 string `json:"i1,omitempty"`
+	I2 string `json:"i2,omitempty"`
+	I3 string `json:"i3,omitempty"`
+	I4 string `json:"i4,omitempty"`
+	I5 string `json:"i5,omitempty"`
+
+	// AmneziaWG 3.0, available from sing-box-extended
+	// v1.13.16-extended-2.6.1 onwards. HeaderProtectionKey is base64 (the
+	// core decodes it to hex itself); the rest are emitted as strings so
+	// upstream parses them into *badoption.Range[uint32], which accepts
+	// both "N" and "low-high".
+	//
+	// There are deliberately no J1-J3 / ITime fields: 2.6.1 removed them
+	// from option.WireGuardAmnezia, and the root decoder runs with
+	// DisallowUnknownFields, so emitting one would now fail the *entire*
+	// config rather than a single endpoint.
+	HeaderProtectionKey    string `json:"header_protection_key,omitempty"`
+	ContentPaddingAddition string `json:"content_padding_addition,omitempty"`
+	RekeyAfterTime         string `json:"rekey_after_time,omitempty"`
+	RekeyTimeout           string `json:"rekey_timeout,omitempty"`
+	RejectAfterTime        string `json:"reject_after_time,omitempty"`
+	KeepaliveTimeout       string `json:"keepalive_timeout,omitempty"`
+	MaxHandshakeAttempts   string `json:"max_handshake_attempts,omitempty"`
 }
 
 type SBUTLS struct {

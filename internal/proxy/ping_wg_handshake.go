@@ -233,6 +233,11 @@ func buildWGUAPI(entry config.ProxyEntry) (uapi string, endpoint string, err err
 // Integer knobs (jc/jmin/jmax/s1-s4) and the magic-header / junk-packet knobs
 // (h1-h4, i1-i5 — which may be ranges or templates carried as strings) are
 // passed through in the form the wireguard-go fork's UAPI parser accepts.
+//
+// This builder speaks to wireguard-go directly rather than through sing-box's
+// option struct, so it is the one path that can carry the full AmneziaWG 3.0
+// knob set — see awg3DeviceKnobs for why the tunnel cannot. A probe against a
+// server that requires header protection only completes if we send them.
 func writeAmneziaUAPI(b *strings.Builder, extra map[string]any) {
 	amRaw, ok := extra["amnezia"].(map[string]any)
 	if !ok {
@@ -257,6 +262,49 @@ func writeAmneziaUAPI(b *strings.Builder, extra map[string]any) {
 			}
 		}
 	}
+	// ── AmneziaWG 3.0 (wireguard-go extended-1.5.0) ──
+	// The key is the only one needing a conversion; the rest are ranges
+	// ("a" or "a-b") that UintRange.FromString takes verbatim.
+	//
+	// headerProtectionUsable gates the key for the same reason the config path
+	// does: with S1-S4 below the nonce size the device refuses to start at all,
+	// so sending it would turn every probe into a flat probe_error. Keeping the
+	// two paths on one rule means ping and connect agree about a given config.
+	if headerProtectionUsable(amRaw) {
+		if h := amneziaKeyHex(amRaw["header_protection_key"]); h != "" {
+			fmt.Fprintf(b, "header_protection_key=%s\n", h)
+		}
+	}
+	for _, k := range awg3DeviceKnobs {
+		if k == "header_protection_key" {
+			continue
+		}
+		if v, ok := amRaw[k]; ok {
+			s := amneziaScalar(v)
+			if s != "" && s != "0" {
+				fmt.Fprintf(b, "%s=%s\n", k, s)
+			}
+		}
+	}
+}
+
+// amneziaKeyHex normalizes a header-protection key to the lowercase hex the
+// UAPI expects. `awg genkey` emits base64 like every other WireGuard key, but
+// HeaderCipherKey.FromHex only accepts hex, so accept either spelling.
+func amneziaKeyHex(v any) string {
+	s := amneziaScalar(v)
+	if s == "" {
+		return ""
+	}
+	if len(s) == 64 {
+		if _, err := hex.DecodeString(s); err == nil {
+			return strings.ToLower(s)
+		}
+	}
+	if h, err := keyToHex(s); err == nil {
+		return h
+	}
+	return ""
 }
 
 // amneziaScalar renders an AmneziaWG knob value (which may arrive as a number
@@ -292,20 +340,24 @@ func keyToHex(b64 string) (string, error) {
 
 // ──────────────────────── stub TUN ────────────────────────
 
+// stubTUNRetryInterval is how often the stub re-offers its synthetic packet.
+// A var so tests can shrink it.
+var stubTUNRetryInterval = 250 * time.Millisecond
+
 // stubTUN is a no-op tun.Device used solely to drive a handshake probe. It
-// surfaces exactly one synthetic IPv4 packet (so the device routes it to the
-// peer and initiates the handshake) and then blocks until Close; every Write
-// is discarded.
+// repeatedly surfaces a synthetic IPv4 packet (so the device routes it to the
+// peer and initiates the handshake); every Write is discarded.
 type stubTUN struct {
 	events chan tun.Event
 	closed chan struct{}
-	sent   bool
+	first  bool
 }
 
 func newStubTUN() *stubTUN {
 	t := &stubTUN{
 		events: make(chan tun.Event, 1),
 		closed: make(chan struct{}),
+		first:  true,
 	}
 	t.events <- tun.EventUp
 	return t
@@ -322,15 +374,37 @@ var dummyIPv4Packet = []byte{
 	10, 0, 0, 2, // dst 10.0.0.2
 }
 
+// Read re-offers the synthetic packet on a slow tick rather than exactly once.
+//
+// device.NewDevice starts RoutineReadFromTUN before the caller gets a chance to
+// run IpcSet, so the very first Read is served while the device still has no
+// peers: allowedips.Lookup returns nil and the packet is dropped on the floor.
+// A stub that yields one packet and then blocks therefore leaves the device
+// with nothing to send — no handshake initiation is ever queued and the probe
+// reports a flat "timeout" having transmitted zero bytes. (It succeeded only
+// when the reader goroutine happened to lose the scheduling race and read after
+// IpcSet, which is why the probe looked flaky rather than broken.)
+//
+// Repeating also gives a lost initiation another trigger, at the cost of a
+// handful of packets the device discards once the handshake is under way.
 func (t *stubTUN) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
-	if !t.sent {
-		t.sent = true
-		n := copy(bufs[0][offset:], dummyIPv4Packet)
-		sizes[0] = n
-		return 1, nil
+	if t.first {
+		t.first = false
+	} else {
+		select {
+		case <-t.closed:
+			return 0, os.ErrClosed
+		case <-time.After(stubTUNRetryInterval):
+		}
 	}
-	<-t.closed
-	return 0, os.ErrClosed
+	select {
+	case <-t.closed:
+		return 0, os.ErrClosed
+	default:
+	}
+	n := copy(bufs[0][offset:], dummyIPv4Packet)
+	sizes[0] = n
+	return 1, nil
 }
 
 func (t *stubTUN) Write(bufs [][]byte, offset int) (int, error) { return len(bufs), nil }

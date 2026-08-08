@@ -15,6 +15,10 @@ import java.net.URLEncoder
  *   MTU        = 1420
  *   # AmneziaWG extras:
  *   Jc = 4  Jmin = 40  Jmax = 70  S1 = 0  S2 = 0  H1 = 1  H2 = 2  H3 = 3  H4 = 4
+ *   # AmneziaWG 3.0 extras (ranges may be "a" or "a-b"):
+ *   HeaderProtectionKey = <base64>  ContentPaddingAddition = 10-50
+ *   RekeyAfterTime = 120  RekeyTimeout = 5  RejectAfterTime = 180
+ *   KeepaliveTimeout = 10  MaxHandshakeAttempts = 18
  *
  *   [Peer]
  *   PublicKey    = <base64>
@@ -70,7 +74,19 @@ object WireGuardConfParser {
         val j2 = iface["j2"].orEmpty()
         val j3 = iface["j3"].orEmpty()
 
-        val isAmnezia = listOf(jc, jmin, jmax, s1, s2, s3, s4, h1, h2, h3, h4).any { it.isNotBlank() }
+        // AmneziaWG 3.0 (.conf keys are CamelCase; parseSections lowercases them).
+        val awg3 = listOf(
+            "header_protection_key" to iface["headerprotectionkey"].orEmpty(),
+            "content_padding_addition" to iface["contentpaddingaddition"].orEmpty(),
+            "rekey_after_time" to iface["rekeyaftertime"].orEmpty(),
+            "rekey_timeout" to iface["rekeytimeout"].orEmpty(),
+            "reject_after_time" to iface["rejectaftertime"].orEmpty(),
+            "keepalive_timeout" to iface["keepalivetimeout"].orEmpty(),
+            "max_handshake_attempts" to iface["maxhandshakeattempts"].orEmpty(),
+        )
+
+        val isAmnezia = (listOf(jc, jmin, jmax, s1, s2, s3, s4, h1, h2, h3, h4) + awg3.map { it.second })
+            .any { it.isNotBlank() }
         val scheme = if (isAmnezia) "awg" else "wg"
         val name = if (isAmnezia) "AmneziaWG" else defaultName
 
@@ -91,6 +107,7 @@ object WireGuardConfParser {
                 "i1" to i1, "i2" to i2, "i3" to i3, "i4" to i4, "i5" to i5,
                 "j1" to j1, "j2" to j2, "j3" to j3,
             ).forEach { pairs.add(it) }
+            pairs.addAll(awg3)
         }
 
         val query = buildQuery(pairs)
