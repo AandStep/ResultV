@@ -91,14 +91,9 @@ fun HomeScreen(
     val dataDir = remember(ctx) { ctx.filesDir.absolutePath }
     LaunchedEffect(profilesState.profiles) {
         CountryRepository.resolve(profilesState.profiles, dataDir)
-        // Only the profiles missing a sample — covers first mount (nothing
-        // pinged yet) *and* a subscription refresh landing new/replaced
-        // profiles, without re-sweeping servers that already have a fresh
-        // reading.
-        val unpinged = profilesState.profiles.filterNot { it.isSection || it.id in pings }
-        if (unpinged.isNotEmpty()) {
-            PingRepository.refreshAll(unpinged)
-        }
+        // The auto-ping sweep for unprobed profiles lives in AppShell, not
+        // here: only one tab is composed at a time, so a screen-local effect
+        // missed every profile added while another tab was on top.
     }
     // Persisted across tab switches so reopening Home doesn't snap shut.
     var dropdownOpen by rememberSaveable { mutableStateOf(false) }

@@ -406,6 +406,24 @@ private class BoxPlatform(private val service: ResultVpnService) : PlatformInter
         }
     }
 
+    /**
+     * Bind a socket to a *named* network interface. Added to libbox's
+     * PlatformInterface in sing-box 1.13.14; sing-box only calls it when a
+     * dialer sets `bind_interface`, which no config this app builds ever does
+     * (verified: nothing under internal/ or mobile/ emits the key).
+     *
+     * Android has no interface-name binding — sockets bind to a `Network`, and
+     * the fd-based API we do have (`VpnService.protect`) means something else
+     * entirely. So rather than silently no-op — which would leave the socket on
+     * whatever route the system picked while sing-box believed it was pinned —
+     * fail loudly, matching upstream's platformInterfaceStub (os.ErrInvalid).
+     */
+    override fun bindInterfaceControl(fd: Int, interfaceName: String) {
+        throw UnsupportedOperationException(
+            "bind_interface is not supported on Android (fd=$fd, interface=$interfaceName)"
+        )
+    }
+
     override fun useProcFS(): Boolean = false
     override fun localDNSTransport(): LocalDNSTransport? = null
 

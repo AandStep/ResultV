@@ -11,6 +11,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.core.net.toUri
 import androidx.compose.foundation.Image
@@ -38,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,6 +69,7 @@ import com.resultv.android.vpn.ACTION_STOP
 import com.resultv.android.vpn.AppInventory
 import com.resultv.android.vpn.AppRoutingRepository
 import com.resultv.android.vpn.DeepLinkImporter
+import com.resultv.android.vpn.PingRepository
 import com.resultv.android.vpn.ProfileRepository
 import com.resultv.android.vpn.ResultVpnService
 import com.resultv.android.vpn.VpnState
@@ -328,6 +331,24 @@ private fun AppShell(
     // resetting them — the previous `when` switch threw all that away every
     // time the user touched the bottom nav.
     val tabStateHolder = rememberSaveableStateHolder()
+
+    // Auto-ping newly-appeared profiles, from here rather than from a screen.
+    //
+    // Only one tab is composed at a time (see the `when (tab)` below), and this
+    // sweep used to live in HomeScreen's LaunchedEffect. Adding a server or a
+    // subscription ends with `onDone` switching to the Proxies tab, which has no
+    // such effect — so the new rows never got probed and each one span an
+    // endless spinner (ServerRow renders "no sample yet" as a spinner) until the
+    // user pressed the manual refresh. Hoisting it to the shell covers every
+    // entry path and every tab.
+    //
+    // results.value is read directly instead of being collected as state: this
+    // effect must re-run when the profile list changes, not every time a probe
+    // publishes a sample (which would restart the sweep on its own output).
+    val profilesForPing by ProfileRepository.state.collectAsStateWithLifecycle()
+    LaunchedEffect(profilesForPing.profiles) {
+        PingRepository.refreshMissing(profilesForPing.profiles)
+    }
 
     val ctx = LocalContext.current
     Scaffold(

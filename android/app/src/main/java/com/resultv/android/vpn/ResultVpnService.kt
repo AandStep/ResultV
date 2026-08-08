@@ -253,7 +253,31 @@ class ResultVpnService : VpnService() {
     /** Rebuild a sing-box config from whatever profile is currently active. */
     private fun buildConfigFromActiveProfile(): String? {
         val active = ProfileRepository.state.value.active ?: return null
+        warnAboutUnsupportedAwgKnobs(active)
         return BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath)
+    }
+
+    /**
+     * Tell the user when a profile asks for AmneziaWG obfuscation the engine
+     * has to drop (J1-J3 / Itime — the bundled wireguard-go implements none of
+     * them). The engine strips them so the endpoint still starts; without this
+     * line the user would just get a weaker tunnel, or an unexplained handshake
+     * timeout if the server actually requires them.
+     */
+    private fun warnAboutUnsupportedAwgKnobs(active: Profile) {
+        // Profiles carry either a parsed entry (subscription imports) or only a
+        // share URI (.conf / manual / link imports) — the AWG configs users
+        // paste are usually the latter, so resolve the URI form too.
+        val dropped = runCatching {
+            val entry = active.entryJson.ifBlank {
+                if (active.uri.isBlank()) return
+                mobile.Mobile.parseProxyURI(active.uri)
+            }
+            mobile.Mobile.unsupportedAWGKnobs(entry)
+        }.getOrDefault("")
+        if (dropped.isNotBlank()) {
+            AppLog.warning(R.string.log_awg_knobs_dropped, dropped, source = EngineLog.ENGINE)
+        }
     }
 
     /**

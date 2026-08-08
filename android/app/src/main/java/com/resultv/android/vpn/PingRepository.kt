@@ -98,6 +98,27 @@ object PingRepository {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /**
+     * The profiles an automatic sweep should probe: real servers (not section
+     * labels) that carry no reading yet. [known] is the set of profile ids that
+     * already have a sample — pass `results.value.keys`.
+     *
+     * Pure and side-effect free so the selection rule is unit-testable without
+     * the native bindings the actual probe needs.
+     */
+    fun profilesNeedingPing(profiles: List<Profile>, known: Set<String>): List<Profile> =
+        profiles.filterNot { it.isSection || it.id in known }
+
+    /**
+     * Probe every profile that has no reading yet. Cheap to call on any profile
+     * list change: already-probed servers are skipped, and probeOne's freshness
+     * cache absorbs the rest.
+     */
+    fun refreshMissing(profiles: List<Profile>) {
+        val missing = profilesNeedingPing(profiles, _results.value.keys)
+        if (missing.isNotEmpty()) refreshAll(missing)
+    }
+
     /** Resolve the probe targets for [profile]. Non-AUTO → 1 element; AUTO → N. */
     fun targetsFor(profile: Profile): List<Target> {
         if (profile.isSection) return emptyList()

@@ -408,6 +408,7 @@
     <string name="log_dns_fallback">Engine provided no DNS address — falling back to 8.8.8.8.</string>
     <string name="log_app_route_failed">Per-app routing: rule for %1$s was not applied.</string>
     <string name="log_protect_failed">Failed to protect an engine socket — possible routing loop.</string>
+    <string name="log_awg_knobs_dropped">AmneziaWG: the engine does not support %1$s — connecting without them. Obfuscation is weaker; if the server requires them, the handshake will not complete.</string>
     <string name="log_adblock_proxy_start_failed">Browser ad-block failed to start (%1$s) — browser uses normal routing.</string>
     <string name="log_traffic_stats_failed">Traffic statistics unavailable this session: %1$s</string>
 
