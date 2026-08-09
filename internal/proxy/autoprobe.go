@@ -20,6 +20,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -52,16 +53,37 @@ type AutoProbeResult struct {
 	Reason   string
 }
 
-// AutoNodeKey identifies a node across subscription refreshes. The backend
-// reassigns ProxyEntry.ID on every fetch (app.go), so ID is useless as a
-// persistent key; address plus subscription is stable.
+// AutoNodeKey identifies a node across subscription refreshes.
+//
+// ProxyEntry.ID is useless as a persistent key: the backend reassigns it on
+// every subscription fetch (app.go). Subscription plus address is stable — but
+// it is not unique. CDN-fronted and multi-account panels routinely issue
+// several logically distinct nodes on one host:port:type, and the frontend
+// already had to work around exactly that collision with namespace-suffixed
+// keys (frontend/src/utils/proxyParser.js:657). So the credential and transport
+// parameters that actually distinguish those nodes are folded in as well.
+//
+// Consequence worth stating: when a provider genuinely reconfigures a node its
+// key changes and its history restarts. For reliability statistics that is the
+// safe direction — better to re-learn a changed node than to credit it with a
+// different node's record.
+//
+// Fields are length-prefixed rather than joined on a bare separator, so a
+// separator occurring inside a field cannot make two different tuples collide.
 func AutoNodeKey(e config.ProxyEntry) string {
-	raw := strings.ToLower(strings.TrimSpace(e.SubscriptionURL)) + "|" +
-		strings.ToLower(strings.TrimSpace(e.IP)) + "|" +
-		fmt.Sprintf("%d", e.Port) + "|" +
-		strings.ToUpper(strings.TrimSpace(e.Type))
-	sum := sha1.Sum([]byte(raw))
-	return hex.EncodeToString(sum[:])
+	h := sha1.New()
+	write := func(s string) { fmt.Fprintf(h, "%d:%s", len(s), s) }
+
+	// Only host and protocol are case-insensitive. URL paths are case-sensitive
+	// per RFC 3986, so the subscription URL is trimmed but never lowercased.
+	write(strings.TrimSpace(e.SubscriptionURL))
+	write(strings.ToLower(strings.TrimSpace(e.IP)))
+	write(strconv.Itoa(e.Port))
+	write(strings.ToUpper(strings.TrimSpace(e.Type)))
+	write(e.Username)
+	write(e.Password)
+	write(string(e.Extra)) // uuid, sni, path, serviceName — the real identity
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // isProbeableNode reports whether an entry has something to dial. SECTION rows
