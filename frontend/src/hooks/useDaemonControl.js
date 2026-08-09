@@ -167,8 +167,7 @@ export const useDaemonControl = (
                     res = await wailsAPI.connect(
                         { ...candidate, port: parseInt(candidate.port, 10) || 0, id: targetProxy.id, name: targetProxy.name },
                         routingRules,
-                        settings.killswitch || false,
-                        settings.adblock || false
+                        settings.killswitch || false
                     );
                     if (res.success) break;
                     if (isTerminalErrorCode(res.errorCode)) break;
@@ -297,8 +296,7 @@ export const useDaemonControl = (
                     res = await wailsAPI.connect(
                         { ...candidate, port: parseInt(candidate.port, 10) || 0, id: proxy.id, name: proxy.name },
                         routingRules,
-                        settings.killswitch || false,
-                        settings.adblock || false
+                        settings.killswitch || false
                     );
                     if (res.success) break;
                     if (isTerminalErrorCode(res.errorCode)) break;

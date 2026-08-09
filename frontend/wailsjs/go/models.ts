@@ -37,7 +37,6 @@ export namespace config {
 	export class AppSettings {
 	    autostart: boolean;
 	    killswitch: boolean;
-	    adblock: boolean;
 	    mode: string;
 	    language: string;
 	    theme: string;
@@ -63,7 +62,6 @@ export namespace config {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.autostart = source["autostart"];
 	        this.killswitch = source["killswitch"];
-	        this.adblock = source["adblock"];
 	        this.mode = source["mode"];
 	        this.language = source["language"];
 	        this.theme = source["theme"];
@@ -299,49 +297,6 @@ export namespace logger {
 }
 
 export namespace main {
-	
-	export class AdBlockStatusDTO {
-	    enabled: boolean;
-	    filterCount: number;
-	    ruleSetsReady: number;
-	    ruleSetsTotal: number;
-	    lastUpdatedUnix: number;
-	    lastError?: string;
-	    caInstalled: boolean;
-	    networkBlocked: number;
-	    cosmeticBlocked: number;
-	    updateInProgress: boolean;
-	    updatePhase?: string;
-	    updateCurrent: number;
-	    updateTotal: number;
-	    updateItem?: string;
-	    networkBlockActive: boolean;
-	    needsReconnect: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new AdBlockStatusDTO(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.enabled = source["enabled"];
-	        this.filterCount = source["filterCount"];
-	        this.ruleSetsReady = source["ruleSetsReady"];
-	        this.ruleSetsTotal = source["ruleSetsTotal"];
-	        this.lastUpdatedUnix = source["lastUpdatedUnix"];
-	        this.lastError = source["lastError"];
-	        this.caInstalled = source["caInstalled"];
-	        this.networkBlocked = source["networkBlocked"];
-	        this.cosmeticBlocked = source["cosmeticBlocked"];
-	        this.updateInProgress = source["updateInProgress"];
-	        this.updatePhase = source["updatePhase"];
-	        this.updateCurrent = source["updateCurrent"];
-	        this.updateTotal = source["updateTotal"];
-	        this.updateItem = source["updateItem"];
-	        this.networkBlockActive = source["networkBlockActive"];
-	        this.needsReconnect = source["needsReconnect"];
-	    }
-	}
 	export class SubscriptionPreview {
 	    proxies: config.ProxyEntry[];
 	    routingLists: config.RoutingList[];

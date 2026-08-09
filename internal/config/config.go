@@ -108,7 +108,6 @@ type Subscription struct {
 type AppSettings struct {
 	Autostart                       bool     `json:"autostart"`
 	KillSwitch                      bool     `json:"killswitch"`
-	AdBlock                         bool     `json:"adblock"`
 	Mode                            string   `json:"mode"`
 	Language                        string   `json:"language"`
 	Theme                           string   `json:"theme"`

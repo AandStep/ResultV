@@ -138,7 +138,6 @@ func TestConnect_TunnelStartFailureIncludesReasonAndFallbackFlag(t *testing.T) {
 		nil,
 		nil,
 		false,
-		false,
 		0,
 		false,
 		nil,
@@ -198,7 +197,6 @@ func TestSetMode_ReconnectsWhenConnected(t *testing.T) {
 		[]string{"notepad.exe"},
 		nil,
 		true,
-		true,
 		0,
 		false,
 		nil,
@@ -224,8 +222,8 @@ func TestSetMode_ReconnectsWhenConnected(t *testing.T) {
 	if last.RoutingMode != ModeWhitelist {
 		t.Fatalf("expected routing mode to be preserved, got: %s", last.RoutingMode)
 	}
-	if !last.KillSwitch || !last.AdBlock {
-		t.Fatalf("expected feature flags to be preserved, got killSwitch=%v adblock=%v", last.KillSwitch, last.AdBlock)
+	if !last.KillSwitch {
+		t.Fatalf("expected feature flags to be preserved, got killSwitch=%v", last.KillSwitch)
 	}
 }
 
@@ -247,7 +245,6 @@ func TestConnect_TunnelRequiresAdmin(t *testing.T) {
 		nil,
 		nil,
 		nil,
-		false,
 		false,
 		0,
 		false,
@@ -297,7 +294,6 @@ func TestConnect_Hysteria2PostStartProbeFailure(t *testing.T) {
 		nil,
 		nil,
 		nil,
-		false,
 		false,
 		0,
 		false,
@@ -349,7 +345,6 @@ func TestConnect_WireGuardTunnelFailsWhenE2EProbeFails(t *testing.T) {
 		nil,
 		nil,
 		false,
-		false,
 		0,
 		false,
 		nil,
@@ -400,7 +395,6 @@ func TestConnect_WireGuardPostStartProbeSuccess(t *testing.T) {
 		nil,
 		nil,
 		false,
-		false,
 		0,
 		false,
 		nil,
@@ -448,7 +442,6 @@ func TestConnect_AmneziaWGTunnelFailsWhenE2EProbeFails(t *testing.T) {
 		nil,
 		nil,
 		nil,
-		false,
 		false,
 		0,
 		false,
@@ -504,7 +497,6 @@ func TestConnect_WireGuardTunnelE2EProbeRetriesThreeTimes(t *testing.T) {
 		nil,
 		nil,
 		false,
-		false,
 		0,
 		false,
 		nil,
@@ -546,7 +538,6 @@ func TestConnect_TrojanTunnelFailsWhenE2EProbeFails(t *testing.T) {
 		nil,
 		nil,
 		nil,
-		false,
 		false,
 		0,
 		false,
@@ -592,7 +583,6 @@ func TestConnect_TrojanProxyFailsWhenE2EProbeFails(t *testing.T) {
 		nil,
 		nil,
 		nil,
-		false,
 		false,
 		0,
 		false,
@@ -648,7 +638,6 @@ func TestConnect_AmneziaWGTunnelStopsSessionWhenE2EProbeFails(t *testing.T) {
 		nil,
 		nil,
 		false,
-		false,
 		0,
 		false,
 		nil,
@@ -702,7 +691,6 @@ func TestConnect_AmneziaWGTunnelClearsSystemProxy(t *testing.T) {
 		nil,
 		nil,
 		true,
-		false,
 		0,
 		false,
 		nil,
@@ -749,7 +737,6 @@ func TestConnect_FailedSwitchClearsCurrentProxyInStatus(t *testing.T) {
 		nil,
 		nil,
 		false,
-		false,
 		0,
 		false,
 		nil,
@@ -770,7 +757,6 @@ func TestConnect_FailedSwitchClearsCurrentProxyInStatus(t *testing.T) {
 		nil,
 		nil,
 		nil,
-		false,
 		false,
 		0,
 		false,
@@ -853,7 +839,6 @@ func TestSetMode_PreservesAppForceVPN(t *testing.T) {
 		nil,
 		nil,
 		[]string{"discord.exe"},
-		false,
 		false,
 		0,
 		false,

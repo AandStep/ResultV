@@ -17,7 +17,7 @@ export function CancelConnect():Promise<void>;
 
 export function CancelUpdate():Promise<void>;
 
-export function Connect(arg1:proxy.ProxyConfig,arg2:config.RoutingRules,arg3:boolean,arg4:boolean):Promise<proxy.ConnectResultDTO>;
+export function Connect(arg1:proxy.ProxyConfig,arg2:config.RoutingRules,arg3:boolean):Promise<proxy.ConnectResultDTO>;
 
 export function DebugFrontendLog(arg1:string):Promise<void>;
 
@@ -35,7 +35,6 @@ export function ExportConfig(arg1:string):Promise<string>;
 
 export function FetchSubscription(arg1:string,arg2:boolean):Promise<main.SubscriptionPreview>;
 
-export function GetAdBlockStatus():Promise<main.AdBlockStatusDTO>;
 
 export function GetConfig():Promise<config.AppConfig>;
 
@@ -63,9 +62,7 @@ export function HandleDeepLink(arg1:string):Promise<void>;
 
 export function ImportConfig(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
-export function InstallAdBlockCA():Promise<void>;
 
-export function IsAdBlockCAInstalled():Promise<boolean>;
 
 export function IsAdmin():Promise<boolean>;
 
@@ -105,11 +102,9 @@ export function StopMITM():Promise<void>;
 
 export function SyncProxies(arg1:Array<config.ProxyEntry>):Promise<void>;
 
-export function ToggleAdBlock(arg1:boolean):Promise<void>;
 
 export function ToggleKillSwitch(arg1:boolean):Promise<void>;
 
-export function UpdateAdBlockFilters():Promise<void>;
 
 export function UpdateRoutingList(arg1:config.RoutingList):Promise<void>;
 

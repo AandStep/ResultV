@@ -44,7 +44,6 @@ import (
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"resultproxy-wails/internal/config"
-	"resultproxy-wails/internal/filter"
 	"resultproxy-wails/internal/logger"
 	"resultproxy-wails/internal/proxy"
 	"resultproxy-wails/internal/system"
@@ -92,7 +91,6 @@ type App struct {
 	crypto     *config.CryptoService
 	config     *config.Manager
 	proxy      *proxy.Manager
-	filters    *filter.Manager
 	tray       *system.Tray
 	killSwitch system.KillSwitch
 	netmon     *system.NetMonitor
@@ -351,12 +349,6 @@ func (a *App) startup(ctx context.Context) {
 	rootDir := a.getAppRootDir()
 	a.initSmartBlockedDomains(userDataPath, rootDir)
 
-	a.filters = filter.NewManager(userDataPath)
-	if err := a.filters.LoadCache(); err != nil {
-		a.log.Warning(fmt.Sprintf("[ADBLOCK] Кэш фильтров не загружен: %v", err))
-	}
-	a.proxy.SetAdBlockCoordinator(a)
-	a.initAdBlockFilters()
 
 	// Leftover kill-switch firewall rules from a crashed / force-killed prior
 	// run are NOT silently cleared here (the old Disable() call was a no-op on a
@@ -616,7 +608,7 @@ func (a *App) SaveConfig(cfg config.AppConfig) error {
 }
 
 func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
-	killSwitch, adBlock bool) (proxy.ConnectResultDTO, error) {
+	killSwitch bool) (proxy.ConnectResultDTO, error) {
 
 	if a.proxy == nil {
 		return proxy.ConnectResultDTO{Success: false, Message: "Proxy manager not initialized"}, nil
@@ -639,7 +631,6 @@ func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
 		rules.AppWhitelist,
 		rules.AppForceVPN,
 		killSwitch,
-		adBlock,
 		cfg.Settings.LocalPort,
 		cfg.Settings.ListenLAN,
 		dnsServers,
@@ -920,7 +911,6 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 			cfg.RoutingRules.AppWhitelist,
 			cfg.RoutingRules.AppForceVPN,
 			cfg.Settings.KillSwitch,
-			cfg.Settings.AdBlock,
 			cfg.Settings.LocalPort,
 			cfg.Settings.ListenLAN,
 			modeSwitchDNS,
@@ -961,7 +951,6 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 				cfg.RoutingRules.AppWhitelist,
 				cfg.RoutingRules.AppForceVPN,
 				cfg.Settings.KillSwitch,
-				cfg.Settings.AdBlock,
 				cfg.Settings.LocalPort,
 				cfg.Settings.ListenLAN,
 				modeSwitchDNS,
@@ -1046,202 +1035,6 @@ func (a *App) ToggleKillSwitch(enable bool) error {
 	}
 
 	return a.proxy.ToggleKillSwitch(enable)
-}
-
-func (a *App) ToggleAdBlock(enable bool) error {
-	if a.config == nil {
-		return fmt.Errorf("config manager not initialized")
-	}
-	cfg := a.config.GetConfig()
-	cfg.Settings.AdBlock = enable
-	if err := a.config.SaveConfig(cfg); err != nil {
-		return err
-	}
-	if a.proxy != nil && a.proxy.GetStatus().IsConnected {
-		result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist, cfg.RoutingRules.AppForceVPN)
-		if !result.Success {
-			a.log.Warning(fmt.Sprintf("[ADBLOCK] Переподключение после переключения: %s", result.Message))
-		}
-	}
-	return nil
-}
-
-// StartMITM implements proxy.AdBlockCoordinator.
-func (a *App) StartMITM(upstreamPort int) (int, error) {
-	if a.filters == nil {
-		return 0, fmt.Errorf("filter manager not initialized")
-	}
-	port := proxy.GetFreeLocalPort(18080)
-	if err := a.filters.StartMITM(port, upstreamPort); err != nil {
-		return 0, err
-	}
-	a.log.Info(fmt.Sprintf("[ADBLOCK] MITM-фильтр на 127.0.0.1:%d (upstream :%d)", port, upstreamPort))
-	return port, nil
-}
-
-// StopMITM implements proxy.AdBlockCoordinator.
-func (a *App) StopMITM() {
-	if a.filters != nil {
-		a.filters.StopMITM()
-	}
-}
-
-// AdBlockStatusDTO is exposed to the Wails frontend.
-type AdBlockStatusDTO struct {
-	Enabled            bool   `json:"enabled"`
-	FilterCount        int    `json:"filterCount"`
-	RuleSetsReady      int    `json:"ruleSetsReady"`
-	RuleSetsTotal      int    `json:"ruleSetsTotal"`
-	LastUpdatedUnix    int64  `json:"lastUpdatedUnix"`
-	LastError          string `json:"lastError,omitempty"`
-	CAInstalled        bool   `json:"caInstalled"`
-	NetworkBlocked     uint64 `json:"networkBlocked"`
-	CosmeticBlocked    uint64 `json:"cosmeticBlocked"`
-	UpdateInProgress   bool   `json:"updateInProgress"`
-	UpdatePhase        string `json:"updatePhase,omitempty"`
-	UpdateCurrent      int    `json:"updateCurrent"`
-	UpdateTotal        int    `json:"updateTotal"`
-	UpdateItem         string `json:"updateItem,omitempty"`
-	NetworkBlockActive bool   `json:"networkBlockActive"`
-	NeedsReconnect     bool   `json:"needsReconnect"`
-}
-
-func (a *App) adBlockStatusDTO() AdBlockStatusDTO {
-	enabled := false
-	if a.config != nil {
-		enabled = a.config.GetConfig().Settings.AdBlock
-	}
-	connected := false
-	engineAdBlock := false
-	if a.proxy != nil {
-		st := a.proxy.GetStatus()
-		connected = st.IsConnected
-		engineAdBlock = a.proxy.IsAdBlockActive()
-	}
-	if a.filters == nil {
-		return AdBlockStatusDTO{Enabled: enabled, CAInstalled: filter.CAInstalled()}
-	}
-	s := a.filters.Status(enabled, connected, engineAdBlock)
-	return AdBlockStatusDTO{
-		Enabled:            s.Enabled,
-		FilterCount:        s.FilterCount,
-		RuleSetsReady:      s.RuleSetsReady,
-		RuleSetsTotal:      s.RuleSetsTotal,
-		LastUpdatedUnix:    s.LastUpdatedUnix,
-		LastError:          s.LastError,
-		CAInstalled:        s.CAInstalled,
-		NetworkBlocked:     s.NetworkBlocked,
-		CosmeticBlocked:    s.CosmeticBlocked,
-		UpdateInProgress:   s.UpdateInProgress,
-		UpdatePhase:        s.UpdatePhase,
-		UpdateCurrent:      s.UpdateCurrent,
-		UpdateTotal:        s.UpdateTotal,
-		UpdateItem:         s.UpdateItem,
-		NetworkBlockActive: s.NetworkBlockActive,
-		NeedsReconnect:     s.NeedsReconnect,
-	}
-}
-
-func (a *App) GetAdBlockStatus() AdBlockStatusDTO {
-	return a.adBlockStatusDTO()
-}
-
-func (a *App) emitAdBlockProgress(p filter.UpdateProgress) {
-	if a.ctx != nil {
-		wailsRuntime.EventsEmit(a.ctx, "adblock:update-progress", p)
-	}
-}
-
-func (a *App) UpdateAdBlockFilters() error {
-	if a.filters == nil {
-		return fmt.Errorf("filter manager not initialized")
-	}
-	ctx, cancel := context.WithTimeout(a.ctx, 2*time.Minute)
-	defer cancel()
-	progress := func(p filter.UpdateProgress) {
-		a.emitAdBlockProgress(p)
-	}
-	if err := a.filters.Update(ctx, progress); err != nil {
-		a.log.Warning(fmt.Sprintf("[ADBLOCK] Обновление баз: %v", err))
-		return err
-	}
-	st := a.adBlockStatusDTO()
-	a.log.Success(fmt.Sprintf("[ADBLOCK] Базы блокировки обновлены (%d/%d)", st.RuleSetsReady, st.RuleSetsTotal))
-	if a.proxy != nil && a.proxy.GetStatus().IsConnected && a.config != nil {
-		cfg := a.config.GetConfig()
-		result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist, cfg.RoutingRules.AppForceVPN)
-		if !result.Success {
-			a.log.Warning(fmt.Sprintf("[ADBLOCK] Переподключение после обновления: %s", result.Message))
-		}
-	}
-	return nil
-}
-
-func (a *App) InstallAdBlockCA() error {
-	if a.filters == nil {
-		return fmt.Errorf("filter manager not initialized")
-	}
-	if err := a.filters.InstallCA(); err != nil {
-		return err
-	}
-	a.log.Success("[ADBLOCK] Корневой сертификат установлен в хранилище Windows")
-	return nil
-}
-
-func (a *App) IsAdBlockCAInstalled() bool {
-	return filter.CAInstalled()
-}
-
-func (a *App) initAdBlockFilters() {
-	if a.ctx == nil || a.filters == nil {
-		return
-	}
-	go func() {
-		ctx, cancel := context.WithTimeout(a.ctx, 2*time.Minute)
-		defer cancel()
-		if a.filters.NeedsUpdate() {
-			if err := a.filters.Update(ctx, a.emitAdBlockProgress); err != nil {
-				a.log.Warning(fmt.Sprintf("[ADBLOCK] Фоновое обновление баз: %v", err))
-			} else {
-				a.log.Info("[ADBLOCK] Базы блокировки обновлены при запуске")
-			}
-		}
-	}()
-	a.startAdBlockFilterRefresh()
-}
-
-func (a *App) startAdBlockFilterRefresh() {
-	if a.ctx == nil || a.filters == nil {
-		return
-	}
-	go func() {
-		ticker := time.NewTicker(24 * time.Hour)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-a.ctx.Done():
-				return
-			case <-ticker.C:
-				ctx, cancel := context.WithTimeout(a.ctx, 2*time.Minute)
-				err := a.filters.Update(ctx, a.emitAdBlockProgress)
-				cancel()
-				if err != nil {
-					a.log.Warning(fmt.Sprintf("[ADBLOCK] Периодическое обновление: %v", err))
-					continue
-				}
-				a.log.Info("[ADBLOCK] Периодические базы блокировки обновлены")
-				if a.proxy != nil && a.proxy.GetStatus().IsConnected && a.config != nil {
-					cfg := a.config.GetConfig()
-					if cfg.Settings.AdBlock {
-						result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist, cfg.RoutingRules.AppForceVPN)
-						if !result.Success {
-							a.log.Warning(fmt.Sprintf("[ADBLOCK] Переподключение: %s", result.Message))
-						}
-					}
-				}
-			}
-		}
-	}()
 }
 
 func (a *App) SetAutostart(enable bool) error {
@@ -3004,7 +2797,7 @@ func (a *App) connectFromTray(proxyID string) error {
 		URI:             selected.URI,
 		Extra:           selected.Extra,
 		SubscriptionURL: selected.SubscriptionURL,
-	}, cfg.RoutingRules, cfg.Settings.KillSwitch, cfg.Settings.AdBlock)
+	}, cfg.RoutingRules, cfg.Settings.KillSwitch)
 	if err != nil {
 		return err
 	}

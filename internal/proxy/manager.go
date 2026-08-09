@@ -105,7 +105,6 @@ type Manager struct {
 	pendingProxy *ProxyConfig
 	pendingMode  ProxyMode
 	killSwitch   bool
-	adBlock      bool
 	routingMode  RoutingMode
 	whitelist    []string
 	appWhitelist []string
@@ -157,8 +156,6 @@ type Manager struct {
 	KillSwitchFirewallEngage    func(ProxyConfig, []string)
 	KillSwitchFirewallDisengage func()
 
-	adBlockCoord AdBlockCoordinator
-	mitmPort     int
 
 	// secrets encrypts the persistent server-IP pin cache (server_pins.json)
 	// with the app's hardware-keyed CryptoService — those hostname→backend-IP
@@ -399,35 +396,6 @@ func (m *Manager) LoadBlockedLists(paths ...string) {
 	m.router.LoadBlockedLists(paths...)
 }
 
-// SetAdBlockCoordinator wires HTTPS MITM filter lifecycle (optional).
-func (m *Manager) SetAdBlockCoordinator(c AdBlockCoordinator) {
-	m.mu.Lock()
-	m.adBlockCoord = c
-	m.mu.Unlock()
-}
-
-func (m *Manager) prepareAdBlock(cfg *EngineConfig, adBlock bool, upstreamPort int) error {
-	m.stopAdBlockMITM()
-	cfg.MITMPort = 0
-	if !adBlock {
-		cfg.AdBlock = false
-		return nil
-	}
-	cfg.AdBlock = true
-	// HTTPS MITM is not wired through sing-box outbounds: routing browser TLS to a
-	// local http outbound breaks tunnel mode (Steam, games, WebView) with
-	// "unexpected EOF" and is fragile with process detection on Windows.
-	// Network blocking via sing-box rule_set reject remains active.
-	_ = upstreamPort
-	return nil
-}
-
-func (m *Manager) stopAdBlockMITM() {
-	if m.adBlockCoord != nil {
-		m.adBlockCoord.StopMITM()
-	}
-	m.mitmPort = 0
-}
 
 // setConnectCancel stores the cancel func for the active Connect operation.
 func (m *Manager) setConnectCancel(cancel context.CancelFunc) {
@@ -524,7 +492,7 @@ func (m *Manager) startEngine(ctx context.Context, cfg EngineConfig) (err error,
 // re-resolves fresh — seamless to the user.
 func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode,
 	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
-	killSwitch, adBlock bool,
+	killSwitch bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
 	dnsLeakProtection bool) ConnectResultDTO {
 
@@ -538,7 +506,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 	}
 
 	res := m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist, appForceVPN,
-		killSwitch, adBlock, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
+		killSwitch, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
 		dnsLeakProtection)
 
 	if shouldRetryWithoutPin(usedCachedPin, res.ErrorCode) {
@@ -546,7 +514,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 		m.log.Warning("[PROXY] Закэшированный IP сервера устарел — переподключение по домену")
 		proxy.ResolvedIP = ""
 		res = m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist, appForceVPN,
-			killSwitch, adBlock, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
+			killSwitch, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
 			dnsLeakProtection)
 	}
 	return res
@@ -554,7 +522,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 
 func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode ProxyMode,
 	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
-	killSwitch, adBlock bool,
+	killSwitch bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
 	dnsLeakProtection bool) ConnectResultDTO {
 
@@ -738,16 +706,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 			engineCfg.SmartRuleSetPath = path
 		}
 	}
-	if err := m.prepareAdBlock(&engineCfg, adBlock, actualLocalPort); err != nil {
-		m.mu.Unlock()
-		return ConnectResultDTO{
-			Success: false,
-			Message: fmt.Sprintf("Блокировка рекламы: %v", err),
-			Reason:  err.Error(),
-		}
-	}
 	if code, err := validateEngineConfig(engineCfg); err != nil {
-		m.stopAdBlockMITM()
 		m.mu.Unlock()
 		return ConnectResultDTO{
 			Success:   false,
@@ -793,7 +752,6 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	// sing-box начнёт умирать сразу после установки соединения (DNS context canceled).
 	tStart := time.Now()
 	if startErr, tunnelFailed, reason, errorCode := m.startEngine(ctx, engineCfg); startErr != nil {
-		m.stopAdBlockMITM()
 		m.mu.Lock()
 		m.clearPendingLocked()
 		m.mu.Unlock()
@@ -810,7 +768,6 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 				m.mode = mode
 				m.proxy = &proxy
 				m.killSwitch = killSwitch
-				m.adBlock = adBlock
 				m.routingMode = routingMode
 				m.whitelist = append([]string(nil), whitelist...)
 				m.appWhitelist = append([]string(nil), appWhitelist...)
@@ -964,7 +921,6 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	m.mode = mode
 	m.proxy = &proxy
 	m.killSwitch = killSwitch
-	m.adBlock = adBlock
 	m.routingMode = routingMode
 	m.whitelist = append([]string(nil), whitelist...)
 	m.appWhitelist = append([]string(nil), appWhitelist...)
@@ -1263,7 +1219,7 @@ func dnsOverrideServers(custom []string) []string {
 // Caller must hold m.mu.
 func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode ProxyMode,
 	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
-	killSwitch, adBlock bool,
+	killSwitch bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
 	dnsLeakProtection bool) ConnectResultDTO {
 	if m.connected {
@@ -1344,15 +1300,7 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 			engineCfg.SmartRuleSetPath = path
 		}
 	}
-	if err := m.prepareAdBlock(&engineCfg, adBlock, actualLocalPort); err != nil {
-		return ConnectResultDTO{
-			Success: false,
-			Message: fmt.Sprintf("Блокировка рекламы: %v", err),
-			Reason:  err.Error(),
-		}
-	}
 	if code, err := validateEngineConfig(engineCfg); err != nil {
-		m.stopAdBlockMITM()
 		return ConnectResultDTO{
 			Success:   false,
 			Message:   err.Error(),
@@ -1384,7 +1332,6 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 	}
 
 	if startErr, tunnelFailed, reason, errorCode := m.startEngine(ctx, engineCfg); startErr != nil {
-		m.stopAdBlockMITM()
 		m.clearPendingLocked()
 		m.emitStatusLocked()
 		m.log.Error(fmt.Sprintf("[PROXY] Ошибка запуска движка: %v", startErr))
@@ -1441,7 +1388,6 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 	m.mode = mode
 	m.proxy = &proxy
 	m.killSwitch = killSwitch
-	m.adBlock = adBlock
 	m.routingMode = routingMode
 	m.whitelist = append([]string(nil), whitelist...)
 	m.appWhitelist = append([]string(nil), appWhitelist...)
@@ -1974,7 +1920,6 @@ func (m *Manager) Disconnect() error {
 			}
 		}
 	}()
-	m.stopAdBlockMITM()
 	wg.Wait()
 
 	m.mu.Lock()
@@ -2003,7 +1948,6 @@ func (m *Manager) disconnectLocked() error {
 
 	m.stopProcessTrackerLocked()
 	m.stopHealthWatchdogLocked()
-	m.stopAdBlockMITM()
 
 	// Same rationale as Disconnect(): tear down engine, system proxy and system
 	// DNS concurrently — independent subsystems, cost max() not sum(). This also
@@ -2067,7 +2011,6 @@ func (m *Manager) SetMode(mode ProxyMode) error {
 	wasConnected := m.connected
 	proxy := m.proxy
 	killSwitch := m.killSwitch
-	adBlock := m.adBlock
 	routingMode := m.routingMode
 	whitelist := append([]string(nil), m.whitelist...)
 	appWhitelist := append([]string(nil), m.appWhitelist...)
@@ -2090,7 +2033,6 @@ func (m *Manager) SetMode(mode ProxyMode) error {
 			appWhitelist,
 			appForceVPN,
 			killSwitch,
-			adBlock,
 			m.localPort,
 			m.listenLAN,
 			m.dnsServers,
@@ -2148,7 +2090,6 @@ func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode Rou
 	p := *m.proxy
 	mode := m.mode
 	killSwitch := m.killSwitch
-	adBlock := m.adBlock
 	lPort := m.localPort
 	listenLAN := m.listenLAN
 	dServers := m.dnsServers
@@ -2156,14 +2097,7 @@ func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode Rou
 	tIPv6 := m.tunIPv6
 	dnsLeak := m.dnsLeakProtection
 
-	return m.connectLocked(ctx, p, mode, routingMode, whitelist, appWhitelist, appForceVPN, killSwitch, adBlock, lPort, listenLAN, dServers, tIPv4, tIPv6, dnsLeak)
-}
-
-// IsAdBlockActive reports whether the running sing-box engine has ad blocking enabled.
-func (m *Manager) IsAdBlockActive() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.adBlock
+	return m.connectLocked(ctx, p, mode, routingMode, whitelist, appWhitelist, appForceVPN, killSwitch, lPort, listenLAN, dServers, tIPv4, tIPv6, dnsLeak)
 }
 
 func (m *Manager) GetStatus() StatusDTO {

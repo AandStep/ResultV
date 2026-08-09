@@ -22,8 +22,8 @@ export function CancelUpdate() {
   return window['go']['main']['App']['CancelUpdate']();
 }
 
-export function Connect(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['Connect'](arg1, arg2, arg3, arg4);
+export function Connect(arg1, arg2, arg3) {
+  return window['go']['main']['App']['Connect'](arg1, arg2, arg3);
 }
 
 export function DebugFrontendLog(arg1) {
@@ -56,10 +56,6 @@ export function ExportConfig(arg1) {
 
 export function FetchSubscription(arg1, arg2) {
   return window['go']['main']['App']['FetchSubscription'](arg1, arg2);
-}
-
-export function GetAdBlockStatus() {
-  return window['go']['main']['App']['GetAdBlockStatus']();
 }
 
 export function GetConfig() {
@@ -112,14 +108,6 @@ export function HandleDeepLink(arg1) {
 
 export function ImportConfig(arg1, arg2, arg3) {
   return window['go']['main']['App']['ImportConfig'](arg1, arg2, arg3);
-}
-
-export function InstallAdBlockCA() {
-  return window['go']['main']['App']['InstallAdBlockCA']();
-}
-
-export function IsAdBlockCAInstalled() {
-  return window['go']['main']['App']['IsAdBlockCAInstalled']();
 }
 
 export function IsAdmin() {
@@ -198,16 +186,8 @@ export function SyncProxies(arg1) {
   return window['go']['main']['App']['SyncProxies'](arg1);
 }
 
-export function ToggleAdBlock(arg1) {
-  return window['go']['main']['App']['ToggleAdBlock'](arg1);
-}
-
 export function ToggleKillSwitch(arg1) {
   return window['go']['main']['App']['ToggleKillSwitch'](arg1);
-}
-
-export function UpdateAdBlockFilters() {
-  return window['go']['main']['App']['UpdateAdBlockFilters']();
 }
 
 export function UpdateRoutingList(arg1) {

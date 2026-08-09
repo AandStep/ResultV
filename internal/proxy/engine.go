@@ -99,8 +99,6 @@ type EngineConfig struct {
 	// these IPs directly without a domain/SNI, so domain rules can't catch
 	// them — Smart mode adds an ip_cidr → proxy rule. Smart-only.
 	BlockedCIDRs []string
-	AdBlock      bool
-	MITMPort     int // local HTTPS MITM proxy port; 0 disables MITM layer
 	KillSwitch   bool
 	LocalPort    int
 	DNSServers   []string
@@ -500,7 +498,7 @@ func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 			Listen:     host,
 			ListenPort: port,
 		}},
-		Outbounds:    appendOutbounds(buildOutbounds(cfg.Proxy), cfg),
+		Outbounds:    buildOutbounds(cfg.Proxy),
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
 	}
@@ -659,24 +657,12 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 		DNS:          buildDNS(cfg),
 		Endpoints:    endpoints,
 		Inbounds:     []SBInbound{tun, probeIn},
-		Outbounds:    appendOutbounds(outbounds, cfg),
+		Outbounds:    outbounds,
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
 	}
 
 	return sbCfg, nil
-}
-
-func appendOutbounds(base []SBOutbound, cfg EngineConfig) []SBOutbound {
-	if cfg.AdBlock && cfg.MITMPort > 0 {
-		base = append(base, SBOutbound{
-			Type:       "http",
-			Tag:        adBlockMITMOutbound,
-			Server:     "127.0.0.1",
-			ServerPort: cfg.MITMPort,
-		})
-	}
-	return base
 }
 
 func effectiveTunStack(stack string) string {
@@ -850,7 +836,6 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			})
 		}
 
-		dns.Rules = appendAdBlockDNSRules(cfg, dns.Rules)
 		return dns
 	}
 
@@ -889,19 +874,7 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 	}
 
 	dns := &SBDNS{Servers: servers}
-	dns.Rules = appendAdBlockDNSRules(cfg, dns.Rules)
 	return dns
-}
-
-func appendAdBlockDNSRules(cfg EngineConfig, rules []SBDNSRule) []SBDNSRule {
-	if !cfg.AdBlock {
-		return rules
-	}
-	tags := adBlockRuleSetTags()
-	return append(rules, SBDNSRule{
-		RuleSet: tags,
-		Action:  "reject",
-	})
 }
 
 func splitDNSServer(raw string) (string, int) {
@@ -932,9 +905,6 @@ func splitDNSServer(raw string) (string, int) {
 func buildRoute(cfg EngineConfig) *SBRoute {
 	findProcess := len(cfg.AppWhitelist) > 0 ||
 		(cfg.Mode == ProxyModeTunnel && len(cfg.AppForceVPN) > 0)
-	if cfg.AdBlock && cfg.MITMPort > 0 {
-		findProcess = true
-	}
 	// Smart mode inverts the default: everything goes direct and only the
 	// censored block-list is tunneled (see the blocked-domain rule below).
 	// Global/Whitelist keep proxy as the catch-all.
@@ -946,9 +916,6 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		Final:       final,
 		AutoDetect:  true,
 		FindProcess: findProcess,
-	}
-	if cfg.AdBlock {
-		route.RuleSet = buildAdBlockRuleSets(effectiveDataDir(cfg))
 	}
 	route.RuleSet = append(route.RuleSet, buildRoutingListRuleSets(cfg.RoutingLists)...)
 
@@ -1002,7 +969,6 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	// inserted here, after the DNS/server infra rules but before every built-in.
 	rules = appendRoutingListRouteRules(cfg.RoutingLists, rules)
 
-	rules = appendAdBlockRouteRules(cfg, rules)
 
 	if cfg.Mode == ProxyModeTunnel {
 		// Probe domains must go through the proxy/endpoint outbound, even when
@@ -1170,53 +1136,6 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	return route
 }
 
-func appendAdBlockRouteRules(cfg EngineConfig, rules []SBRouteRule) []SBRouteRule {
-	if !cfg.AdBlock {
-		return rules
-	}
-	tags := adBlockRuleSetTags()
-	rules = append(rules, SBRouteRule{
-		RuleSet: tags,
-		Action:  "reject",
-	})
-
-	if cfg.MITMPort <= 0 {
-		return rules
-	}
-
-	browserRX := browserProcessPathRegexes()
-	if len(browserRX) == 0 {
-		return rules
-	}
-
-	// Pinning-sensitive domains bypass MITM (direct).
-	for _, d := range adBlockPinningBypassDomains {
-		rules = append(rules, SBRouteRule{
-			Action:   "route",
-			Domain:   []string{d},
-			Outbound: "direct",
-		})
-	}
-
-	// Force TCP TLS through local MITM proxy for browsers.
-	rules = append(rules, SBRouteRule{
-		Action:           "route",
-		ProcessPathRegex: browserRX,
-		Network:          []string{"tcp"},
-		Port:             []int{443},
-		Outbound:         adBlockMITMOutbound,
-	})
-
-	// Block QUIC/HTTP3 so browsers fall back to TCP (MITM cannot inspect QUIC).
-	rules = append(rules, SBRouteRule{
-		Action:           "reject",
-		ProcessPathRegex: browserRX,
-		Network:          []string{"udp"},
-		Port:             []int{443},
-	})
-
-	return rules
-}
 
 // OverlappingProbeDomains returns user-whitelist entries that match (exactly
 // or as a parent suffix) one of the tunnelProbeDomains. These are forced

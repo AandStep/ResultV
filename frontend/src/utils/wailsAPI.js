@@ -44,11 +44,6 @@ import {
   IsAutostartEnabled,
   SetAutostart,
   ToggleKillSwitch,
-  ToggleAdBlock,
-  GetAdBlockStatus,
-  UpdateAdBlockFilters,
-  InstallAdBlockCA,
-  IsAdBlockCAInstalled,
   UpdateRules,
   SyncProxies,
   FetchSubscription,
@@ -65,9 +60,9 @@ import {
 
 export const wailsAPI = {
   
-  connect: async (proxyStr, options, mode, processName) => {
+  connect: async (proxyStr, options, killSwitch) => {
     try {
-      return await Connect(proxyStr, options, mode, processName);
+      return await Connect(proxyStr, options, killSwitch);
     } catch (e) {
       console.error("wailsAPI.connect error:", e);
       throw e;
@@ -307,50 +302,6 @@ export const wailsAPI = {
     }
   },
 
-  toggleAdBlock: async (enabled) => {
-    try {
-      await ToggleAdBlock(enabled);
-    } catch (e) {
-      console.error("wailsAPI.toggleAdBlock error:", e);
-      throw e;
-    }
-  },
-
-  getAdBlockStatus: async () => {
-    try {
-      return await GetAdBlockStatus();
-    } catch (e) {
-      console.error("wailsAPI.getAdBlockStatus error:", e);
-      return null;
-    }
-  },
-
-  updateAdBlockFilters: async () => {
-    try {
-      await UpdateAdBlockFilters();
-    } catch (e) {
-      console.error("wailsAPI.updateAdBlockFilters error:", e);
-      throw e;
-    }
-  },
-
-  installAdBlockCA: async () => {
-    try {
-      await InstallAdBlockCA();
-    } catch (e) {
-      console.error("wailsAPI.installAdBlockCA error:", e);
-      throw e;
-    }
-  },
-
-  isAdBlockCAInstalled: async () => {
-    try {
-      return await IsAdBlockCAInstalled();
-    } catch (e) {
-      console.error("wailsAPI.isAdBlockCAInstalled error:", e);
-      return false;
-    }
-  },
 
   updateRules: async (url) => {
     try {

@@ -16,7 +16,6 @@
 package proxy
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -26,10 +25,6 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-
-	"github.com/sagernet/sing-box/include"
-	"github.com/sagernet/sing-box/option"
-	singjson "github.com/sagernet/sing/common/json"
 )
 
 func TestBuildRoute_NestedDomainException_ProducesProxyOverride(t *testing.T) {
@@ -689,13 +684,13 @@ func TestOutboundTLSDiagnostic(t *testing.T) {
 func TestResolvedFingerprint_UnknownFallsBackToChrome(t *testing.T) {
 	fp := func(v string) string { return resolvedFingerprint(map[string]interface{}{"fp": v}) }
 	cases := map[string]string{
-		"ch":       "chrome", // clipped paste — the real-world failure
-		"bogus123": "chrome",
-		"ChRoMe":   "chrome", // normalised
-		"qq":       "qq",
-		"firefox":  "firefox",
+		"ch":         "chrome", // clipped paste — the real-world failure
+		"bogus123":   "chrome",
+		"ChRoMe":     "chrome", // normalised
+		"qq":         "qq",
+		"firefox":    "firefox",
 		"randomized": "randomized",
-		"none":     "", // explicit opt-out keeps bare Go fingerprint
+		"none":       "", // explicit opt-out keeps bare Go fingerprint
 	}
 	for in, want := range cases {
 		if got := fp(in); got != want {
@@ -1204,134 +1199,6 @@ func TestBuildRoute_ExplicitBrowserExclusionGetsDirectRule(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("explicit chrome.exe exclusion must produce a direct process rule, rules=%+v", route.Rules)
-	}
-}
-
-func TestBuildAdBlockRuleSets_PrefersLocalFiles(t *testing.T) {
-	dir := t.TempDir()
-	rsDir := filepath.Join(dir, "filter", "rulesets")
-	if err := os.MkdirAll(rsDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	payload := make([]byte, minLocalSRSBytes+1)
-	for i := range payload {
-		payload[i] = 0x01
-	}
-	if err := os.WriteFile(filepath.Join(rsDir, "ads.srs"), payload, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	sets := buildAdBlockRuleSets(dir)
-	if len(sets) < 1 {
-		t.Fatal("expected rule sets")
-	}
-	if sets[0].Type != "local" || sets[0].LocalOptions.Path == "" {
-		t.Fatalf("expected local ads rule-set, got %+v", sets[0])
-	}
-}
-
-func TestBuildRoute_AdBlock_RejectRuleSets(t *testing.T) {
-	cfg := EngineConfig{AdBlock: true}
-	route := buildRoute(cfg)
-	if route == nil {
-		t.Fatal("expected route")
-	}
-	if len(route.RuleSet) < 1 {
-		t.Fatalf("expected rule_set definitions, got %+v", route.RuleSet)
-	}
-	var rejectFound bool
-	for _, r := range route.Rules {
-		if r.Action == "reject" && len(r.RuleSet) > 0 {
-			rejectFound = true
-			break
-		}
-	}
-	if !rejectFound {
-		t.Fatalf("expected reject rule with rule_set, rules=%+v", route.Rules)
-	}
-}
-
-func TestBuildDNS_AdBlock_RejectRuleSets(t *testing.T) {
-	cfg := EngineConfig{Mode: ProxyModeProxy, AdBlock: true}
-	dns := buildDNS(cfg)
-	if dns == nil {
-		t.Fatal("expected dns")
-	}
-	var rejectFound bool
-	for _, r := range dns.Rules {
-		if r.Action == "reject" && len(r.RuleSet) > 0 {
-			rejectFound = true
-			break
-		}
-	}
-	if !rejectFound {
-		t.Fatalf("expected dns reject rule, rules=%+v", dns.Rules)
-	}
-}
-
-func TestBuildRoute_AdBlockMITM_BrowserRules(t *testing.T) {
-	cfg := EngineConfig{AdBlock: true, MITMPort: 18080}
-	route := buildRoute(cfg)
-	if !route.FindProcess {
-		t.Fatal("expected find_process for MITM browser rules")
-	}
-	var mitmTCP, quicReject bool
-	for _, r := range route.Rules {
-		if r.Outbound == adBlockMITMOutbound && len(r.ProcessPathRegex) > 0 {
-			mitmTCP = true
-		}
-		if r.Action == "reject" && len(r.Network) == 1 && r.Network[0] == "udp" {
-			quicReject = true
-		}
-	}
-	if !mitmTCP {
-		t.Fatalf("expected MITM outbound rule, rules=%+v", route.Rules)
-	}
-	if !quicReject {
-		t.Fatalf("expected QUIC reject for browsers, rules=%+v", route.Rules)
-	}
-}
-
-func TestBuildProxyModeConfig_AdBlock_OutboundMITM(t *testing.T) {
-	cfg := mustBuildProxyModeConfig(t, EngineConfig{
-		AdBlock:  true,
-		MITMPort: 18080,
-		LocalPort: 14081,
-		Proxy: ProxyConfig{IP: "1.2.3.4", Port: 1080, Type: "socks5"},
-	})
-	var mitmOutbound bool
-	for _, o := range cfg.Outbounds {
-		if o.Tag == adBlockMITMOutbound {
-			mitmOutbound = true
-			if o.ServerPort != 18080 {
-				t.Fatalf("mitm port: got %d", o.ServerPort)
-			}
-		}
-	}
-	if !mitmOutbound {
-		t.Fatalf("expected adblock-mitm outbound, outbounds=%+v", cfg.Outbounds)
-	}
-}
-
-func TestBuildProxyModeConfig_AdBlock_SingBoxParses(t *testing.T) {
-	cfg := mustBuildProxyModeConfig(t, EngineConfig{
-		AdBlock:   true,
-		MITMPort:  18080,
-		LocalPort: 14081,
-		Mode:      ProxyModeProxy,
-		ListenAddr: "127.0.0.1:14081",
-		Proxy:     ProxyConfig{IP: "1.2.3.4", Port: 1080, Type: "socks5"},
-	})
-	j, err := json.Marshal(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(j), `"rule_set"`) {
-		t.Fatalf("expected rule_set in config: %s", string(j))
-	}
-	ctx := include.Context(context.Background())
-	var opt option.Options
-	if err := singjson.UnmarshalContext(ctx, j, &opt); err != nil {
-		t.Fatalf("sing-box decode adblock config: %v\n%s", err, j)
 	}
 }
 

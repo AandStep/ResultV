@@ -221,7 +221,7 @@ func normalizeRoots(in []string) []string {
 // process family. Users who genuinely want a browser bypassed must add it as an
 // explicit root, which flows through a separate, unfiltered path.
 //
-// Mirrors the desktop-browser set in internal/proxy/adblock_rules.go
+// Mirrors the desktop-browser set formerly kept alongside the routing rules.
 // (browserProcessPathRegexes); keep the two lists in sync.
 var autoCaptureBlockedBrowsers = map[string]struct{}{
 	"chrome.exe":        {},
