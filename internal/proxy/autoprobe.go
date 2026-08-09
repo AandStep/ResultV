@@ -18,11 +18,16 @@ package proxy
 import (
 	"context"
 	"crypto/sha1"
+	"crypto/tls"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"net"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"resultproxy-wails/internal/config"
 )
@@ -162,13 +167,119 @@ func probeTransport(e config.ProxyEntry) (rtt int64, ok bool, stage, reason stri
 	}
 }
 
-func probeOne(e config.ProxyEntry, depth AutoProbeDepth) AutoProbeResult {
-	rtt, ok, stage, reason := probeTransport(e)
-	return AutoProbeResult{
-		Key:    AutoNodeKey(e),
-		RTTms:  rtt,
-		OK:     ok,
-		Stage:  stage,
-		Reason: reason,
+// autoProbeSamples is the number of TLS handshakes averaged in DepthFull.
+// One sample is noisy — a single slow handshake could be a GC pause on the
+// node, not the path. Three gives a median that shrugs off one outlier plus
+// a jitter figure (max-min) that a single sample cannot produce at all.
+const autoProbeSamples = 3
+
+// autoTLSProbe performs a plain TLS handshake against host:port with the given
+// SNI and ALPN. Declared as a var so tests can substitute it, matching the
+// pingTCPProbe pattern in manager.go.
+//
+// For Reality nodes this deliberately does NOT perform Reality authentication:
+// an unauthenticated ClientHello is forwarded by the server to its camouflage
+// site and completes as an ordinary handshake. That is exactly the signal we
+// want — the path is alive and the SNI is not being cut. The probe sends no
+// payload, so certificate identity is irrelevant and is not verified: under
+// Reality the certificate belongs to the camouflage site, and plenty of nodes
+// present a certificate that does not match the dialed IP.
+var autoTLSProbe = func(host string, port int, sni string, alpn []string) (int64, bool, string) {
+	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
+	dialer := &net.Dialer{Timeout: 4 * time.Second}
+	start := time.Now()
+	conn, err := tls.DialWithDialer(dialer, "tcp", addr, &tls.Config{
+		ServerName:         sni,
+		NextProtos:         alpn,
+		InsecureSkipVerify: true, // probe only; see comment above
+		MinVersion:         tls.VersionTLS12,
+	})
+	elapsed := time.Since(start)
+	if err != nil {
+		return 0, false, pingReasonFromError(err)
 	}
+	_ = conn.Close()
+	return elapsed.Milliseconds(), true, ""
+}
+
+// autoProbeTLSParams derives the SNI and ALPN to present. Protocols that never
+// wrap in TLS report wantTLS=false so the stage is skipped for them.
+func autoProbeTLSParams(e config.ProxyEntry) (sni string, alpn []string, wantTLS bool) {
+	switch strings.ToUpper(strings.TrimSpace(e.Type)) {
+	case "SS", "SHADOWSOCKS", "WIREGUARD", "AMNEZIAWG", "HYSTERIA2":
+		return "", nil, false
+	}
+
+	extra := map[string]interface{}{}
+	if len(e.Extra) > 0 {
+		_ = json.Unmarshal(e.Extra, &extra)
+	}
+
+	sni = getStringField(extra, "sni", "")
+	if sni == "" {
+		sni = getStringField(extra, "serverName", "")
+	}
+	if sni == "" {
+		sni = strings.TrimSpace(e.IP)
+	}
+
+	if raw := getStringField(extra, "alpn", ""); raw != "" {
+		for _, p := range strings.Split(raw, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				alpn = append(alpn, p)
+			}
+		}
+	}
+
+	// A bare IP as ServerName is fine to hand to crypto/tls as-is: per the
+	// stdlib doc on tls.Config.ServerName, an IP-shaped value is simply left
+	// out of the ClientHello's SNI extension while the handshake proceeds
+	// normally. So there is nothing to special-case here — we still get the
+	// "TLS actually completes behind this live socket" signal, just without
+	// an SNI to test for domain-based blocking on nodes that have no
+	// CDN/domain front.
+	return sni, alpn, true
+}
+
+// medianAndJitter reduces repeated-sample latencies to one figure each. The
+// median (not mean) resists a single stalled sample skewing the result, and
+// jitter as max-min surfaces path instability that a single sample can never
+// reveal, independent of the median's own smoothing.
+func medianAndJitter(v []int64) (median, jitter int64) {
+	if len(v) == 0 {
+		return 0, 0
+	}
+	s := append([]int64(nil), v...)
+	sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
+	return s[len(s)/2], s[len(s)-1] - s[0]
+}
+
+func probeOne(e config.ProxyEntry, depth AutoProbeDepth) AutoProbeResult {
+	res := AutoProbeResult{Key: AutoNodeKey(e)}
+
+	rtt, ok, stage, reason := probeTransport(e)
+	res.RTTms, res.OK, res.Stage, res.Reason = rtt, ok, stage, reason
+	if !ok || depth == DepthFast {
+		return res
+	}
+
+	sni, alpn, wantTLS := autoProbeTLSParams(e)
+	if !wantTLS {
+		return res
+	}
+
+	samples := make([]int64, 0, autoProbeSamples)
+	for i := 0; i < autoProbeSamples; i++ {
+		lat, tlsOK, tlsReason := autoTLSProbe(e.IP, e.Port, sni, alpn)
+		if !tlsOK {
+			// A live TCP handshake with a dead TLS handshake is the DPI
+			// signature a bare SYN probe cannot see. Treat it as a failure.
+			return AutoProbeResult{Key: res.Key, OK: false, Stage: "tls", Reason: tlsReason}
+		}
+		samples = append(samples, lat)
+	}
+
+	res.RTTms, res.JitterMs = medianAndJitter(samples)
+	res.Stage = "tls"
+	return res
 }

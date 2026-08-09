@@ -194,6 +194,89 @@ func TestAutoNodeKey_HostCaseAndWhitespaceIgnored_PathCaseSignificant(t *testing
 	}
 }
 
+func TestAutoProbeTLSParams_ReadsSNIAndALPNFromExtra(t *testing.T) {
+	e := config.ProxyEntry{
+		IP:    "1.2.3.4",
+		Port:  443,
+		Type:  "VLESS",
+		Extra: []byte(`{"sni":"www.example.com","alpn":"h2,http/1.1","security":"reality"}`),
+	}
+
+	sni, alpn, wantTLS := autoProbeTLSParams(e)
+
+	if !wantTLS {
+		t.Fatal("reality-узел должен требовать TLS-этап")
+	}
+	if sni != "www.example.com" {
+		t.Errorf("ожидали SNI из extra, получили %q", sni)
+	}
+	if len(alpn) != 2 || alpn[0] != "h2" {
+		t.Errorf("ожидали ALPN [h2 http/1.1], получили %v", alpn)
+	}
+}
+
+func TestAutoProbeTLSParams_FallsBackToHostAndSkipsPlainProtocols(t *testing.T) {
+	tls := config.ProxyEntry{IP: "cdn.example.com", Port: 443, Type: "TROJAN"}
+	sni, _, wantTLS := autoProbeTLSParams(tls)
+	if !wantTLS || sni != "cdn.example.com" {
+		t.Errorf("TROJAN без extra: ожидали TLS с SNI=host, получили sni=%q wantTLS=%v", sni, wantTLS)
+	}
+
+	ss := config.ProxyEntry{IP: "1.2.3.4", Port: 8388, Type: "SS"}
+	if _, _, want := autoProbeTLSParams(ss); want {
+		t.Error("SS не использует TLS — этап должен пропускаться")
+	}
+}
+
+func TestProbeAutoNodes_FullFailsNodeWhenTLSHandshakeFails(t *testing.T) {
+	oldTCP, oldTLS := pingTCPProbe, autoTLSProbe
+	defer func() { pingTCPProbe, autoTLSProbe = oldTCP, oldTLS }()
+
+	pingTCPProbe = func(_ string, _ int) (int64, bool, string) { return 20, true, "" }
+	autoTLSProbe = func(_ string, _ int, _ string, _ []string) (int64, bool, string) {
+		return 0, false, "connection_reset"
+	}
+
+	got := ProbeAutoNodes(context.Background(),
+		[]config.ProxyEntry{{ID: "a", IP: "1.1.1.1", Port: 443, Type: "VLESS"}},
+		DepthFull)
+
+	if len(got) != 1 {
+		t.Fatalf("ожидали 1 результат, получили %d", len(got))
+	}
+	if got[0].OK {
+		t.Error("живой TCP при мёртвом TLS должен считаться отказом — это и есть SNI-блокировка")
+	}
+	if got[0].Stage != "tls" || got[0].Reason != "connection_reset" {
+		t.Errorf("ожидали stage=tls reason=connection_reset, получили %+v", got[0])
+	}
+}
+
+func TestProbeAutoNodes_FullTakesMedianAndJitterOfThreeSamples(t *testing.T) {
+	oldTCP, oldTLS := pingTCPProbe, autoTLSProbe
+	defer func() { pingTCPProbe, autoTLSProbe = oldTCP, oldTLS }()
+
+	pingTCPProbe = func(_ string, _ int) (int64, bool, string) { return 5, true, "" }
+	samples := []int64{30, 90, 50}
+	var i int
+	autoTLSProbe = func(_ string, _ int, _ string, _ []string) (int64, bool, string) {
+		v := samples[i%len(samples)]
+		i++
+		return v, true, ""
+	}
+
+	got := ProbeAutoNodes(context.Background(),
+		[]config.ProxyEntry{{ID: "a", IP: "1.1.1.1", Port: 443, Type: "VLESS"}},
+		DepthFull)
+
+	if got[0].RTTms != 50 {
+		t.Errorf("ожидали медиану 50, получили %d", got[0].RTTms)
+	}
+	if got[0].JitterMs != 60 {
+		t.Errorf("ожидали джиттер 90-30=60, получили %d", got[0].JitterMs)
+	}
+}
+
 // TestProbeAutoNodes_BoundedPoolProbesEveryNodeOnceWithinConcurrencyLimit
 // exercises the >16-node path that autoProbeConcurrency exists for. All other
 // tests in this file use <=3 nodes, where pool == len(targets) and each worker
