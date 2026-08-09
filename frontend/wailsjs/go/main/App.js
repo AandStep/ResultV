@@ -146,6 +146,10 @@ export function ResetLeftoverReport() {
   return window['go']['main']['App']['ResetLeftoverReport']();
 }
 
+export function ResolveAutoCandidates(arg1) {
+  return window['go']['main']['App']['ResolveAutoCandidates'](arg1);
+}
+
 export function RestartAsAdmin() {
   return window['go']['main']['App']['RestartAsAdmin']();
 }
@@ -170,16 +174,8 @@ export function SetTrayIcon(arg1) {
   return window['go']['main']['App']['SetTrayIcon'](arg1);
 }
 
-export function StartMITM(arg1) {
-  return window['go']['main']['App']['StartMITM'](arg1);
-}
-
 export function StartUpdate() {
   return window['go']['main']['App']['StartUpdate']();
-}
-
-export function StopMITM() {
-  return window['go']['main']['App']['StopMITM']();
 }
 
 export function SyncProxies(arg1) {

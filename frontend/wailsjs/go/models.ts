@@ -297,6 +297,7 @@ export namespace logger {
 }
 
 export namespace main {
+	
 	export class SubscriptionPreview {
 	    proxies: config.ProxyEntry[];
 	    routingLists: config.RoutingList[];

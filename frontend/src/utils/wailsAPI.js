@@ -26,6 +26,7 @@ import {
   Disconnect,
   DetectCountry,
   PingProxy,
+  ResolveAutoCandidates,
   GetConfig,
   SaveConfig,
   ImportConfig,
@@ -95,7 +96,17 @@ export const wailsAPI = {
     }
   },
 
-  
+  // Ranked AUTO-group connect candidates from the backend (App.ResolveAutoCandidates):
+  // member lookup, dead-node filtering, two-phase probing, ranking and the
+  // ≤5 cap all happen there, so both the tray and this UI path agree.
+  async resolveAutoCandidates(proxyId) {
+    try {
+      return (await ResolveAutoCandidates(String(proxyId))) || [];
+    } catch {
+      return [];
+    }
+  },
+
   getConfig: async () => {
     try {
       return await GetConfig();

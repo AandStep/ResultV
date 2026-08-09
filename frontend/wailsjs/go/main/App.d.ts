@@ -35,7 +35,6 @@ export function ExportConfig(arg1:string):Promise<string>;
 
 export function FetchSubscription(arg1:string,arg2:boolean):Promise<main.SubscriptionPreview>;
 
-
 export function GetConfig():Promise<config.AppConfig>;
 
 export function GetLANIPs():Promise<Array<string>>;
@@ -62,8 +61,6 @@ export function HandleDeepLink(arg1:string):Promise<void>;
 
 export function ImportConfig(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
-
-
 export function IsAdmin():Promise<boolean>;
 
 export function IsAutostartEnabled():Promise<boolean>;
@@ -82,6 +79,8 @@ export function RefreshSubscription(arg1:string):Promise<Array<config.ProxyEntry
 
 export function ResetLeftoverReport():Promise<string>;
 
+export function ResolveAutoCandidates(arg1:string):Promise<Array<config.ProxyEntry>>;
+
 export function RestartAsAdmin():Promise<void>;
 
 export function SaveConfig(arg1:config.AppConfig):Promise<void>;
@@ -94,17 +93,11 @@ export function SetStartInTray(arg1:boolean):Promise<void>;
 
 export function SetTrayIcon(arg1:Array<number>):Promise<void>;
 
-export function StartMITM(arg1:number):Promise<number>;
-
 export function StartUpdate():Promise<void>;
-
-export function StopMITM():Promise<void>;
 
 export function SyncProxies(arg1:Array<config.ProxyEntry>):Promise<void>;
 
-
 export function ToggleKillSwitch(arg1:boolean):Promise<void>;
-
 
 export function UpdateRoutingList(arg1:config.RoutingList):Promise<void>;
 

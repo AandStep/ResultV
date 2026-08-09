@@ -47,40 +47,17 @@ export const useDaemonControl = (
         if (statusGenerationRef) statusGenerationRef.current += 1;
     };
 
-    const getConnectCandidates = useCallback((proxyToResolve) => {
+    // Ranking lives in the backend (App.ResolveAutoCandidates) so the tray and
+    // the UI cannot drift apart. This used to sort AUTO members by the cached
+    // ping sweep, which measured a bare TCP connect and knew nothing about
+    // past connect failures.
+    const getConnectCandidates = useCallback(async (proxyToResolve) => {
         if (proxyToResolve?.type?.toUpperCase() !== "AUTO") {
             return [proxyToResolve];
         }
-        try {
-            const extra = typeof proxyToResolve.extra === 'string'
-                ? JSON.parse(proxyToResolve.extra)
-                : (proxyToResolve.extra || {});
-            const memberIds = (extra.members || []).map(String);
-            const members = proxies.filter(p => memberIds.includes(String(p.id)));
-            if (members.length === 0) return [proxyToResolve];
-
-            const pingScore = (id) => {
-                const v = pings[id];
-                if (!v) return null;
-                if (v === "Unknown") return Number.MAX_SAFE_INTEGER - 1;
-                const m = /^(\d+)/.exec(String(v));
-                return m ? parseInt(m[1], 10) : null;
-            };
-
-            const scored = [];
-            const unscored = [];
-            for (const member of members) {
-                const score = pingScore(member.id);
-                if (score !== null) scored.push({ member, score });
-                else unscored.push(member);
-            }
-            scored.sort((a, b) => a.score - b.score);
-            const ordered = [...scored.map(x => x.member), ...unscored];
-            return ordered.length > 0 ? ordered : [proxyToResolve];
-        } catch (e) {
-            return [proxyToResolve];
-        }
-    }, [proxies, pings]);
+        const ranked = await wailsAPI.resolveAutoCandidates(proxyToResolve.id);
+        return ranked.length > 0 ? ranked : [proxyToResolve];
+    }, []);
 
     const isTerminalErrorCode = (code) =>
         code === "tun_privileges" || code === "proxy_not_supported";
@@ -149,7 +126,7 @@ export const useDaemonControl = (
                     return;
                 }
                 const isAuto = targetProxy?.type?.toUpperCase() === "AUTO";
-                const candidates = getConnectCandidates(targetProxy).slice(0, isAuto ? AUTO_MAX_ATTEMPTS : 1);
+                const candidates = (await getConnectCandidates(targetProxy)).slice(0, isAuto ? AUTO_MAX_ATTEMPTS : 1);
                 addLog(`Подключение к ${targetProxy.name}...`, "info");
                 setActiveProxy(targetProxy);
                 if (String(settings?.lastSelectedProxyId) !== String(targetProxy.id)) {
@@ -269,7 +246,7 @@ export const useDaemonControl = (
                 if (setActiveTab) setActiveTab("home");
 
                 const isAuto = proxy?.type?.toUpperCase() === "AUTO";
-                const candidates = getConnectCandidates(proxy).slice(0, isAuto ? AUTO_MAX_ATTEMPTS : 1);
+                const candidates = (await getConnectCandidates(proxy)).slice(0, isAuto ? AUTO_MAX_ATTEMPTS : 1);
 
                 setActiveProxy(proxy);
                 if (String(settings?.lastSelectedProxyId) !== String(proxy.id)) {
