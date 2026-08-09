@@ -1,0 +1,189 @@
+// Copyright (C) 2026 ResultV
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+package proxy
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+)
+
+// Per-node health statistics, persisted across launches.
+//
+// The single most honest signal about a node is whether Connect actually
+// succeeded, and until now that was thrown away: every connect re-probed from
+// scratch and a node that failed three times yesterday could still win today on
+// a 20ms head start. This store keeps that history so future selection can
+// weigh it (see Task 9 — this file only stores and reports, it does not score).
+//
+// Entries are keyed by AutoNodeKey (opaque hashed strings from autoprobe.go).
+// This store never parses or interprets a key; it just remembers whatever
+// string it is given.
+//
+// Unlike server_pins.json, which maps hostnames to real backend IPs — exactly
+// the data a censor wants — this file holds only opaque hashed keys and
+// timings, so it carries no plaintext liability and is NOT encrypted.
+
+const nodeStatsFile = "node_stats.json"
+
+// nodeStatAlpha weights new samples in the EWMA. 0.3 tracks genuine route
+// changes within a few probes while still damping one-off spikes.
+const nodeStatAlpha = 0.3
+
+// NodeStat is one node's rolling health record.
+type NodeStat struct {
+	EWMARTTms     float64   `json:"ewmaRttMs"`
+	JitterMs      float64   `json:"jitterMs"`
+	ConnectOK     int       `json:"connectOk"`
+	ConnectFail   int       `json:"connectFail"`
+	ConsecFails   int       `json:"consecFails"`
+	LastSuccessAt time.Time `json:"lastSuccessAt"`
+	LastFailAt    time.Time `json:"lastFailAt"`
+	LastReason    string    `json:"lastReason"`
+}
+
+// NodeStatStore holds per-node stats in memory and persists them to a plain
+// JSON file on explicit Flush. Safe for concurrent use.
+type NodeStatStore struct {
+	mu      sync.Mutex
+	dataDir string
+	stats   map[string]NodeStat
+	dirty   bool
+}
+
+// NewNodeStatStore loads any existing stats from dataDir/node_stats.json (or
+// starts empty if the file is missing or corrupt) and returns a ready store.
+func NewNodeStatStore(dataDir string) *NodeStatStore {
+	s := &NodeStatStore{dataDir: dataDir, stats: map[string]NodeStat{}}
+	s.load()
+	return s
+}
+
+func (s *NodeStatStore) path() string {
+	return filepath.Join(s.dataDir, nodeStatsFile)
+}
+
+// load reads the stats file if present. Losing statistics is recoverable;
+// refusing to start over a corrupt or unreadable file is not — so any error
+// here just leaves the store empty rather than propagating.
+func (s *NodeStatStore) load() {
+	if s.dataDir == "" {
+		return
+	}
+	raw, err := os.ReadFile(s.path())
+	if err != nil {
+		return
+	}
+	loaded := map[string]NodeStat{}
+	if err := json.Unmarshal(raw, &loaded); err != nil {
+		return
+	}
+	s.stats = loaded
+}
+
+// Get returns the stat record for key, or the zero value if never recorded.
+func (s *NodeStatStore) Get(key string) NodeStat {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stats[key]
+}
+
+// RecordProbe folds a latency probe result into the node's rolling stats.
+//
+// A failed probe still updates LastReason and LastFailAt (something worth
+// remembering happened) but must leave EWMARTTms untouched: a dead probe
+// reports 0ms, and blending that into the average would read as "got faster"
+// when the truth is "didn't answer at all".
+//
+// The very first successful sample seeds EWMARTTms/JitterMs outright instead
+// of being blended against the zero-value starting point — otherwise every
+// node's first reading would come out halved.
+func (s *NodeStatStore) RecordProbe(key string, rttMs, jitterMs int64, ok bool, reason string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	st := s.stats[key]
+	st.LastReason = reason
+	if ok {
+		if st.EWMARTTms == 0 {
+			st.EWMARTTms = float64(rttMs)
+			st.JitterMs = float64(jitterMs)
+		} else {
+			st.EWMARTTms = st.EWMARTTms*(1-nodeStatAlpha) + float64(rttMs)*nodeStatAlpha
+			st.JitterMs = st.JitterMs*(1-nodeStatAlpha) + float64(jitterMs)*nodeStatAlpha
+		}
+	} else {
+		st.LastFailAt = time.Now()
+	}
+	s.stats[key] = st
+	s.dirty = true
+}
+
+// RecordConnect folds in the outcome of a real connection attempt — the
+// strongest signal this store has, since it reflects an actual end-to-end
+// connect rather than a lightweight probe.
+//
+// ConsecFails resets to 0 on success and increments on failure, answering
+// "is it broken right now". ConnectFail only ever accumulates, answering the
+// separate question "how unreliable has this node been overall". Both are
+// kept because scoring (Task 9) needs to tell a node mid-outage apart from
+// one that is merely historically flaky.
+func (s *NodeStatStore) RecordConnect(key string, ok bool, reason string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	st := s.stats[key]
+	if ok {
+		st.ConnectOK++
+		st.ConsecFails = 0
+		st.LastSuccessAt = time.Now()
+		st.LastReason = ""
+	} else {
+		st.ConnectFail++
+		st.ConsecFails++
+		st.LastFailAt = time.Now()
+		st.LastReason = reason
+	}
+	s.stats[key] = st
+	s.dirty = true
+}
+
+// Flush persists the store to disk if and only if something changed since
+// the last successful flush. RecordProbe/RecordConnect only mark the store
+// dirty in memory; a sweep of dozens of probes must cost exactly one
+// WriteFile when the caller decides to flush, not one per record, and there
+// is no background timer — callers own when a flush happens.
+func (s *NodeStatStore) Flush() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.dirty || s.dataDir == "" {
+		return nil
+	}
+	raw, err := json.Marshal(s.stats)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(s.dataDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(s.path(), raw, 0o600); err != nil {
+		return err
+	}
+	s.dirty = false
+	return nil
+}
