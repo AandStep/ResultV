@@ -46,7 +46,7 @@ func TestRankAutoCandidates_OrdersByRTTAndCapsAtFive(t *testing.T) {
 		return rtt[ip], true, ""
 	}
 
-	got := RankAutoCandidates(context.Background(),
+	got, _ := RankAutoCandidates(context.Background(),
 		mkNodes("a", "b", "c", "d", "e", "f", "g"), "")
 
 	if len(got) != AutoMaxCandidates {
@@ -79,7 +79,7 @@ func TestRankAutoCandidates_DropsUnreachableNodes(t *testing.T) {
 		return 30, true, ""
 	}
 
-	got := RankAutoCandidates(context.Background(), mkNodes("dead", "live"), "")
+	got, _ := RankAutoCandidates(context.Background(), mkNodes("dead", "live"), "")
 
 	if len(got) != 1 || got[0].IP != "live" {
 		t.Fatalf("недоступный узел не должен попадать в кандидаты, получили %+v", got)
@@ -91,8 +91,33 @@ func TestRankAutoCandidates_NoReachableNodesReturnsNil(t *testing.T) {
 	defer func() { pingTCPProbe = oldTCP }()
 	pingTCPProbe = func(_ string, _ int) (int64, bool, string) { return 0, false, "timeout" }
 
-	if got := RankAutoCandidates(context.Background(), mkNodes("a", "b"), ""); got != nil {
+	if got, _ := RankAutoCandidates(context.Background(), mkNodes("a", "b"), ""); got != nil {
 		t.Fatalf("ожидали nil когда живых узлов нет, получили %+v", got)
+	}
+}
+
+func TestRankAutoCandidates_ReturnsPhase1EvenWhenNoneReachable(t *testing.T) {
+	// This is the diagnostic case that matters most: a dead AUTO group is
+	// exactly when the caller's per-member RTT/reason table needs data, so
+	// phase1 must not come back empty just because candidates did.
+	oldTCP := pingTCPProbe
+	defer func() { pingTCPProbe = oldTCP }()
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) { return 0, false, "timeout: " + ip }
+
+	got, phase1 := RankAutoCandidates(context.Background(), mkNodes("a", "b"), "")
+	if got != nil {
+		t.Fatalf("ожидали nil кандидатов, получили %+v", got)
+	}
+	if len(phase1) != 2 {
+		t.Fatalf("ожидали 2 строки диагностики фазы 1 даже без доступных узлов, получили %d: %+v", len(phase1), phase1)
+	}
+	for _, r := range phase1 {
+		if r.OK {
+			t.Errorf("узел %q помечен как OK, хотя ping должен был провалиться", r.Key)
+		}
+		if r.Reason == "" {
+			t.Errorf("узел %q: пустая причина отказа в диагностике фазы 1", r.Key)
+		}
 	}
 }
 

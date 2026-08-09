@@ -18,7 +18,6 @@ package proxy
 import (
 	"context"
 	"sort"
-	"sync"
 
 	"resultproxy-wails/internal/config"
 )
@@ -32,20 +31,6 @@ const AutoMaxCandidates = 5
 // probe. Phase 1 is cheap and wide; phase 2 is accurate and narrow.
 const autoShortlistSize = 5
 
-// lastSnapshotMu guards lastSnapshot. RankAutoCandidates is reachable from
-// both the tray and the frontend, so a bare package-level slice would race.
-var lastSnapshotMu sync.Mutex
-var lastSnapshot []AutoProbeResult
-
-// LastAutoProbeSnapshot returns the phase-1 results of the most recent
-// RankAutoCandidates call, for diagnostics. Guarded because the ranking runs
-// from both the tray and the frontend.
-func LastAutoProbeSnapshot() []AutoProbeResult {
-	lastSnapshotMu.Lock()
-	defer lastSnapshotMu.Unlock()
-	return append([]AutoProbeResult(nil), lastSnapshot...)
-}
-
 // RankAutoCandidates probes members in two phases and returns them best-first.
 //
 // Phase 1 sweeps every member with DepthFast to drop the dead ones. Phase 2
@@ -54,22 +39,22 @@ func LastAutoProbeSnapshot() []AutoProbeResult {
 // so the node currently in use is always measured on equal footing — without it
 // a node just outside the top-5 would flap in and out of consideration.
 //
-// Returns nil when nothing is reachable; callers fall back to the AUTO head.
-func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previousKey string) []config.ProxyEntry {
+// Returns candidates nil when nothing is reachable; callers fall back to the
+// AUTO head. phase1 carries the raw phase-1 probe rows and is returned on
+// EVERY exit path (including the nil-candidates ones) instead of being stashed
+// in package state: this function is called concurrently from independent
+// callers (tray clicks each run on their own goroutine — see tray.go), and a
+// shared package-level "last snapshot" would let one caller's diagnostic table
+// silently show another caller's rows. Returning phase1 as an ordinary value
+// ties it to the call that produced it, so there is nothing left to race.
+func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previousKey string) (candidates []config.ProxyEntry, phase1 []AutoProbeResult) {
 	byKey := make(map[string]config.ProxyEntry, len(members))
 	for _, m := range members {
 		byKey[AutoNodeKey(m)] = m
 	}
 
 	fast := ProbeAutoNodes(ctx, members, DepthFast)
-
-	// Snapshot phase-1 results for diagnostics: callers (ResolveAutoCandidates)
-	// build the per-member RTT/reason table from this, since after ranking they
-	// only have the survivors, not the full sweep. Store a copy, not the live
-	// slice — a concurrent rank must not mutate what a reader is iterating.
-	lastSnapshotMu.Lock()
-	lastSnapshot = append([]AutoProbeResult(nil), fast...)
-	lastSnapshotMu.Unlock()
+	phase1 = fast
 
 	alive := make([]AutoProbeResult, 0, len(fast))
 	for _, r := range fast {
@@ -78,7 +63,7 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 		}
 	}
 	if len(alive) == 0 {
-		return nil
+		return nil, phase1
 	}
 	sort.SliceStable(alive, func(i, j int) bool { return alive[i].RTTms < alive[j].RTTms })
 
@@ -108,7 +93,7 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 		}
 	}
 	if len(scored) == 0 {
-		return nil
+		return nil, phase1
 	}
 	sort.SliceStable(scored, func(i, j int) bool { return scored[i].RTTms < scored[j].RTTms })
 
@@ -119,5 +104,5 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 		}
 		out = append(out, byKey[r.Key])
 	}
-	return out
+	return out, phase1
 }

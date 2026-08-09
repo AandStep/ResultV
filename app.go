@@ -107,9 +107,15 @@ type App struct {
 	// lastAutoNodeKey is the AutoNodeKey of the AUTO member currently in use.
 	// Passed as previousKey to RankAutoCandidates so the active node is always
 	// re-measured on equal footing instead of flapping in and out of the
-	// shortlist. Empty until a connection is made. Written by Task 5; this
-	// task only reads it.
-	lastAutoNodeKey string
+	// shortlist. Empty until a connection is made.
+	//
+	// lastAutoNodeKeyMu guards it: every tray click dispatches on its own
+	// goroutine (system/tray.go's `go t.safeCall(...)`), so a click reading it
+	// via ResolveAutoCandidates can run concurrently with another click's
+	// connectFromTray writing it. Use getLastAutoNodeKey/setLastAutoNodeKey,
+	// never the field directly.
+	lastAutoNodeKeyMu sync.RWMutex
+	lastAutoNodeKey   string
 
 	startInTray bool
 
@@ -2648,6 +2654,23 @@ func extractAutoMembers(raw json.RawMessage) []string {
 	return parsed.Members
 }
 
+// getLastAutoNodeKey reads lastAutoNodeKey under RLock. See the field comment
+// on App.lastAutoNodeKeyMu for why this can't be a bare field read: tray
+// clicks run concurrently, one goroutine's read here can race another's write
+// in setLastAutoNodeKey.
+func (a *App) getLastAutoNodeKey() string {
+	a.lastAutoNodeKeyMu.RLock()
+	defer a.lastAutoNodeKeyMu.RUnlock()
+	return a.lastAutoNodeKey
+}
+
+// setLastAutoNodeKey writes lastAutoNodeKey under Lock. See getLastAutoNodeKey.
+func (a *App) setLastAutoNodeKey(key string) {
+	a.lastAutoNodeKeyMu.Lock()
+	defer a.lastAutoNodeKeyMu.Unlock()
+	a.lastAutoNodeKey = key
+}
+
 // ResolveAutoCandidates returns the ranked connect candidates for an entry.
 //
 // This is the single selection entry point: the tray path and the frontend
@@ -2691,20 +2714,22 @@ func (a *App) ResolveAutoCandidates(proxyID string) []config.ProxyEntry {
 		}
 	}
 
-	ranked := proxy.RankAutoCandidates(a.ctx, members, a.lastAutoNodeKey)
+	ranked, phase1 := proxy.RankAutoCandidates(a.ctx, members, a.getLastAutoNodeKey())
 
 	// The AUTO row shows one aggregate number while its members are hidden
 	// from the UI (filteredProxies) — without this table there is no way to
 	// tell which member produced an implausible RTT or why one dropped out.
-	// Built from the phase-1 snapshot because after ranking we only have the
-	// survivors, not the full sweep with failure reasons.
+	// Built from the phase-1 return value (not package state — RankAutoCandidates
+	// no longer stashes a shared snapshot, since two concurrent callers, e.g.
+	// two tray clicks, would otherwise race over it) because after ranking we
+	// only have the survivors, not the full sweep with failure reasons.
 	if a.log != nil {
 		byKey := map[string]config.ProxyEntry{}
 		for _, m := range members {
 			byKey[proxy.AutoNodeKey(m)] = m
 		}
 		var rows []autoMemberProbe
-		for _, r := range proxy.LastAutoProbeSnapshot() {
+		for _, r := range phase1 {
 			m := byKey[r.Key]
 			rows = append(rows, autoMemberProbe{
 				Name:   strings.TrimSpace(m.Name),
@@ -2824,7 +2849,18 @@ func (a *App) connectFromTray(proxyID string) error {
 			if a.log != nil {
 				a.log.Info(fmt.Sprintf("[TRAY] AUTO: узел не поднялся, пробуем следующий (%s)", label))
 			}
-			_ = a.Disconnect() // returns error only (app.go:727)
+			// Tear down only the engine here, NOT a.Disconnect(): that also
+			// disables the kill switch (app.go's Disconnect, ~line 733-736),
+			// which would drop firewall protection for the gap between this
+			// failed candidate and the next connect attempt — precisely when
+			// there is no tunnel up and the kill switch is the only thing
+			// stopping a leak. Leaving the kill switch enabled here is the
+			// whole point of this branch. The tray/title/proxy:disconnected
+			// event are left alone too: we're still mid-failover, not actually
+			// disconnected, so telling the UI otherwise would be wrong.
+			if a.proxy != nil {
+				_ = a.proxy.Disconnect()
+			}
 		}
 		result, err := a.Connect(proxy.ProxyConfig{
 			ID:              candidate.ID,
@@ -2842,7 +2878,7 @@ func (a *App) connectFromTray(proxyID string) error {
 			continue
 		}
 		if result.Success {
-			a.lastAutoNodeKey = proxy.AutoNodeKey(candidate)
+			a.setLastAutoNodeKey(proxy.AutoNodeKey(candidate))
 			a.refreshTrayProxyList()
 			return nil
 		}
@@ -2851,6 +2887,15 @@ func (a *App) connectFromTray(proxyID string) error {
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no candidate connected")
 	}
+	// Every candidate failed. Unlike the between-candidates case above, there
+	// is no next attempt left to protect, so the reason to keep the kill
+	// switch armed and the engine silent is gone — and leaving it that way
+	// would strand the user behind firewall rules with no engine running and
+	// nothing telling the UI it's disconnected. Run the full Disconnect() here
+	// to restore the pre-failover end state: kill switch disabled, tray/title
+	// reset, proxy:disconnected emitted. a.Disconnect() itself no-ops when
+	// a.proxy is nil.
+	_ = a.Disconnect()
 	return lastErr
 }
 
