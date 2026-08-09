@@ -18,6 +18,7 @@ package proxy
 import (
 	"context"
 	"sort"
+	"sync"
 
 	"resultproxy-wails/internal/config"
 )
@@ -30,6 +31,20 @@ const AutoMaxCandidates = 5
 // autoShortlistSize is how many phase-1 survivors get the expensive DepthFull
 // probe. Phase 1 is cheap and wide; phase 2 is accurate and narrow.
 const autoShortlistSize = 5
+
+// lastSnapshotMu guards lastSnapshot. RankAutoCandidates is reachable from
+// both the tray and the frontend, so a bare package-level slice would race.
+var lastSnapshotMu sync.Mutex
+var lastSnapshot []AutoProbeResult
+
+// LastAutoProbeSnapshot returns the phase-1 results of the most recent
+// RankAutoCandidates call, for diagnostics. Guarded because the ranking runs
+// from both the tray and the frontend.
+func LastAutoProbeSnapshot() []AutoProbeResult {
+	lastSnapshotMu.Lock()
+	defer lastSnapshotMu.Unlock()
+	return append([]AutoProbeResult(nil), lastSnapshot...)
+}
 
 // RankAutoCandidates probes members in two phases and returns them best-first.
 //
@@ -47,6 +62,15 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 	}
 
 	fast := ProbeAutoNodes(ctx, members, DepthFast)
+
+	// Snapshot phase-1 results for diagnostics: callers (ResolveAutoCandidates)
+	// build the per-member RTT/reason table from this, since after ranking they
+	// only have the survivors, not the full sweep. Store a copy, not the live
+	// slice — a concurrent rank must not mutate what a reader is iterating.
+	lastSnapshotMu.Lock()
+	lastSnapshot = append([]AutoProbeResult(nil), fast...)
+	lastSnapshotMu.Unlock()
+
 	alive := make([]AutoProbeResult, 0, len(fast))
 	for _, r := range fast {
 		if r.OK {

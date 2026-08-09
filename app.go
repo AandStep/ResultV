@@ -2440,7 +2440,7 @@ func (a *App) refreshTrayProxyList() {
 //     first one's IP.
 //  2. AUTO.Extra.members listing IDs that don't exist in cfg.Proxies
 //     ("orphan members") — filter does not hide them because there's
-//     nothing to hide, but they're also unreachable from resolveAutoProxy.
+//     nothing to hide, but they're also unreachable from ResolveAutoCandidates.
 //
 // Both anomalies are silent corruption that the user can only detect by
 // observing wrong-server behaviour; logging them here puts a breadcrumb in
@@ -2627,117 +2627,6 @@ func formatAutoMemberTable(autoLabel string, rows []autoMemberProbe) []string {
 	return out
 }
 
-// resolveAutoProxy turns an AUTO-group head into its best-pinging member.
-// For non-AUTO entries it returns the input unchanged.
-//
-// The merged result keeps the AUTO head's ID/Name (so UI labels stay stable
-// across pings) but takes IP/Port/Type/credentials AND SubscriptionURL from
-// the chosen member. The SubscriptionURL copy is critical: without it the
-// engine logs leak the member's raw host:port instead of the subscription
-// label (manager.Connect branches on SubscriptionURL != "").
-func (a *App) resolveAutoProxy(p *config.ProxyEntry) *config.ProxyEntry {
-	if !strings.EqualFold(p.Type, "AUTO") || len(p.Extra) == 0 {
-		return p
-	}
-	var parsed struct {
-		Members []string `json:"members"`
-	}
-	if len(p.Extra) > 0 && p.Extra[0] == '"' {
-		var s string
-		if err := json.Unmarshal(p.Extra, &s); err == nil {
-			_ = json.Unmarshal([]byte(s), &parsed)
-		}
-	} else {
-		_ = json.Unmarshal(p.Extra, &parsed)
-	}
-
-	cfg := a.config.GetConfig()
-	var best *config.ProxyEntry
-	var bestPing int64 = 9999999
-	pinged := 0
-	reachable := 0
-
-	var rows []autoMemberProbe
-	for _, memberID := range parsed.Members {
-		if memberID == "" {
-			continue
-		}
-		for i := range cfg.Proxies {
-			if cfg.Proxies[i].ID == memberID {
-				member := &cfg.Proxies[i]
-				// SECTION rows carry no address (normalizeSectionEntry blanks
-				// IP/Port); probing them dials ":0". The frontend sweep already
-				// skips them — the backend must too.
-				if strings.EqualFold(member.Type, "SECTION") {
-					break
-				}
-				pinged++
-				pingRes := a.PingProxy(member.IP, member.Port, member.Type)
-				rows = append(rows, autoMemberProbe{
-					Name:   strings.TrimSpace(member.Name),
-					Addr:   fmt.Sprintf("%s:%d", member.IP, member.Port),
-					Type:   strings.ToUpper(member.Type),
-					RTTms:  pingRes.LatencyMs,
-					OK:     pingRes.Reachable,
-					Reason: pingRes.Reason,
-				})
-				if pingRes.Reachable {
-					reachable++
-					if pingRes.LatencyMs < bestPing {
-						bestPing = pingRes.LatencyMs
-						best = member
-					}
-				}
-				break
-			}
-		}
-	}
-
-	autoLabel := strings.TrimSpace(p.Name)
-	if autoLabel == "" {
-		autoLabel = "AUTO"
-	}
-	if a.log != nil {
-		for _, line := range formatAutoMemberTable(autoLabel, rows) {
-			a.log.Info(line)
-		}
-	}
-	if best != nil {
-		// Surface the AUTO routing decision so the user can see WHY the
-		// connection went to a particular IP/country — without this the
-		// engine logs show only the member IP and the user can't tell
-		// whether they clicked the right thing in the tray.
-		bestLabel := strings.TrimSpace(best.Name)
-		if bestLabel == "" {
-			bestLabel = fmt.Sprintf("%s:%d", best.IP, best.Port)
-		}
-		if a.log != nil {
-			a.log.Info(fmt.Sprintf("[PROXY] AUTO «%s»: выбран узел «%s» (пинг %dms, проверено %d из %d, доступно %d)",
-				autoLabel, bestLabel, bestPing, pinged, len(parsed.Members), reachable))
-		}
-		merged := *best
-		merged.ID = p.ID
-		merged.Name = p.Name
-		// Preserve the AUTO head's subscription metadata so logs/labels
-		// downstream show the subscription instead of the raw member host.
-		// best.SubscriptionURL is usually equal to p.SubscriptionURL, but
-		// fall back to the AUTO head's value when a member entry was added
-		// outside the subscription import path.
-		if strings.TrimSpace(merged.SubscriptionURL) == "" {
-			merged.SubscriptionURL = p.SubscriptionURL
-		}
-		if strings.TrimSpace(merged.Provider) == "" {
-			merged.Provider = p.Provider
-		}
-		return &merged
-	}
-	if a.log != nil {
-		a.log.Warning(fmt.Sprintf("[PROXY] AUTO «%s»: ни один из %d узлов не доступен — попытка по последней записи",
-			autoLabel, len(parsed.Members)))
-	}
-	return p
-}
-
 // extractAutoMembers reads the member ID list out of an AUTO head's Extra.
 // Providers' Extra reaches us in two shapes — raw JSON object, or that object
 // encoded as a JSON string — so both are handled.
@@ -2803,6 +2692,34 @@ func (a *App) ResolveAutoCandidates(proxyID string) []config.ProxyEntry {
 	}
 
 	ranked := proxy.RankAutoCandidates(a.ctx, members, a.lastAutoNodeKey)
+
+	// The AUTO row shows one aggregate number while its members are hidden
+	// from the UI (filteredProxies) — without this table there is no way to
+	// tell which member produced an implausible RTT or why one dropped out.
+	// Built from the phase-1 snapshot because after ranking we only have the
+	// survivors, not the full sweep with failure reasons.
+	if a.log != nil {
+		byKey := map[string]config.ProxyEntry{}
+		for _, m := range members {
+			byKey[proxy.AutoNodeKey(m)] = m
+		}
+		var rows []autoMemberProbe
+		for _, r := range proxy.LastAutoProbeSnapshot() {
+			m := byKey[r.Key]
+			rows = append(rows, autoMemberProbe{
+				Name:   strings.TrimSpace(m.Name),
+				Addr:   fmt.Sprintf("%s:%d", m.IP, m.Port),
+				Type:   strings.ToUpper(m.Type),
+				RTTms:  r.RTTms,
+				OK:     r.OK,
+				Reason: r.Reason,
+			})
+		}
+		for _, line := range formatAutoMemberTable(strings.TrimSpace(head.Name), rows) {
+			a.log.Info(line)
+		}
+	}
+
 	if len(ranked) == 0 {
 		if a.log != nil {
 			a.log.Warning(fmt.Sprintf("[PROXY] AUTO «%s»: ни один из %d узлов не доступен — попытка по AUTO-записи",
@@ -2878,7 +2795,15 @@ func (a *App) connectFromTray(proxyID string) error {
 		a.log.Info(fmt.Sprintf("[TRAY] клик по «%s» (id=%s, type=%s)", clickedLabel, proxyID, selected.Type))
 	}
 
-	selected = a.resolveAutoProxy(selected)
+	// ResolveAutoCandidates is the single selection entry point shared with
+	// the frontend: for a non-AUTO entry it resolves to itself, for an AUTO
+	// head it returns up to 5 members ranked best-first. Consuming it here
+	// (instead of resolving one member and giving up, as the tray used to)
+	// gives the tray the same failover the frontend already had.
+	candidates := a.ResolveAutoCandidates(proxyID)
+	if len(candidates) == 0 {
+		return fmt.Errorf("proxy %s not resolvable", proxyID)
+	}
 
 	cfg.Settings.LastSelectedProxyID = proxyID
 	if err := a.config.SaveConfig(cfg); err != nil {
@@ -2889,25 +2814,44 @@ func (a *App) connectFromTray(proxyID string) error {
 	// log output on SubscriptionURL != "" — without this the user sees the
 	// raw member IP in logs whenever they connect via the tray (which is
 	// exactly the leak the user complained about for AUTO routing).
-	result, err := a.Connect(proxy.ProxyConfig{
-		ID:              selected.ID,
-		IP:              selected.IP,
-		Port:            selected.Port,
-		Type:            selected.Type,
-		Username:        selected.Username,
-		Password:        selected.Password,
-		URI:             selected.URI,
-		Extra:           selected.Extra,
-		SubscriptionURL: selected.SubscriptionURL,
-	}, cfg.RoutingRules, cfg.Settings.KillSwitch)
-	if err != nil {
-		return err
+	var lastErr error
+	for i, candidate := range candidates {
+		if i > 0 {
+			label := strings.TrimSpace(candidate.Name)
+			if label == "" {
+				label = fmt.Sprintf("%s:%d", candidate.IP, candidate.Port)
+			}
+			if a.log != nil {
+				a.log.Info(fmt.Sprintf("[TRAY] AUTO: узел не поднялся, пробуем следующий (%s)", label))
+			}
+			_ = a.Disconnect() // returns error only (app.go:727)
+		}
+		result, err := a.Connect(proxy.ProxyConfig{
+			ID:              candidate.ID,
+			IP:              candidate.IP,
+			Port:            candidate.Port,
+			Type:            candidate.Type,
+			Username:        candidate.Username,
+			Password:        candidate.Password,
+			URI:             candidate.URI,
+			Extra:           candidate.Extra,
+			SubscriptionURL: candidate.SubscriptionURL,
+		}, cfg.RoutingRules, cfg.Settings.KillSwitch)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if result.Success {
+			a.lastAutoNodeKey = proxy.AutoNodeKey(candidate)
+			a.refreshTrayProxyList()
+			return nil
+		}
+		lastErr = errors.New(result.Message)
 	}
-	if !result.Success {
-		return errors.New(result.Message)
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no candidate connected")
 	}
-	a.refreshTrayProxyList()
-	return nil
+	return lastErr
 }
 
 // resolveProxyID returns the canonical ID for a ProxyConfig. Callers must
