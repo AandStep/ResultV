@@ -104,6 +104,13 @@ type App struct {
 	taskbarUnhook func()
 	smartProvider *proxy.HTTPBlockedListProvider
 
+	// lastAutoNodeKey is the AutoNodeKey of the AUTO member currently in use.
+	// Passed as previousKey to RankAutoCandidates so the active node is always
+	// re-measured on equal footing instead of flapping in and out of the
+	// shortlist. Empty until a connection is made. Written by Task 5; this
+	// task only reads it.
+	lastAutoNodeKey string
+
 	startInTray bool
 
 	deepLinkMu      sync.Mutex
@@ -2729,6 +2736,101 @@ func (a *App) resolveAutoProxy(p *config.ProxyEntry) *config.ProxyEntry {
 			autoLabel, len(parsed.Members)))
 	}
 	return p
+}
+
+// extractAutoMembers reads the member ID list out of an AUTO head's Extra.
+// Providers' Extra reaches us in two shapes — raw JSON object, or that object
+// encoded as a JSON string — so both are handled.
+func extractAutoMembers(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var parsed struct {
+		Members []string `json:"members"`
+	}
+	if raw[0] == '"' {
+		var s string
+		if err := json.Unmarshal(raw, &s); err == nil {
+			_ = json.Unmarshal([]byte(s), &parsed)
+		}
+	} else {
+		_ = json.Unmarshal(raw, &parsed)
+	}
+	return parsed.Members
+}
+
+// ResolveAutoCandidates returns the ranked connect candidates for an entry.
+//
+// This is the single selection entry point: the tray path and the frontend
+// both call it. Before it existed the two disagreed — the frontend ranked by
+// its cached ping sweep while the tray re-probed serially — so any improvement
+// to selection had to be made twice or it silently missed one of them.
+//
+// Non-AUTO entries resolve to themselves. An AUTO head with no reachable
+// member resolves to the head itself, preserving the previous fallback.
+func (a *App) ResolveAutoCandidates(proxyID string) []config.ProxyEntry {
+	if a.config == nil {
+		return nil
+	}
+	cfg := a.config.GetConfig()
+
+	var head *config.ProxyEntry
+	for i := range cfg.Proxies {
+		if cfg.Proxies[i].ID == proxyID {
+			head = &cfg.Proxies[i]
+			break
+		}
+	}
+	if head == nil {
+		return nil
+	}
+	if !strings.EqualFold(head.Type, "AUTO") {
+		return []config.ProxyEntry{*head}
+	}
+
+	memberIDs := extractAutoMembers(head.Extra)
+	members := make([]config.ProxyEntry, 0, len(memberIDs))
+	for _, id := range memberIDs {
+		if id == "" {
+			continue
+		}
+		for i := range cfg.Proxies {
+			if cfg.Proxies[i].ID == id {
+				members = append(members, cfg.Proxies[i])
+				break
+			}
+		}
+	}
+
+	ranked := proxy.RankAutoCandidates(a.ctx, members, a.lastAutoNodeKey)
+	if len(ranked) == 0 {
+		if a.log != nil {
+			a.log.Warning(fmt.Sprintf("[PROXY] AUTO «%s»: ни один из %d узлов не доступен — попытка по AUTO-записи",
+				strings.TrimSpace(head.Name), len(memberIDs)))
+		}
+		return []config.ProxyEntry{*head}
+	}
+
+	// Keep the AUTO head's identity on every candidate: manager.Connect
+	// branches its log output on SubscriptionURL != "", and the UI keys the
+	// row by the head's ID. Without this the logs leak the member host:port.
+	out := make([]config.ProxyEntry, 0, len(ranked))
+	for _, c := range ranked {
+		c.ID = head.ID
+		c.Name = head.Name
+		if strings.TrimSpace(c.SubscriptionURL) == "" {
+			c.SubscriptionURL = head.SubscriptionURL
+		}
+		if strings.TrimSpace(c.Provider) == "" {
+			c.Provider = head.Provider
+		}
+		out = append(out, c)
+	}
+	if a.log != nil {
+		a.log.Info(fmt.Sprintf("[PROXY] AUTO «%s»: кандидатов %d, первый — %s:%d",
+			strings.TrimSpace(head.Name), len(out), ranked[0].IP, ranked[0].Port))
+	}
+	return out
 }
 
 func (a *App) connectFromTray(proxyID string) error {

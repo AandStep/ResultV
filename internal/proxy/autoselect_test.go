@@ -1,0 +1,128 @@
+// Copyright (C) 2026 ResultV
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+package proxy
+
+import (
+	"context"
+	"sync"
+	"testing"
+
+	"resultproxy-wails/internal/config"
+)
+
+func mkNodes(ips ...string) []config.ProxyEntry {
+	out := make([]config.ProxyEntry, 0, len(ips))
+	for _, ip := range ips {
+		out = append(out, config.ProxyEntry{
+			ID: ip, IP: ip, Port: 443, Type: "VLESS",
+			Name: ip, SubscriptionURL: "https://sub.example",
+		})
+	}
+	return out
+}
+
+func TestRankAutoCandidates_OrdersByRTTAndCapsAtFive(t *testing.T) {
+	oldTCP, oldTLS := pingTCPProbe, autoTLSProbe
+	defer func() { pingTCPProbe, autoTLSProbe = oldTCP, oldTLS }()
+
+	rtt := map[string]int64{
+		"a": 90, "b": 10, "c": 50, "d": 20, "e": 70, "f": 30, "g": 40,
+	}
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) { return rtt[ip], true, "" }
+	autoTLSProbe = func(ip string, _ int, _ string, _ []string) (int64, bool, string) {
+		return rtt[ip], true, ""
+	}
+
+	got := RankAutoCandidates(context.Background(),
+		mkNodes("a", "b", "c", "d", "e", "f", "g"), "")
+
+	if len(got) != AutoMaxCandidates {
+		t.Fatalf("ожидали не более %d кандидатов, получили %d", AutoMaxCandidates, len(got))
+	}
+	if got[0].IP != "b" {
+		t.Errorf("быстрейший узел должен быть первым, получили %q", got[0].IP)
+	}
+	if got[1].IP != "d" {
+		t.Errorf("вторым ожидали d (20ms), получили %q", got[1].IP)
+	}
+}
+
+func TestRankAutoCandidates_DropsUnreachableNodes(t *testing.T) {
+	// DepthFull (phase 2) probes the shortlist with a real TLS handshake for
+	// any type not in autoProbeTLSParams' no-TLS list — VLESS (mkNodes'
+	// default) needs one. Without mocking autoTLSProbe too, "live" would hit
+	// the real network via an unresolvable host and be dropped as a false
+	// negative, which is not what this test is checking.
+	oldTCP, oldTLS := pingTCPProbe, autoTLSProbe
+	defer func() { pingTCPProbe, autoTLSProbe = oldTCP, oldTLS }()
+
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) {
+		if ip == "dead" {
+			return 0, false, "timeout"
+		}
+		return 30, true, ""
+	}
+	autoTLSProbe = func(ip string, _ int, _ string, _ []string) (int64, bool, string) {
+		return 30, true, ""
+	}
+
+	got := RankAutoCandidates(context.Background(), mkNodes("dead", "live"), "")
+
+	if len(got) != 1 || got[0].IP != "live" {
+		t.Fatalf("недоступный узел не должен попадать в кандидаты, получили %+v", got)
+	}
+}
+
+func TestRankAutoCandidates_NoReachableNodesReturnsNil(t *testing.T) {
+	oldTCP := pingTCPProbe
+	defer func() { pingTCPProbe = oldTCP }()
+	pingTCPProbe = func(_ string, _ int) (int64, bool, string) { return 0, false, "timeout" }
+
+	if got := RankAutoCandidates(context.Background(), mkNodes("a", "b"), ""); got != nil {
+		t.Fatalf("ожидали nil когда живых узлов нет, получили %+v", got)
+	}
+}
+
+func TestRankAutoCandidates_IncludesPreviousPickInShortlistEvenIfSlow(t *testing.T) {
+	oldTCP, oldTLS := pingTCPProbe, autoTLSProbe
+	defer func() { pingTCPProbe, autoTLSProbe = oldTCP, oldTLS }()
+
+	rtt := map[string]int64{"a": 10, "b": 20, "c": 30, "d": 40, "e": 50, "slow": 900}
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) { return rtt[ip], true, "" }
+
+	// ProbeAutoNodes runs the shortlist through a bounded worker pool, so this
+	// closure is invoked from multiple goroutines concurrently. Go maps are not
+	// safe for concurrent writes even to distinct keys (the runtime detects the
+	// write-write race and calls fatal, which -race or not aborts the whole test
+	// binary) — a mutex is required, not just good practice.
+	var fullProbedMu sync.Mutex
+	fullProbed := map[string]bool{}
+	autoTLSProbe = func(ip string, _ int, _ string, _ []string) (int64, bool, string) {
+		fullProbedMu.Lock()
+		fullProbed[ip] = true
+		fullProbedMu.Unlock()
+		return rtt[ip], true, ""
+	}
+
+	nodes := mkNodes("a", "b", "c", "d", "e", "slow")
+	prev := AutoNodeKey(nodes[5])
+
+	RankAutoCandidates(context.Background(), nodes, prev)
+
+	if !fullProbed["slow"] {
+		t.Error("прошлый выбор должен попадать в фазу 2 даже если он вне топ-5")
+	}
+}

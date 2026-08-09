@@ -5,6 +5,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -39,5 +40,21 @@ func TestFormatAutoMemberTable_EmptyMembersStillReportsGroup(t *testing.T) {
 	}
 	if !strings.Contains(got[0], "0") {
 		t.Errorf("заголовок должен сообщать 0 членов, получили %q", got[0])
+	}
+}
+
+func TestExtractAutoMembers_ParsesBothExtraEncodings(t *testing.T) {
+	plain := json.RawMessage(`{"members":["m1","m2"]}`)
+	if got := extractAutoMembers(plain); len(got) != 2 || got[0] != "m1" {
+		t.Errorf("прямой JSON: ожидали [m1 m2], получили %v", got)
+	}
+
+	quoted := json.RawMessage(`"{\"members\":[\"m3\"]}"`)
+	if got := extractAutoMembers(quoted); len(got) != 1 || got[0] != "m3" {
+		t.Errorf("JSON-в-строке: ожидали [m3], получили %v", got)
+	}
+
+	if got := extractAutoMembers(nil); len(got) != 0 {
+		t.Errorf("пустой extra: ожидали пусто, получили %v", got)
 	}
 }
