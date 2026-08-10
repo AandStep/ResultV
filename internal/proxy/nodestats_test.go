@@ -88,3 +88,33 @@ func TestNodeStatStore_UnknownKeyReturnsZeroValue(t *testing.T) {
 		t.Errorf("неизвестный ключ должен давать нулевое значение, получили %+v", got)
 	}
 }
+
+// TestNodeStatStore_RecordConnectSanitizesReasonItself is the regression test
+// for the finding: RecordProbe and the package-level RecordConnectOutcome
+// both sanitize reason before it can reach node_stats.json (an unencrypted
+// file, on the promise it holds no addresses), but the exported
+// NodeStatStore.RecordConnect method did not — it stored whatever the caller
+// passed verbatim. No current caller misuses it, but the invariant should
+// hold by construction, not by every present and future caller remembering
+// to pre-sanitize.
+func TestNodeStatStore_RecordConnectSanitizesReasonItself(t *testing.T) {
+	s := NewNodeStatStore(t.TempDir())
+
+	// A raw dial error, exactly the shape sanitizeStatReason exists to
+	// collapse: Go's net package embeds the remote address in it.
+	s.RecordConnect("k", false, "dial tcp 203.0.113.5:443: i/o timeout")
+
+	got := s.Get("k").LastReason
+	if got == "dial tcp 203.0.113.5:443: i/o timeout" {
+		t.Fatal("RecordConnect stored the raw reason verbatim — an address reached node_stats.json unsanitized")
+	}
+	if got != "error" {
+		t.Errorf("unrecognised reason should collapse to the canned \"error\", got %q", got)
+	}
+
+	// A reason already in the fixed vocabulary must survive unchanged.
+	s.RecordConnect("k2", false, "timeout")
+	if got := s.Get("k2").LastReason; got != "timeout" {
+		t.Errorf("known-vocabulary reason should pass through, got %q", got)
+	}
+}

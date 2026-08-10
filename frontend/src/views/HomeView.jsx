@@ -136,7 +136,15 @@ export const HomeView = () => {
   }, [isProxyListOpen]);
 
   // The chosen node is known only after a connect, so this refreshes when the
-  // active proxy changes rather than on every render.
+  // active proxy changes rather than on every render. isConnected is also a
+  // dep: neither proxies nor activeProxy reliably change identity when a
+  // connect completes — activeProxy is set BEFORE wailsAPI.connect
+  // (useDaemonControl.js) and the status poller resolves it back to the same
+  // object already in `proxies`. isConnected does flip false->true right
+  // after a successful connect (useDaemonControl.js sets it post-success;
+  // useDaemonStatus.js also mirrors the backend's isConnected flag every
+  // status tick), so it is the reliable signal that a connect just finished
+  // and the AUTO row should re-fetch.
   const [autoStatusById, setAutoStatusById] = useState({});
   useEffect(() => {
     let cancelled = false;
@@ -154,7 +162,7 @@ export const HomeView = () => {
     return () => {
       cancelled = true;
     };
-  }, [proxies, activeProxy]);
+  }, [proxies, activeProxy, isConnected]);
 
   const displayProxy = useMemo(() => {
     const chain = [
@@ -269,22 +277,22 @@ export const HomeView = () => {
   const hasProviders = proxies.some((p) => p.provider);
 
   const sortedFavoriteProxies = useMemo(
-    () => sortProxiesByOption(favoriteProxies, homeSortBy, pings),
-    [favoriteProxies, homeSortBy, pings],
+    () => sortProxiesByOption(favoriteProxies, homeSortBy, pings, autoStatusById),
+    [favoriteProxies, homeSortBy, pings, autoStatusById],
   );
 
   const sortedProviderFlatGroups = useMemo(
     () =>
       providerFlatGroups.map((g) => ({
         ...g,
-        proxies: sortProxiesByOption(g.proxies, homeSortBy, pings),
+        proxies: sortProxiesByOption(g.proxies, homeSortBy, pings, autoStatusById),
       })),
-    [providerFlatGroups, homeSortBy, pings],
+    [providerFlatGroups, homeSortBy, pings, autoStatusById],
   );
 
   const sortedNonFavoriteProxies = useMemo(
-    () => sortProxiesByOption(nonFavoriteProxies, homeSortBy, pings),
-    [nonFavoriteProxies, homeSortBy, pings],
+    () => sortProxiesByOption(nonFavoriteProxies, homeSortBy, pings, autoStatusById),
+    [nonFavoriteProxies, homeSortBy, pings, autoStatusById],
   );
 
   const statsFillRemainingHeight =

@@ -87,8 +87,41 @@ func AutoNodeKey(e config.ProxyEntry) string {
 	write(strings.ToUpper(strings.TrimSpace(e.Type)))
 	write(e.Username)
 	write(e.Password)
-	write(string(e.Extra)) // uuid, sni, path, serviceName — the real identity
+	write(canonicalizeExtra(e.Extra)) // uuid, sni, path, serviceName — the real identity
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// canonicalizeExtra normalizes Extra's JSON encoding before it is hashed.
+//
+// Extra reaches the backend through two different encoders that disagree on
+// escaping: Go's encoding/json HTML-escapes &, <, > by default, while the
+// frontend's JSON.stringify (used on every settings round-trip — see
+// updateSetting, fired as early as the first connect via
+// lastSelectedProxyId) does not. Hashing the raw bytes would therefore give
+// the SAME logical node two different keys depending on which encoder wrote
+// it last — e.g. a ws/xhttp path containing "?ed=2048&v=1" — breaking
+// hysteresis and restarting its history.
+//
+// Unmarshal-then-remarshal fixes this: both encodings decode to the
+// identical Go value, and re-encoding through encoding/json is deterministic
+// (sorted map keys, fixed escaping) regardless of which form was fed in, so
+// the two forms collapse to the same canonical bytes.
+func canonicalizeExtra(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		// Malformed JSON: fall back to the raw bytes. A parse failure should
+		// still yield a stable (if imperfect) key, not a panic or every
+		// malformed node silently collapsing onto the empty-Extra key.
+		return string(raw)
+	}
+	canon, err := json.Marshal(v)
+	if err != nil {
+		return string(raw)
+	}
+	return string(canon)
 }
 
 // isProbeableNode reports whether an entry has something to dial. SECTION rows
@@ -202,10 +235,39 @@ var autoTLSProbe = func(host string, port int, sni string, alpn []string) (int64
 	return elapsed.Milliseconds(), true, ""
 }
 
+// autoProbeWantsTLS mirrors applyTLSAndTransport's TLS-enable condition
+// (outbound.go:428-500), the engine's own rule for whether a node's outbound
+// gets a TLS record at all: security must be "tls" or "reality", a Reality
+// public key ("pbk") must be present, or the legacy tls:true flag must be
+// set — and that legacy flag is itself vetoed by an explicit
+// security:"none" (extraSecurityExplicitlyNone, outbound.go). This must not
+// grow its own approximation of "looks like it wants TLS": parseVLESSURI
+// defaults security to "none" and parseVMessURI writes no security key at
+// all unless tls=="tls" (uriparser.go), so anything looser than the engine's
+// own condition fires a ClientHello at a node that never speaks TLS — which
+// is exactly the bug this function exists to fix (probe times out, node gets
+// deleted from AUTO selection and penalised as if it had actually failed).
+func autoProbeWantsTLS(extra map[string]interface{}) bool {
+	security := getStringField(extra, "security", "none")
+	pbk := getStringField(extra, "pbk", "")
+	if pbk != "" && !strings.EqualFold(security, "reality") {
+		security = "reality" // mirrors applyTLSAndTransport's own auto-detect
+	}
+	switch strings.ToLower(security) {
+	case "reality", "tls":
+		return true
+	}
+	if extraSecurityExplicitlyNone(extra) {
+		return false
+	}
+	return getBoolField(extra, "tls")
+}
+
 // autoProbeTLSParams derives the SNI and ALPN to present. Protocols that never
 // wrap in TLS report wantTLS=false so the stage is skipped for them.
 func autoProbeTLSParams(e config.ProxyEntry) (sni string, alpn []string, wantTLS bool) {
-	switch strings.ToUpper(strings.TrimSpace(e.Type)) {
+	protoType := strings.ToUpper(strings.TrimSpace(e.Type))
+	switch protoType {
 	case "SS", "SHADOWSOCKS", "WIREGUARD", "AMNEZIAWG", "HYSTERIA2":
 		return "", nil, false
 	}
@@ -213,6 +275,21 @@ func autoProbeTLSParams(e config.ProxyEntry) (sni string, alpn []string, wantTLS
 	extra := map[string]interface{}{}
 	if len(e.Extra) > 0 {
 		_ = json.Unmarshal(e.Extra, &extra)
+	}
+
+	wantTLS = autoProbeWantsTLS(extra)
+	// TROJAN's outbound builder (outbound.go's buildProxyOutbound, TROJAN
+	// case) forces TLS on by default even with no security field at all —
+	// unlike VLESS/VMess, Trojan is not a meaningful protocol without TLS —
+	// and only an explicit security=none turns it off. Mirror that
+	// protocol-specific override here too, or every Trojan node with a bare
+	// Extra (the common case) would silently skip the stage that is its
+	// whole point.
+	if !wantTLS && protoType == "TROJAN" && !extraSecurityExplicitlyNone(extra) {
+		wantTLS = true
+	}
+	if !wantTLS {
+		return "", nil, false
 	}
 
 	sni = getStringField(extra, "sni", "")

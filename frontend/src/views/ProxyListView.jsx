@@ -179,7 +179,16 @@ export const ProxyListView = () => {
   }, []);
 
   // The chosen node is known only after a connect, so this refreshes when the
-  // active proxy changes rather than on every render.
+  // active proxy changes rather than on every render. isConnected is also a
+  // dep: this view stays permanently mounted (hidden via CSS) so it never
+  // re-runs on its own, and neither proxies nor activeProxy reliably change
+  // identity when a connect completes — activeProxy is set BEFORE
+  // wailsAPI.connect (useDaemonControl.js) and the status poller resolves it
+  // back to the same object already in `proxies`. isConnected does flip
+  // false->true right after a successful connect (useDaemonControl.js sets
+  // it post-success; useDaemonStatus.js also mirrors the backend's
+  // isConnected flag every status tick), so it is the reliable signal that a
+  // connect just finished and the AUTO row should re-fetch.
   const [autoStatusById, setAutoStatusById] = useState({});
   useEffect(() => {
     let cancelled = false;
@@ -197,7 +206,7 @@ export const ProxyListView = () => {
     return () => {
       cancelled = true;
     };
-  }, [proxies, activeProxy]);
+  }, [proxies, activeProxy, isConnected]);
 
   const autoMemberIds = useMemo(() => {
     const ids = new Set();
@@ -229,11 +238,13 @@ export const ProxyListView = () => {
       result.sort((a, b) => (a.provider || "").localeCompare(b.provider || ""));
     } else if (sortBy === "ping") {
       result.sort(
-        (a, b) => getPingSortMetric(a, pings) - getPingSortMetric(b, pings),
+        (a, b) =>
+          getPingSortMetric(a, pings, autoStatusById) -
+          getPingSortMetric(b, pings, autoStatusById),
       );
     }
     return result;
-  }, [proxies, searchQuery, sortBy, autoMemberIds, pings]);
+  }, [proxies, searchQuery, sortBy, autoMemberIds, pings, autoStatusById]);
 
   const groupedProxies = useMemo(() => {
     const groups = {};

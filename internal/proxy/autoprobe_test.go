@@ -76,6 +76,36 @@ func TestProbeAutoNodes_SkipsSectionAndAddresslessEntries(t *testing.T) {
 	}
 }
 
+// TestProbeAutoNodes_CancelledContextLeavesZeroValueSlotsWithEmptyKey
+// documents the premise finding #5's context-cancellation item depends on:
+// a probe slot the worker pool never reached because ctx was already
+// cancelled is left at AutoProbeResult's zero value, whose Key is "". That
+// zero-Key value is indistinguishable from "not yet a real result" by every
+// caller (RankAutoCandidates in particular — see
+// TestRankAutoCandidates_CancelledProbesAreNotRecordedUnderEmptyKey), so
+// something downstream must filter it rather than record or display it.
+func TestProbeAutoNodes_CancelledContextLeavesZeroValueSlotsWithEmptyKey(t *testing.T) {
+	old := pingTCPProbe
+	defer func() { pingTCPProbe = old }()
+	pingTCPProbe = func(_ string, _ int) (int64, bool, string) {
+		t.Error("проба не должна вызываться при уже отменённом контексте")
+		return 0, false, ""
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	got := ProbeAutoNodes(ctx, mkNodes("a", "b"), DepthFast)
+	if len(got) != 2 {
+		t.Fatalf("ожидали 2 (нулевых) слота, получили %d", len(got))
+	}
+	for _, r := range got {
+		if r.Key != "" {
+			t.Errorf("ожидали пустой Key у отменённого слота, получили %+v", r)
+		}
+	}
+}
+
 func TestProbeAutoNodes_UsesHysteria2ProbeForHysteria2(t *testing.T) {
 	oldTCP, oldHY := pingTCPProbe, pingHysteria2Probe
 	defer func() { pingTCPProbe, pingHysteria2Probe = oldTCP, oldHY }()
@@ -127,6 +157,50 @@ func TestAutoNodeKey_DiffersOnExtra(t *testing.T) {
 
 	if AutoNodeKey(a) == AutoNodeKey(b) {
 		t.Fatal("entries differing only in Extra (uuid) produced the same key — CDN/multi-account collision is not fixed")
+	}
+}
+
+// TestAutoNodeKey_CanonicalizesExtraHTMLEscaping is the regression test for
+// the finding: AutoNodeKey used to hash e.Extra's raw bytes, but Extra
+// reaches the backend through two encoders that disagree on escaping — Go's
+// encoding/json HTML-escapes &, <, > by default, JSON.stringify (the
+// frontend, on every settings round-trip — see updateSetting) does not. A
+// node whose ws/xhttp path contains "&" (e.g. "?ed=2048&v=1", a common
+// early-data pattern) got one key right after connect and a DIFFERENT key
+// the moment the config round-tripped through the frontend, silently
+// restarting its history and breaking hysteresis.
+func TestAutoNodeKey_CanonicalizesExtraHTMLEscaping(t *testing.T) {
+	// htmlEscaped is what encoding/json (Go, used whenever THIS backend
+	// writes Extra) actually produces for a path containing "&": it
+	// HTML-escapes &, <, > by default. literalBytes is what JSON.stringify
+	// (the frontend, on every settings round-trip — see updateSetting)
+	// writes for the exact same logical value: no HTML-escaping at all.
+	htmlEscaped, err := json.Marshal(map[string]string{"path": "/ws?a=1&b=2"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	literalBytes := json.RawMessage(`{"path":"/ws?a=1&b=2"}`)
+	if string(htmlEscaped) == string(literalBytes) {
+		t.Fatal("test setup invalid: encoding/json did not actually HTML-escape '&' here, so this test would prove nothing")
+	}
+
+	escaped := sampleProxyEntry()
+	escaped.Extra = htmlEscaped
+
+	literal := sampleProxyEntry()
+	literal.Extra = literalBytes
+
+	if AutoNodeKey(escaped) != AutoNodeKey(literal) {
+		t.Fatal("HTML-escaped and literal encodings of the same logical Extra must hash to the same key")
+	}
+
+	// Guard against a canonicalization bug that just hashes the empty
+	// string, or otherwise collapses every Extra onto one key: a genuinely
+	// different value must still produce a different key.
+	different := sampleProxyEntry()
+	different.Extra = json.RawMessage(`{"path":"/ws?a=1&b=3"}`)
+	if AutoNodeKey(escaped) == AutoNodeKey(different) {
+		t.Fatal("genuinely different Extra values must still produce different keys after canonicalization")
 	}
 }
 
@@ -228,6 +302,72 @@ func TestAutoProbeTLSParams_FallsBackToHostAndSkipsPlainProtocols(t *testing.T) 
 	}
 }
 
+// TestAutoProbeTLSParams_MirrorsEngineTLSCondition is the regression test for
+// the finding: autoProbeTLSParams used to decide wantTLS from e.Type alone,
+// firing a ClientHello at any non-excluded-protocol node regardless of
+// whether its Extra actually asked for TLS. A plain vless://...?security=none
+// node (parseVLESSURI defaults security to "none", never omits it) or a
+// vmess:// node with tls!="tls" (parseVMessURI then writes no security key at
+// all) would get probed anyway, time out at the TLS stage, and get deleted
+// from AUTO selection while being penalised as if it had genuinely failed.
+//
+// Each case is checked against the exact condition applyTLSAndTransport uses
+// (outbound.go:428-500) — the engine's own rule for whether a node's
+// outbound gets a TLS record — so this test would catch autoProbeTLSParams
+// drifting from that rule in either direction (probing a plain node, or
+// skipping a TLS node).
+func TestAutoProbeTLSParams_MirrorsEngineTLSCondition(t *testing.T) {
+	cases := []struct {
+		name    string
+		e       config.ProxyEntry
+		wantTLS bool
+	}{
+		{
+			name:    "vless security=none has no TLS stage",
+			e:       config.ProxyEntry{IP: "1.2.3.4", Port: 443, Type: "VLESS", Extra: []byte(`{"security":"none","network":"ws"}`)},
+			wantTLS: false,
+		},
+		{
+			name:    "vmess with no security key has no TLS stage",
+			e:       config.ProxyEntry{IP: "1.2.3.4", Port: 443, Type: "VMESS", Extra: []byte(`{"network":"tcp","uuid":"x"}`)},
+			wantTLS: false,
+		},
+		{
+			name:    "socks5 has no TLS stage",
+			e:       config.ProxyEntry{IP: "1.2.3.4", Port: 1080, Type: "SOCKS5"},
+			wantTLS: false,
+		},
+		{
+			name:    "http has no TLS stage",
+			e:       config.ProxyEntry{IP: "1.2.3.4", Port: 8080, Type: "HTTP"},
+			wantTLS: false,
+		},
+		{
+			name:    "security=tls runs the TLS stage",
+			e:       config.ProxyEntry{IP: "1.2.3.4", Port: 443, Type: "VLESS", Extra: []byte(`{"security":"tls"}`)},
+			wantTLS: true,
+		},
+		{
+			name:    "security=reality runs the TLS stage",
+			e:       config.ProxyEntry{IP: "1.2.3.4", Port: 443, Type: "VLESS", Extra: []byte(`{"security":"reality"}`)},
+			wantTLS: true,
+		},
+		{
+			name:    "pbk present without security runs the TLS stage",
+			e:       config.ProxyEntry{IP: "1.2.3.4", Port: 443, Type: "VLESS", Extra: []byte(`{"pbk":"REbCbLiQwWzmUHZgBc-oCO0CMtwgvWURtWkFjNfcQkk"}`)},
+			wantTLS: true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, _, got := autoProbeTLSParams(c.e)
+			if got != c.wantTLS {
+				t.Errorf("wantTLS = %v, хотели %v", got, c.wantTLS)
+			}
+		})
+	}
+}
+
 func TestProbeAutoNodes_FullFailsNodeWhenTLSHandshakeFails(t *testing.T) {
 	oldTCP, oldTLS := pingTCPProbe, autoTLSProbe
 	defer func() { pingTCPProbe, autoTLSProbe = oldTCP, oldTLS }()
@@ -238,7 +378,11 @@ func TestProbeAutoNodes_FullFailsNodeWhenTLSHandshakeFails(t *testing.T) {
 	}
 
 	got := ProbeAutoNodes(context.Background(),
-		[]config.ProxyEntry{{ID: "a", IP: "1.1.1.1", Port: 443, Type: "VLESS"}},
+		// security=tls: wantTLS must be true for this node or DepthFull
+		// would never reach the TLS stage this test is about (see
+		// autoProbeWantsTLS — a VLESS node with no Extra at all no longer
+		// implies TLS, that was finding #1's bug).
+		[]config.ProxyEntry{{ID: "a", IP: "1.1.1.1", Port: 443, Type: "VLESS", Extra: []byte(`{"security":"tls"}`)}},
 		DepthFull)
 
 	if len(got) != 1 {
@@ -266,7 +410,9 @@ func TestProbeAutoNodes_FullTakesMedianAndJitterOfThreeSamples(t *testing.T) {
 	}
 
 	got := ProbeAutoNodes(context.Background(),
-		[]config.ProxyEntry{{ID: "a", IP: "1.1.1.1", Port: 443, Type: "VLESS"}},
+		// security=tls — see the comment in
+		// TestProbeAutoNodes_FullFailsNodeWhenTLSHandshakeFails above.
+		[]config.ProxyEntry{{ID: "a", IP: "1.1.1.1", Port: 443, Type: "VLESS", Extra: []byte(`{"security":"tls"}`)}},
 		DepthFull)
 
 	if got[0].RTTms != 50 {

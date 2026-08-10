@@ -152,6 +152,12 @@ func (s *NodeStatStore) RecordProbe(key string, rttMs, jitterMs int64, ok bool, 
 // separate question "how unreliable has this node been overall". Both are
 // kept because scoring (Task 9) needs to tell a node mid-outage apart from
 // one that is merely historically flaky.
+//
+// reason is sanitized here, not left to callers, for the same reason
+// RecordProbe sanitizes internally (see its comment): node_stats.json is
+// unencrypted on the promise it holds no addresses, and that promise must
+// hold by construction rather than depend on every present and future caller
+// remembering to sanitize before calling in.
 func (s *NodeStatStore) RecordConnect(key string, ok bool, reason string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -166,7 +172,7 @@ func (s *NodeStatStore) RecordConnect(key string, ok bool, reason string) {
 		st.ConnectFail++
 		st.ConsecFails++
 		st.LastFailAt = time.Now()
-		st.LastReason = reason
+		st.LastReason = sanitizeStatReason(reason)
 	}
 	s.stats[key] = st
 	s.dirty = true
@@ -247,9 +253,8 @@ func sanitizeStatReason(reason string) string {
 }
 
 // RecordConnectOutcome folds a real connection attempt into the active store.
-// reason is sanitized first — see sanitizeStatReason.
+// reason sanitization happens inside RecordConnect itself — see its comment.
 func RecordConnectOutcome(key string, ok bool, reason string) {
-	reason = sanitizeStatReason(reason)
 	nodeStats().RecordConnect(key, ok, reason)
 	_ = nodeStats().Flush()
 }

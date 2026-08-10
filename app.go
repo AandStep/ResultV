@@ -2615,14 +2615,77 @@ func (a *App) setLastSelectedProxy(proxyID string) error {
 	return nil
 }
 
-// autoMemberProbe is one row of the AUTO-group diagnostic table.
+// autoMemberProbe is one row of the AUTO-group diagnostic table. It holds the
+// FINAL verdict for a member — for anything phase 2 (DepthFull) re-probed,
+// that means phase 2's outcome, not phase 1's; see buildAutoMemberRows.
 type autoMemberProbe struct {
-	Name   string
-	Addr   string
-	Type   string
-	RTTms  int64
-	OK     bool
+	Name  string
+	Addr  string
+	Type  string
+	RTTms int64
+	OK    bool
+	// Stage is the probe stage the verdict came from ("tcp", "udp", "tls",
+	// ...). Only meaningful when !OK — it lets the table say a member died
+	// at the TLS handshake specifically, the failure mode finding #1's bug
+	// produced and that a bare RTT/reason pair cannot distinguish from a
+	// plain connect failure.
+	Stage  string
 	Reason string
+}
+
+// buildAutoMemberRows turns two probe phases into one row per member for the
+// diagnostic table, in phase-1 sweep order.
+//
+// Phase 1 (DepthFast) alone used to be the only input here, which hid exactly
+// the failures a TLS-stage bug produces: a member that passes TCP and then
+// dies on the TLS handshake in phase 2 (DepthFull, shortlist only) would show
+// as a healthy "NNms" row while being silently absent from RankAutoCandidates'
+// output. Phase 1 already covers every member (ProbeAutoNodes runs over the
+// full list), so it seeds one row per member; phase 2 then overwrites that
+// row for whichever members it actually re-probed, since phase 2's verdict is
+// the final one for those nodes — phase 1's was only provisional.
+func buildAutoMemberRows(members []config.ProxyEntry, phase1, phase2 []proxy.AutoProbeResult) []autoMemberProbe {
+	byKey := make(map[string]config.ProxyEntry, len(members))
+	for _, m := range members {
+		byKey[proxy.AutoNodeKey(m)] = m
+	}
+
+	rowByKey := make(map[string]autoMemberProbe, len(phase1))
+	order := make([]string, 0, len(phase1))
+	for _, r := range phase1 {
+		order = append(order, r.Key)
+		m := byKey[r.Key]
+		rowByKey[r.Key] = autoMemberProbe{
+			Name:   strings.TrimSpace(m.Name),
+			Addr:   fmt.Sprintf("%s:%d", m.IP, m.Port),
+			Type:   strings.ToUpper(m.Type),
+			RTTms:  r.RTTms,
+			OK:     r.OK,
+			Stage:  r.Stage,
+			Reason: r.Reason,
+		}
+	}
+	for _, r := range phase2 {
+		row, seen := rowByKey[r.Key]
+		if !seen {
+			// Unreachable in practice: phase 2 only ever probes phase-1
+			// survivors plus previousKey, both drawn from phase1's own
+			// members. Skip rather than invent a nameless row if it ever
+			// happens (e.g. future caller passes mismatched slices).
+			continue
+		}
+		row.RTTms = r.RTTms
+		row.OK = r.OK
+		row.Stage = r.Stage
+		row.Reason = r.Reason
+		rowByKey[r.Key] = row
+	}
+
+	rows := make([]autoMemberProbe, 0, len(order))
+	for _, k := range order {
+		rows = append(rows, rowByKey[k])
+	}
+	return rows
 }
 
 // formatAutoMemberTable renders the per-member probe results for an AUTO group.
@@ -2636,8 +2699,17 @@ func formatAutoMemberTable(autoLabel string, rows []autoMemberProbe) []string {
 		status := r.Reason
 		if r.OK {
 			status = fmt.Sprintf("%dms", r.RTTms)
-		} else if status == "" {
-			status = "недоступен"
+		} else {
+			if status == "" {
+				status = "недоступен"
+			}
+			if r.Stage == "tls" {
+				// Distinguishes an SNI/DPI-style drop (live TCP, dead TLS —
+				// see autoProbeTLSParams/probeOne) from a plain connect
+				// failure, so the pending manual verification step this
+				// table exists for doesn't mistake one for the other.
+				status = fmt.Sprintf("TLS не прошёл: %s", status)
+			}
 		}
 		out = append(out, fmt.Sprintf("[PROXY]   %d. %s [%s] %s — %s",
 			i+1, r.Name, r.Type, r.Addr, status))
@@ -2681,6 +2753,43 @@ func (a *App) setLastAutoNodeKey(key string) {
 	a.lastAutoNodeKeyMu.Lock()
 	defer a.lastAutoNodeKeyMu.Unlock()
 	a.lastAutoNodeKey = key
+}
+
+// autoOutcomeKey returns the AutoNodeKey to record a connect outcome under
+// for the index-th candidate connectFromTray just tried on proxyID, or "" if
+// nothing should be recorded.
+//
+// Two guards, both mirroring ReportAutoConnectOutcome (the frontend's
+// equivalent path):
+//
+//   - isAuto: a plain (non-AUTO) server has nothing in a.autoCandidates and
+//     no AUTO cache to fold a result into — the frontend's retry loop
+//     deliberately skips reportAutoConnectOutcome with the same `if (isAuto)`
+//     guard (useDaemonControl.js). Without it, connecting to a plain server
+//     from the tray would overwrite the global lastAutoNodeKey with a key no
+//     AUTO group's cache contains (every AUTO row would then revert to
+//     showing the member minimum) and write a junk entry to node_stats.json.
+//
+//   - the key comes from a.autoCandidates[proxyID][index] — the UNSTAMPED
+//     entry RankAutoCandidates produced and ResolveAutoCandidates cached —
+//     not from AutoNodeKey(candidate) computed on the identity-stamped copy
+//     connectFromTray actually dials. ResolveAutoCandidates overwrites a
+//     blank member SubscriptionURL with the head's before returning
+//     candidates, and AutoNodeKey hashes SubscriptionURL, so stamping can
+//     change the key. Hashing the stamped copy would then produce a key
+//     ReportAutoConnectOutcome (which always reads the cache) could never
+//     reproduce, splitting one node's history across two keys.
+func (a *App) autoOutcomeKey(proxyID string, isAuto bool, index int) string {
+	if !isAuto {
+		return ""
+	}
+	a.autoCandidatesMu.Lock()
+	cached := a.autoCandidates[proxyID]
+	a.autoCandidatesMu.Unlock()
+	if index < 0 || index >= len(cached) {
+		return ""
+	}
+	return proxy.AutoNodeKey(cached[index])
 }
 
 // ReportAutoConnectOutcome lets the UI retry loop feed real connection results
@@ -2835,32 +2944,21 @@ func (a *App) ResolveAutoCandidates(proxyID string) []config.ProxyEntry {
 		}
 	}
 
-	ranked, phase1 := proxy.RankAutoCandidates(a.ctx, members, a.getLastAutoNodeKey())
+	ranked, diag := proxy.RankAutoCandidates(a.ctx, members, a.getLastAutoNodeKey())
 
 	// The AUTO row shows one aggregate number while its members are hidden
 	// from the UI (filteredProxies) — without this table there is no way to
 	// tell which member produced an implausible RTT or why one dropped out.
-	// Built from the phase-1 return value (not package state — RankAutoCandidates
-	// no longer stashes a shared snapshot, since two concurrent callers, e.g.
-	// two tray clicks, would otherwise race over it) because after ranking we
-	// only have the survivors, not the full sweep with failure reasons.
+	// Built from diag (not package state — RankAutoCandidates no longer
+	// stashes a shared snapshot, since two concurrent callers, e.g. two tray
+	// clicks, would otherwise race over it) because after ranking we only
+	// have the survivors, not the full sweep with failure reasons. Both
+	// phases feed the table, not just phase 1: a member that passes the
+	// phase-1 TCP connect and then dies on the phase-2 TLS handshake must
+	// show that TLS failure, not a stale "healthy" phase-1 reading — see
+	// buildAutoMemberRows.
 	if a.log != nil {
-		byKey := map[string]config.ProxyEntry{}
-		for _, m := range members {
-			byKey[proxy.AutoNodeKey(m)] = m
-		}
-		var rows []autoMemberProbe
-		for _, r := range phase1 {
-			m := byKey[r.Key]
-			rows = append(rows, autoMemberProbe{
-				Name:   strings.TrimSpace(m.Name),
-				Addr:   fmt.Sprintf("%s:%d", m.IP, m.Port),
-				Type:   strings.ToUpper(m.Type),
-				RTTms:  r.RTTms,
-				OK:     r.OK,
-				Reason: r.Reason,
-			})
-		}
+		rows := buildAutoMemberRows(members, diag.Phase1, diag.Phase2)
 		for _, line := range formatAutoMemberTable(strings.TrimSpace(head.Name), rows) {
 			a.log.Info(line)
 		}
@@ -2939,6 +3037,8 @@ func (a *App) connectFromTray(proxyID string) error {
 			matchCount, proxyID, selected.Name, selected.IP, selected.Port))
 	}
 
+	isAuto := strings.EqualFold(selected.Type, "AUTO")
+
 	clickedLabel := strings.TrimSpace(selected.Name)
 	if clickedLabel == "" {
 		if selected.IP != "" {
@@ -3004,24 +3104,39 @@ func (a *App) connectFromTray(proxyID string) error {
 			Extra:           candidate.Extra,
 			SubscriptionURL: candidate.SubscriptionURL,
 		}, cfg.RoutingRules, cfg.Settings.KillSwitch)
-		key := proxy.AutoNodeKey(candidate)
+		// key is "" (and every RecordConnectOutcome/setLastAutoNodeKey call
+		// below a silent no-op) unless this is an AUTO group — mirrors the
+		// frontend's `if (isAuto)` guard in useDaemonControl.js. A plain
+		// server connected from the tray has no AUTO cache to report into;
+		// recording one would overwrite the global lastAutoNodeKey with a key
+		// no AUTO group's cache contains (every row would then read Known
+		// but resolve to nothing) and pile junk entries into node_stats.json.
+		// See autoOutcomeKey for why the key comes from the cache, not from
+		// AutoNodeKey(candidate) directly.
+		key := a.autoOutcomeKey(proxyID, isAuto, i)
 		if err != nil {
 			// Never pass err.Error() — it embeds the remote address and this
 			// store is written to disk unencrypted. sanitizeStatReason in
 			// nodestats.go is the backstop, but call sites must not rely on it.
-			proxy.RecordConnectOutcome(key, false, "error")
+			if key != "" {
+				proxy.RecordConnectOutcome(key, false, "error")
+			}
 			lastErr = err
 			continue
 		}
 		if result.Success {
-			proxy.RecordConnectOutcome(key, true, "")
-			a.setLastAutoNodeKey(key)
+			if key != "" {
+				proxy.RecordConnectOutcome(key, true, "")
+				a.setLastAutoNodeKey(key)
+			}
 			a.refreshTrayProxyList()
 			return nil
 		}
 		// result.Message is a user-facing Russian string that can contain a
 		// host:port — same leak concern as err.Error() above.
-		proxy.RecordConnectOutcome(key, false, "error")
+		if key != "" {
+			proxy.RecordConnectOutcome(key, false, "error")
+		}
 		lastErr = errors.New(result.Message)
 	}
 	if lastErr == nil {

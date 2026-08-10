@@ -17,6 +17,7 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
@@ -30,6 +31,14 @@ func mkNodes(ips ...string) []config.ProxyEntry {
 		out = append(out, config.ProxyEntry{
 			ID: ip, IP: ip, Port: 443, Type: "VLESS",
 			Name: ip, SubscriptionURL: "https://sub.example",
+			// security=tls, not an empty Extra: a real VLESS node parsed
+			// from a URI always carries an explicit security value
+			// (parseVLESSURI defaults it to "none" — never absent), so an
+			// empty Extra here would be unrepresentative fixture data.
+			// These ranking tests need DepthFull's TLS stage to actually
+			// run (that's where autoTLSProbe below is consulted), which
+			// requires wantTLS=true per autoProbeTLSParams/autoProbeWantsTLS.
+			Extra: json.RawMessage(`{"security":"tls"}`),
 		})
 	}
 	return out
@@ -105,14 +114,14 @@ func TestRankAutoCandidates_ReturnsPhase1EvenWhenNoneReachable(t *testing.T) {
 	defer func() { pingTCPProbe = oldTCP }()
 	pingTCPProbe = func(ip string, _ int) (int64, bool, string) { return 0, false, "timeout: " + ip }
 
-	got, phase1 := RankAutoCandidates(context.Background(), mkNodes("a", "b"), "")
+	got, diag := RankAutoCandidates(context.Background(), mkNodes("a", "b"), "")
 	if got != nil {
 		t.Fatalf("ожидали nil кандидатов, получили %+v", got)
 	}
-	if len(phase1) != 2 {
-		t.Fatalf("ожидали 2 строки диагностики фазы 1 даже без доступных узлов, получили %d: %+v", len(phase1), phase1)
+	if len(diag.Phase1) != 2 {
+		t.Fatalf("ожидали 2 строки диагностики фазы 1 даже без доступных узлов, получили %d: %+v", len(diag.Phase1), diag.Phase1)
 	}
-	for _, r := range phase1 {
+	for _, r := range diag.Phase1 {
 		if r.OK {
 			t.Errorf("узел %q помечен как OK, хотя ping должен был провалиться", r.Key)
 		}
@@ -181,6 +190,71 @@ func TestRankAutoCandidates_RecordsProbeResultsInStore(t *testing.T) {
 	dead := nodeStats().Get(AutoNodeKey(nodes[1]))
 	if dead.LastReason != "timeout" {
 		t.Errorf("неудачная проба должна сохранять reason, получили %q", dead.LastReason)
+	}
+}
+
+// TestDropEmptyKeyResults_RemovesOnlyZeroValueSlots is a focused unit test of
+// the helper RankAutoCandidates uses to filter cancelled probe slots (see
+// ProbeAutoNodes: a slot the worker pool never reached is left at its zero
+// value, whose Key is ""). It must remove exactly the empty-Key entries and
+// nothing else, preserving both OK and failed real results.
+func TestDropEmptyKeyResults_RemovesOnlyZeroValueSlots(t *testing.T) {
+	in := []AutoProbeResult{
+		{Key: "a", OK: true, RTTms: 10},
+		{}, // zero-value: a cancelled slot
+		{Key: "b", OK: false, Reason: "timeout"},
+	}
+
+	got := dropEmptyKeyResults(in)
+
+	if len(got) != 2 {
+		t.Fatalf("ожидали 2 результата после фильтрации, получили %d: %+v", len(got), got)
+	}
+	for _, r := range got {
+		if r.Key == "" {
+			t.Errorf("запись с пустым Key пережила фильтрацию: %+v", r)
+		}
+	}
+}
+
+// TestRankAutoCandidates_CancelledProbesAreNotRecordedUnderEmptyKey is the
+// regression test for the finding: probes skipped because ctx was already
+// cancelled used to be recorded under the empty key "" (nodeStats().
+// RecordProbe("", ...)), writing a permanent junk entry to node_stats.json
+// and surfacing as a meaningless "— :0" row in the diagnostic table built
+// from phase1/diag.Phase1. Passing an already-cancelled context makes every
+// probe slot arrive at its zero value (see
+// TestProbeAutoNodes_CancelledContextLeavesZeroValueSlotsWithEmptyKey), which
+// is exactly the scenario dropEmptyKeyResults exists to filter before either
+// recording or returning.
+func TestRankAutoCandidates_CancelledProbesAreNotRecordedUnderEmptyKey(t *testing.T) {
+	oldTCP, oldStore := pingTCPProbe, nodeStats()
+	defer func() {
+		pingTCPProbe = oldTCP
+		SetNodeStatStore(oldStore)
+	}()
+	SetNodeStatStore(NewNodeStatStore(t.TempDir()))
+
+	pingTCPProbe = func(_ string, _ int) (int64, bool, string) {
+		t.Error("проба не должна вызываться при уже отменённом контексте")
+		return 0, false, ""
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	got, diag := RankAutoCandidates(ctx, mkNodes("a", "b", "c"), "")
+
+	if got != nil {
+		t.Fatalf("ожидали nil кандидатов, получили %+v", got)
+	}
+	for _, r := range diag.Phase1 {
+		if r.Key == "" {
+			t.Fatalf("diag.Phase1 содержит запись с пустым ключом: %+v", diag.Phase1)
+		}
+	}
+	if st := nodeStats().Get(""); st != (NodeStat{}) {
+		t.Errorf("под пустым ключом не должно быть записи в сторе, получили %+v", st)
 	}
 }
 

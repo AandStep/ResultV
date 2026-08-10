@@ -174,6 +174,40 @@ func detectClassWeights(members []config.ProxyEntry, fast []AutoProbeResult) map
 	return weights
 }
 
+// AutoProbeDiagnostics carries both probe phases back to the caller's
+// diagnostic table. Phase1 is the wide, cheap sweep (TCP/UDP/QUIC connect,
+// every member); Phase2 is the narrow, accurate one (TLS handshake with real
+// SNI/ALPN, shortlist only) — the only phase that can see SNI-based
+// blocking. A member phase 2 re-probed can look healthy in Phase1 and still
+// be missing from the final `candidates`, so callers building a per-member
+// table need both, not just Phase1, or that member silently shows as a
+// healthy "NNms" row instead of the failure it actually is.
+type AutoProbeDiagnostics struct {
+	Phase1 []AutoProbeResult
+	Phase2 []AutoProbeResult
+}
+
+// dropEmptyKeyResults removes probe slots ProbeAutoNodes left at their zero
+// value because ctx was cancelled before a worker reached them (see
+// ProbeAutoNodes: a cancelled slot is never assigned, so it keeps out[i]'s
+// zero value, whose Key is ""). AutoNodeKey never returns "" for an actual
+// probe, so an empty Key unambiguously marks a cancelled slot, not a real
+// result. Recording one would write a permanent junk entry to
+// node_stats.json under the empty key, and returning it in the diagnostics
+// would show a meaningless "— :0" row in the table — every OK on such a
+// slot is already false, so filtering them out never changes which nodes are
+// considered alive.
+func dropEmptyKeyResults(in []AutoProbeResult) []AutoProbeResult {
+	out := in[:0]
+	for _, r := range in {
+		if r.Key == "" {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
 // RankAutoCandidates probes members in two phases and returns them best-first.
 //
 // Phase 1 sweeps every member with DepthFast to drop the dead ones. Phase 2
@@ -183,14 +217,15 @@ func detectClassWeights(members []config.ProxyEntry, fast []AutoProbeResult) map
 // a node just outside the top-5 would flap in and out of consideration.
 //
 // Returns candidates nil when nothing is reachable; callers fall back to the
-// AUTO head. phase1 carries the raw phase-1 probe rows and is returned on
-// EVERY exit path (including the nil-candidates ones) instead of being stashed
-// in package state: this function is called concurrently from independent
-// callers (tray clicks each run on their own goroutine — see tray.go), and a
-// shared package-level "last snapshot" would let one caller's diagnostic table
-// silently show another caller's rows. Returning phase1 as an ordinary value
-// ties it to the call that produced it, so there is nothing left to race.
-func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previousKey string) (candidates []config.ProxyEntry, phase1 []AutoProbeResult) {
+// AUTO head. diag carries the raw probe rows from both phases and is returned
+// on EVERY exit path (including the nil-candidates ones) instead of being
+// stashed in package state: this function is called concurrently from
+// independent callers (tray clicks each run on their own goroutine — see
+// tray.go), and a shared package-level "last snapshot" would let one caller's
+// diagnostic table silently show another caller's rows. Returning diag as an
+// ordinary value ties it to the call that produced it, so there is nothing
+// left to race.
+func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previousKey string) (candidates []config.ProxyEntry, diag AutoProbeDiagnostics) {
 	// Deferred rather than a single call before the last return: this function
 	// has early returns (no reachable node in phase 1 or phase 2) and those
 	// probe results are exactly the diagnostic data worth keeping across a
@@ -203,7 +238,8 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 	}
 
 	fast := ProbeAutoNodes(ctx, members, DepthFast)
-	phase1 = fast
+	fast = dropEmptyKeyResults(fast)
+	diag.Phase1 = fast
 	for _, r := range fast {
 		nodeStats().RecordProbe(r.Key, r.RTTms, r.JitterMs, r.OK, r.Reason)
 	}
@@ -215,7 +251,7 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 		}
 	}
 	if len(alive) == 0 {
-		return nil, phase1
+		return nil, diag
 	}
 	sort.SliceStable(alive, func(i, j int) bool { return alive[i].RTTms < alive[j].RTTms })
 
@@ -238,6 +274,8 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 	}
 
 	full := ProbeAutoNodes(ctx, shortlist, DepthFull)
+	full = dropEmptyKeyResults(full)
+	diag.Phase2 = full
 	for _, r := range full {
 		nodeStats().RecordProbe(r.Key, r.RTTms, r.JitterMs, r.OK, r.Reason)
 	}
@@ -248,7 +286,7 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 		}
 	}
 	if len(scored) == 0 {
-		return nil, phase1
+		return nil, diag
 	}
 	// Score every candidate exactly once, into a parallel slice, before sorting.
 	// nodeStats() is a live store that other goroutines mutate concurrently —
@@ -294,5 +332,5 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 		}
 		out = append(out, byKey[r.result.Key])
 	}
-	return out, phase1
+	return out, diag
 }

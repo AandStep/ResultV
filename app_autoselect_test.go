@@ -48,6 +48,69 @@ func TestFormatAutoMemberTable_EmptyMembersStillReportsGroup(t *testing.T) {
 	}
 }
 
+// TestFormatAutoMemberTable_MarksTLSStageFailureDistinctly is the regression
+// test for finding #4: a member that dies specifically at the TLS handshake
+// (Stage=="tls", the SNI/DPI-blocking signature — see
+// autoProbeTLSParams/probeOne) must read differently from a plain connect
+// failure, so the pending manual verification step this table exists for can
+// tell "never even connected" apart from "connected fine, TLS killed it".
+func TestFormatAutoMemberTable_MarksTLSStageFailureDistinctly(t *testing.T) {
+	rows := []autoMemberProbe{
+		{Name: "A", Addr: "1.1.1.1:443", Type: "VLESS", OK: false, Stage: "tls", Reason: "timeout"},
+		{Name: "B", Addr: "2.2.2.2:443", Type: "VLESS", OK: false, Stage: "tcp", Reason: "timeout"},
+	}
+
+	got := formatAutoMemberTable("Auto", rows)
+	if len(got) != 3 {
+		t.Fatalf("ожидали заголовок + 2 строки, получили %d: %v", len(got), got)
+	}
+	if !strings.Contains(got[1], "TLS") {
+		t.Errorf("отказ на TLS-этапе должен быть явно помечен, получили %q", got[1])
+	}
+	if strings.Contains(got[2], "TLS") {
+		t.Errorf("обычный отказ на TCP-этапе не должен упоминать TLS, получили %q", got[2])
+	}
+}
+
+// TestBuildAutoMemberRows_Phase2VerdictOverridesPhase1 is the regression test
+// for finding #4: ResolveAutoCandidates used to feed the diagnostic table
+// from phase 1 (DepthFast, TCP-only) alone. A member that passes phase 1 and
+// then dies at phase 2's TLS handshake (DepthFull, shortlist only — the
+// exact fallout of finding #1's bug) showed up as a healthy "NNms" row while
+// being silently absent from RankAutoCandidates' output. buildAutoMemberRows
+// must show phase 2's verdict — the FINAL one — for any member phase 2
+// actually re-probed, and leave phase 1's verdict alone for members phase 2
+// never touched.
+func TestBuildAutoMemberRows_Phase2VerdictOverridesPhase1(t *testing.T) {
+	members := []config.ProxyEntry{
+		{ID: "a", Name: "A", IP: "1.1.1.1", Port: 443, Type: "VLESS"},
+		{ID: "b", Name: "B", IP: "2.2.2.2", Port: 443, Type: "VLESS"},
+	}
+	keyA, keyB := proxy.AutoNodeKey(members[0]), proxy.AutoNodeKey(members[1])
+
+	phase1 := []proxy.AutoProbeResult{
+		{Key: keyA, OK: true, RTTms: 30, Stage: "tcp"},
+		{Key: keyB, OK: true, RTTms: 40, Stage: "tcp"},
+	}
+	// A passes TCP in phase 1 but dies on TLS in phase 2. B is never
+	// re-probed (e.g. it fell outside the shortlist).
+	phase2 := []proxy.AutoProbeResult{
+		{Key: keyA, OK: false, Stage: "tls", Reason: "timeout"},
+	}
+
+	rows := buildAutoMemberRows(members, phase1, phase2)
+
+	if len(rows) != 2 {
+		t.Fatalf("ожидали 2 строки, получили %d: %+v", len(rows), rows)
+	}
+	if rows[0].OK || rows[0].Stage != "tls" || rows[0].Reason != "timeout" {
+		t.Errorf("строка A должна отражать отказ фазы 2 на TLS, а не успех фазы 1: %+v", rows[0])
+	}
+	if !rows[1].OK || rows[1].RTTms != 40 {
+		t.Errorf("строка B (фаза 2 её не трогала) должна сохранить вердикт фазы 1: %+v", rows[1])
+	}
+}
+
 func TestExtractAutoMembers_ParsesBothExtraEncodings(t *testing.T) {
 	plain := json.RawMessage(`{"members":["m1","m2"]}`)
 	if got := extractAutoMembers(plain); len(got) != 2 || got[0] != "m1" {
@@ -221,6 +284,80 @@ func TestReportAutoConnectOutcome_GuardsOutOfRangeAndMismatchedAddress(t *testin
 	a.ReportAutoConnectOutcome("head-1", 1, member2.IP, member2.Port, true)
 	if got := proxy.LookupNodeStat(proxy.AutoNodeKey(member2)).ConnectOK; got != 1 {
 		t.Fatalf("контрольный вызов с верным адресом должен был записать результат, получили ConnectOK=%d", got)
+	}
+}
+
+// TestAutoOutcomeKey_NonAutoNeverRecords is the regression test for one half
+// of finding #5's landmine: connectFromTray used to record connect outcomes
+// and set lastAutoNodeKey for non-AUTO proxies too, unlike the frontend's
+// retry loop which deliberately guards with `if (isAuto)`
+// (useDaemonControl.js). Connecting to a plain server from the tray would
+// overwrite the global lastAutoNodeKey with a key no AUTO group's cache
+// contains — every AUTO row would then revert to showing the member minimum
+// — and pile junk entries into node_stats.json. autoOutcomeKey must return ""
+// for isAuto=false regardless of what is cached, so callers never record.
+func TestAutoOutcomeKey_NonAutoNeverRecords(t *testing.T) {
+	a := newTestApp(t, t.TempDir())
+	member := config.ProxyEntry{ID: "m1", Name: "Member 1", Type: "VLESS", IP: "1.1.1.1", Port: 443}
+	a.autoCandidatesMu.Lock()
+	a.autoCandidates["plain-1"] = []config.ProxyEntry{member}
+	a.autoCandidatesMu.Unlock()
+
+	if got := a.autoOutcomeKey("plain-1", false, 0); got != "" {
+		t.Errorf("проксирование не-AUTO сервера не должно давать ключ, получили %q", got)
+	}
+}
+
+// TestAutoOutcomeKey_UsesUnstampedCacheEntry is the regression test for the
+// other half of finding #5's landmine: connectFromTray used to compute the
+// node key from the identity-stamped candidate (ResolveAutoCandidates
+// overwrites a blank member SubscriptionURL with the head's before handing
+// candidates back — see its "Keep the AUTO head's identity" comment), while
+// ReportAutoConnectOutcome always keys off the UNSTAMPED entry cached in
+// a.autoCandidates. AutoNodeKey hashes SubscriptionURL, so stamping can
+// change the key, and the two call sites would silently disagree on which
+// key a given connect outcome belongs under. autoOutcomeKey must read the
+// cache — the same thing ReportAutoConnectOutcome reads — never the stamped
+// copy.
+func TestAutoOutcomeKey_UsesUnstampedCacheEntry(t *testing.T) {
+	a := newTestApp(t, t.TempDir())
+	// Blank SubscriptionURL, exactly as a member looks BEFORE
+	// ResolveAutoCandidates' identity stamp fills it in from the head.
+	member := config.ProxyEntry{ID: "m1", Name: "Member 1", Type: "VLESS", IP: "1.1.1.1", Port: 443}
+	a.autoCandidatesMu.Lock()
+	a.autoCandidates["auto-1"] = []config.ProxyEntry{member}
+	a.autoCandidatesMu.Unlock()
+
+	want := proxy.AutoNodeKey(member)
+	if got := a.autoOutcomeKey("auto-1", true, 0); got != want {
+		t.Errorf("key = %q, хотели %q (ключ некэшированной/пришпиленной копии)", got, want)
+	}
+
+	// Prove the divergence this test guards against is real: the stamped
+	// copy (SubscriptionURL filled from the head) must hash to a DIFFERENT
+	// key, or this test would not be exercising anything.
+	stamped := member
+	stamped.SubscriptionURL = "https://head.example/sub"
+	if proxy.AutoNodeKey(stamped) == want {
+		t.Fatal("неверная настройка теста: простановка SubscriptionURL не изменила ключ")
+	}
+}
+
+// TestAutoOutcomeKey_OutOfRangeIndexYieldsEmptyKey mirrors
+// ReportAutoConnectOutcome's own out-of-range guard (see
+// TestReportAutoConnectOutcome_GuardsOutOfRangeAndMismatchedAddress) so the
+// two call sites stay consistent about what "no such candidate" means.
+func TestAutoOutcomeKey_OutOfRangeIndexYieldsEmptyKey(t *testing.T) {
+	a := newTestApp(t, t.TempDir())
+	a.autoCandidatesMu.Lock()
+	a.autoCandidates["auto-1"] = []config.ProxyEntry{{ID: "m1", IP: "1.1.1.1", Port: 443, Type: "VLESS"}}
+	a.autoCandidatesMu.Unlock()
+
+	if got := a.autoOutcomeKey("auto-1", true, 5); got != "" {
+		t.Errorf("индекс за пределами кэша должен давать пустой ключ, получили %q", got)
+	}
+	if got := a.autoOutcomeKey("auto-1", true, -1); got != "" {
+		t.Errorf("отрицательный индекс должен давать пустой ключ, получили %q", got)
 	}
 }
 

@@ -48,14 +48,29 @@ const UNKNOWN_RANK = 1e11;
 
 /**
  * Lower = better latency for ascending sort.
+ *
+ * For AUTO rows, ranks by the same chosen-node RTT autoRowPingLabel displays
+ * once it is known, falling back to the member minimum otherwise — see
+ * autoRowPingLabel's own doc comment for why the minimum alone is a poor
+ * number (one unusually fast member sets it for the whole group even though
+ * it may never be the one actually picked). Without this, once the AUTO row
+ * DISPLAYS the chosen node's RTT (see GetAutoGroupStatus/autoStatusById) it
+ * would still SORT as if it were the group minimum — a proxy list that
+ * visibly reads 180ms sorting ahead of one that reads 90ms.
+ *
  * @param {{ id?: string, type?: string, extra?: unknown }} proxy
  * @param {Record<string, string>} pings
+ * @param {Record<string, { known?: boolean, rttMs?: number }>} [autoStatusById]
  */
-export function getPingSortMetric(proxy, pings) {
+export function getPingSortMetric(proxy, pings, autoStatusById) {
     const t = proxy.type?.toUpperCase() || "";
     if (t === "SECTION") return SECTION_RANK;
 
     if (t === "AUTO") {
+        const status = autoStatusById?.[proxy.id];
+        if (status?.known && typeof status.rttMs === "number") {
+            return status.rttMs;
+        }
         const extra = parseExtra(proxy.extra);
         const memberIds = (extra?.members || []).map(String);
         const values = memberIds
@@ -108,8 +123,9 @@ export function autoRowPingLabel(proxy, pings, autoStatus) {
  * @param {unknown[]} list
  * @param {string} sortBy
  * @param {Record<string, string>} pings
+ * @param {Record<string, { known?: boolean, rttMs?: number }>} [autoStatusById]
  */
-export function sortProxiesByOption(list, sortBy, pings) {
+export function sortProxiesByOption(list, sortBy, pings, autoStatusById) {
     const result = [...list];
     if (sortBy === "country") {
         result.sort((a, b) => (a.country || "").localeCompare(b.country || ""));
@@ -121,7 +137,9 @@ export function sortProxiesByOption(list, sortBy, pings) {
         result.sort((a, b) => (a.provider || "").localeCompare(b.provider || ""));
     } else if (sortBy === "ping") {
         result.sort(
-            (a, b) => getPingSortMetric(a, pings) - getPingSortMetric(b, pings),
+            (a, b) =>
+                getPingSortMetric(a, pings, autoStatusById) -
+                getPingSortMetric(b, pings, autoStatusById),
         );
     }
     return result;
