@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -186,4 +187,61 @@ func (s *NodeStatStore) Flush() error {
 	}
 	s.dirty = false
 	return nil
+}
+
+// Package-level store. RankAutoCandidates is called from both the tray and the
+// frontend and has no natural owner to thread the store through; a guarded
+// package-level instance keeps the call sites unchanged.
+var (
+	nodeStatsMu    sync.Mutex
+	nodeStatsStore *NodeStatStore
+)
+
+// SetNodeStatStore installs the active store. app.go's startup calls this with
+// a persistent, disk-backed store before anything can resolve an AUTO group;
+// tests install a t.TempDir()-backed one and restore the previous value.
+func SetNodeStatStore(s *NodeStatStore) {
+	nodeStatsMu.Lock()
+	defer nodeStatsMu.Unlock()
+	nodeStatsStore = s
+}
+
+// nodeStats returns the active store, creating an in-memory one if the app has
+// not installed a persistent store yet, so callers never nil-check.
+func nodeStats() *NodeStatStore {
+	nodeStatsMu.Lock()
+	defer nodeStatsMu.Unlock()
+	if nodeStatsStore == nil {
+		nodeStatsStore = &NodeStatStore{stats: map[string]NodeStat{}}
+	}
+	return nodeStatsStore
+}
+
+// sanitizeStatReason reduces a failure description to a fixed vocabulary before
+// it can reach node_stats.json.
+//
+// That file is deliberately NOT encrypted, on the stated grounds that it holds
+// only opaque hashed keys and timings. Free-text reasons would break that
+// promise silently: Go's dial errors embed the remote address ("dial tcp
+// 203.0.113.5:443: i/o timeout"), so storing err.Error() verbatim would write
+// real backend IPs to a plaintext file on disk — exactly the data
+// server_pins.json is encrypted to protect. Anything unrecognised collapses to
+// "error" rather than being stored.
+func sanitizeStatReason(reason string) string {
+	switch strings.ToLower(strings.TrimSpace(reason)) {
+	case "":
+		return ""
+	case "timeout", "connection_refused", "network_unreachable", "no_route_to_host",
+		"connection_closed", "connection_reset", "probe_error", "lan_bind_unavailable":
+		return reason
+	}
+	return "error"
+}
+
+// RecordConnectOutcome folds a real connection attempt into the active store.
+// reason is sanitized first — see sanitizeStatReason.
+func RecordConnectOutcome(key string, ok bool, reason string) {
+	reason = sanitizeStatReason(reason)
+	nodeStats().RecordConnect(key, ok, reason)
+	_ = nodeStats().Flush()
 }

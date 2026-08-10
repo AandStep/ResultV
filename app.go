@@ -117,6 +117,12 @@ type App struct {
 	lastAutoNodeKeyMu sync.RWMutex
 	lastAutoNodeKey   string
 
+	// Ranked candidates from the last ResolveAutoCandidates call, per AUTO head
+	// ID. ReportAutoConnectOutcome needs the full member entry to rebuild the
+	// same AutoNodeKey the probe used; the UI only knows the address.
+	autoCandidatesMu sync.Mutex
+	autoCandidates   map[string][]config.ProxyEntry
+
 	startInTray bool
 
 	deepLinkMu      sync.Mutex
@@ -147,7 +153,8 @@ type App struct {
 
 func NewApp() *App {
 	return &App{
-		log: logger.New(),
+		log:            logger.New(),
+		autoCandidates: map[string][]config.ProxyEntry{},
 	}
 }
 
@@ -305,6 +312,11 @@ func (a *App) startup(ctx context.Context) {
 	})
 
 	a.log.Info("ResultV запускается...")
+
+	// Install the persistent node-stat store before anything can resolve an
+	// AUTO group; without it the package falls back to an in-memory store and
+	// the history is lost on every launch.
+	proxy.SetNodeStatStore(proxy.NewNodeStatStore(system.UserDataDir()))
 
 	if err := system.RegisterResultVProtocol(); err != nil {
 		a.log.Warning(fmt.Sprintf("[СИСТЕМА] Не удалось зарегистрировать resultv://: %v", err))
@@ -2671,6 +2683,40 @@ func (a *App) setLastAutoNodeKey(key string) {
 	a.lastAutoNodeKey = key
 }
 
+// ReportAutoConnectOutcome lets the UI retry loop feed real connection results
+// into node statistics. The UI connects by candidate address, so the backend
+// cannot observe which candidate was tried without being told.
+//
+// The key is NOT rebuilt from the arguments. AutoNodeKey hashes Username,
+// Password and Extra as well as the address, so a key reconstructed from the
+// address alone would never match the one the probe recorded, and the two
+// halves of a node's history would accumulate under different keys while
+// appearing to work. Instead the candidate is looked up in the list
+// ResolveAutoCandidates cached for this proxyID and keyed off the full entry.
+//
+// No reason is accepted from the UI: res.message is user-facing text that can
+// contain a host:port, and node_stats.json is unencrypted. Failures are
+// recorded as the canned "error".
+func (a *App) ReportAutoConnectOutcome(proxyID, ip string, port int, ok bool) {
+	a.autoCandidatesMu.Lock()
+	cached := a.autoCandidates[proxyID]
+	a.autoCandidatesMu.Unlock()
+
+	for _, c := range cached {
+		if c.IP != ip || c.Port != port {
+			continue
+		}
+		key := proxy.AutoNodeKey(c)
+		if ok {
+			proxy.RecordConnectOutcome(key, true, "")
+			a.setLastAutoNodeKey(key)
+		} else {
+			proxy.RecordConnectOutcome(key, false, "error")
+		}
+		return
+	}
+}
+
 // ResolveAutoCandidates returns the ranked connect candidates for an entry.
 //
 // This is the single selection entry point: the tray path and the frontend
@@ -2744,6 +2790,16 @@ func (a *App) ResolveAutoCandidates(proxyID string) []config.ProxyEntry {
 			a.log.Info(line)
 		}
 	}
+
+	// Cache the member entries before the identity stamp below overwrites their
+	// ID and Name. ReportAutoConnectOutcome must rebuild the exact same
+	// AutoNodeKey the probe used, and that key hashes Username, Password and
+	// Extra as well as the address — the UI only ever tells us an address, so
+	// without the full entry here the reported outcome would land under a key
+	// that never matches and a node's history would split in two.
+	a.autoCandidatesMu.Lock()
+	a.autoCandidates[head.ID] = ranked
+	a.autoCandidatesMu.Unlock()
 
 	if len(ranked) == 0 {
 		if a.log != nil {
@@ -2873,15 +2929,24 @@ func (a *App) connectFromTray(proxyID string) error {
 			Extra:           candidate.Extra,
 			SubscriptionURL: candidate.SubscriptionURL,
 		}, cfg.RoutingRules, cfg.Settings.KillSwitch)
+		key := proxy.AutoNodeKey(candidate)
 		if err != nil {
+			// Never pass err.Error() — it embeds the remote address and this
+			// store is written to disk unencrypted. sanitizeStatReason in
+			// nodestats.go is the backstop, but call sites must not rely on it.
+			proxy.RecordConnectOutcome(key, false, "error")
 			lastErr = err
 			continue
 		}
 		if result.Success {
-			a.setLastAutoNodeKey(proxy.AutoNodeKey(candidate))
+			proxy.RecordConnectOutcome(key, true, "")
+			a.setLastAutoNodeKey(key)
 			a.refreshTrayProxyList()
 			return nil
 		}
+		// result.Message is a user-facing Russian string that can contain a
+		// host:port — same leak concern as err.Error() above.
+		proxy.RecordConnectOutcome(key, false, "error")
 		lastErr = errors.New(result.Message)
 	}
 	if lastErr == nil {

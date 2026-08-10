@@ -151,3 +151,34 @@ func TestRankAutoCandidates_IncludesPreviousPickInShortlistEvenIfSlow(t *testing
 		t.Error("прошлый выбор должен попадать в фазу 2 даже если он вне топ-5")
 	}
 }
+
+func TestRankAutoCandidates_RecordsProbeResultsInStore(t *testing.T) {
+	oldTCP, oldTLS, oldStore := pingTCPProbe, autoTLSProbe, nodeStats()
+	defer func() {
+		pingTCPProbe, autoTLSProbe = oldTCP, oldTLS
+		SetNodeStatStore(oldStore)
+	}()
+
+	SetNodeStatStore(NewNodeStatStore(t.TempDir()))
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) {
+		if ip == "dead" {
+			return 0, false, "timeout"
+		}
+		return 60, true, ""
+	}
+	autoTLSProbe = func(_ string, _ int, _ string, _ []string) (int64, bool, string) {
+		return 60, true, ""
+	}
+
+	nodes := mkNodes("live", "dead")
+	RankAutoCandidates(context.Background(), nodes, "")
+
+	live := nodeStats().Get(AutoNodeKey(nodes[0]))
+	if live.EWMARTTms == 0 {
+		t.Error("успешная проба должна попадать в стор")
+	}
+	dead := nodeStats().Get(AutoNodeKey(nodes[1]))
+	if dead.LastReason != "timeout" {
+		t.Errorf("неудачная проба должна сохранять reason, получили %q", dead.LastReason)
+	}
+}

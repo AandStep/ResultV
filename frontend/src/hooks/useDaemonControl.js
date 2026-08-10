@@ -146,6 +146,17 @@ export const useDaemonControl = (
                         routingRules,
                         settings.killswitch || false
                     );
+                    // Whether a connect actually succeeded is the most honest
+                    // signal about a node, and it used to be discarded. Only
+                    // AUTO reports: a single server has nothing to rank against.
+                    if (isAuto) {
+                        await wailsAPI.reportAutoConnectOutcome(
+                            targetProxy.id,
+                            candidate.ip,
+                            parseInt(candidate.port, 10) || 0,
+                            !!res.success,
+                        );
+                    }
                     if (res.success) break;
                     if (isTerminalErrorCode(res.errorCode)) break;
                     if (!isAuto) break;
@@ -275,6 +286,17 @@ export const useDaemonControl = (
                         routingRules,
                         settings.killswitch || false
                     );
+                    // Whether a connect actually succeeded is the most honest
+                    // signal about a node, and it used to be discarded. Only
+                    // AUTO reports: a single server has nothing to rank against.
+                    if (isAuto) {
+                        await wailsAPI.reportAutoConnectOutcome(
+                            proxy.id,
+                            candidate.ip,
+                            parseInt(candidate.port, 10) || 0,
+                            !!res.success,
+                        );
+                    }
                     if (res.success) break;
                     if (isTerminalErrorCode(res.errorCode)) break;
                     if (!isAuto) break;

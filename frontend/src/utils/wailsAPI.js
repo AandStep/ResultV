@@ -27,6 +27,7 @@ import {
   DetectCountry,
   PingProxy,
   ResolveAutoCandidates,
+  ReportAutoConnectOutcome,
   GetConfig,
   SaveConfig,
   ImportConfig,
@@ -104,6 +105,19 @@ export const wailsAPI = {
       return (await ResolveAutoCandidates(String(proxyId))) || [];
     } catch {
       return [];
+    }
+  },
+
+  // Feeds a real connect result back into per-node statistics. Only the AUTO
+  // head's id, the address and success/failure are sent: the backend rebuilds
+  // the node key from its own cached candidate entry, and no failure text
+  // crosses over — res.message is user-facing and can contain a host:port,
+  // while node_stats.json is stored unencrypted.
+  async reportAutoConnectOutcome(proxyId, ip, port, ok) {
+    try {
+      await ReportAutoConnectOutcome(String(proxyId), String(ip), port, !!ok);
+    } catch {
+      // Statistics are best-effort; never let them break a connect attempt.
     }
   },
 

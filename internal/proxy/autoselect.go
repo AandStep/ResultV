@@ -48,6 +48,12 @@ const autoShortlistSize = 5
 // silently show another caller's rows. Returning phase1 as an ordinary value
 // ties it to the call that produced it, so there is nothing left to race.
 func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previousKey string) (candidates []config.ProxyEntry, phase1 []AutoProbeResult) {
+	// Deferred rather than a single call before the last return: this function
+	// has early returns (no reachable node in phase 1 or phase 2) and those
+	// probe results are exactly the diagnostic data worth keeping across a
+	// restart, not just the happy path's.
+	defer func() { _ = nodeStats().Flush() }()
+
 	byKey := make(map[string]config.ProxyEntry, len(members))
 	for _, m := range members {
 		byKey[AutoNodeKey(m)] = m
@@ -55,6 +61,9 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 
 	fast := ProbeAutoNodes(ctx, members, DepthFast)
 	phase1 = fast
+	for _, r := range fast {
+		nodeStats().RecordProbe(r.Key, r.RTTms, r.JitterMs, r.OK, r.Reason)
+	}
 
 	alive := make([]AutoProbeResult, 0, len(fast))
 	for _, r := range fast {
@@ -86,6 +95,9 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 	}
 
 	full := ProbeAutoNodes(ctx, shortlist, DepthFull)
+	for _, r := range full {
+		nodeStats().RecordProbe(r.Key, r.RTTms, r.JitterMs, r.OK, r.Reason)
+	}
 	scored := make([]AutoProbeResult, 0, len(full))
 	for _, r := range full {
 		if r.OK {
