@@ -1430,3 +1430,43 @@ func TestBuildRoute_SmartMode_UsesRuleSetWhenCompiled(t *testing.T) {
 		t.Fatalf("route.rule_set must declare %q, got %+v", smartRuleSetTag, route.RuleSet)
 	}
 }
+
+// TestAppWhitelistPathRegexes_PathQualifiedEntry covers the Blizzard updater:
+// it is named Agent.exe, so a bare basename entry would also match Docker's,
+// 1C's and every corporate agent on the machine — silently pulling an unrelated
+// process out of the tunnel (Global) or into it (Smart).
+func TestAppWhitelistPathRegexes_PathQualifiedEntry(t *testing.T) {
+	rx := appWhitelistPathRegexes([]string{`Battle.net\Agent\Agent.exe`})
+	if len(rx) != 1 {
+		t.Fatalf("expected exactly 1 regex, got %v", rx)
+	}
+	re, err := regexp.Compile(rx[0])
+	if err != nil {
+		t.Fatalf("regex %q does not compile: %v", rx[0], err)
+	}
+	if !re.MatchString(`C:\Program Files (x86)\Battle.net\Agent\Agent.exe`) {
+		t.Fatalf("blizzard agent path not matched by %q", rx[0])
+	}
+	if re.MatchString(`C:\Docker\agent.exe`) {
+		t.Fatalf("unrelated agent.exe matched by %q — tunnel hole", rx[0])
+	}
+	if re.MatchString(`C:\Battle.net\Agent\other.exe`) {
+		t.Fatalf("unrelated exe in the same directory matched by %q", rx[0])
+	}
+}
+
+// TestAppWhitelistPathRegexes_BareBasenameUnchanged pins the existing shape:
+// a plain executable name must keep matching wherever the game is installed.
+func TestAppWhitelistPathRegexes_BareBasenameUnchanged(t *testing.T) {
+	rx := appWhitelistPathRegexes([]string{"wow.exe"})
+	if len(rx) != 1 {
+		t.Fatalf("expected exactly 1 regex, got %v", rx)
+	}
+	if rx[0] != `(?i)(^|[\\/])wow\.exe$` {
+		t.Fatalf("bare basename regex changed shape: %q", rx[0])
+	}
+	re := regexp.MustCompile(rx[0])
+	if !re.MatchString(`D:\Games\World of Warcraft\_retail_\wow.exe`) {
+		t.Fatalf("bare basename stopped matching an install path")
+	}
+}

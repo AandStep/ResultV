@@ -469,10 +469,42 @@ func appWhitelistPathRegexes(names []string) []string {
 			continue
 		}
 		seen[key] = struct{}{}
-		esc := regexp.QuoteMeta(n)
-		out = append(out, `(?i)(^|[\\/])`+esc+`$`)
+		rx := processPathRegex(n)
+		if rx == "" {
+			continue
+		}
+		out = append(out, rx)
 	}
 	return out
+}
+
+// processPathRegex compiles one app-list entry into a sing-box
+// process_path_regex.
+//
+// A bare basename ("wow.exe") anchors on any path separator, so it matches the
+// executable wherever the game is installed — the long-standing behaviour.
+//
+// An entry carrying path components ("Battle.net\Agent\Agent.exe") anchors the
+// whole tail instead. Blizzard's updater is named Agent.exe; as a bare basename
+// it would also match Docker's, 1C's and every corporate agent on the machine,
+// silently routing an unrelated process the wrong way. Separators are accepted
+// in either slash direction and matched in either direction, because entries
+// are authored by hand and Windows paths arrive both ways.
+func processPathRegex(entry string) string {
+	parts := strings.FieldsFunc(entry, func(r rune) bool {
+		return r == '\\' || r == '/'
+	})
+	quoted := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p == "" {
+			continue
+		}
+		quoted = append(quoted, regexp.QuoteMeta(p))
+	}
+	if len(quoted) == 0 {
+		return ""
+	}
+	return `(?i)(^|[\\/])` + strings.Join(quoted, `[\\/]`) + `$`
 }
 
 func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {

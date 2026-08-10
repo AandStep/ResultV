@@ -860,3 +860,25 @@ func TestSetMode_PreservesAppForceVPN(t *testing.T) {
 		t.Fatalf("appForceVPN must survive SetMode reconnect, got %v", last.AppForceVPN)
 	}
 }
+
+// TestBasenameRoots_DropsPathQualifiedEntries guards the widening hazard:
+// processtree.normalizeRoots strips a root to its basename, so feeding it a
+// path-qualified entry would collapse "Battle.net\Agent\Agent.exe" back to a
+// bare "agent.exe" and re-open the ambiguity the path form exists to close.
+func TestBasenameRoots_DropsPathQualifiedEntries(t *testing.T) {
+	got := basenameRoots([]string{
+		"Battle.net.exe",
+		`Battle.net\Agent\Agent.exe`,
+		"Wow.exe",
+		"some/dir/thing.exe",
+	})
+	want := []string{"Battle.net.exe", "Wow.exe"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}

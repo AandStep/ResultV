@@ -254,8 +254,26 @@ func (m *Manager) effectiveAppWhitelist(userRoots []string) []string {
 	if len(userRoots) == 0 {
 		return nil
 	}
-	snap := processtree.Scan(userRoots)
+	snap := processtree.Scan(basenameRoots(userRoots))
 	return mergeAppWhitelist(userRoots, snap.Descendants)
+}
+
+// basenameRoots drops path-qualified entries from the process-tree root set.
+// processtree.normalizeRoots strips a root down to its basename, so passing
+// "Battle.net\Agent\Agent.exe" through would widen it back into a bare
+// "agent.exe" and match every unrelated agent on the machine — exactly the
+// ambiguity the path-qualified form exists to avoid. Such entries still work as
+// route and DNS rules; their parent process is normally a root already, so the
+// scan discovers the descendants regardless.
+func basenameRoots(entries []string) []string {
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if strings.ContainsAny(e, `\/`) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // warnProbeDomainOverlap logs a one-line notice when the user's
