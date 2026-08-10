@@ -26,10 +26,20 @@ export default {
         marquee: {
           '0%, 15%': { transform: 'translateX(0)' },
           '85%, 100%': { transform: 'translateX(var(--scroll-amount))' },
-        }
+        },
+        // Drains left-to-right for exactly as long as a toast is on screen, so
+        // the toast says when it is leaving instead of vanishing unannounced.
+        'toast-drain': {
+          from: { transform: 'scaleX(1)' },
+          to: { transform: 'scaleX(0)' },
+        },
       },
       animation: {
         marquee: 'marquee 1s linear infinite alternate',
+        // 4s matches DEFAULT_DURATION in ToastContext so the class is correct
+        // on its own; ToastStack overrides animation-duration per toast for the
+        // ones that stay longer.
+        'toast-drain': 'toast-drain 4s linear forwards',
       }
     }
   },
