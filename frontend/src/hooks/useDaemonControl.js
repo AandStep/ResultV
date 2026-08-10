@@ -18,6 +18,14 @@
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import wailsAPI from "../utils/wailsAPI";
+import { useToast } from "../context/ToastContext";
+
+// Shown once per app launch. Deliberately a module variable rather than a
+// setting: "once per launch" literally means it should reset on restart, and
+// the running status label already carries the information on every later
+// connect — this toast only explains WHY the wait is long, which is worth
+// saying once.
+let autoResolveHintShown = false;
 
 export const useDaemonControl = (
     isConnected,
@@ -40,6 +48,7 @@ export const useDaemonControl = (
     statusGenerationRef,
 ) => {
     const { t } = useTranslation();
+    const { showToast } = useToast();
 
     const AUTO_MAX_ATTEMPTS = 5;
 
@@ -119,12 +128,11 @@ export const useDaemonControl = (
                 setIsConnecting(true);
                 if (targetProxy?.type?.toUpperCase() === "SECTION") {
                     setIsConnecting(false);
-                    showAlertDialog({
-                        title: t("common.notice"),
-                        message:
-                            t("proxyList.sectionNoConnect") ||
-                            "This row is a subscription group label — pick a server below.",
+                    // A toast, not a modal: there is nothing to confirm here,
+                    // so an OK button is just an extra click.
+                    showToast({
                         variant: "info",
+                        message: t("proxyList.sectionNoConnect"),
                     });
                     bumpGen();
                     isSwitchingRef.current = false;
@@ -144,6 +152,16 @@ export const useDaemonControl = (
                 }
 
                 let candidates;
+                if (isAuto && !autoResolveHintShown) {
+                    autoResolveHintShown = true;
+                    showToast({
+                        variant: "info",
+                        message: t("toast.autoResolveHint"),
+                        // Longer than the default: this sentence takes more
+                        // than four seconds to read.
+                        duration: 6000,
+                    });
+                }
                 // Scoped narrowly around the one await: this function and
                 // selectAndConnect have no outer finally, they reset their
                 // flags twice over (tail of try, and catch). Joining that
@@ -255,6 +273,7 @@ export const useDaemonControl = (
         setIsDisconnecting,
         updateSetting,
         showAlertDialog,
+        showToast,
         t,
         getConnectCandidates,
     ]);
@@ -266,12 +285,11 @@ export const useDaemonControl = (
                 return;
 
             if (proxy?.type?.toUpperCase() === "SECTION") {
-                showAlertDialog({
-                    title: t("common.notice"),
-                    message:
-                        t("proxyList.sectionNoConnect") ||
-                        "This row is a subscription group label — pick a server below.",
+                // A toast, not a modal: there is nothing to confirm here, so an
+                // OK button is just an extra click.
+                showToast({
                     variant: "info",
+                    message: t("proxyList.sectionNoConnect"),
                 });
                 return;
             }
@@ -295,6 +313,16 @@ export const useDaemonControl = (
                 }
 
                 let candidates;
+                if (isAuto && !autoResolveHintShown) {
+                    autoResolveHintShown = true;
+                    showToast({
+                        variant: "info",
+                        message: t("toast.autoResolveHint"),
+                        // Longer than the default: this sentence takes more
+                        // than four seconds to read.
+                        duration: 6000,
+                    });
+                }
                 // Scoped narrowly around the one await: this function and
                 // toggleConnection have no outer finally, they reset their
                 // flags twice over (tail of try, and catch). Joining that
@@ -410,6 +438,7 @@ export const useDaemonControl = (
             isSwitchingRef,
             updateSetting,
             showAlertDialog,
+            showToast,
             t,
             getConnectCandidates,
         ],

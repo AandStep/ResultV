@@ -498,5 +498,8 @@
     "adminTitle": "Administrator rights required",
     "adminMessage": "Tunnel mode needs administrator privileges for the virtual network adapter. Click the button below and approve the UAC prompt — the app will restart elevated.",
     "restartAsAdmin": "Restart as administrator"
+  },
+  "toast": {
+    "autoResolveHint": "Connecting to an auto server can take longer — we're picking the best node for you."
   }
 }
