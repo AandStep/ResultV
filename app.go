@@ -2687,33 +2687,45 @@ func (a *App) setLastAutoNodeKey(key string) {
 // into node statistics. The UI connects by candidate address, so the backend
 // cannot observe which candidate was tried without being told.
 //
-// The key is NOT rebuilt from the arguments. AutoNodeKey hashes Username,
-// Password and Extra as well as the address, so a key reconstructed from the
-// address alone would never match the one the probe recorded, and the two
-// halves of a node's history would accumulate under different keys while
-// appearing to work. Instead the candidate is looked up in the list
+// The key is NOT rebuilt from ip/port. AutoNodeKey hashes Username, Password
+// and Extra as well as the address, so a key reconstructed from the address
+// alone would never match the one the probe recorded, and the two halves of
+// a node's history would accumulate under different keys while appearing to
+// work. Instead the candidate is looked up by candidateIndex in the list
 // ResolveAutoCandidates cached for this proxyID and keyed off the full entry.
+//
+// candidateIndex is the position the UI iterated to (its retry loop's `i`),
+// not a value derived from the address: CDN-fronted and multi-account panels
+// can issue several distinct members sharing one host:port:type
+// (AutoNodeKey's doc comment), so an address alone does not identify a
+// unique candidate. ip/port are still required and checked against the
+// cached entry at that index — if the cache was replaced since the UI got
+// its list (e.g. a subscription refresh ran ResolveAutoCandidates again),
+// the index could now point at a different node. Misattributing a result to
+// the wrong node is worse than losing a datapoint, so any mismatch or
+// out-of-range index is a silent no-op.
 //
 // No reason is accepted from the UI: res.message is user-facing text that can
 // contain a host:port, and node_stats.json is unencrypted. Failures are
 // recorded as the canned "error".
-func (a *App) ReportAutoConnectOutcome(proxyID, ip string, port int, ok bool) {
+func (a *App) ReportAutoConnectOutcome(proxyID string, candidateIndex int, ip string, port int, ok bool) {
 	a.autoCandidatesMu.Lock()
 	cached := a.autoCandidates[proxyID]
 	a.autoCandidatesMu.Unlock()
 
-	for _, c := range cached {
-		if c.IP != ip || c.Port != port {
-			continue
-		}
-		key := proxy.AutoNodeKey(c)
-		if ok {
-			proxy.RecordConnectOutcome(key, true, "")
-			a.setLastAutoNodeKey(key)
-		} else {
-			proxy.RecordConnectOutcome(key, false, "error")
-		}
+	if candidateIndex < 0 || candidateIndex >= len(cached) {
 		return
+	}
+	c := cached[candidateIndex]
+	if c.IP != ip || c.Port != port {
+		return
+	}
+	key := proxy.AutoNodeKey(c)
+	if ok {
+		proxy.RecordConnectOutcome(key, true, "")
+		a.setLastAutoNodeKey(key)
+	} else {
+		proxy.RecordConnectOutcome(key, false, "error")
 	}
 }
 

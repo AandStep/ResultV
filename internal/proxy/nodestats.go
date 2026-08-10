@@ -114,12 +114,20 @@ func (s *NodeStatStore) Get(key string) NodeStat {
 // The very first successful sample seeds EWMARTTms/JitterMs outright instead
 // of being blended against the zero-value starting point — otherwise every
 // node's first reading would come out halved.
+//
+// reason is sanitized exactly like RecordConnect's, even though the current
+// caller (RankAutoCandidates, fed by pingTCPProbe/pingHysteria2Probe/
+// pingWireGuardProbe/autoTLSProbe) only ever passes fixed vocabulary strings
+// today. This is defence in depth, not a fix for a known leak: node_stats.json
+// is unencrypted on the promise that it holds no addresses, and that promise
+// should not depend on every present and future probe function remembering
+// never to interpolate one.
 func (s *NodeStatStore) RecordProbe(key string, rttMs, jitterMs int64, ok bool, reason string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	st := s.stats[key]
-	st.LastReason = reason
+	st.LastReason = sanitizeStatReason(reason)
 	if ok {
 		if st.EWMARTTms == 0 {
 			st.EWMARTTms = float64(rttMs)
@@ -244,4 +252,13 @@ func RecordConnectOutcome(key string, ok bool, reason string) {
 	reason = sanitizeStatReason(reason)
 	nodeStats().RecordConnect(key, ok, reason)
 	_ = nodeStats().Flush()
+}
+
+// LookupNodeStat reads the active store's record for key, or the zero value
+// if key was never recorded. The package-level store (nodeStats) has no
+// exported read access otherwise, and callers outside this package —
+// app.go's tests today, Task 9's scoring and Task 12's UI tomorrow — need
+// one without reaching into unexported state.
+func LookupNodeStat(key string) NodeStat {
+	return nodeStats().Get(key)
 }

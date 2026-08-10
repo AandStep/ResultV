@@ -152,6 +152,7 @@ export const useDaemonControl = (
                     if (isAuto) {
                         await wailsAPI.reportAutoConnectOutcome(
                             targetProxy.id,
+                            i,
                             candidate.ip,
                             parseInt(candidate.port, 10) || 0,
                             !!res.success,
@@ -292,6 +293,7 @@ export const useDaemonControl = (
                     if (isAuto) {
                         await wailsAPI.reportAutoConnectOutcome(
                             proxy.id,
+                            i,
                             candidate.ip,
                             parseInt(candidate.port, 10) || 0,
                             !!res.success,

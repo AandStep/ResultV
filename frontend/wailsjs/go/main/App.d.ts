@@ -77,7 +77,7 @@ export function RefreshRoutingList(arg1:string):Promise<config.RoutingList>;
 
 export function RefreshSubscription(arg1:string):Promise<Array<config.ProxyEntry>>;
 
-export function ReportAutoConnectOutcome(arg1:string,arg2:string,arg3:number,arg4:boolean):Promise<void>;
+export function ReportAutoConnectOutcome(arg1:string,arg2:number,arg3:string,arg4:number,arg5:boolean):Promise<void>;
 
 export function ResetLeftoverReport():Promise<string>;
 

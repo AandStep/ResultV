@@ -6,8 +6,13 @@ package main
 
 import (
 	"encoding/json"
+	"net"
+	"strconv"
 	"strings"
 	"testing"
+
+	"resultproxy-wails/internal/config"
+	"resultproxy-wails/internal/proxy"
 )
 
 func TestFormatAutoMemberTable_ListsEveryMemberWithRTTAndReason(t *testing.T) {
@@ -56,5 +61,165 @@ func TestExtractAutoMembers_ParsesBothExtraEncodings(t *testing.T) {
 
 	if got := extractAutoMembers(nil); len(got) != 0 {
 		t.Errorf("пустой extra: ожидали пусто, получили %v", got)
+	}
+}
+
+// TestReportAutoConnectOutcome_IndexDisambiguatesCollidingAddress covers the
+// exact collision AutoNodeKey's doc comment warns about: CDN-fronted and
+// multi-account panels can issue several logically distinct nodes on one
+// host:port:type. member1 and member2 below share IP and Port and differ
+// only in Extra, so ReportAutoConnectOutcome's old "first IP/Port match"
+// lookup would have credited whichever of them happened to sort first with
+// the other's connect result. The fix looks the candidate up by index
+// instead (verified against the address only as a staleness check), so this
+// test asserts the outcome lands under member2's AutoNodeKey and nowhere
+// near member1's.
+//
+// Why a real loopback listener instead of mocking the probe: pingTCPProbe and
+// autoTLSProbe (internal/proxy/autoprobe.go, manager.go) are unexported
+// package-level vars, substitutable only by test code inside package proxy
+// (see internal/proxy/autoselect_test.go) — unreachable from this package
+// main test. Exporting them just for this test would widen the production
+// API for a test-only need, so instead this test opens a real 127.0.0.1
+// listener and points both members at it: RankAutoCandidates' phase-1 TCP
+// probe then succeeds deterministically without touching any real host or
+// the network this machine actually routes through. Both members use Type
+// "SS" so phase 2 never attempts a TLS handshake (autoProbeTLSParams treats
+// SS/SHADOWSOCKS/WIREGUARD/AMNEZIAWG/HYSTERIA2 as wantTLS=false) — a bare
+// loopback socket has no certificate to offer.
+func TestReportAutoConnectOutcome_IndexDisambiguatesCollidingAddress(t *testing.T) {
+	// nodeStats() falls back to an in-memory store when unset, but that
+	// fallback is a shared package-level var — leaving it installed would
+	// leak this test's records into whichever test runs next in the same
+	// binary. Reset it afterward instead of trying to save/restore the
+	// previous value: there is no exported getter, and SetNodeStatStore(nil)
+	// puts the package back exactly where "never configured" would.
+	t.Cleanup(func() { proxy.SetNodeStatStore(nil) })
+	proxy.SetNodeStatStore(proxy.NewNodeStatStore(t.TempDir()))
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	_, portStr, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("split addr: %v", err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatalf("parse port: %v", err)
+	}
+
+	member1 := config.ProxyEntry{
+		ID: "m1", Name: "Member 1", Type: "SS",
+		IP: "127.0.0.1", Port: port,
+		Extra: json.RawMessage(`{"password":"pw1"}`),
+	}
+	member2 := config.ProxyEntry{
+		ID: "m2", Name: "Member 2", Type: "SS",
+		IP: "127.0.0.1", Port: port,
+		Extra: json.RawMessage(`{"password":"pw2"}`),
+	}
+	head := config.ProxyEntry{
+		ID:    "auto-1",
+		Name:  "Auto Group",
+		Type:  "AUTO",
+		Extra: mustExtra(t, []string{member1.ID, member2.ID}),
+	}
+
+	a := newTestApp(t, t.TempDir())
+	cfg := a.config.GetConfig()
+	cfg.Proxies = []config.ProxyEntry{head, member1, member2}
+	if err := a.config.SaveConfig(cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	ranked := a.ResolveAutoCandidates(head.ID)
+	if len(ranked) != 2 {
+		t.Fatalf("ожидали обоих коллидирующих членов в ранжировании, получили %d: %+v", len(ranked), ranked)
+	}
+
+	// Find member2's position in the cache ReportAutoConnectOutcome will
+	// consult. NOT by IP/Port — both members share the address, that is the
+	// entire point of this test — but by the same AutoNodeKey the probe used,
+	// which is exactly what the UI cannot compute (it only ever sees the
+	// address) and exactly why the index has to come from the loop position.
+	a.autoCandidatesMu.Lock()
+	cached := a.autoCandidates[head.ID]
+	a.autoCandidatesMu.Unlock()
+	idx := -1
+	for i, c := range cached {
+		if proxy.AutoNodeKey(c) == proxy.AutoNodeKey(member2) {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		t.Fatalf("member2 не найден среди кэшированных кандидатов: %+v", cached)
+	}
+
+	a.ReportAutoConnectOutcome(head.ID, idx, member2.IP, member2.Port, true)
+
+	key1, key2 := proxy.AutoNodeKey(member1), proxy.AutoNodeKey(member2)
+	if got := proxy.LookupNodeStat(key2).ConnectOK; got != 1 {
+		t.Errorf("результат должен был попасть под ключ member2 (ConnectOK=1), получили %d", got)
+	}
+	if got := proxy.LookupNodeStat(key1).ConnectOK; got != 0 {
+		t.Errorf("результат НЕ должен был попасть под ключ member1, получили ConnectOK=%d", got)
+	}
+}
+
+// TestReportAutoConnectOutcome_GuardsOutOfRangeAndMismatchedAddress locks in
+// the two silent-no-op paths app.go's ReportAutoConnectOutcome added for
+// index-based lookup: an index outside the cached slice, and an index whose
+// cached entry's address disagrees with what the caller reported (the cache
+// having been replaced since the UI fetched its candidate list, e.g. by a
+// subscription refresh mid-attempt). Both must record nothing — misattributing
+// an outcome to the wrong node is worse than losing the datapoint.
+func TestReportAutoConnectOutcome_GuardsOutOfRangeAndMismatchedAddress(t *testing.T) {
+	t.Cleanup(func() { proxy.SetNodeStatStore(nil) })
+	proxy.SetNodeStatStore(proxy.NewNodeStatStore(t.TempDir()))
+
+	member1 := config.ProxyEntry{ID: "m1", Name: "Member 1", Type: "VLESS", IP: "127.0.0.1", Port: 1111}
+	member2 := config.ProxyEntry{ID: "m2", Name: "Member 2", Type: "VLESS", IP: "127.0.0.1", Port: 2222}
+
+	a := newTestApp(t, t.TempDir())
+	// Populate the cache directly (same package as app.go, field is
+	// unexported) rather than through ResolveAutoCandidates: these two cases
+	// exercise the guard clauses alone and need no real probing.
+	a.autoCandidatesMu.Lock()
+	a.autoCandidates["head-1"] = []config.ProxyEntry{member1, member2}
+	a.autoCandidatesMu.Unlock()
+
+	assertNothingRecorded := func(t *testing.T) {
+		t.Helper()
+		for _, m := range []config.ProxyEntry{member1, member2} {
+			st := proxy.LookupNodeStat(proxy.AutoNodeKey(m))
+			if st.ConnectOK != 0 || st.ConnectFail != 0 {
+				t.Errorf("ожидали отсутствие записи для %s, получили %+v", m.ID, st)
+			}
+		}
+	}
+
+	// Out of range: only 2 candidates cached, index 2 is one past the end.
+	a.ReportAutoConnectOutcome("head-1", 2, member1.IP, member1.Port, true)
+	assertNothingRecorded(t)
+
+	// Negative index.
+	a.ReportAutoConnectOutcome("head-1", -1, member1.IP, member1.Port, true)
+	assertNothingRecorded(t)
+
+	// Valid index, but the reported address does not match what is cached at
+	// that position (stale cache from the UI's point of view).
+	a.ReportAutoConnectOutcome("head-1", 1, member1.IP, member1.Port, true)
+	assertNothingRecorded(t)
+
+	// Sanity check: the same call with the correct address at that index DOES
+	// record, so assertNothingRecorded above was actually testing the guard
+	// and not, say, a typo'd proxyID that never matched anything.
+	a.ReportAutoConnectOutcome("head-1", 1, member2.IP, member2.Port, true)
+	if got := proxy.LookupNodeStat(proxy.AutoNodeKey(member2)).ConnectOK; got != 1 {
+		t.Fatalf("контрольный вызов с верным адресом должен был записать результат, получили ConnectOK=%d", got)
 	}
 }

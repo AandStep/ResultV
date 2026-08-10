@@ -108,14 +108,17 @@ export const wailsAPI = {
     }
   },
 
-  // Feeds a real connect result back into per-node statistics. Only the AUTO
-  // head's id, the address and success/failure are sent: the backend rebuilds
-  // the node key from its own cached candidate entry, and no failure text
-  // crosses over — res.message is user-facing and can contain a host:port,
-  // while node_stats.json is stored unencrypted.
-  async reportAutoConnectOutcome(proxyId, ip, port, ok) {
+  // Feeds a real connect result back into per-node statistics. The AUTO
+  // head's id, the candidate's index in the list ResolveAutoCandidates
+  // returned, the address and success/failure are sent: the backend rebuilds
+  // the node key from its own cached candidate entry at that index (checked
+  // against the address so a stale cache can't misattribute the outcome to
+  // the wrong node — see app.go's ReportAutoConnectOutcome), and no failure
+  // text crosses over — res.message is user-facing and can contain a
+  // host:port, while node_stats.json is stored unencrypted.
+  async reportAutoConnectOutcome(proxyId, candidateIndex, ip, port, ok) {
     try {
-      await ReportAutoConnectOutcome(String(proxyId), String(ip), port, !!ok);
+      await ReportAutoConnectOutcome(String(proxyId), candidateIndex, String(ip), port, !!ok);
     } catch {
       // Statistics are best-effort; never let them break a connect attempt.
     }
