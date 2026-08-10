@@ -17,7 +17,8 @@
       "error": "Connection Error",
       "unprotected": "Unprotected",
       "connecting": "Connecting...",
-      "disconnecting": "Disconnecting..."
+      "disconnecting": "Disconnecting...",
+      "resolving": "Finding a server"
     },
     "desc": {
       "protected": "Your traffic is routed through proxy.",
@@ -25,7 +26,8 @@
       "error": "Node unreachable. Check details or select another server.",
       "unprotected": "Your real IP is exposed.",
       "connecting": "Establishing connection to the server...",
-      "disconnecting": "Closing connection..."
+      "disconnecting": "Closing connection...",
+      "resolving": "Picking the best server for you..."
     },
     "noProxies": "No proxies? ",
     "buyDiscount": "Buy them with a 5% discount",
@@ -381,7 +383,8 @@
       "connected": "Connected",
       "connect": "Connect",
       "connecting": "Connecting",
-      "disconnect": "Disconnect"
+      "disconnect": "Disconnect",
+      "resolving": "Finding a server"
     }
   },
   "logs": {

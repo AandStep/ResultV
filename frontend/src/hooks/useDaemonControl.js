@@ -15,7 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import wailsAPI from "../utils/wailsAPI";
 
@@ -42,6 +42,11 @@ export const useDaemonControl = (
     const { t } = useTranslation();
 
     const AUTO_MAX_ATTEMPTS = 5;
+
+    // True only while an AUTO group's candidates are being resolved. That
+    // resolve runs a two-phase probe over every member and takes seconds, and
+    // it used to happen with nothing at all on screen.
+    const [isResolving, setIsResolving] = useState(false);
 
     const bumpGen = () => {
         if (statusGenerationRef) statusGenerationRef.current += 1;
@@ -126,11 +131,31 @@ export const useDaemonControl = (
                     return;
                 }
                 const isAuto = targetProxy?.type?.toUpperCase() === "AUTO";
-                const candidates = (await getConnectCandidates(targetProxy)).slice(0, isAuto ? AUTO_MAX_ATTEMPTS : 1);
+
+                // Tell the UI about the choice BEFORE awaiting the resolve.
+                // For an AUTO group that await runs a two-phase probe over
+                // every member and takes seconds; doing it first left the
+                // screen completely unchanged for that whole time, which reads
+                // as "the click didn't register".
                 addLog(`Подключение к ${targetProxy.name}...`, "info");
                 setActiveProxy(targetProxy);
                 if (String(settings?.lastSelectedProxyId) !== String(targetProxy.id)) {
                     updateSetting("lastSelectedProxyId", targetProxy.id);
+                }
+
+                let candidates;
+                // Scoped narrowly around the one await: this function and
+                // selectAndConnect have no outer finally, they reset their
+                // flags twice over (tail of try, and catch). Joining that
+                // scheme is easy to desynchronise; this is shorter and safer.
+                if (isAuto) setIsResolving(true);
+                try {
+                    candidates = (await getConnectCandidates(targetProxy)).slice(
+                        0,
+                        isAuto ? AUTO_MAX_ATTEMPTS : 1,
+                    );
+                } finally {
+                    if (isAuto) setIsResolving(false);
                 }
 
                 let res = null;
@@ -258,11 +283,30 @@ export const useDaemonControl = (
                 if (setActiveTab) setActiveTab("home");
 
                 const isAuto = proxy?.type?.toUpperCase() === "AUTO";
-                const candidates = (await getConnectCandidates(proxy)).slice(0, isAuto ? AUTO_MAX_ATTEMPTS : 1);
 
+                // Tell the UI about the choice BEFORE awaiting the resolve.
+                // For an AUTO group that await runs a two-phase probe over
+                // every member and takes seconds; doing it first left the
+                // screen completely unchanged for that whole time, which reads
+                // as "the click didn't register".
                 setActiveProxy(proxy);
                 if (String(settings?.lastSelectedProxyId) !== String(proxy.id)) {
                     updateSetting("lastSelectedProxyId", proxy.id);
+                }
+
+                let candidates;
+                // Scoped narrowly around the one await: this function and
+                // toggleConnection have no outer finally, they reset their
+                // flags twice over (tail of try, and catch). Joining that
+                // scheme is easy to desynchronise; this is shorter and safer.
+                if (isAuto) setIsResolving(true);
+                try {
+                    candidates = (await getConnectCandidates(proxy)).slice(
+                        0,
+                        isAuto ? AUTO_MAX_ATTEMPTS : 1,
+                    );
+                } finally {
+                    if (isAuto) setIsResolving(false);
                 }
                 addLog(`Переключение на: ${proxy.name}...`, "info");
 
@@ -438,5 +482,6 @@ export const useDaemonControl = (
         selectAndConnect,
         deleteProxy,
         cancelConnect,
+        isResolving,
     };
 };

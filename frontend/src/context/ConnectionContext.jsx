@@ -90,7 +90,7 @@ export const ConnectionProvider = ({ children }) => {
         showAlertDialog,
     );
 
-    const { disconnectOnly, toggleConnection, selectAndConnect, deleteProxy, cancelConnect } = useDaemonControl(
+    const { disconnectOnly, toggleConnection, selectAndConnect, deleteProxy, cancelConnect, isResolving } = useDaemonControl(
         isConnected,
         setIsConnected,
         setIsConnecting,
@@ -145,6 +145,7 @@ export const ConnectionProvider = ({ children }) => {
     const value = {
         isConnected,
         isConnecting,
+        isResolving,
         isDisconnecting,
         isProxyDead,
         failedProxy,

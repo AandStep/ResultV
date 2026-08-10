@@ -95,6 +95,7 @@ export const HomeView = () => {
   const {
     isConnected,
     isConnecting,
+    isResolving,
     isDisconnecting,
     isProxyDead,
     failedProxy,
@@ -336,7 +337,7 @@ export const HomeView = () => {
           className={`text-3xl font-bold ${
             isDisconnecting
               ? "text-amber-400"
-              : isConnecting
+              : isConnecting || isResolving
                 ? "text-amber-400"
                 : isConnected
                   ? isProxyDead
@@ -349,25 +350,29 @@ export const HomeView = () => {
         >
           {isDisconnecting
             ? t("home.status.disconnecting")
-            : isConnecting
-              ? t("home.status.connecting")
-              : isConnected
-                ? isProxyDead
-                  ? t("home.status.lost")
-                  : t("home.status.protected")
-                : isError
-                  ? t("home.status.error")
-                  : t("home.status.unprotected")}
+            : isResolving
+              ? t("home.status.resolving")
+              : isConnecting
+                ? t("home.status.connecting")
+                : isConnected
+                  ? isProxyDead
+                    ? t("home.status.lost")
+                    : t("home.status.protected")
+                  : isError
+                    ? t("home.status.error")
+                    : t("home.status.unprotected")}
         </h2>
         {!(isConnected && !isProxyDead) && (
           <p className="text-zinc-400">
-            {isConnecting
-              ? t("home.desc.connecting")
-              : isConnected
-                ? t("home.desc.lost")
-                : isError
-                  ? t("home.desc.error")
-                  : t("home.desc.unprotected")}
+            {isResolving
+              ? t("home.desc.resolving")
+              : isConnecting
+                ? t("home.desc.connecting")
+                : isConnected
+                  ? t("home.desc.lost")
+                  : isError
+                    ? t("home.desc.error")
+                    : t("home.desc.unprotected")}
           </p>
         )}
       </div>
@@ -378,10 +383,16 @@ export const HomeView = () => {
         ></div>
         <button
           disabled={
-            isDisconnecting || (!hasProxies && !isConnected && !isConnecting)
+            // Resolving is not cancellable: cancelConnect tells the backend to
+            // abort a connection that has not started yet, and the resolve's
+            // own await would carry on regardless. Offering a cancel that does
+            // nothing is the same lie as showing "Connecting" during a resolve.
+            isDisconnecting ||
+            isResolving ||
+            (!hasProxies && !isConnected && !isConnecting)
           }
           onClick={
-            isDisconnecting
+            isDisconnecting || isResolving
               ? undefined
               : isConnecting
                 ? cancelConnect
@@ -390,7 +401,7 @@ export const HomeView = () => {
                   : toggleConnection
           }
           className={`relative border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none flex items-center justify-center w-48 h-48 rounded-full transition-all duration-300 transform active:scale-95 ${
-            isDisconnecting
+            isDisconnecting || isResolving
               ? "bg-gradient-to-br from-zinc-800 to-zinc-900 border-4 border-amber-500 text-amber-400 shadow-2xl shadow-amber-500/30 scale-95 cursor-wait"
               : isConnecting
                 ? "bg-gradient-to-br from-zinc-800 to-zinc-900 border-4 border-amber-500 text-amber-400 shadow-2xl shadow-amber-500/30 scale-95 hover:border-rose-500 hover:text-rose-400 cursor-pointer"
@@ -405,7 +416,7 @@ export const HomeView = () => {
                       : "bg-gradient-to-br from-zinc-800 to-zinc-900 border-4 border-zinc-800 text-zinc-400 hover:border-[#007E3A] hover:text-[#007E3A] shadow-2xl"
           }`}
         >
-          {isDisconnecting || isConnecting ? (
+          {isDisconnecting || isConnecting || isResolving ? (
             <div className="w-20 h-20 flex items-center justify-center">
               <div className="w-16 h-16 rounded-full border-4 border-amber-500/30 border-t-amber-400 animate-spin" />
             </div>
