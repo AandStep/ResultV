@@ -280,6 +280,96 @@ func TestRankAutoCandidates_StaysOnCurrentPickWithinTolerance(t *testing.T) {
 // this test a comparator bug like `if isCurrent { score -= 1e18 }` (making
 // the current pick effectively unbeatable forever) would pass the whole
 // package: nothing else asserts AUTO ever moves off a node once picked.
+func TestNodeClass_ClassifiesByProtocolAndTransport(t *testing.T) {
+	cases := []struct {
+		name string
+		e    config.ProxyEntry
+		want string
+	}{
+		{"reality", config.ProxyEntry{Type: "VLESS", Extra: []byte(`{"security":"reality"}`)}, "obfs"},
+		{"xhttp", config.ProxyEntry{Type: "VLESS", Extra: []byte(`{"type":"xhttp"}`)}, "obfs"},
+		{"grpc", config.ProxyEntry{Type: "VLESS", Extra: []byte(`{"type":"grpc"}`)}, "obfs"},
+		{"hysteria2 obfs string", config.ProxyEntry{Type: "HYSTERIA2", Extra: []byte(`{"obfs":"salamander"}`)}, "obfs"},
+		{"hysteria2 obfs object", config.ProxyEntry{Type: "HYSTERIA2", Extra: []byte(`{"obfs":{"type":"salamander","password":"x"}}`)}, "obfs"},
+		{"hysteria2 no obfs", config.ProxyEntry{Type: "HYSTERIA2"}, "plain"},
+		{"plain vless tls", config.ProxyEntry{Type: "VLESS", Extra: []byte(`{"security":"tls"}`)}, "plain"},
+		{"trojan", config.ProxyEntry{Type: "TROJAN"}, "plain"},
+		{"shadowsocks", config.ProxyEntry{Type: "SS"}, "plain"},
+	}
+	for _, c := range cases {
+		if got := nodeClass(c.e); got != c.want {
+			t.Errorf("%s: ожидали %q, получили %q", c.name, c.want, got)
+		}
+	}
+}
+
+func TestDetectClassWeights_PenalisesPlainWhenPlainIsBeingCut(t *testing.T) {
+	members := []config.ProxyEntry{
+		{IP: "p1", Port: 443, Type: "TROJAN"},
+		{IP: "p2", Port: 443, Type: "TROJAN"},
+		{IP: "p3", Port: 443, Type: "TROJAN"},
+		{IP: "o1", Port: 443, Type: "VLESS", Extra: []byte(`{"security":"reality"}`)},
+		{IP: "o2", Port: 443, Type: "VLESS", Extra: []byte(`{"security":"reality"}`)},
+		{IP: "o3", Port: 443, Type: "VLESS", Extra: []byte(`{"security":"reality"}`)},
+	}
+	fast := []AutoProbeResult{
+		{Key: AutoNodeKey(members[0]), OK: false},
+		{Key: AutoNodeKey(members[1]), OK: false},
+		{Key: AutoNodeKey(members[2]), OK: false},
+		{Key: AutoNodeKey(members[3]), OK: true},
+		{Key: AutoNodeKey(members[4]), OK: true},
+		{Key: AutoNodeKey(members[5]), OK: true},
+	}
+
+	w := detectClassWeights(members, fast)
+
+	if w["plain"] != autoBlockedClassPenalty {
+		t.Errorf("простые узлы мертвы, обфусцированные живы — ожидали штраф %v, получили %v",
+			autoBlockedClassPenalty, w["plain"])
+	}
+	if w["obfs"] != 1.0 {
+		t.Errorf("обфусцированные узлы не должны штрафоваться, получили %v", w["obfs"])
+	}
+}
+
+func TestDetectClassWeights_NoPenaltyWhenBothClassesHealthy(t *testing.T) {
+	members := []config.ProxyEntry{
+		{IP: "p1", Port: 443, Type: "TROJAN"},
+		{IP: "p2", Port: 443, Type: "TROJAN"},
+		{IP: "p3", Port: 443, Type: "TROJAN"},
+		{IP: "o1", Port: 443, Type: "VLESS", Extra: []byte(`{"security":"reality"}`)},
+	}
+	fast := []AutoProbeResult{
+		{Key: AutoNodeKey(members[0]), OK: true},
+		{Key: AutoNodeKey(members[1]), OK: true},
+		{Key: AutoNodeKey(members[2]), OK: true},
+		{Key: AutoNodeKey(members[3]), OK: true},
+	}
+
+	w := detectClassWeights(members, fast)
+	if w["plain"] != 1.0 || w["obfs"] != 1.0 {
+		t.Errorf("оба класса живы — штрафов быть не должно, получили %v", w)
+	}
+}
+
+func TestDetectClassWeights_TooFewPlainNodesIsNotEvidence(t *testing.T) {
+	members := []config.ProxyEntry{
+		{IP: "p1", Port: 443, Type: "TROJAN"},
+		{IP: "o1", Port: 443, Type: "VLESS", Extra: []byte(`{"security":"reality"}`)},
+		{IP: "o2", Port: 443, Type: "VLESS", Extra: []byte(`{"security":"reality"}`)},
+	}
+	fast := []AutoProbeResult{
+		{Key: AutoNodeKey(members[0]), OK: false},
+		{Key: AutoNodeKey(members[1]), OK: true},
+		{Key: AutoNodeKey(members[2]), OK: true},
+	}
+
+	w := detectClassWeights(members, fast)
+	if w["plain"] != 1.0 {
+		t.Errorf("один мёртвый простой узел — статистически не вывод, ожидали 1.0, получили %v", w["plain"])
+	}
+}
+
 func TestRankAutoCandidates_SwitchesToClearlyFasterRival(t *testing.T) {
 	oldTCP, oldTLS, oldStore := pingTCPProbe, autoTLSProbe, nodeStats()
 	defer func() {

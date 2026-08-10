@@ -17,7 +17,9 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
+	"strings"
 	"time"
 
 	"resultproxy-wails/internal/config"
@@ -66,8 +68,8 @@ const (
 // 120ms is worse to actually use than a steady 70ms one, even though its
 // best sample looks better. Failure history dominates latency outright: no
 // amount of speed makes a node that will not connect a good pick. classWeight
-// is always 1.0 today — Task 10 is what computes a real value from a node's
-// class/history; this task only threads the parameter through.
+// comes from detectClassWeights and is 1.0 unless the phase-1 sweep shows
+// plain-protocol nodes dying while obfuscated ones stay healthy.
 func scoreNode(r AutoProbeResult, st NodeStat, isCurrent bool, classWeight float64, now time.Time) float64 {
 	base := float64(r.RTTms) + 2*float64(r.JitterMs)
 	score := base * classWeight
@@ -85,6 +87,83 @@ func scoreNode(r AutoProbeResult, st NodeStat, isCurrent bool, classWeight float
 		score -= autoTolerance
 	}
 	return score
+}
+
+// autoBlockedClassPenalty multiplies the score of plain-protocol nodes when the
+// measurements say plain protocols are being cut right now.
+const autoBlockedClassPenalty = 3.0
+
+// autoClassMinSample is the smallest number of nodes in a class for its health
+// ratio to mean anything. One dead node out of one is not evidence of anything.
+const autoClassMinSample = 3
+
+// nodeClass splits nodes into censorship-resistant and plain transports.
+// Providers encode the same split in section headers ("when they throttle" /
+// "when they don't"), but header text is unreliable — the protocol is not.
+func nodeClass(e config.ProxyEntry) string {
+	extra := map[string]any{}
+	if len(e.Extra) > 0 {
+		_ = json.Unmarshal(e.Extra, &extra)
+	}
+	security := strings.ToLower(getStringField(extra, "security", ""))
+	network := strings.ToLower(getStringField(extra, "type", ""))
+
+	// "obfs" arrives either as a bare string or as an object (SBHysteria2Obfs
+	// has type/password), so test for a non-empty presence rather than a string
+	// value — getStringField would return "" for the object form.
+	hasObfs := false
+	switch v := extra["obfs"].(type) {
+	case string:
+		hasObfs = strings.TrimSpace(v) != ""
+	case map[string]any:
+		hasObfs = len(v) > 0
+	}
+
+	if security == "reality" || hasObfs {
+		return "obfs"
+	}
+	switch network {
+	case "xhttp", "grpc":
+		return "obfs"
+	}
+	return "plain"
+}
+
+// detectClassWeights infers whether plain protocols are currently being blocked
+// by comparing per-class survival in the phase-1 sweep. Only measurement decides
+// this — a class is penalised only when its own nodes are dying while the other
+// class's are fine, and only when the sample is big enough to mean something.
+func detectClassWeights(members []config.ProxyEntry, fast []AutoProbeResult) map[string]float64 {
+	weights := map[string]float64{"plain": 1.0, "obfs": 1.0}
+
+	okByKey := make(map[string]bool, len(fast))
+	for _, r := range fast {
+		okByKey[r.Key] = r.OK
+	}
+
+	total := map[string]int{}
+	alive := map[string]int{}
+	for _, m := range members {
+		if !isProbeableNode(m) {
+			continue
+		}
+		c := nodeClass(m)
+		total[c]++
+		if okByKey[AutoNodeKey(m)] {
+			alive[c]++
+		}
+	}
+
+	if total["plain"] < autoClassMinSample || total["obfs"] < 1 {
+		return weights
+	}
+	plainRatio := float64(alive["plain"]) / float64(total["plain"])
+	obfsRatio := float64(alive["obfs"]) / float64(total["obfs"])
+
+	if plainRatio < 0.5 && obfsRatio >= 0.5 {
+		weights["plain"] = autoBlockedClassPenalty
+	}
+	return weights
 }
 
 // RankAutoCandidates probes members in two phases and returns them best-first.
@@ -176,6 +255,17 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 	// against a single now snapshot removes that inconsistency and does N
 	// mutex-guarded store lookups instead of N*logN.
 	now := time.Now()
+	// Class weights come from the phase-1 sweep (the wide, cheap one) so a
+	// handful of shortlist members never gets mistaken for the whole group's
+	// health signal. Looked up once per candidate here, in the same pass that
+	// computes score — not inside the comparator, which must stay a pure read
+	// of precomputed values (see the comment above on why scores are
+	// precomputed at all).
+	weights := detectClassWeights(members, fast)
+	classByKey := make(map[string]string, len(members))
+	for _, m := range members {
+		classByKey[AutoNodeKey(m)] = nodeClass(m)
+	}
 	type rankedCandidate struct {
 		result AutoProbeResult
 		score  float64
@@ -184,7 +274,7 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 	for i, r := range scored {
 		ranked[i] = rankedCandidate{
 			result: r,
-			score:  scoreNode(r, nodeStats().Get(r.Key), r.Key == previousKey, 1.0, now),
+			score:  scoreNode(r, nodeStats().Get(r.Key), r.Key == previousKey, weights[classByKey[r.Key]], now),
 		}
 	}
 	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].score < ranked[j].score })
