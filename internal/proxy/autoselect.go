@@ -18,6 +18,7 @@ package proxy
 import (
 	"context"
 	"sort"
+	"time"
 
 	"resultproxy-wails/internal/config"
 )
@@ -30,6 +31,61 @@ const AutoMaxCandidates = 5
 // autoShortlistSize is how many phase-1 survivors get the expensive DepthFull
 // probe. Phase 1 is cheap and wide; phase 2 is accurate and narrow.
 const autoShortlistSize = 5
+
+// autoTolerance is the head start the node currently in use keeps. A rival must
+// beat it by more than this to take over. Mirrors the `tolerance` knob in
+// Clash's url-test and sing-box's urltest, which exists for the same reason:
+// without it two nodes a few milliseconds apart swap on every evaluation.
+const autoTolerance = 50.0
+
+const (
+	// autoConsecFailPenalty is applied once per consecutive real-connect
+	// failure (capped, see autoConsecFailCap). It is sized in the thousands
+	// because RTTs here are measured in tens of milliseconds — no amount of
+	// speed should let a node that will not connect outrank one that does.
+	autoConsecFailPenalty = 2000.0
+	// autoRecentFailPenalty applies once while the node's last connect
+	// failure is still within autoRecentFailWindow, on top of any
+	// autoConsecFailPenalty — a node that just failed is worse than one whose
+	// last failure has aged out even at the same ConsecFails count.
+	autoRecentFailPenalty = 1500.0
+	// autoRecentFailWindow bounds how long a single failure keeps hurting the
+	// score. Past this, the node gets to compete on its current probe data
+	// again rather than being punished forever for one past incident.
+	autoRecentFailWindow = 5 * time.Minute
+	// autoConsecFailCap stops the failure-count penalty from growing without
+	// bound. Past 3 the node is already ranked last among reachable nodes;
+	// letting the multiplier climb further would make a recovered node need
+	// an implausibly long clean streak to ever climb back.
+	autoConsecFailCap = 3
+)
+
+// scoreNode ranks a node; lower is better.
+//
+// Jitter is weighted double because a node that swings between 20ms and
+// 120ms is worse to actually use than a steady 70ms one, even though its
+// best sample looks better. Failure history dominates latency outright: no
+// amount of speed makes a node that will not connect a good pick. classWeight
+// is always 1.0 today — Task 10 is what computes a real value from a node's
+// class/history; this task only threads the parameter through.
+func scoreNode(r AutoProbeResult, st NodeStat, isCurrent bool, classWeight float64, now time.Time) float64 {
+	base := float64(r.RTTms) + 2*float64(r.JitterMs)
+	score := base * classWeight
+
+	fails := st.ConsecFails
+	if fails > autoConsecFailCap {
+		fails = autoConsecFailCap
+	}
+	score += autoConsecFailPenalty * float64(fails)
+
+	if !st.LastFailAt.IsZero() && now.Sub(st.LastFailAt) < autoRecentFailWindow {
+		score += autoRecentFailPenalty
+	}
+	if isCurrent {
+		score -= autoTolerance
+	}
+	return score
+}
 
 // RankAutoCandidates probes members in two phases and returns them best-first.
 //
@@ -107,7 +163,12 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 	if len(scored) == 0 {
 		return nil, phase1
 	}
-	sort.SliceStable(scored, func(i, j int) bool { return scored[i].RTTms < scored[j].RTTms })
+	now := time.Now()
+	sort.SliceStable(scored, func(i, j int) bool {
+		si := scoreNode(scored[i], nodeStats().Get(scored[i].Key), scored[i].Key == previousKey, 1.0, now)
+		sj := scoreNode(scored[j], nodeStats().Get(scored[j].Key), scored[j].Key == previousKey, 1.0, now)
+		return si < sj
+	})
 
 	out := make([]config.ProxyEntry, 0, AutoMaxCandidates)
 	for _, r := range scored {

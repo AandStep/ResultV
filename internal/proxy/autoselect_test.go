@@ -19,6 +19,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"resultproxy-wails/internal/config"
 )
@@ -180,5 +181,71 @@ func TestRankAutoCandidates_RecordsProbeResultsInStore(t *testing.T) {
 	dead := nodeStats().Get(AutoNodeKey(nodes[1]))
 	if dead.LastReason != "timeout" {
 		t.Errorf("неудачная проба должна сохранять reason, получили %q", dead.LastReason)
+	}
+}
+
+func TestScoreNode_PenalisesJitterOverRawLatency(t *testing.T) {
+	now := time.Now()
+	steady := scoreNode(AutoProbeResult{RTTms: 60, JitterMs: 2}, NodeStat{}, false, 1.0, now)
+	jumpy := scoreNode(AutoProbeResult{RTTms: 50, JitterMs: 40}, NodeStat{}, false, 1.0, now)
+
+	if jumpy <= steady {
+		t.Errorf("нестабильный узел (50ms±40) не должен обыгрывать стабильный (60ms±2): %v vs %v", jumpy, steady)
+	}
+}
+
+func TestScoreNode_PenalisesConsecutiveFailuresAndCapsAtThree(t *testing.T) {
+	now := time.Now()
+	clean := scoreNode(AutoProbeResult{RTTms: 100}, NodeStat{}, false, 1.0, now)
+	three := scoreNode(AutoProbeResult{RTTms: 100}, NodeStat{ConsecFails: 3}, false, 1.0, now)
+	ten := scoreNode(AutoProbeResult{RTTms: 100}, NodeStat{ConsecFails: 10}, false, 1.0, now)
+
+	if three <= clean {
+		t.Error("серия отказов должна ухудшать скор")
+	}
+	if three != ten {
+		t.Errorf("штраф должен упираться в потолок на 3 отказах: %v vs %v", three, ten)
+	}
+}
+
+func TestScoreNode_RecentConnectFailurePenaltyExpires(t *testing.T) {
+	now := time.Now()
+	fresh := scoreNode(AutoProbeResult{RTTms: 100}, NodeStat{LastFailAt: now.Add(-1 * time.Minute)}, false, 1.0, now)
+	stale := scoreNode(AutoProbeResult{RTTms: 100}, NodeStat{LastFailAt: now.Add(-30 * time.Minute)}, false, 1.0, now)
+
+	if fresh <= stale {
+		t.Error("свежий провал должен штрафоваться сильнее старого")
+	}
+}
+
+func TestScoreNode_CurrentPickGetsToleranceCredit(t *testing.T) {
+	now := time.Now()
+	current := scoreNode(AutoProbeResult{RTTms: 100}, NodeStat{}, true, 1.0, now)
+	other := scoreNode(AutoProbeResult{RTTms: 100}, NodeStat{}, false, 1.0, now)
+
+	if other-current != autoTolerance {
+		t.Errorf("текущий выбор должен получать кредит ровно в autoTolerance, разница %v", other-current)
+	}
+}
+
+func TestRankAutoCandidates_StaysOnCurrentPickWithinTolerance(t *testing.T) {
+	oldTCP, oldTLS, oldStore := pingTCPProbe, autoTLSProbe, nodeStats()
+	defer func() {
+		pingTCPProbe, autoTLSProbe = oldTCP, oldTLS
+		SetNodeStatStore(oldStore)
+	}()
+	SetNodeStatStore(NewNodeStatStore(t.TempDir()))
+
+	rtt := map[string]int64{"cur": 100, "new": 70}
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) { return rtt[ip], true, "" }
+	autoTLSProbe = func(ip string, _ int, _ string, _ []string) (int64, bool, string) {
+		return rtt[ip], true, ""
+	}
+
+	nodes := mkNodes("cur", "new")
+	got, _ := RankAutoCandidates(context.Background(), nodes, AutoNodeKey(nodes[0]))
+
+	if got[0].IP != "cur" {
+		t.Errorf("узел быстрее лишь на 30ms при tolerance=50 не должен вытеснять текущий, получили %q", got[0].IP)
 	}
 }
