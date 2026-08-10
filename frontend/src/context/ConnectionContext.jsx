@@ -125,6 +125,12 @@ export const ConnectionProvider = ({ children }) => {
         }
         if (activeProxy?.type?.toUpperCase() !== "AUTO") return;
         if (autoFailoverInFlightRef.current) return;
+        // selectAndConnect's first act is to bail out when a switch is already
+        // running. Arming the guard before that no-op would strand it set: the
+        // call returns without throwing, so the catch below never clears it and
+        // this dead-node episode would never fail over. Skip the round instead
+        // and let a later render try again.
+        if (isSwitchingRef.current) return;
 
         autoFailoverInFlightRef.current = true;
         (async () => {
