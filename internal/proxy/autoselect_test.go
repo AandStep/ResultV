@@ -228,6 +228,29 @@ func TestScoreNode_CurrentPickGetsToleranceCredit(t *testing.T) {
 	}
 }
 
+// TestScoreNode_ToleranceCreditIsExactlyFifty pins autoTolerance's effect to a
+// concrete number instead of comparing against the constant's own name (as
+// TestScoreNode_CurrentPickGetsToleranceCredit does). That symmetry check
+// stays green no matter how absurd autoTolerance becomes — e.g. a comparator
+// bug of `if isCurrent { score -= 1e18 }` would still satisfy "other minus
+// current equals autoTolerance" if autoTolerance were redefined to 1e18. This
+// test asserts the actual arithmetic against a literal, so it catches both an
+// absurd constant and a dropped tolerance credit.
+func TestScoreNode_ToleranceCreditIsExactlyFifty(t *testing.T) {
+	if autoTolerance != 50 {
+		t.Fatalf("тест ожидает autoTolerance=50, но константа равна %v — обновите литерал в тесте, если допуск изменён намеренно", autoTolerance)
+	}
+
+	now := time.Now()
+	const rtt = 100.0
+	got := scoreNode(AutoProbeResult{RTTms: rtt}, NodeStat{}, true, 1.0, now)
+	want := rtt - 50.0
+
+	if got != want {
+		t.Errorf("текущий выбор при RTT=%vms и пустой статистике должен получить скор %v, получили %v", rtt, want, got)
+	}
+}
+
 func TestRankAutoCandidates_StaysOnCurrentPickWithinTolerance(t *testing.T) {
 	oldTCP, oldTLS, oldStore := pingTCPProbe, autoTLSProbe, nodeStats()
 	defer func() {
@@ -247,5 +270,36 @@ func TestRankAutoCandidates_StaysOnCurrentPickWithinTolerance(t *testing.T) {
 
 	if got[0].IP != "cur" {
 		t.Errorf("узел быстрее лишь на 30ms при tolerance=50 не должен вытеснять текущий, получили %q", got[0].IP)
+	}
+}
+
+// TestRankAutoCandidates_SwitchesToClearlyFasterRival is the mirror of
+// TestRankAutoCandidates_StaysOnCurrentPickWithinTolerance: it proves the
+// other half of hysteresis actually works — a rival that beats the current
+// pick by far more than autoTolerance must take over the top rank. Without
+// this test a comparator bug like `if isCurrent { score -= 1e18 }` (making
+// the current pick effectively unbeatable forever) would pass the whole
+// package: nothing else asserts AUTO ever moves off a node once picked.
+func TestRankAutoCandidates_SwitchesToClearlyFasterRival(t *testing.T) {
+	oldTCP, oldTLS, oldStore := pingTCPProbe, autoTLSProbe, nodeStats()
+	defer func() {
+		pingTCPProbe, autoTLSProbe = oldTCP, oldTLS
+		SetNodeStatStore(oldStore)
+	}()
+	SetNodeStatStore(NewNodeStatStore(t.TempDir()))
+
+	// Gap is 400ms, far more than the 50ms tolerance credit the current pick
+	// gets, so "new" must win even after the credit is applied.
+	rtt := map[string]int64{"cur": 500, "new": 100}
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) { return rtt[ip], true, "" }
+	autoTLSProbe = func(ip string, _ int, _ string, _ []string) (int64, bool, string) {
+		return rtt[ip], true, ""
+	}
+
+	nodes := mkNodes("cur", "new")
+	got, _ := RankAutoCandidates(context.Background(), nodes, AutoNodeKey(nodes[0]))
+
+	if len(got) == 0 || got[0].IP != "new" {
+		t.Errorf("узел быстрее текущего на 400ms (много больше tolerance=50) должен вытеснить текущий выбор, получили %+v", got)
 	}
 }

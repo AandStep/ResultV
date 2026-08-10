@@ -163,19 +163,38 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 	if len(scored) == 0 {
 		return nil, phase1
 	}
+	// Score every candidate exactly once, into a parallel slice, before sorting.
+	// nodeStats() is a live store that other goroutines mutate concurrently —
+	// tray clicks each run on their own goroutine (see tray.go), and
+	// connectFromTray -> RecordConnectOutcome -> NodeStatStore.RecordConnect
+	// writes the very ConsecFails/LastFailAt fields scoreNode reads, for the
+	// same keys a concurrent ranking could be scoring. A comparator that called
+	// nodeStats().Get(...) and scoreNode(...) inline would re-read that
+	// mutating store up to O(n log n) times per sort, so two comparisons of the
+	// same element could legally disagree mid-sort, producing a quietly
+	// self-inconsistent order for one ranking cycle. Scoring once up front
+	// against a single now snapshot removes that inconsistency and does N
+	// mutex-guarded store lookups instead of N*logN.
 	now := time.Now()
-	sort.SliceStable(scored, func(i, j int) bool {
-		si := scoreNode(scored[i], nodeStats().Get(scored[i].Key), scored[i].Key == previousKey, 1.0, now)
-		sj := scoreNode(scored[j], nodeStats().Get(scored[j].Key), scored[j].Key == previousKey, 1.0, now)
-		return si < sj
-	})
+	type rankedCandidate struct {
+		result AutoProbeResult
+		score  float64
+	}
+	ranked := make([]rankedCandidate, len(scored))
+	for i, r := range scored {
+		ranked[i] = rankedCandidate{
+			result: r,
+			score:  scoreNode(r, nodeStats().Get(r.Key), r.Key == previousKey, 1.0, now),
+		}
+	}
+	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].score < ranked[j].score })
 
 	out := make([]config.ProxyEntry, 0, AutoMaxCandidates)
-	for _, r := range scored {
+	for _, r := range ranked {
 		if len(out) >= AutoMaxCandidates {
 			break
 		}
-		out = append(out, byKey[r.Key])
+		out = append(out, byKey[r.result.Key])
 	}
 	return out, phase1
 }
