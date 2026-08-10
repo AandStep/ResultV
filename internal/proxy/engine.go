@@ -218,6 +218,13 @@ type SBDNS struct {
 	Servers  []SBDNSServer `json:"servers"`
 	Rules    []SBDNSRule   `json:"rules,omitempty"`
 	Strategy string        `json:"strategy,omitempty"`
+	// Final names the DNS server used when no rule matches. sing-box falls
+	// back to the FIRST registered transport when this is empty
+	// (dns/transport_manager.go), so Smart mode must name "local" explicitly
+	// to keep non-blocked lookups on the system resolver. A non-empty tag with
+	// no matching server is a hard start failure ("default DNS server not
+	// found"), so only ever set a tag that is registered.
+	Final string `json:"final,omitempty"`
 }
 
 type SBDNSServer struct {
@@ -782,6 +789,30 @@ func outboundTLSDiagnostic(proxy ProxyConfig) string {
 	return "tls"
 }
 
+// smartRuleSetActive reports whether buildRoute registers the compiled
+// Smart-mode block-list rule-set. buildDNS references the very same tag, and a
+// DNS rule pointing at an unregistered rule_set fails the start — so both sides
+// ask this one function instead of repeating the condition and drifting apart.
+func smartRuleSetActive(cfg EngineConfig) bool {
+	return cfg.RoutingMode == ModeSmart &&
+		len(cfg.BlockedDomains) > 0 &&
+		cfg.SmartRuleSetPath != ""
+}
+
+// firstDetourServerTag returns the tag of the first DNS server routed through
+// the given detour. That server is already the de-facto default today: with no
+// dns.final, sing-box uses the first registered transport and reaches the rest
+// only through rules. Pointing Smart mode's tunnel rules at it therefore
+// preserves current behaviour for blocked domains exactly.
+func firstDetourServerTag(servers []SBDNSServer, detour string) string {
+	for _, s := range servers {
+		if s.Detour == detour && s.Tag != "" {
+			return s.Tag
+		}
+	}
+	return ""
+}
+
 func buildDNS(cfg EngineConfig) *SBDNS {
 	if cfg.Mode == ProxyModeTunnel {
 		// All DNS servers route through the proxy/endpoint outbound (tag
@@ -866,6 +897,38 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 				ProcessPathRegex: rx,
 				Server:           "local",
 			})
+		}
+
+		// Smart mode: make DNS mirror the traffic split. buildRoute sets
+		// Final="direct" here, so everything outside the block-list leaves from
+		// the user's real address — yet every lookup still exited through the
+		// tunnel. GeoDNS services (Battle.net/WoW, Akamai, game CDNs) answered
+		// for the exit node's region while the game connected directly: that
+		// mismatch is what produced the high ping, the launcher's "VPN
+		// detected" and the mid-session drops.
+		//
+		// Blocked domains keep resolving through the tunnel — a local answer
+		// for a censored domain is a poisoned answer. Force-VPN apps do too:
+		// their whole reason for being on that list is that the local answer is
+		// unusable.
+		if smartRuleSetActive(cfg) {
+			if tunnelTag := firstDetourServerTag(dns.Servers, detour); tunnelTag != "" {
+				if rx := appWhitelistPathRegexes(cfg.AppForceVPN); len(rx) > 0 {
+					dns.Rules = append(dns.Rules, SBDNSRule{
+						ProcessPathRegex: rx,
+						Server:           tunnelTag,
+					})
+				}
+				dns.Rules = append(dns.Rules, SBDNSRule{
+					RuleSet: []string{smartRuleSetTag},
+					Server:  tunnelTag,
+				})
+				// Everything else lands on the system resolver, which is what
+				// restores correct GeoDNS answers. The "local" server is
+				// appended unconditionally in both branches above, so this tag
+				// always resolves.
+				dns.Final = "local"
+			}
 		}
 
 		return dns
@@ -1076,7 +1139,7 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	// inlining ~78k suffixes costs ~160 ms of config marshal/parse/index per
 	// connect. Same rule, same position — only the matcher's storage differs.
 	if cfg.RoutingMode == ModeSmart && len(cfg.BlockedDomains) > 0 {
-		if cfg.SmartRuleSetPath != "" {
+		if smartRuleSetActive(cfg) {
 			route.RuleSet = append(route.RuleSet, SBRuleSet{
 				Type:         "local",
 				Tag:          smartRuleSetTag,

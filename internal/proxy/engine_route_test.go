@@ -1470,3 +1470,127 @@ func TestAppWhitelistPathRegexes_BareBasenameUnchanged(t *testing.T) {
 		t.Fatalf("bare basename stopped matching an install path")
 	}
 }
+
+// smartDNSConfig is the minimal Smart-mode tunnel config with a compiled
+// rule-set — the state in which the DNS split is expected to engage.
+func smartDNSConfig() EngineConfig {
+	return EngineConfig{
+		Mode:             ProxyModeTunnel,
+		RoutingMode:      ModeSmart,
+		Proxy:            ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		BlockedDomains:   []string{"instagram.com", "discord.com"},
+		SmartRuleSetPath: `C:\data\routing\smart-deadbeef.srs`,
+	}
+}
+
+// TestBuildDNS_SmartModeResolvesDirectTrafficLocally is the core regression for
+// the Battle.net report. buildRoute sets Final="direct" in Smart mode, so
+// non-blocked traffic leaves from the user's real address — but every lookup
+// used to exit through the tunnel. GeoDNS services (Blizzard, Akamai, game
+// CDNs) then answered for the exit node's region while the game connected
+// directly, producing WoW's high ping and the launcher's "VPN detected".
+func TestBuildDNS_SmartModeResolvesDirectTrafficLocally(t *testing.T) {
+	dns := buildDNS(smartDNSConfig())
+	if dns == nil {
+		t.Fatal("dns missing")
+	}
+	if dns.Final != "local" {
+		t.Fatalf("smart mode must default DNS to the system resolver, got Final=%q", dns.Final)
+	}
+	var localFound bool
+	for _, s := range dns.Servers {
+		if s.Tag == "local" {
+			localFound = true
+			break
+		}
+	}
+	if !localFound {
+		t.Fatal(`final points at tag "local" but no such server is registered — sing-box fails the start`)
+	}
+}
+
+// TestBuildDNS_SmartModeTunnelsBlockedAndForceVPN pins the other half of the
+// split: censored domains must still resolve through the tunnel (a local answer
+// is a poisoned answer), and so must force-VPN apps, whose whole point is that
+// the local answer is unusable.
+func TestBuildDNS_SmartModeTunnelsBlockedAndForceVPN(t *testing.T) {
+	cfg := smartDNSConfig()
+	cfg.AppForceVPN = []string{"Battle.net.exe"}
+	dns := buildDNS(cfg)
+
+	var tunnelTag string
+	for _, s := range dns.Servers {
+		if s.Detour == "proxy" {
+			tunnelTag = s.Tag
+			break
+		}
+	}
+	if tunnelTag == "" {
+		t.Fatal("expected at least one dns server with proxy detour")
+	}
+
+	var blockedRule, forceRule bool
+	for _, r := range dns.Rules {
+		if len(r.RuleSet) == 1 && r.RuleSet[0] == smartRuleSetTag && r.Server == tunnelTag {
+			blockedRule = true
+		}
+		if len(r.ProcessPathRegex) == 1 && r.Server == tunnelTag &&
+			strings.Contains(r.ProcessPathRegex[0], "Battle") {
+			forceRule = true
+		}
+	}
+	if !blockedRule {
+		t.Fatalf("blocked domains must resolve through the tunnel, rules: %+v", dns.Rules)
+	}
+	if !forceRule {
+		t.Fatalf("force-VPN apps must resolve through the tunnel, rules: %+v", dns.Rules)
+	}
+}
+
+// TestBuildDNS_SmartModeWithoutRuleSetKeepsTunnelDNS covers the fallback: the
+// DNS rule references the rule-set tag that buildRoute registers, so when the
+// compile failed and buildRoute inlined the suffixes instead, referencing the
+// tag would fail the start. Inlining ~74k suffixes into DNS rules as well is
+// not an option, so we keep the old all-tunnel behaviour.
+func TestBuildDNS_SmartModeWithoutRuleSetKeepsTunnelDNS(t *testing.T) {
+	cfg := smartDNSConfig()
+	cfg.SmartRuleSetPath = ""
+	dns := buildDNS(cfg)
+	if dns.Final != "" {
+		t.Fatalf("without a compiled rule-set the DNS split must stay off, got Final=%q", dns.Final)
+	}
+	for _, r := range dns.Rules {
+		if len(r.RuleSet) > 0 {
+			t.Fatalf("dns must not reference an unregistered rule_set: %+v", r)
+		}
+	}
+}
+
+// TestBuildDNS_GlobalModeUnchanged is the regression boundary: Global mode
+// tunnels everything, so its DNS must keep tunnelling everything too.
+func TestBuildDNS_GlobalModeUnchanged(t *testing.T) {
+	cfg := smartDNSConfig()
+	cfg.RoutingMode = ModeGlobal
+	dns := buildDNS(cfg)
+	if dns.Final != "" {
+		t.Fatalf("global mode DNS must be untouched, got Final=%q", dns.Final)
+	}
+	for _, r := range dns.Rules {
+		if len(r.RuleSet) > 0 {
+			t.Fatalf("global mode must not gain a rule_set DNS rule: %+v", r)
+		}
+	}
+}
+
+// TestBuildDNS_SmartFinalSerializes guards against the field silently dropping
+// out of the marshalled config, by the same reasoning as the strict_route test.
+func TestBuildDNS_SmartFinalSerializes(t *testing.T) {
+	cfg := mustBuildTunnelModeConfig(t, smartDNSConfig())
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"final":"local"`) {
+		t.Fatalf("dns final missing from json:\n%s", string(raw))
+	}
+}
