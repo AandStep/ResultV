@@ -106,20 +106,28 @@ func nodeClass(e config.ProxyEntry) string {
 		_ = json.Unmarshal(e.Extra, &extra)
 	}
 	security := strings.ToLower(getStringField(extra, "security", ""))
-	network := strings.ToLower(getStringField(extra, "type", ""))
+	// The transport is stored under the "network" key, not "type" — "type" is
+	// only the URI *query parameter* name (see parseVLESSURI); every consumer
+	// (outbound.go, the JSON-subscription parser) reads it back as "network".
+	network := strings.ToLower(getStringField(extra, "network", ""))
 
-	// "obfs" arrives either as a bare string or as an object (SBHysteria2Obfs
-	// has type/password), so test for a non-empty presence rather than a string
-	// value — getStringField would return "" for the object form.
-	hasObfs := false
-	switch v := extra["obfs"].(type) {
-	case string:
-		hasObfs = strings.TrimSpace(v) != ""
-	case map[string]any:
-		hasObfs = len(v) > 0
-	}
+	// Hysteria2 obfuscation is always a flat string under "obfs_type"
+	// (parseHysteria2URI writes it, outbound.go reads it the same way, with
+	// "obfsType" as the camelCase alias some producers use) — there is no
+	// object-shaped "obfs" key anywhere a real node populates.
+	obfsType := getStringField(extra, "obfs_type", getStringField(extra, "obfsType", ""))
 
-	if security == "reality" || hasObfs {
+	// pbk mirrors outbound.go's own Reality auto-detection: the engine builds
+	// a node as Reality whenever a public key is present, even without an
+	// explicit security=reality, so nodeClass must agree or such a node
+	// classifies as plain. Deliberately NOT falling back to the
+	// publicKey/public_key aliases outbound.go also checks there: those are
+	// WireGuard's own key field, and every VLESS/VMESS Reality producer in
+	// this repo writes the key under "pbk" specifically — falling back would
+	// misclassify every WireGuard node as obfs.
+	pbk := getStringField(extra, "pbk", "")
+
+	if security == "reality" || obfsType != "" || pbk != "" {
 		return "obfs"
 	}
 	switch network {

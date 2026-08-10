@@ -287,10 +287,17 @@ func TestNodeClass_ClassifiesByProtocolAndTransport(t *testing.T) {
 		want string
 	}{
 		{"reality", config.ProxyEntry{Type: "VLESS", Extra: []byte(`{"security":"reality"}`)}, "obfs"},
-		{"xhttp", config.ProxyEntry{Type: "VLESS", Extra: []byte(`{"type":"xhttp"}`)}, "obfs"},
-		{"grpc", config.ProxyEntry{Type: "VLESS", Extra: []byte(`{"type":"grpc"}`)}, "obfs"},
-		{"hysteria2 obfs string", config.ProxyEntry{Type: "HYSTERIA2", Extra: []byte(`{"obfs":"salamander"}`)}, "obfs"},
-		{"hysteria2 obfs object", config.ProxyEntry{Type: "HYSTERIA2", Extra: []byte(`{"obfs":{"type":"salamander","password":"x"}}`)}, "obfs"},
+		// Transport is stored under "network" (parseVLESSURI, outbound.go),
+		// never under "type" — "type" is only the URI query parameter name.
+		{"xhttp", config.ProxyEntry{Type: "VLESS", Extra: []byte(`{"network":"xhttp"}`)}, "obfs"},
+		{"grpc", config.ProxyEntry{Type: "VLESS", Extra: []byte(`{"network":"grpc"}`)}, "obfs"},
+		// A public key with no explicit security is still Reality — the engine
+		// (outbound.go's applyTLSAndTransport) auto-detects it that way too.
+		{"pbk without explicit security", config.ProxyEntry{Type: "VLESS", Extra: []byte(`{"pbk":"REbCbLiQwWzmUHZgBc-oCO0CMtwgvWURtWkFjNfcQkk"}`)}, "obfs"},
+		// Hysteria2 obfuscation is always a flat string under "obfs_type"
+		// (parseHysteria2URI); there is no object-shaped "obfs" key any real
+		// producer writes.
+		{"hysteria2 obfs", config.ProxyEntry{Type: "HYSTERIA2", Extra: []byte(`{"obfs_type":"salamander"}`)}, "obfs"},
 		{"hysteria2 no obfs", config.ProxyEntry{Type: "HYSTERIA2"}, "plain"},
 		{"plain vless tls", config.ProxyEntry{Type: "VLESS", Extra: []byte(`{"security":"tls"}`)}, "plain"},
 		{"trojan", config.ProxyEntry{Type: "TROJAN"}, "plain"},
@@ -391,5 +398,71 @@ func TestRankAutoCandidates_SwitchesToClearlyFasterRival(t *testing.T) {
 
 	if len(got) == 0 || got[0].IP != "new" {
 		t.Errorf("узел быстрее текущего на 400ms (много больше tolerance=50) должен вытеснить текущий выбор, получили %+v", got)
+	}
+}
+
+// TestRankAutoCandidates_ClassPenaltyChangesFinalOrder proves the class weight
+// computed by detectClassWeights actually reaches scoreNode's classWeight
+// argument inside RankAutoCandidates, not just detectClassWeights' own return
+// map. Every other TestRankAutoCandidates_* test uses mkNodes(), which builds
+// uniform VLESS nodes with no Extra — they all classify "plain", so
+// total["obfs"] is always 0 and detectClassWeights always short-circuits to
+// {1.0, 1.0} before ever reaching the ratio check. The scoring loop's
+// weights[classByKey[r.Key]] lookup could be reverted to a literal 1.0 and
+// every one of those tests would stay green. This test is the one that would
+// catch that regression: it puts the plain node in front on raw RTT alone and
+// checks the penalty flips the order.
+func TestRankAutoCandidates_ClassPenaltyChangesFinalOrder(t *testing.T) {
+	oldTCP, oldTLS, oldStore := pingTCPProbe, autoTLSProbe, nodeStats()
+	defer func() {
+		pingTCPProbe, autoTLSProbe = oldTCP, oldTLS
+		SetNodeStatStore(oldStore)
+	}()
+	SetNodeStatStore(NewNodeStatStore(t.TempDir()))
+
+	members := []config.ProxyEntry{
+		{ID: "p1", IP: "p1", Port: 443, Type: "TROJAN", Name: "p1", SubscriptionURL: "https://sub.example"},
+		{ID: "p2", IP: "p2", Port: 443, Type: "TROJAN", Name: "p2", SubscriptionURL: "https://sub.example"},
+		{ID: "p3", IP: "p3", Port: 443, Type: "TROJAN", Name: "p3", SubscriptionURL: "https://sub.example"},
+		{ID: "o1", IP: "o1", Port: 443, Type: "VLESS", Name: "o1", SubscriptionURL: "https://sub.example", Extra: []byte(`{"security":"reality"}`)},
+		{ID: "o2", IP: "o2", Port: 443, Type: "VLESS", Name: "o2", SubscriptionURL: "https://sub.example", Extra: []byte(`{"security":"reality"}`)},
+	}
+
+	// Phase 1 (TCP connect): p2 and p3 are dead, so the plain class' survival
+	// ratio is 1/3 (<0.5) while obfs' is 2/2 (>=0.5) — detectClassWeights'
+	// exact trigger condition. p1's own phase-1 RTT does not matter for the
+	// final score (DepthFull overwrites RTT/Jitter with the TLS samples
+	// below) — it only needs to survive so it reaches phase 2 at all. Both
+	// probes are mocked because TROJAN and VLESS both want a phase-2 TLS
+	// handshake (see autoProbeTLSParams); leaving autoTLSProbe real would
+	// dial the live network.
+	tcpAlive := map[string]bool{"p1": true, "p2": false, "p3": false, "o1": true, "o2": true}
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) {
+		if tcpAlive[ip] {
+			return 5, true, ""
+		}
+		return 0, false, "timeout"
+	}
+
+	// Phase 2 (TLS handshake, DepthFull, 3 samples averaged): p1 is genuinely
+	// the fastest node (80ms), faster than either obfs node (100ms/110ms) —
+	// but plain is the class currently reported as being cut. Unpenalised,
+	// p1 (base 80) wins outright. Penalised 3x (autoBlockedClassPenalty), its
+	// score is 240 — worse than both obfs nodes' unpenalised 100 and 110.
+	tlsRTT := map[string]int64{"p1": 80, "o1": 100, "o2": 110}
+	autoTLSProbe = func(ip string, _ int, _ string, _ []string) (int64, bool, string) {
+		return tlsRTT[ip], true, ""
+	}
+
+	got, _ := RankAutoCandidates(context.Background(), members, "")
+
+	if len(got) != 3 {
+		t.Fatalf("ожидали 3 живых кандидата (p1, o1, o2), получили %d: %+v", len(got), got)
+	}
+	if got[0].IP != "o1" {
+		t.Errorf("штраф x%v за вымирающий plain-класс должен вывести более медленный, но живой obfs-узел первым, получили %+v", autoBlockedClassPenalty, got)
+	}
+	if got[len(got)-1].IP != "p1" {
+		t.Errorf("оштрафованный p1 (80ms*%v=%vms) должен проигрывать обоим obfs-узлам (100ms, 110ms без штрафа), получили %+v", autoBlockedClassPenalty, 80*autoBlockedClassPenalty, got)
 	}
 }
