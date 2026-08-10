@@ -298,6 +298,24 @@ export namespace logger {
 
 export namespace main {
 	
+	export class AutoGroupStatus {
+	    nodeName: string;
+	    nodeIp: string;
+	    rttMs: number;
+	    known: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new AutoGroupStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.nodeName = source["nodeName"];
+	        this.nodeIp = source["nodeIp"];
+	        this.rttMs = source["rttMs"];
+	        this.known = source["known"];
+	    }
+	}
 	export class SubscriptionPreview {
 	    proxies: config.ProxyEntry[];
 	    routingLists: config.RoutingList[];

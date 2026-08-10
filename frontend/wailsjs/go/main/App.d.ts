@@ -35,6 +35,8 @@ export function ExportConfig(arg1:string):Promise<string>;
 
 export function FetchSubscription(arg1:string,arg2:boolean):Promise<main.SubscriptionPreview>;
 
+export function GetAutoGroupStatus(arg1:string):Promise<main.AutoGroupStatus>;
+
 export function GetConfig():Promise<config.AppConfig>;
 
 export function GetLANIPs():Promise<Array<string>>;

@@ -58,6 +58,10 @@ export function FetchSubscription(arg1, arg2) {
   return window['go']['main']['App']['FetchSubscription'](arg1, arg2);
 }
 
+export function GetAutoGroupStatus(arg1) {
+  return window['go']['main']['App']['GetAutoGroupStatus'](arg1);
+}
+
 export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
 }

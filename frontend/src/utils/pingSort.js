@@ -78,6 +78,32 @@ export function getPingSortMetric(proxy, pings) {
 }
 
 /**
+ * Ping label for an AUTO row.
+ *
+ * Falls back to the group minimum only when the chosen node is unknown (no
+ * connection yet). The minimum is a poor number on its own: one unusually fast
+ * member sets it for the whole group even though it may never be picked.
+ *
+ * @param {{ extra?: unknown }} proxy
+ * @param {Record<string, string>} pings
+ * @param {{ known?: boolean, rttMs?: number }} [autoStatus]
+ */
+export function autoRowPingLabel(proxy, pings, autoStatus) {
+    if (autoStatus?.known && typeof autoStatus.rttMs === "number") {
+        return `${autoStatus.rttMs}ms`;
+    }
+    const extra = parseExtra(proxy.extra);
+    const memberIds = (extra?.members || []).map(String);
+    const values = memberIds
+        .map((id) => pings[id])
+        .filter((p) => p && /^\d+/.test(String(p)));
+    if (!values.length) return null;
+    return values
+        .slice()
+        .sort((a, b) => parseInt(a, 10) - parseInt(b, 10))[0];
+}
+
+/**
  * Same ordering rules as proxy list / home dropdown.
  * @param {unknown[]} list
  * @param {string} sortBy

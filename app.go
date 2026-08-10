@@ -2729,6 +2729,69 @@ func (a *App) ReportAutoConnectOutcome(proxyID string, candidateIndex int, ip st
 	}
 }
 
+// AutoGroupStatus reports which member an AUTO group currently resolves to and
+// its measured RTT, so the UI can show the node actually in use instead of the
+// group minimum — one unusually fast member used to set the number for the
+// whole group.
+type AutoGroupStatus struct {
+	NodeName string `json:"nodeName"`
+	NodeIP   string `json:"nodeIp"`
+	RTTms    int64  `json:"rttMs"`
+	Known    bool   `json:"known"`
+}
+
+// GetAutoGroupStatus reports the node that proxyID's AUTO group currently
+// resolves to (per the last successful connect) and its measured RTT.
+//
+// lastAutoNodeKey is a single global value, not scoped to one group: with more
+// than one AUTO group configured, matching it without checking group
+// membership would make every group's row echo whichever group connected
+// last. Restricting the search to a.autoCandidates[proxyID] — the member list
+// ResolveAutoCandidates cached for THIS group — keeps a match scoped to nodes
+// that actually belong to it.
+//
+// NodeName/NodeIP are read from that cache rather than stored in dedicated
+// App fields: both call sites that set lastAutoNodeKey (ReportAutoConnectOutcome,
+// connectFromTray) already hold the full config.ProxyEntry they keyed off, and
+// the cache holds that same entry, so there is nothing else to keep in sync.
+//
+// EWMARTTms can be meaningful even before a successful connect — a node that
+// was only probed still has a rolling RTT — so this does not require ConnectOK
+// to be nonzero, only that lastAutoNodeKey has been set at all (which happens
+// on connect, not on probe; see the field comment on App.lastAutoNodeKeyMu).
+func (a *App) GetAutoGroupStatus(proxyID string) AutoGroupStatus {
+	key := a.getLastAutoNodeKey()
+	if key == "" {
+		return AutoGroupStatus{}
+	}
+
+	a.autoCandidatesMu.Lock()
+	cached := a.autoCandidates[proxyID]
+	a.autoCandidatesMu.Unlock()
+
+	var node *config.ProxyEntry
+	for i := range cached {
+		if proxy.AutoNodeKey(cached[i]) == key {
+			node = &cached[i]
+			break
+		}
+	}
+	if node == nil {
+		return AutoGroupStatus{}
+	}
+
+	st := proxy.LookupNodeStat(key)
+	if st.EWMARTTms <= 0 {
+		return AutoGroupStatus{}
+	}
+	return AutoGroupStatus{
+		NodeName: node.Name,
+		NodeIP:   node.IP,
+		RTTms:    int64(st.EWMARTTms + 0.5),
+		Known:    true,
+	}
+}
+
 // ResolveAutoCandidates returns the ranked connect candidates for an entry.
 //
 // This is the single selection entry point: the tray path and the frontend

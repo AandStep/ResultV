@@ -223,3 +223,62 @@ func TestReportAutoConnectOutcome_GuardsOutOfRangeAndMismatchedAddress(t *testin
 		t.Fatalf("контрольный вызов с верным адресом должен был записать результат, получили ConnectOK=%d", got)
 	}
 }
+
+// TestGetAutoGroupStatus_ReportsConnectedMemberScopedToItsGroup covers three
+// properties GetAutoGroupStatus depends on but a bare port of the brief's
+// snippet (which ignores its proxyID parameter and checks only
+// a.lastAutoNodeKey) would get wrong the moment a config has more than one
+// AUTO group:
+//
+//  1. Before any connect, status is unknown regardless of proxyID.
+//  2. Once connected, the OWNING group's row reports the resolved member's
+//     name/IP and RTT.
+//  3. A DIFFERENT AUTO group's row must stay unknown — lastAutoNodeKey is one
+//     global value, not scoped per group, so without checking group
+//     membership every group would echo whichever one connected last.
+//
+// It also checks that a probed-but-never-connected node still reports a
+// meaningful RTT (RecordProbe alone, no RecordConnect/ReportAutoConnectOutcome
+// call) — NodeStat.EWMARTTms is populated by probes, not connects.
+func TestGetAutoGroupStatus_ReportsConnectedMemberScopedToItsGroup(t *testing.T) {
+	t.Cleanup(func() { proxy.SetNodeStatStore(nil) })
+	store := proxy.NewNodeStatStore(t.TempDir())
+	proxy.SetNodeStatStore(store)
+
+	member1 := config.ProxyEntry{ID: "m1", Name: "Member 1", Type: "VLESS", IP: "127.0.0.1", Port: 1111}
+	member2 := config.ProxyEntry{ID: "m2", Name: "Member 2", Type: "VLESS", IP: "203.0.113.9", Port: 2222}
+	otherGroupMember := config.ProxyEntry{ID: "o1", Name: "Other Member", Type: "VLESS", IP: "198.51.100.1", Port: 3333}
+
+	a := newTestApp(t, t.TempDir())
+
+	if got := a.GetAutoGroupStatus("head-1"); got.Known {
+		t.Fatalf("ожидали Known=false до подключения, получили %+v", got)
+	}
+
+	a.autoCandidatesMu.Lock()
+	a.autoCandidates["head-1"] = []config.ProxyEntry{member1, member2}
+	a.autoCandidates["head-2"] = []config.ProxyEntry{otherGroupMember}
+	a.autoCandidatesMu.Unlock()
+
+	key2 := proxy.AutoNodeKey(member2)
+	store.RecordProbe(key2, 42, 3, true, "")
+	a.setLastAutoNodeKey(key2)
+
+	got := a.GetAutoGroupStatus("head-1")
+	if !got.Known || got.NodeName != member2.Name || got.NodeIP != member2.IP || got.RTTms != 42 {
+		t.Fatalf("ожидали статус member2 (42ms), получили %+v", got)
+	}
+
+	if got := a.GetAutoGroupStatus("head-2"); got.Known {
+		t.Fatalf("статус чужой AUTO-группы не должен знать про узел другой группы, получили %+v", got)
+	}
+
+	// Probe-only record (no connect outcome at all): RTT must still surface.
+	key1 := proxy.AutoNodeKey(member1)
+	store.RecordProbe(key1, 15, 1, true, "")
+	a.setLastAutoNodeKey(key1)
+	got = a.GetAutoGroupStatus("head-1")
+	if !got.Known || got.RTTms != 15 {
+		t.Fatalf("RTT из пробы без коннекта должен быть виден, получили %+v", got)
+	}
+}

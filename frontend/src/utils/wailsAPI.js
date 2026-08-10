@@ -28,6 +28,7 @@ import {
   PingProxy,
   ResolveAutoCandidates,
   ReportAutoConnectOutcome,
+  GetAutoGroupStatus,
   GetConfig,
   SaveConfig,
   ImportConfig,
@@ -121,6 +122,18 @@ export const wailsAPI = {
       await ReportAutoConnectOutcome(String(proxyId), candidateIndex, String(ip), port, !!ok);
     } catch {
       // Statistics are best-effort; never let them break a connect attempt.
+    }
+  },
+
+  // Which member proxyId's AUTO group currently resolves to and its measured
+  // RTT (App.GetAutoGroupStatus), so the row can show that node's RTT instead
+  // of the group minimum. `{}` (known: undefined) reads the same as "unknown"
+  // to autoRowPingLabel as an empty success response would.
+  async getAutoGroupStatus(proxyId) {
+    try {
+      return (await GetAutoGroupStatus(String(proxyId))) || {};
+    } catch {
+      return {};
     }
   },
 

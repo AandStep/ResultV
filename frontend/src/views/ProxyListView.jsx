@@ -40,7 +40,11 @@ import {
   mergeSubscriptionRefreshCountries,
 } from "../utils/proxyParser";
 import wailsAPI from "../utils/wailsAPI";
-import { parseExtra, getPingSortMetric } from "../utils/pingSort";
+import {
+  parseExtra,
+  getPingSortMetric,
+  autoRowPingLabel,
+} from "../utils/pingSort";
 import impLogo from "../assets/implogo.png";
 
 function formatTrafficBytes(n) {
@@ -173,6 +177,27 @@ export const ProxyListView = () => {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  // The chosen node is known only after a connect, so this refreshes when the
+  // active proxy changes rather than on every render.
+  const [autoStatusById, setAutoStatusById] = useState({});
+  useEffect(() => {
+    let cancelled = false;
+    const autoIds = proxies
+      .filter((p) => p.type?.toUpperCase() === "AUTO")
+      .map((p) => String(p.id));
+    if (autoIds.length === 0) return;
+    (async () => {
+      const next = {};
+      for (const id of autoIds) {
+        next[id] = await wailsAPI.getAutoGroupStatus(id);
+      }
+      if (!cancelled) setAutoStatusById(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [proxies, activeProxy]);
 
   const autoMemberIds = useMemo(() => {
     const ids = new Set();
@@ -378,18 +403,10 @@ export const ProxyListView = () => {
         ? t("proxyList.sectionType")
         : protocolInfo;
 
-    // For AUTO cards: compute best ping from member servers.
+    // For AUTO cards: RTT of the node actually resolved to, falling back to
+    // the member minimum only before the first connect (see autoRowPingLabel).
     const autoBestPing = isAutoProxy
-      ? (() => {
-          const extra = parseExtra(proxy.extra);
-          const memberIds = (extra?.members || []).map(String);
-          const arr = memberIds
-            .map((id) => pings[id])
-            .filter((p) => p && /^\d+/.test(String(p)));
-          return arr.length
-            ? arr.sort((a, b) => parseInt(a, 10) - parseInt(b, 10))[0]
-            : null;
-        })()
+      ? autoRowPingLabel(proxy, pings, autoStatusById[proxy.id])
       : null;
 
     const pingPending = isPingPending(proxy);
