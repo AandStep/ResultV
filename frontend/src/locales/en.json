@@ -297,7 +297,8 @@
     },
     "forceApps": {
       "title": "Apps via VPN",
-      "desc": "All traffic of these apps always goes through the VPN — for apps whose traffic Smart mode can't match by lists (domainless connections). Works only in TUNNEL mode."
+      "desc": "All traffic of these apps always goes through the VPN — for apps whose traffic Smart mode can't match by lists (domainless connections). Works only in TUNNEL mode.",
+      "popular": "Popular programs to send via VPN:"
     },
     "forceDomains": {
       "title": "Sites via VPN",

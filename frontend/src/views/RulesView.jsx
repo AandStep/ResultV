@@ -273,6 +273,15 @@ export const RulesView = () => {
     }
   };
 
+  // Bundle chips add a whole process family at once. A launcher spawns helpers
+  // and the game under separate executables, and a partial set leaves half the
+  // traffic on the other route — so this is one state update, not N.
+  const addAppNames = (names) => {
+    const missing = names.filter((n) => !appList.includes(n));
+    if (missing.length === 0) return;
+    setRules({ ...rules, [appField]: [...appList, ...missing] });
+  };
+
   const addApp = () => {
     if (!newApp) return;
     addAppName(normalizeAppName(newApp));
@@ -307,8 +316,40 @@ export const RulesView = () => {
   const appPlaceholder = isWin ? "steam.exe" : "safari.app";
 
   const popularApps = isWin
-    ? ["steam.exe", "discord.exe", "telegram.exe", "epicgameslauncher.exe"]
-    : ["safari.app", "discord.app", "telegram.app"];
+    ? [
+        { label: "steam.exe", processes: ["steam.exe"] },
+        { label: "discord.exe", processes: ["discord.exe"] },
+        { label: "telegram.exe", processes: ["telegram.exe"] },
+        { label: "epicgameslauncher.exe", processes: ["epicgameslauncher.exe"] },
+      ]
+    : [
+        { label: "safari.app", processes: ["safari.app"] },
+        { label: "discord.app", processes: ["discord.app"] },
+        { label: "telegram.app", processes: ["telegram.app"] },
+      ];
+
+  // Smart mode's app list means "force through VPN", so this chip serves the
+  // reverse case from the Global-mode chips: users whose ISP blocks Blizzard.
+  // Battle.net's own traffic already goes direct in Smart mode and needs no
+  // entry here. Agent.exe is path-qualified on purpose — as a bare basename it
+  // would also match Docker's and every corporate agent on the machine.
+  const blizzardChip = {
+    label: "Blizzard / Battle.net",
+    processes: [
+      "Battle.net.exe",
+      "Battle.net Helper.exe",
+      "Battle.net Launcher.exe",
+      "BlizzardError.exe",
+      "BlizzardBrowser.exe",
+      "Wow.exe",
+      "WowClassic.exe",
+      "WowT.exe",
+      "WowB.exe",
+      "Battle.net\\Agent\\Agent.exe",
+    ],
+  };
+
+  const appChips = isSmart ? (isWin ? [blizzardChip] : []) : popularApps;
 
   const domainTitle = isSmart
     ? t("rules.forceDomains.title")
@@ -494,18 +535,18 @@ export const RulesView = () => {
           ))}
         </div>
 
-        {!isSmart && (
+        {appChips.length > 0 && (
           <div className="pt-6 mt-8 border-t border-zinc-800">
             <p className="text-sm font-medium text-zinc-400 mb-4">
-              {t("rules.apps.popular")}
+              {isSmart ? t("rules.forceApps.popular") : t("rules.apps.popular")}
             </p>
             <div className="flex flex-wrap gap-3">
-              {popularApps.map((appName) => {
-                const isAdded = appList.includes(appName);
+              {appChips.map((chip) => {
+                const isAdded = chip.processes.every((p) => appList.includes(p));
                 return (
                   <button
-                    key={appName}
-                    onClick={() => addAppName(appName)}
+                    key={chip.label}
+                    onClick={() => addAppNames(chip.processes)}
                     disabled={isAdded}
                     className={`flex items-center px-4 py-2 rounded-xl text-sm font-medium transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${
                       isAdded
@@ -514,7 +555,7 @@ export const RulesView = () => {
                     }`}
                   >
                     {!isAdded && <Plus className="w-4 h-4 mr-2" />}
-                    <span className="font-mono">{appName}</span>
+                    <span className="font-mono">{chip.label}</span>
                   </button>
                 );
               })}
