@@ -199,7 +199,7 @@ func (p *HTTPBlockedListProvider) FetchBlockedCIDRs(ctx context.Context) ([]stri
 		}
 		merged = append(merged, parseCIDRPayload(body)...)
 	}
-	merged = normalizeCIDRs(merged)
+	merged = normalizeBlockedCIDRs(merged)
 	if len(merged) == 0 {
 		if lastErr != nil {
 			return nil, lastErr
@@ -265,7 +265,7 @@ func parseCIDRPayload(raw []byte) []string {
 			out = append(out, s)
 		}
 	}
-	return normalizeCIDRs(out)
+	return normalizeBlockedCIDRs(out)
 }
 
 type BlockedCIDRsCache struct {
@@ -283,7 +283,7 @@ func LoadBlockedCIDRsCache(path string) (BlockedCIDRsCache, error) {
 	if err := json.Unmarshal(data, &out); err != nil {
 		return out, err
 	}
-	out.CIDRs = normalizeCIDRs(out.CIDRs)
+	out.CIDRs = normalizeBlockedCIDRs(out.CIDRs)
 	if len(out.CIDRs) == 0 {
 		return out, fmt.Errorf("cidr cache is empty")
 	}
@@ -291,7 +291,7 @@ func LoadBlockedCIDRsCache(path string) (BlockedCIDRsCache, error) {
 }
 
 func SaveBlockedCIDRsCache(path string, cache BlockedCIDRsCache) error {
-	cache.CIDRs = normalizeCIDRs(cache.CIDRs)
+	cache.CIDRs = normalizeBlockedCIDRs(cache.CIDRs)
 	if len(cache.CIDRs) == 0 {
 		return fmt.Errorf("cidrs are empty")
 	}

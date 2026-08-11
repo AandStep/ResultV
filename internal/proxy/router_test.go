@@ -273,7 +273,7 @@ func TestNormalizeCIDRs(t *testing.T) {
 
 func TestDefaultBlockedCIDRs_ValidAndContainsTelegram(t *testing.T) {
 	raw := defaultBlockedCIDRs()
-	got := normalizeCIDRs(raw)
+	got := normalizeBlockedCIDRs(raw)
 	if len(got) != len(raw) {
 		t.Fatalf("all default CIDRs must be valid: raw=%d normalized=%d (%v)", len(raw), len(got), got)
 	}
@@ -374,12 +374,14 @@ func TestCustomBlockedDomains(t *testing.T) {
 	}
 }
 
-// TestNormalizeCIDRs_DropsOverBroadIPv4 is the regression for a real poisoned
-// cache: Re:filter's discord_ips.lst shipped 104.16.0.0/12 — all of Cloudflare —
-// and Smart mode's ip_cidr rule dragged every Cloudflare-hosted service into the
-// tunnel. defaultBlockedCIDRSources documents the invariant; this enforces it.
-func TestNormalizeCIDRs_DropsOverBroadIPv4(t *testing.T) {
-	got := normalizeCIDRs([]string{
+// TestNormalizeBlockedCIDRs_DropsOverBroadIPv4 is the regression for a real
+// poisoned cache: Re:filter's discord_ips.lst shipped 104.16.0.0/12 — all of
+// Cloudflare — and Smart mode's ip_cidr rule dragged every Cloudflare-hosted
+// service into the tunnel. defaultBlockedCIDRSources documents the invariant;
+// this enforces it. The guard is specific to the curated block-list; see
+// TestNormalizeCIDRs_KeepsWideIPv4ForUserLists for the other side of the line.
+func TestNormalizeBlockedCIDRs_DropsOverBroadIPv4(t *testing.T) {
+	got := normalizeBlockedCIDRs([]string{
 		"104.16.0.0/12",  // all of Cloudflare — must be dropped
 		"194.221.0.0/16", // Telegram — the widest legitimate entry
 		"5.28.192.0/18",  // Telegram
@@ -397,6 +399,27 @@ func TestNormalizeCIDRs_DropsOverBroadIPv4(t *testing.T) {
 	for _, want := range []string{"194.221.0.0/16", "5.28.192.0/18", "2a0a:f280::/32"} {
 		if !has[want] {
 			t.Fatalf("legitimate cidr %q was dropped: %v", want, got)
+		}
+	}
+}
+
+// TestNormalizeCIDRs_KeepsWideIPv4ForUserLists pins the boundary the over-broad
+// guard must not cross. normalizeCIDRs serves routing lists and Xray
+// subscriptions, where wide ranges are the point: RFC1918 blocks in a `direct`
+// rule are how a user keeps LAN traffic off the tunnel. Dropping them silently
+// broke the user's own routing with nothing to show for it — the guard belongs
+// to normalizeBlockedCIDRs alone.
+func TestNormalizeCIDRs_KeepsWideIPv4ForUserLists(t *testing.T) {
+	in := []string{"10.0.0.0/8", "172.16.0.0/12", "104.16.0.0/12", "2001:db8::/32"}
+	got := normalizeCIDRs(in)
+
+	has := make(map[string]bool, len(got))
+	for _, c := range got {
+		has[c] = true
+	}
+	for _, want := range in {
+		if !has[want] {
+			t.Errorf("user-list cidr %q was dropped: %v", want, got)
 		}
 	}
 }

@@ -110,7 +110,7 @@ func (r *Router) SetCustomBlockedDomains(domains []string) {
 func (r *Router) SetBlockedCIDRs(cidrs []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.blockedCIDRs = normalizeCIDRs(cidrs)
+	r.blockedCIDRs = normalizeBlockedCIDRs(cidrs)
 }
 
 // GetBlockedCIDRs returns a copy of the IP-subnet block-list. Consumed by the
@@ -334,15 +334,47 @@ func (r *Router) containsBlocked(domain string) bool {
 // cloud-provider-wide ranges (Re:filter's discord_ips.lst has shipped
 // 104.16.0.0/12 = all of Cloudflare, itdog's discord.lst 172.64.0.0/13),
 // and routing those through the tunnel drags unrelated traffic in with them.
-// defaultBlockedCIDRSources states the invariant in prose — this enforces it
-// at the one chokepoint every list passes through. /16 is the widest
-// legitimate entry we ship (194.221.0.0/16, Telegram). IPv6 is not filtered:
-// a /32 there (2a0a:f280::/32) is a normal service allocation.
+// defaultBlockedCIDRSources states the invariant in prose — normalizeBlockedCIDRs
+// enforces it. /16 is the widest legitimate entry we ship (194.221.0.0/16,
+// Telegram). IPv6 is not filtered: a /32 there (2a0a:f280::/32) is a normal
+// service allocation.
+//
+// This applies to the curated block-list only, never to lists the user supplied
+// themselves — see normalizeBlockedCIDRs.
 const maxBlockedCIDRPrefixIPv4 = 16
+
+// normalizeBlockedCIDRs normalizes a curated block-list and additionally drops
+// IPv4 prefixes wider than maxBlockedCIDRPrefixIPv4.
+//
+// The width guard lives here rather than in normalizeCIDRs because it must not
+// reach user-supplied lists. A routing list or an Xray subscription legitimately
+// carries wide ranges — 10.0.0.0/8 and 172.16.0.0/12 in a `direct` rule are the
+// normal way to keep RFC1918 traffic off the tunnel — and silently discarding
+// them would break the user's own routing with no error to show for it. Third-
+// party block-lists get no such benefit of the doubt: there a /12 is a mistake
+// that drags all of Cloudflare through the proxy.
+func normalizeBlockedCIDRs(in []string) []string {
+	normalized := normalizeCIDRs(in)
+	out := make([]string, 0, len(normalized))
+	for _, s := range normalized {
+		_, ipNet, err := net.ParseCIDR(s)
+		if err != nil {
+			continue
+		}
+		if ones, bits := ipNet.Mask.Size(); bits == 32 && ones < maxBlockedCIDRPrefixIPv4 {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
 
 // normalizeCIDRs validates and de-duplicates a list of CIDR strings. Bare IPs
 // are widened to host CIDRs (/32 or /128); blanks, comments and unparseable
 // entries are dropped. Output is canonicalised via net.IPNet.String().
+//
+// Entries are kept whatever their prefix width. Callers handling a curated
+// block-list want normalizeBlockedCIDRs instead.
 func normalizeCIDRs(in []string) []string {
 	if len(in) == 0 {
 		return []string{}
@@ -367,9 +399,6 @@ func normalizeCIDRs(in []string) []string {
 		}
 		_, ipNet, err := net.ParseCIDR(s)
 		if err != nil {
-			continue
-		}
-		if ones, bits := ipNet.Mask.Size(); bits == 32 && ones < maxBlockedCIDRPrefixIPv4 {
 			continue
 		}
 		n := ipNet.String()
