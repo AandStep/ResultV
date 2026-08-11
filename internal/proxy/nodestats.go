@@ -203,9 +203,9 @@ func (s *NodeStatStore) Flush() error {
 	return nil
 }
 
-// Package-level store. RankAutoCandidates is called from both the tray and the
-// frontend and has no natural owner to thread the store through; a guarded
-// package-level instance keeps the call sites unchanged.
+// Package-level store. RankAutoCandidates is called from the connect path and
+// from a user-triggered refresh and has no natural owner to thread the store
+// through; a guarded package-level instance keeps the call sites unchanged.
 var (
 	nodeStatsMu    sync.Mutex
 	nodeStatsStore *NodeStatStore
