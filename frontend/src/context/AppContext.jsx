@@ -17,15 +17,20 @@
 
 import React from "react";
 import { LogProvider } from "./LogContext";
+import { ToastProvider } from "./ToastContext";
 import { ConfigProvider } from "./ConfigContext";
 import { ConnectionProvider } from "./ConnectionContext";
 
 export const AppProvider = ({ children }) => {
     return (
         <LogProvider>
-            <ConfigProvider>
-                <ConnectionProvider>{children}</ConnectionProvider>
-            </ConfigProvider>
+            {/* Outside ConnectionProvider: useDaemonControl raises toasts, so
+                the toast context has to already exist by the time it runs. */}
+            <ToastProvider>
+                <ConfigProvider>
+                    <ConnectionProvider>{children}</ConnectionProvider>
+                </ConfigProvider>
+            </ToastProvider>
         </LogProvider>
     );
 };

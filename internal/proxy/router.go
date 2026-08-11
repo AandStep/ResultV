@@ -329,6 +329,17 @@ func (r *Router) containsBlocked(domain string) bool {
 	return false
 }
 
+// maxBlockedCIDRPrefixIPv4 is the widest IPv4 prefix accepted into the
+// Smart-mode ip_cidr block-list. Upstream sources occasionally ship
+// cloud-provider-wide ranges (Re:filter's discord_ips.lst has shipped
+// 104.16.0.0/12 = all of Cloudflare, itdog's discord.lst 172.64.0.0/13),
+// and routing those through the tunnel drags unrelated traffic in with them.
+// defaultBlockedCIDRSources states the invariant in prose — this enforces it
+// at the one chokepoint every list passes through. /16 is the widest
+// legitimate entry we ship (194.221.0.0/16, Telegram). IPv6 is not filtered:
+// a /32 there (2a0a:f280::/32) is a normal service allocation.
+const maxBlockedCIDRPrefixIPv4 = 16
+
 // normalizeCIDRs validates and de-duplicates a list of CIDR strings. Bare IPs
 // are widened to host CIDRs (/32 or /128); blanks, comments and unparseable
 // entries are dropped. Output is canonicalised via net.IPNet.String().
@@ -356,6 +367,9 @@ func normalizeCIDRs(in []string) []string {
 		}
 		_, ipNet, err := net.ParseCIDR(s)
 		if err != nil {
+			continue
+		}
+		if ones, bits := ipNet.Mask.Size(); bits == 32 && ones < maxBlockedCIDRPrefixIPv4 {
 			continue
 		}
 		n := ipNet.String()

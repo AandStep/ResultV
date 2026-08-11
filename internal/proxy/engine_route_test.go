@@ -16,7 +16,6 @@
 package proxy
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -26,10 +25,6 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-
-	"github.com/sagernet/sing-box/include"
-	"github.com/sagernet/sing-box/option"
-	singjson "github.com/sagernet/sing/common/json"
 )
 
 func TestBuildRoute_NestedDomainException_ProducesProxyOverride(t *testing.T) {
@@ -689,13 +684,13 @@ func TestOutboundTLSDiagnostic(t *testing.T) {
 func TestResolvedFingerprint_UnknownFallsBackToChrome(t *testing.T) {
 	fp := func(v string) string { return resolvedFingerprint(map[string]interface{}{"fp": v}) }
 	cases := map[string]string{
-		"ch":       "chrome", // clipped paste — the real-world failure
-		"bogus123": "chrome",
-		"ChRoMe":   "chrome", // normalised
-		"qq":       "qq",
-		"firefox":  "firefox",
+		"ch":         "chrome", // clipped paste — the real-world failure
+		"bogus123":   "chrome",
+		"ChRoMe":     "chrome", // normalised
+		"qq":         "qq",
+		"firefox":    "firefox",
 		"randomized": "randomized",
-		"none":     "", // explicit opt-out keeps bare Go fingerprint
+		"none":       "", // explicit opt-out keeps bare Go fingerprint
 	}
 	for in, want := range cases {
 		if got := fp(in); got != want {
@@ -1207,134 +1202,6 @@ func TestBuildRoute_ExplicitBrowserExclusionGetsDirectRule(t *testing.T) {
 	}
 }
 
-func TestBuildAdBlockRuleSets_PrefersLocalFiles(t *testing.T) {
-	dir := t.TempDir()
-	rsDir := filepath.Join(dir, "filter", "rulesets")
-	if err := os.MkdirAll(rsDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	payload := make([]byte, minLocalSRSBytes+1)
-	for i := range payload {
-		payload[i] = 0x01
-	}
-	if err := os.WriteFile(filepath.Join(rsDir, "ads.srs"), payload, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	sets := buildAdBlockRuleSets(dir)
-	if len(sets) < 1 {
-		t.Fatal("expected rule sets")
-	}
-	if sets[0].Type != "local" || sets[0].LocalOptions.Path == "" {
-		t.Fatalf("expected local ads rule-set, got %+v", sets[0])
-	}
-}
-
-func TestBuildRoute_AdBlock_RejectRuleSets(t *testing.T) {
-	cfg := EngineConfig{AdBlock: true}
-	route := buildRoute(cfg)
-	if route == nil {
-		t.Fatal("expected route")
-	}
-	if len(route.RuleSet) < 1 {
-		t.Fatalf("expected rule_set definitions, got %+v", route.RuleSet)
-	}
-	var rejectFound bool
-	for _, r := range route.Rules {
-		if r.Action == "reject" && len(r.RuleSet) > 0 {
-			rejectFound = true
-			break
-		}
-	}
-	if !rejectFound {
-		t.Fatalf("expected reject rule with rule_set, rules=%+v", route.Rules)
-	}
-}
-
-func TestBuildDNS_AdBlock_RejectRuleSets(t *testing.T) {
-	cfg := EngineConfig{Mode: ProxyModeProxy, AdBlock: true}
-	dns := buildDNS(cfg)
-	if dns == nil {
-		t.Fatal("expected dns")
-	}
-	var rejectFound bool
-	for _, r := range dns.Rules {
-		if r.Action == "reject" && len(r.RuleSet) > 0 {
-			rejectFound = true
-			break
-		}
-	}
-	if !rejectFound {
-		t.Fatalf("expected dns reject rule, rules=%+v", dns.Rules)
-	}
-}
-
-func TestBuildRoute_AdBlockMITM_BrowserRules(t *testing.T) {
-	cfg := EngineConfig{AdBlock: true, MITMPort: 18080}
-	route := buildRoute(cfg)
-	if !route.FindProcess {
-		t.Fatal("expected find_process for MITM browser rules")
-	}
-	var mitmTCP, quicReject bool
-	for _, r := range route.Rules {
-		if r.Outbound == adBlockMITMOutbound && len(r.ProcessPathRegex) > 0 {
-			mitmTCP = true
-		}
-		if r.Action == "reject" && len(r.Network) == 1 && r.Network[0] == "udp" {
-			quicReject = true
-		}
-	}
-	if !mitmTCP {
-		t.Fatalf("expected MITM outbound rule, rules=%+v", route.Rules)
-	}
-	if !quicReject {
-		t.Fatalf("expected QUIC reject for browsers, rules=%+v", route.Rules)
-	}
-}
-
-func TestBuildProxyModeConfig_AdBlock_OutboundMITM(t *testing.T) {
-	cfg := mustBuildProxyModeConfig(t, EngineConfig{
-		AdBlock:  true,
-		MITMPort: 18080,
-		LocalPort: 14081,
-		Proxy: ProxyConfig{IP: "1.2.3.4", Port: 1080, Type: "socks5"},
-	})
-	var mitmOutbound bool
-	for _, o := range cfg.Outbounds {
-		if o.Tag == adBlockMITMOutbound {
-			mitmOutbound = true
-			if o.ServerPort != 18080 {
-				t.Fatalf("mitm port: got %d", o.ServerPort)
-			}
-		}
-	}
-	if !mitmOutbound {
-		t.Fatalf("expected adblock-mitm outbound, outbounds=%+v", cfg.Outbounds)
-	}
-}
-
-func TestBuildProxyModeConfig_AdBlock_SingBoxParses(t *testing.T) {
-	cfg := mustBuildProxyModeConfig(t, EngineConfig{
-		AdBlock:   true,
-		MITMPort:  18080,
-		LocalPort: 14081,
-		Mode:      ProxyModeProxy,
-		ListenAddr: "127.0.0.1:14081",
-		Proxy:     ProxyConfig{IP: "1.2.3.4", Port: 1080, Type: "socks5"},
-	})
-	j, err := json.Marshal(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(j), `"rule_set"`) {
-		t.Fatalf("expected rule_set in config: %s", string(j))
-	}
-	ctx := include.Context(context.Background())
-	var opt option.Options
-	if err := singjson.UnmarshalContext(ctx, j, &opt); err != nil {
-		t.Fatalf("sing-box decode adblock config: %v\n%s", err, j)
-	}
-}
-
 func TestBuildRouteAppForceVPN(t *testing.T) {
 	cfg := EngineConfig{
 		Mode:         ProxyModeTunnel,
@@ -1496,5 +1363,234 @@ func TestRoutingListMissingCacheSkipped(t *testing.T) {
 		if rs.Tag == "rl-x" {
 			t.Error("rule_set for a missing cache file must be skipped")
 		}
+	}
+}
+
+// TestBuildRoute_SmartMode_UsesRuleSetWhenCompiled verifies that a compiled
+// block-list is referenced by tag instead of being inlined as domain_suffix,
+// and that it keeps its position ahead of the whitelist direct rule (the
+// ordering that makes an explicit "route via VPN" win — see
+// TestBuildRoute_SmartMode_BlockedWinsOverWhitelist).
+func TestBuildRoute_SmartMode_UsesRuleSetWhenCompiled(t *testing.T) {
+	cfg := EngineConfig{
+		Mode:             ProxyModeTunnel,
+		RoutingMode:      ModeSmart,
+		Proxy:            ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		Whitelist:        []string{".com"},
+		BlockedDomains:   []string{"instagram.com"},
+		SmartRuleSetPath: filepath.Join("C:", "data", "routing", "smart-deadbeefdeadbeef.srs"),
+	}
+	route := buildRoute(cfg)
+
+	blockedIdx, comDirectIdx := -1, -1
+	for i, r := range route.Rules {
+		if r.Outbound == "proxy" {
+			for _, tag := range r.RuleSet {
+				if tag == smartRuleSetTag {
+					blockedIdx = i
+				}
+			}
+			for _, d := range r.DomainSuffix {
+				if d == "instagram.com" {
+					t.Fatalf("blocked domains must not be inlined when a rule-set is compiled, rules=%+v", route.Rules)
+				}
+			}
+		}
+		if r.Outbound == "direct" {
+			for _, d := range r.DomainSuffix {
+				if d == "com" {
+					comDirectIdx = i
+				}
+			}
+		}
+	}
+	if blockedIdx == -1 {
+		t.Fatalf("expected a rule referencing %q, rules=%+v", smartRuleSetTag, route.Rules)
+	}
+	if comDirectIdx == -1 {
+		t.Fatalf("expected whitelist com → direct rule, rules=%+v", route.Rules)
+	}
+	if blockedIdx > comDirectIdx {
+		t.Fatalf("rule-set rule (idx=%d) must precede whitelist direct rule (idx=%d)", blockedIdx, comDirectIdx)
+	}
+
+	var declared bool
+	for _, rs := range route.RuleSet {
+		if rs.Tag == smartRuleSetTag {
+			declared = true
+			if rs.Type != "local" || rs.Format != "binary" {
+				t.Fatalf("rule-set must be a local binary set, got type=%q format=%q", rs.Type, rs.Format)
+			}
+			if rs.LocalOptions.Path != cfg.SmartRuleSetPath {
+				t.Fatalf("rule-set path = %q, want %q", rs.LocalOptions.Path, cfg.SmartRuleSetPath)
+			}
+		}
+	}
+	if !declared {
+		t.Fatalf("route.rule_set must declare %q, got %+v", smartRuleSetTag, route.RuleSet)
+	}
+}
+
+// TestAppWhitelistPathRegexes_PathQualifiedEntry covers the Blizzard updater:
+// it is named Agent.exe, so a bare basename entry would also match Docker's,
+// 1C's and every corporate agent on the machine — silently pulling an unrelated
+// process out of the tunnel (Global) or into it (Smart).
+func TestAppWhitelistPathRegexes_PathQualifiedEntry(t *testing.T) {
+	rx := appWhitelistPathRegexes([]string{`Battle.net\Agent\Agent.exe`})
+	if len(rx) != 1 {
+		t.Fatalf("expected exactly 1 regex, got %v", rx)
+	}
+	re, err := regexp.Compile(rx[0])
+	if err != nil {
+		t.Fatalf("regex %q does not compile: %v", rx[0], err)
+	}
+	if !re.MatchString(`C:\Program Files (x86)\Battle.net\Agent\Agent.exe`) {
+		t.Fatalf("blizzard agent path not matched by %q", rx[0])
+	}
+	if re.MatchString(`C:\Docker\agent.exe`) {
+		t.Fatalf("unrelated agent.exe matched by %q — tunnel hole", rx[0])
+	}
+	if re.MatchString(`C:\Battle.net\Agent\other.exe`) {
+		t.Fatalf("unrelated exe in the same directory matched by %q", rx[0])
+	}
+}
+
+// TestAppWhitelistPathRegexes_BareBasenameUnchanged pins the existing shape:
+// a plain executable name must keep matching wherever the game is installed.
+func TestAppWhitelistPathRegexes_BareBasenameUnchanged(t *testing.T) {
+	rx := appWhitelistPathRegexes([]string{"wow.exe"})
+	if len(rx) != 1 {
+		t.Fatalf("expected exactly 1 regex, got %v", rx)
+	}
+	if rx[0] != `(?i)(^|[\\/])wow\.exe$` {
+		t.Fatalf("bare basename regex changed shape: %q", rx[0])
+	}
+	re := regexp.MustCompile(rx[0])
+	if !re.MatchString(`D:\Games\World of Warcraft\_retail_\wow.exe`) {
+		t.Fatalf("bare basename stopped matching an install path")
+	}
+}
+
+// smartDNSConfig is the minimal Smart-mode tunnel config with a compiled
+// rule-set — the state in which the DNS split is expected to engage.
+func smartDNSConfig() EngineConfig {
+	return EngineConfig{
+		Mode:             ProxyModeTunnel,
+		RoutingMode:      ModeSmart,
+		Proxy:            ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		BlockedDomains:   []string{"instagram.com", "discord.com"},
+		SmartRuleSetPath: `C:\data\routing\smart-deadbeef.srs`,
+	}
+}
+
+// TestBuildDNS_SmartModeResolvesDirectTrafficLocally is the core regression for
+// the Battle.net report. buildRoute sets Final="direct" in Smart mode, so
+// non-blocked traffic leaves from the user's real address — but every lookup
+// used to exit through the tunnel. GeoDNS services (Blizzard, Akamai, game
+// CDNs) then answered for the exit node's region while the game connected
+// directly, producing WoW's high ping and the launcher's "VPN detected".
+func TestBuildDNS_SmartModeResolvesDirectTrafficLocally(t *testing.T) {
+	dns := buildDNS(smartDNSConfig())
+	if dns == nil {
+		t.Fatal("dns missing")
+	}
+	if dns.Final != "local" {
+		t.Fatalf("smart mode must default DNS to the system resolver, got Final=%q", dns.Final)
+	}
+	var localFound bool
+	for _, s := range dns.Servers {
+		if s.Tag == "local" {
+			localFound = true
+			break
+		}
+	}
+	if !localFound {
+		t.Fatal(`final points at tag "local" but no such server is registered — sing-box fails the start`)
+	}
+}
+
+// TestBuildDNS_SmartModeTunnelsBlockedAndForceVPN pins the other half of the
+// split: censored domains must still resolve through the tunnel (a local answer
+// is a poisoned answer), and so must force-VPN apps, whose whole point is that
+// the local answer is unusable.
+func TestBuildDNS_SmartModeTunnelsBlockedAndForceVPN(t *testing.T) {
+	cfg := smartDNSConfig()
+	cfg.AppForceVPN = []string{"Battle.net.exe"}
+	dns := buildDNS(cfg)
+
+	var tunnelTag string
+	for _, s := range dns.Servers {
+		if s.Detour == "proxy" {
+			tunnelTag = s.Tag
+			break
+		}
+	}
+	if tunnelTag == "" {
+		t.Fatal("expected at least one dns server with proxy detour")
+	}
+
+	var blockedRule, forceRule bool
+	for _, r := range dns.Rules {
+		if len(r.RuleSet) == 1 && r.RuleSet[0] == smartRuleSetTag && r.Server == tunnelTag {
+			blockedRule = true
+		}
+		if len(r.ProcessPathRegex) == 1 && r.Server == tunnelTag &&
+			strings.Contains(r.ProcessPathRegex[0], "Battle") {
+			forceRule = true
+		}
+	}
+	if !blockedRule {
+		t.Fatalf("blocked domains must resolve through the tunnel, rules: %+v", dns.Rules)
+	}
+	if !forceRule {
+		t.Fatalf("force-VPN apps must resolve through the tunnel, rules: %+v", dns.Rules)
+	}
+}
+
+// TestBuildDNS_SmartModeWithoutRuleSetKeepsTunnelDNS covers the fallback: the
+// DNS rule references the rule-set tag that buildRoute registers, so when the
+// compile failed and buildRoute inlined the suffixes instead, referencing the
+// tag would fail the start. Inlining ~74k suffixes into DNS rules as well is
+// not an option, so we keep the old all-tunnel behaviour.
+func TestBuildDNS_SmartModeWithoutRuleSetKeepsTunnelDNS(t *testing.T) {
+	cfg := smartDNSConfig()
+	cfg.SmartRuleSetPath = ""
+	dns := buildDNS(cfg)
+	if dns.Final != "" {
+		t.Fatalf("without a compiled rule-set the DNS split must stay off, got Final=%q", dns.Final)
+	}
+	for _, r := range dns.Rules {
+		if len(r.RuleSet) > 0 {
+			t.Fatalf("dns must not reference an unregistered rule_set: %+v", r)
+		}
+	}
+}
+
+// TestBuildDNS_GlobalModeUnchanged is the regression boundary: Global mode
+// tunnels everything, so its DNS must keep tunnelling everything too.
+func TestBuildDNS_GlobalModeUnchanged(t *testing.T) {
+	cfg := smartDNSConfig()
+	cfg.RoutingMode = ModeGlobal
+	dns := buildDNS(cfg)
+	if dns.Final != "" {
+		t.Fatalf("global mode DNS must be untouched, got Final=%q", dns.Final)
+	}
+	for _, r := range dns.Rules {
+		if len(r.RuleSet) > 0 {
+			t.Fatalf("global mode must not gain a rule_set DNS rule: %+v", r)
+		}
+	}
+}
+
+// TestBuildDNS_SmartFinalSerializes guards against the field silently dropping
+// out of the marshalled config, by the same reasoning as the strict_route test.
+func TestBuildDNS_SmartFinalSerializes(t *testing.T) {
+	cfg := mustBuildTunnelModeConfig(t, smartDNSConfig())
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"final":"local"`) {
+		t.Fatalf("dns final missing from json:\n%s", string(raw))
 	}
 }

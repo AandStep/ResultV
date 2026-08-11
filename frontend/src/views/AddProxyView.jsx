@@ -45,20 +45,36 @@ const PLAIN_TYPES = ["HTTP", "HTTPS", "SOCKS5"];
 const VPN_TYPES_LIST = ["VLESS", "VMESS", "TROJAN", "SS", "WIREGUARD", "AMNEZIAWG", "HYSTERIA2", "NAIVEPROXY"];
 const VPN_SECURITY_OPTIONS = ["none", "tls", "reality"];
 
-const AMNEZIA_INT_KEYS = ["jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4", "itime"];
-const AMNEZIA_STR_KEYS = ["i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3"];
+// j1-j3 and itime are gone on purpose: the wireguard-go fork behind the
+// engine has no UAPI device key for them, so any value here would only make
+// IpcSet fail and keep the endpoint from starting.
+const AMNEZIA_INT_KEYS = ["jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4"];
+const AMNEZIA_STR_KEYS = ["i1", "i2", "i3", "i4", "i5"];
+// AmneziaWG 3.0 device knobs. All are free-form strings: the timings and the
+// content padding accept either "n" or a "low-high" range, and the header
+// protection key is 64 hex characters.
+const AMNEZIA_AWG3_KEYS = [
+  "header_protection_key",
+  "content_padding_addition",
+  "rekey_after_time",
+  "rekey_timeout",
+  "reject_after_time",
+  "keepalive_timeout",
+  "max_handshake_attempts",
+];
 
 const EMPTY_AMNEZIA_FIELDS = (() => {
   const o = {};
   for (const k of AMNEZIA_INT_KEYS) o[k] = "";
   for (const k of AMNEZIA_STR_KEYS) o[k] = "";
+  for (const k of AMNEZIA_AWG3_KEYS) o[k] = "";
   return o;
 })();
 
 const amneziaFieldsFromObject = (raw) => {
   const out = { ...EMPTY_AMNEZIA_FIELDS };
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
-  for (const k of [...AMNEZIA_INT_KEYS, ...AMNEZIA_STR_KEYS]) {
+  for (const k of [...AMNEZIA_INT_KEYS, ...AMNEZIA_STR_KEYS, ...AMNEZIA_AWG3_KEYS]) {
     const v = raw[k];
     if (v === undefined || v === null || v === "") continue;
     out[k] = String(v);
@@ -74,7 +90,7 @@ const amneziaObjectFromFields = (fields) => {
     const n = Number(s);
     if (Number.isFinite(n) && n >= 0) obj[k] = n;
   }
-  for (const k of AMNEZIA_STR_KEYS) {
+  for (const k of [...AMNEZIA_STR_KEYS, ...AMNEZIA_AWG3_KEYS]) {
     const s = String(fields?.[k] ?? "").trim();
     if (s) obj[k] = s;
   }
@@ -90,7 +106,7 @@ const AmneziaEditor = ({ fields, onFieldsChange, useRaw, onUseRawChange, rawValu
       <label className="block text-[11px] uppercase tracking-wider text-zinc-500 mb-1">{label}</label>
       <input
         type="text"
-        inputMode={AMNEZIA_STR_KEYS.includes(k) ? "text" : "numeric"}
+        inputMode={AMNEZIA_STR_KEYS.includes(k) || AMNEZIA_AWG3_KEYS.includes(k) ? "text" : "numeric"}
         className={inputCls}
         value={fields[k]}
         onChange={(e) => onFieldsChange({ ...fields, [k]: e.target.value })}
@@ -158,22 +174,42 @@ const AmneziaEditor = ({ fields, onFieldsChange, useRaw, onUseRawChange, rawValu
             </div>
           </Group>
 
-          <Group title={t("add.awgGroupSpecial") || "AWG 2.0: special junk I1–I5 / Itime"}>
+          <Group title={t("add.awgGroupSpecial") || "AWG 2.0: signature-пакеты I1–I5"}>
             <div className="grid grid-cols-2 gap-2">
               <Fld k="i1" label="I1" />
               <Fld k="i2" label="I2" />
               <Fld k="i3" label="I3" />
               <Fld k="i4" label="I4" />
               <Fld k="i5" label="I5" />
-              <Fld k="itime" label="Itime" placeholder="сек" />
             </div>
           </Group>
 
-          <Group title={t("add.awgGroupHandshakeJunk") || "AWG 2.0: handshake junk J1–J3"}>
-            <div className="grid grid-cols-3 gap-2">
-              <Fld k="j1" label="J1" />
-              <Fld k="j2" label="J2" />
-              <Fld k="j3" label="J3" />
+          <Group title={t("add.awgGroupProtection") || "AWG 3.0: защита заголовков"}>
+            <div className="grid grid-cols-1 gap-2">
+              <Fld
+                k="header_protection_key"
+                label={t("add.awgHeaderProtectionKey") || "Header protection key"}
+                placeholder={t("add.awgHexKeyHint") || "base64, как private_key; требует S1–S4 ≥ 12"}
+              />
+              <Fld
+                k="content_padding_addition"
+                label={t("add.awgContentPadding") || "Content padding addition"}
+                placeholder="16-64"
+              />
+            </div>
+          </Group>
+
+          <Group title={t("add.awgGroupTimings") || "AWG 3.0: тайминги (сек, «n» или «от-до»)"}>
+            <div className="grid grid-cols-2 gap-2">
+              <Fld k="rekey_after_time" label="Rekey after" placeholder="100-140" />
+              <Fld k="rekey_timeout" label="Rekey timeout" placeholder="5-8" />
+              <Fld k="reject_after_time" label="Reject after" placeholder="160-200" />
+              <Fld k="keepalive_timeout" label="Keepalive timeout" placeholder="10-14" />
+              <Fld
+                k="max_handshake_attempts"
+                label={t("add.awgMaxHandshakes") || "Max handshakes"}
+                placeholder="18-22"
+              />
             </div>
           </Group>
         </>

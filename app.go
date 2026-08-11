@@ -44,7 +44,6 @@ import (
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"resultproxy-wails/internal/config"
-	"resultproxy-wails/internal/filter"
 	"resultproxy-wails/internal/logger"
 	"resultproxy-wails/internal/proxy"
 	"resultproxy-wails/internal/system"
@@ -92,7 +91,6 @@ type App struct {
 	crypto     *config.CryptoService
 	config     *config.Manager
 	proxy      *proxy.Manager
-	filters    *filter.Manager
 	tray       *system.Tray
 	killSwitch system.KillSwitch
 	netmon     *system.NetMonitor
@@ -105,6 +103,25 @@ type App struct {
 	trayHidden    atomic.Uint32
 	taskbarUnhook func()
 	smartProvider *proxy.HTTPBlockedListProvider
+
+	// lastAutoNodeKey is the AutoNodeKey of the AUTO member currently in use.
+	// Passed as previousKey to RankAutoCandidates so the active node is always
+	// re-measured on equal footing instead of flapping in and out of the
+	// shortlist. Empty until a connection is made.
+	//
+	// lastAutoNodeKeyMu guards it: every tray click dispatches on its own
+	// goroutine (system/tray.go's `go t.safeCall(...)`), so a click reading it
+	// via ResolveAutoCandidates can run concurrently with another click's
+	// connectFromTray writing it. Use getLastAutoNodeKey/setLastAutoNodeKey,
+	// never the field directly.
+	lastAutoNodeKeyMu sync.RWMutex
+	lastAutoNodeKey   string
+
+	// Ranked candidates from the last ResolveAutoCandidates call, per AUTO head
+	// ID. ReportAutoConnectOutcome needs the full member entry to rebuild the
+	// same AutoNodeKey the probe used; the UI only knows the address.
+	autoCandidatesMu sync.Mutex
+	autoCandidates   map[string][]config.ProxyEntry
 
 	startInTray bool
 
@@ -136,7 +153,8 @@ type App struct {
 
 func NewApp() *App {
 	return &App{
-		log: logger.New(),
+		log:            logger.New(),
+		autoCandidates: map[string][]config.ProxyEntry{},
 	}
 }
 
@@ -295,6 +313,11 @@ func (a *App) startup(ctx context.Context) {
 
 	a.log.Info("ResultV запускается...")
 
+	// Install the persistent node-stat store before anything can resolve an
+	// AUTO group; without it the package falls back to an in-memory store and
+	// the history is lost on every launch.
+	proxy.SetNodeStatStore(proxy.NewNodeStatStore(system.UserDataDir()))
+
 	if err := system.RegisterResultVProtocol(); err != nil {
 		a.log.Warning(fmt.Sprintf("[СИСТЕМА] Не удалось зарегистрировать resultv://: %v", err))
 	}
@@ -327,6 +350,10 @@ func (a *App) startup(ctx context.Context) {
 		a.log.Success("Конфигурация загружена")
 	}
 
+	// Must run right after config.Init, while WasCreatedFresh still reflects
+	// what Init found on disk.
+	a.seedChangelogVersionOnFreshInstall()
+
 	a.proxy = proxy.NewManager(a.log)
 	a.proxy.Init(a.ctx)
 	// Encrypt the persistent server-IP pin cache with the same hardware-keyed
@@ -351,12 +378,6 @@ func (a *App) startup(ctx context.Context) {
 	rootDir := a.getAppRootDir()
 	a.initSmartBlockedDomains(userDataPath, rootDir)
 
-	a.filters = filter.NewManager(userDataPath)
-	if err := a.filters.LoadCache(); err != nil {
-		a.log.Warning(fmt.Sprintf("[ADBLOCK] Кэш фильтров не загружен: %v", err))
-	}
-	a.proxy.SetAdBlockCoordinator(a)
-	a.initAdBlockFilters()
 
 	// Leftover kill-switch firewall rules from a crashed / force-killed prior
 	// run are NOT silently cleared here (the old Disable() call was a no-op on a
@@ -616,7 +637,7 @@ func (a *App) SaveConfig(cfg config.AppConfig) error {
 }
 
 func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
-	killSwitch, adBlock bool) (proxy.ConnectResultDTO, error) {
+	killSwitch bool) (proxy.ConnectResultDTO, error) {
 
 	if a.proxy == nil {
 		return proxy.ConnectResultDTO{Success: false, Message: "Proxy manager not initialized"}, nil
@@ -639,7 +660,6 @@ func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
 		rules.AppWhitelist,
 		rules.AppForceVPN,
 		killSwitch,
-		adBlock,
 		cfg.Settings.LocalPort,
 		cfg.Settings.ListenLAN,
 		dnsServers,
@@ -920,7 +940,6 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 			cfg.RoutingRules.AppWhitelist,
 			cfg.RoutingRules.AppForceVPN,
 			cfg.Settings.KillSwitch,
-			cfg.Settings.AdBlock,
 			cfg.Settings.LocalPort,
 			cfg.Settings.ListenLAN,
 			modeSwitchDNS,
@@ -961,7 +980,6 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 				cfg.RoutingRules.AppWhitelist,
 				cfg.RoutingRules.AppForceVPN,
 				cfg.Settings.KillSwitch,
-				cfg.Settings.AdBlock,
 				cfg.Settings.LocalPort,
 				cfg.Settings.ListenLAN,
 				modeSwitchDNS,
@@ -1046,202 +1064,6 @@ func (a *App) ToggleKillSwitch(enable bool) error {
 	}
 
 	return a.proxy.ToggleKillSwitch(enable)
-}
-
-func (a *App) ToggleAdBlock(enable bool) error {
-	if a.config == nil {
-		return fmt.Errorf("config manager not initialized")
-	}
-	cfg := a.config.GetConfig()
-	cfg.Settings.AdBlock = enable
-	if err := a.config.SaveConfig(cfg); err != nil {
-		return err
-	}
-	if a.proxy != nil && a.proxy.GetStatus().IsConnected {
-		result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist, cfg.RoutingRules.AppForceVPN)
-		if !result.Success {
-			a.log.Warning(fmt.Sprintf("[ADBLOCK] Переподключение после переключения: %s", result.Message))
-		}
-	}
-	return nil
-}
-
-// StartMITM implements proxy.AdBlockCoordinator.
-func (a *App) StartMITM(upstreamPort int) (int, error) {
-	if a.filters == nil {
-		return 0, fmt.Errorf("filter manager not initialized")
-	}
-	port := proxy.GetFreeLocalPort(18080)
-	if err := a.filters.StartMITM(port, upstreamPort); err != nil {
-		return 0, err
-	}
-	a.log.Info(fmt.Sprintf("[ADBLOCK] MITM-фильтр на 127.0.0.1:%d (upstream :%d)", port, upstreamPort))
-	return port, nil
-}
-
-// StopMITM implements proxy.AdBlockCoordinator.
-func (a *App) StopMITM() {
-	if a.filters != nil {
-		a.filters.StopMITM()
-	}
-}
-
-// AdBlockStatusDTO is exposed to the Wails frontend.
-type AdBlockStatusDTO struct {
-	Enabled            bool   `json:"enabled"`
-	FilterCount        int    `json:"filterCount"`
-	RuleSetsReady      int    `json:"ruleSetsReady"`
-	RuleSetsTotal      int    `json:"ruleSetsTotal"`
-	LastUpdatedUnix    int64  `json:"lastUpdatedUnix"`
-	LastError          string `json:"lastError,omitempty"`
-	CAInstalled        bool   `json:"caInstalled"`
-	NetworkBlocked     uint64 `json:"networkBlocked"`
-	CosmeticBlocked    uint64 `json:"cosmeticBlocked"`
-	UpdateInProgress   bool   `json:"updateInProgress"`
-	UpdatePhase        string `json:"updatePhase,omitempty"`
-	UpdateCurrent      int    `json:"updateCurrent"`
-	UpdateTotal        int    `json:"updateTotal"`
-	UpdateItem         string `json:"updateItem,omitempty"`
-	NetworkBlockActive bool   `json:"networkBlockActive"`
-	NeedsReconnect     bool   `json:"needsReconnect"`
-}
-
-func (a *App) adBlockStatusDTO() AdBlockStatusDTO {
-	enabled := false
-	if a.config != nil {
-		enabled = a.config.GetConfig().Settings.AdBlock
-	}
-	connected := false
-	engineAdBlock := false
-	if a.proxy != nil {
-		st := a.proxy.GetStatus()
-		connected = st.IsConnected
-		engineAdBlock = a.proxy.IsAdBlockActive()
-	}
-	if a.filters == nil {
-		return AdBlockStatusDTO{Enabled: enabled, CAInstalled: filter.CAInstalled()}
-	}
-	s := a.filters.Status(enabled, connected, engineAdBlock)
-	return AdBlockStatusDTO{
-		Enabled:            s.Enabled,
-		FilterCount:        s.FilterCount,
-		RuleSetsReady:      s.RuleSetsReady,
-		RuleSetsTotal:      s.RuleSetsTotal,
-		LastUpdatedUnix:    s.LastUpdatedUnix,
-		LastError:          s.LastError,
-		CAInstalled:        s.CAInstalled,
-		NetworkBlocked:     s.NetworkBlocked,
-		CosmeticBlocked:    s.CosmeticBlocked,
-		UpdateInProgress:   s.UpdateInProgress,
-		UpdatePhase:        s.UpdatePhase,
-		UpdateCurrent:      s.UpdateCurrent,
-		UpdateTotal:        s.UpdateTotal,
-		UpdateItem:         s.UpdateItem,
-		NetworkBlockActive: s.NetworkBlockActive,
-		NeedsReconnect:     s.NeedsReconnect,
-	}
-}
-
-func (a *App) GetAdBlockStatus() AdBlockStatusDTO {
-	return a.adBlockStatusDTO()
-}
-
-func (a *App) emitAdBlockProgress(p filter.UpdateProgress) {
-	if a.ctx != nil {
-		wailsRuntime.EventsEmit(a.ctx, "adblock:update-progress", p)
-	}
-}
-
-func (a *App) UpdateAdBlockFilters() error {
-	if a.filters == nil {
-		return fmt.Errorf("filter manager not initialized")
-	}
-	ctx, cancel := context.WithTimeout(a.ctx, 2*time.Minute)
-	defer cancel()
-	progress := func(p filter.UpdateProgress) {
-		a.emitAdBlockProgress(p)
-	}
-	if err := a.filters.Update(ctx, progress); err != nil {
-		a.log.Warning(fmt.Sprintf("[ADBLOCK] Обновление баз: %v", err))
-		return err
-	}
-	st := a.adBlockStatusDTO()
-	a.log.Success(fmt.Sprintf("[ADBLOCK] Базы блокировки обновлены (%d/%d)", st.RuleSetsReady, st.RuleSetsTotal))
-	if a.proxy != nil && a.proxy.GetStatus().IsConnected && a.config != nil {
-		cfg := a.config.GetConfig()
-		result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist, cfg.RoutingRules.AppForceVPN)
-		if !result.Success {
-			a.log.Warning(fmt.Sprintf("[ADBLOCK] Переподключение после обновления: %s", result.Message))
-		}
-	}
-	return nil
-}
-
-func (a *App) InstallAdBlockCA() error {
-	if a.filters == nil {
-		return fmt.Errorf("filter manager not initialized")
-	}
-	if err := a.filters.InstallCA(); err != nil {
-		return err
-	}
-	a.log.Success("[ADBLOCK] Корневой сертификат установлен в хранилище Windows")
-	return nil
-}
-
-func (a *App) IsAdBlockCAInstalled() bool {
-	return filter.CAInstalled()
-}
-
-func (a *App) initAdBlockFilters() {
-	if a.ctx == nil || a.filters == nil {
-		return
-	}
-	go func() {
-		ctx, cancel := context.WithTimeout(a.ctx, 2*time.Minute)
-		defer cancel()
-		if a.filters.NeedsUpdate() {
-			if err := a.filters.Update(ctx, a.emitAdBlockProgress); err != nil {
-				a.log.Warning(fmt.Sprintf("[ADBLOCK] Фоновое обновление баз: %v", err))
-			} else {
-				a.log.Info("[ADBLOCK] Базы блокировки обновлены при запуске")
-			}
-		}
-	}()
-	a.startAdBlockFilterRefresh()
-}
-
-func (a *App) startAdBlockFilterRefresh() {
-	if a.ctx == nil || a.filters == nil {
-		return
-	}
-	go func() {
-		ticker := time.NewTicker(24 * time.Hour)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-a.ctx.Done():
-				return
-			case <-ticker.C:
-				ctx, cancel := context.WithTimeout(a.ctx, 2*time.Minute)
-				err := a.filters.Update(ctx, a.emitAdBlockProgress)
-				cancel()
-				if err != nil {
-					a.log.Warning(fmt.Sprintf("[ADBLOCK] Периодическое обновление: %v", err))
-					continue
-				}
-				a.log.Info("[ADBLOCK] Периодические базы блокировки обновлены")
-				if a.proxy != nil && a.proxy.GetStatus().IsConnected && a.config != nil {
-					cfg := a.config.GetConfig()
-					if cfg.Settings.AdBlock {
-						result := a.proxy.ReconnectWithRoutingRules(a.ctx, proxy.RoutingMode(cfg.RoutingRules.Mode), cfg.RoutingRules.Whitelist, cfg.RoutingRules.AppWhitelist, cfg.RoutingRules.AppForceVPN)
-						if !result.Success {
-							a.log.Warning(fmt.Sprintf("[ADBLOCK] Переподключение: %s", result.Message))
-						}
-					}
-				}
-			}
-		}
-	}()
 }
 
 func (a *App) SetAutostart(enable bool) error {
@@ -2640,7 +2462,7 @@ func (a *App) refreshTrayProxyList() {
 //     first one's IP.
 //  2. AUTO.Extra.members listing IDs that don't exist in cfg.Proxies
 //     ("orphan members") — filter does not hide them because there's
-//     nothing to hide, but they're also unreachable from resolveAutoProxy.
+//     nothing to hide, but they're also unreachable from ResolveAutoCandidates.
 //
 // Both anomalies are silent corruption that the user can only detect by
 // observing wrong-server behaviour; logging them here puts a breadcrumb in
@@ -2797,95 +2619,393 @@ func (a *App) setLastSelectedProxy(proxyID string) error {
 	return nil
 }
 
-// resolveAutoProxy turns an AUTO-group head into its best-pinging member.
-// For non-AUTO entries it returns the input unchanged.
+// autoMemberProbe is one row of the AUTO-group diagnostic table. It holds the
+// FINAL verdict for a member — for anything phase 2 (DepthFull) re-probed,
+// that means phase 2's outcome, not phase 1's; see buildAutoMemberRows.
+type autoMemberProbe struct {
+	Name  string
+	Addr  string
+	Type  string
+	RTTms int64
+	OK    bool
+	// Stage is the probe stage the verdict came from ("tcp", "udp", "tls",
+	// ...). Only meaningful when !OK — it lets the table say a member died
+	// at the TLS handshake specifically, the failure mode finding #1's bug
+	// produced and that a bare RTT/reason pair cannot distinguish from a
+	// plain connect failure.
+	Stage  string
+	Reason string
+}
+
+// buildAutoMemberRows turns two probe phases into one row per member for the
+// diagnostic table, in phase-1 sweep order.
 //
-// The merged result keeps the AUTO head's ID/Name (so UI labels stay stable
-// across pings) but takes IP/Port/Type/credentials AND SubscriptionURL from
-// the chosen member. The SubscriptionURL copy is critical: without it the
-// engine logs leak the member's raw host:port instead of the subscription
-// label (manager.Connect branches on SubscriptionURL != "").
-func (a *App) resolveAutoProxy(p *config.ProxyEntry) *config.ProxyEntry {
-	if !strings.EqualFold(p.Type, "AUTO") || len(p.Extra) == 0 {
-		return p
+// Phase 1 (DepthFast) alone used to be the only input here, which hid exactly
+// the failures a TLS-stage bug produces: a member that passes TCP and then
+// dies on the TLS handshake in phase 2 (DepthFull, shortlist only) would show
+// as a healthy "NNms" row while being silently absent from RankAutoCandidates'
+// output. Phase 1 already covers every member (ProbeAutoNodes runs over the
+// full list), so it seeds one row per member; phase 2 then overwrites that
+// row for whichever members it actually re-probed, since phase 2's verdict is
+// the final one for those nodes — phase 1's was only provisional.
+func buildAutoMemberRows(members []config.ProxyEntry, phase1, phase2 []proxy.AutoProbeResult) []autoMemberProbe {
+	byKey := make(map[string]config.ProxyEntry, len(members))
+	for _, m := range members {
+		byKey[proxy.AutoNodeKey(m)] = m
+	}
+
+	rowByKey := make(map[string]autoMemberProbe, len(phase1))
+	order := make([]string, 0, len(phase1))
+	for _, r := range phase1 {
+		order = append(order, r.Key)
+		m := byKey[r.Key]
+		rowByKey[r.Key] = autoMemberProbe{
+			Name:   strings.TrimSpace(m.Name),
+			Addr:   fmt.Sprintf("%s:%d", m.IP, m.Port),
+			Type:   strings.ToUpper(m.Type),
+			RTTms:  r.RTTms,
+			OK:     r.OK,
+			Stage:  r.Stage,
+			Reason: r.Reason,
+		}
+	}
+	for _, r := range phase2 {
+		row, seen := rowByKey[r.Key]
+		if !seen {
+			// Unreachable in practice: phase 2 only ever probes phase-1
+			// survivors plus previousKey, both drawn from phase1's own
+			// members. Skip rather than invent a nameless row if it ever
+			// happens (e.g. future caller passes mismatched slices).
+			continue
+		}
+		row.RTTms = r.RTTms
+		row.OK = r.OK
+		row.Stage = r.Stage
+		row.Reason = r.Reason
+		rowByKey[r.Key] = row
+	}
+
+	rows := make([]autoMemberProbe, 0, len(order))
+	for _, k := range order {
+		rows = append(rows, rowByKey[k])
+	}
+	return rows
+}
+
+// formatAutoMemberTable renders the per-member probe results for an AUTO group.
+// It exists because the AUTO row shows a single aggregate number while its
+// members are hidden from the UI (filteredProxies) — without this table there is
+// no way to tell which member produced an implausible reading.
+func formatAutoMemberTable(autoLabel string, rows []autoMemberProbe) []string {
+	out := make([]string, 0, len(rows)+1)
+	out = append(out, fmt.Sprintf("[PROXY] AUTO «%s»: опрошено узлов: %d", autoLabel, len(rows)))
+	for i, r := range rows {
+		status := r.Reason
+		if r.OK {
+			status = fmt.Sprintf("%dms", r.RTTms)
+		} else {
+			if status == "" {
+				status = "недоступен"
+			}
+			if r.Stage == "tls" {
+				// Distinguishes an SNI/DPI-style drop (live TCP, dead TLS —
+				// see autoProbeTLSParams/probeOne) from a plain connect
+				// failure, so the pending manual verification step this
+				// table exists for doesn't mistake one for the other.
+				status = fmt.Sprintf("TLS не прошёл: %s", status)
+			}
+		}
+		out = append(out, fmt.Sprintf("[PROXY]   %d. %s [%s] %s — %s",
+			i+1, r.Name, r.Type, r.Addr, status))
+	}
+	return out
+}
+
+// extractAutoMembers reads the member ID list out of an AUTO head's Extra.
+// Providers' Extra reaches us in two shapes — raw JSON object, or that object
+// encoded as a JSON string — so both are handled.
+func extractAutoMembers(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
 	}
 	var parsed struct {
 		Members []string `json:"members"`
 	}
-	if len(p.Extra) > 0 && p.Extra[0] == '"' {
+	if raw[0] == '"' {
 		var s string
-		if err := json.Unmarshal(p.Extra, &s); err == nil {
+		if err := json.Unmarshal(raw, &s); err == nil {
 			_ = json.Unmarshal([]byte(s), &parsed)
 		}
 	} else {
-		_ = json.Unmarshal(p.Extra, &parsed)
+		_ = json.Unmarshal(raw, &parsed)
+	}
+	return parsed.Members
+}
+
+// getLastAutoNodeKey reads lastAutoNodeKey under RLock. See the field comment
+// on App.lastAutoNodeKeyMu for why this can't be a bare field read: tray
+// clicks run concurrently, one goroutine's read here can race another's write
+// in setLastAutoNodeKey.
+func (a *App) getLastAutoNodeKey() string {
+	a.lastAutoNodeKeyMu.RLock()
+	defer a.lastAutoNodeKeyMu.RUnlock()
+	return a.lastAutoNodeKey
+}
+
+// setLastAutoNodeKey writes lastAutoNodeKey under Lock. See getLastAutoNodeKey.
+func (a *App) setLastAutoNodeKey(key string) {
+	a.lastAutoNodeKeyMu.Lock()
+	defer a.lastAutoNodeKeyMu.Unlock()
+	a.lastAutoNodeKey = key
+}
+
+// autoOutcomeKey returns the AutoNodeKey to record a connect outcome under
+// for the index-th candidate connectFromTray just tried on proxyID, or "" if
+// nothing should be recorded.
+//
+// Two guards, both mirroring ReportAutoConnectOutcome (the frontend's
+// equivalent path):
+//
+//   - isAuto: a plain (non-AUTO) server has nothing in a.autoCandidates and
+//     no AUTO cache to fold a result into — the frontend's retry loop
+//     deliberately skips reportAutoConnectOutcome with the same `if (isAuto)`
+//     guard (useDaemonControl.js). Without it, connecting to a plain server
+//     from the tray would overwrite the global lastAutoNodeKey with a key no
+//     AUTO group's cache contains (every AUTO row would then revert to
+//     showing the member minimum) and write a junk entry to node_stats.json.
+//
+//   - the key comes from a.autoCandidates[proxyID][index] — the UNSTAMPED
+//     entry RankAutoCandidates produced and ResolveAutoCandidates cached —
+//     not from AutoNodeKey(candidate) computed on the identity-stamped copy
+//     connectFromTray actually dials. ResolveAutoCandidates overwrites a
+//     blank member SubscriptionURL with the head's before returning
+//     candidates, and AutoNodeKey hashes SubscriptionURL, so stamping can
+//     change the key. Hashing the stamped copy would then produce a key
+//     ReportAutoConnectOutcome (which always reads the cache) could never
+//     reproduce, splitting one node's history across two keys.
+func (a *App) autoOutcomeKey(proxyID string, isAuto bool, index int) string {
+	if !isAuto {
+		return ""
+	}
+	a.autoCandidatesMu.Lock()
+	cached := a.autoCandidates[proxyID]
+	a.autoCandidatesMu.Unlock()
+	if index < 0 || index >= len(cached) {
+		return ""
+	}
+	return proxy.AutoNodeKey(cached[index])
+}
+
+// ReportAutoConnectOutcome lets the UI retry loop feed real connection results
+// into node statistics. The UI connects by candidate address, so the backend
+// cannot observe which candidate was tried without being told.
+//
+// The key is NOT rebuilt from ip/port. AutoNodeKey hashes Username, Password
+// and Extra as well as the address, so a key reconstructed from the address
+// alone would never match the one the probe recorded, and the two halves of
+// a node's history would accumulate under different keys while appearing to
+// work. Instead the candidate is looked up by candidateIndex in the list
+// ResolveAutoCandidates cached for this proxyID and keyed off the full entry.
+//
+// candidateIndex is the position the UI iterated to (its retry loop's `i`),
+// not a value derived from the address: CDN-fronted and multi-account panels
+// can issue several distinct members sharing one host:port:type
+// (AutoNodeKey's doc comment), so an address alone does not identify a
+// unique candidate. ip/port are still required and checked against the
+// cached entry at that index — if the cache was replaced since the UI got
+// its list (e.g. a subscription refresh ran ResolveAutoCandidates again),
+// the index could now point at a different node. Misattributing a result to
+// the wrong node is worse than losing a datapoint, so any mismatch or
+// out-of-range index is a silent no-op.
+//
+// No reason is accepted from the UI: res.message is user-facing text that can
+// contain a host:port, and node_stats.json is unencrypted. Failures are
+// recorded as the canned "error".
+func (a *App) ReportAutoConnectOutcome(proxyID string, candidateIndex int, ip string, port int, ok bool) {
+	a.autoCandidatesMu.Lock()
+	cached := a.autoCandidates[proxyID]
+	a.autoCandidatesMu.Unlock()
+
+	if candidateIndex < 0 || candidateIndex >= len(cached) {
+		return
+	}
+	c := cached[candidateIndex]
+	if c.IP != ip || c.Port != port {
+		return
+	}
+	key := proxy.AutoNodeKey(c)
+	if ok {
+		proxy.RecordConnectOutcome(key, true, "")
+		a.setLastAutoNodeKey(key)
+	} else {
+		proxy.RecordConnectOutcome(key, false, "error")
+	}
+}
+
+// AutoGroupStatus reports which member an AUTO group currently resolves to and
+// its measured RTT, so the UI can show the node actually in use instead of the
+// group minimum — one unusually fast member used to set the number for the
+// whole group.
+type AutoGroupStatus struct {
+	NodeName string `json:"nodeName"`
+	NodeIP   string `json:"nodeIp"`
+	RTTms    int64  `json:"rttMs"`
+	Known    bool   `json:"known"`
+}
+
+// GetAutoGroupStatus reports the node that proxyID's AUTO group currently
+// resolves to (per the last successful connect) and its measured RTT.
+//
+// lastAutoNodeKey is a single global value, not scoped to one group: with more
+// than one AUTO group configured, matching it without checking group
+// membership would make every group's row echo whichever group connected
+// last. Restricting the search to a.autoCandidates[proxyID] — the member list
+// ResolveAutoCandidates cached for THIS group — keeps a match scoped to nodes
+// that actually belong to it.
+//
+// NodeName/NodeIP are read from that cache rather than stored in dedicated
+// App fields: both call sites that set lastAutoNodeKey (ReportAutoConnectOutcome,
+// connectFromTray) already hold the full config.ProxyEntry they keyed off, and
+// the cache holds that same entry, so there is nothing else to keep in sync.
+//
+// EWMARTTms can be meaningful even before a successful connect — a node that
+// was only probed still has a rolling RTT — so this does not require ConnectOK
+// to be nonzero, only that lastAutoNodeKey has been set at all (which happens
+// on connect, not on probe; see the field comment on App.lastAutoNodeKeyMu).
+func (a *App) GetAutoGroupStatus(proxyID string) AutoGroupStatus {
+	key := a.getLastAutoNodeKey()
+	if key == "" {
+		return AutoGroupStatus{}
 	}
 
-	cfg := a.config.GetConfig()
-	var best *config.ProxyEntry
-	var bestPing int64 = 9999999
-	pinged := 0
-	reachable := 0
+	a.autoCandidatesMu.Lock()
+	cached := a.autoCandidates[proxyID]
+	a.autoCandidatesMu.Unlock()
 
-	for _, memberID := range parsed.Members {
-		if memberID == "" {
+	var node *config.ProxyEntry
+	for i := range cached {
+		if proxy.AutoNodeKey(cached[i]) == key {
+			node = &cached[i]
+			break
+		}
+	}
+	if node == nil {
+		return AutoGroupStatus{}
+	}
+
+	st := proxy.LookupNodeStat(key)
+	if st.EWMARTTms <= 0 {
+		return AutoGroupStatus{}
+	}
+	return AutoGroupStatus{
+		NodeName: node.Name,
+		NodeIP:   node.IP,
+		RTTms:    int64(st.EWMARTTms + 0.5),
+		Known:    true,
+	}
+}
+
+// ResolveAutoCandidates returns the ranked connect candidates for an entry.
+//
+// This is the single selection entry point: the tray path and the frontend
+// both call it. Before it existed the two disagreed — the frontend ranked by
+// its cached ping sweep while the tray re-probed serially — so any improvement
+// to selection had to be made twice or it silently missed one of them.
+//
+// Non-AUTO entries resolve to themselves. An AUTO head with no reachable
+// member resolves to the head itself, preserving the previous fallback.
+func (a *App) ResolveAutoCandidates(proxyID string) []config.ProxyEntry {
+	if a.config == nil {
+		return nil
+	}
+	cfg := a.config.GetConfig()
+
+	var head *config.ProxyEntry
+	for i := range cfg.Proxies {
+		if cfg.Proxies[i].ID == proxyID {
+			head = &cfg.Proxies[i]
+			break
+		}
+	}
+	if head == nil {
+		return nil
+	}
+	if !strings.EqualFold(head.Type, "AUTO") {
+		return []config.ProxyEntry{*head}
+	}
+
+	memberIDs := extractAutoMembers(head.Extra)
+	members := make([]config.ProxyEntry, 0, len(memberIDs))
+	for _, id := range memberIDs {
+		if id == "" {
 			continue
 		}
 		for i := range cfg.Proxies {
-			if cfg.Proxies[i].ID == memberID {
-				member := &cfg.Proxies[i]
-				pinged++
-				pingRes := a.PingProxy(member.IP, member.Port, member.Type)
-				if pingRes.Reachable {
-					reachable++
-					if pingRes.LatencyMs < bestPing {
-						bestPing = pingRes.LatencyMs
-						best = member
-					}
-				}
+			if cfg.Proxies[i].ID == id {
+				members = append(members, cfg.Proxies[i])
 				break
 			}
 		}
 	}
 
-	autoLabel := strings.TrimSpace(p.Name)
-	if autoLabel == "" {
-		autoLabel = "AUTO"
+	ranked, diag := proxy.RankAutoCandidates(a.ctx, members, a.getLastAutoNodeKey())
+
+	// The AUTO row shows one aggregate number while its members are hidden
+	// from the UI (filteredProxies) — without this table there is no way to
+	// tell which member produced an implausible RTT or why one dropped out.
+	// Built from diag (not package state — RankAutoCandidates no longer
+	// stashes a shared snapshot, since two concurrent callers, e.g. two tray
+	// clicks, would otherwise race over it) because after ranking we only
+	// have the survivors, not the full sweep with failure reasons. Both
+	// phases feed the table, not just phase 1: a member that passes the
+	// phase-1 TCP connect and then dies on the phase-2 TLS handshake must
+	// show that TLS failure, not a stale "healthy" phase-1 reading — see
+	// buildAutoMemberRows.
+	if a.log != nil {
+		rows := buildAutoMemberRows(members, diag.Phase1, diag.Phase2)
+		for _, line := range formatAutoMemberTable(strings.TrimSpace(head.Name), rows) {
+			a.log.Info(line)
+		}
 	}
-	if best != nil {
-		// Surface the AUTO routing decision so the user can see WHY the
-		// connection went to a particular IP/country — without this the
-		// engine logs show only the member IP and the user can't tell
-		// whether they clicked the right thing in the tray.
-		bestLabel := strings.TrimSpace(best.Name)
-		if bestLabel == "" {
-			bestLabel = fmt.Sprintf("%s:%d", best.IP, best.Port)
-		}
+
+	// Cache the member entries before the identity stamp below overwrites their
+	// ID and Name. ReportAutoConnectOutcome must rebuild the exact same
+	// AutoNodeKey the probe used, and that key hashes Username, Password and
+	// Extra as well as the address — the UI only ever tells us an address, so
+	// without the full entry here the reported outcome would land under a key
+	// that never matches and a node's history would split in two.
+	a.autoCandidatesMu.Lock()
+	a.autoCandidates[head.ID] = ranked
+	a.autoCandidatesMu.Unlock()
+
+	if len(ranked) == 0 {
 		if a.log != nil {
-			a.log.Info(fmt.Sprintf("[PROXY] AUTO «%s»: выбран узел «%s» (пинг %dms, проверено %d из %d, доступно %d)",
-				autoLabel, bestLabel, bestPing, pinged, len(parsed.Members), reachable))
+			a.log.Warning(fmt.Sprintf("[PROXY] AUTO «%s»: ни один из %d узлов не доступен — попытка по AUTO-записи",
+				strings.TrimSpace(head.Name), len(memberIDs)))
 		}
-		merged := *best
-		merged.ID = p.ID
-		merged.Name = p.Name
-		// Preserve the AUTO head's subscription metadata so logs/labels
-		// downstream show the subscription instead of the raw member host.
-		// best.SubscriptionURL is usually equal to p.SubscriptionURL, but
-		// fall back to the AUTO head's value when a member entry was added
-		// outside the subscription import path.
-		if strings.TrimSpace(merged.SubscriptionURL) == "" {
-			merged.SubscriptionURL = p.SubscriptionURL
+		return []config.ProxyEntry{*head}
+	}
+
+	// Keep the AUTO head's identity on every candidate: manager.Connect
+	// branches its log output on SubscriptionURL != "", and the UI keys the
+	// row by the head's ID. Without this the logs leak the member host:port.
+	out := make([]config.ProxyEntry, 0, len(ranked))
+	for _, c := range ranked {
+		c.ID = head.ID
+		c.Name = head.Name
+		if strings.TrimSpace(c.SubscriptionURL) == "" {
+			c.SubscriptionURL = head.SubscriptionURL
 		}
-		if strings.TrimSpace(merged.Provider) == "" {
-			merged.Provider = p.Provider
+		if strings.TrimSpace(c.Provider) == "" {
+			c.Provider = head.Provider
 		}
-		return &merged
+		out = append(out, c)
 	}
 	if a.log != nil {
-		a.log.Warning(fmt.Sprintf("[PROXY] AUTO «%s»: ни один из %d узлов не доступен — попытка по последней записи",
-			autoLabel, len(parsed.Members)))
+		a.log.Info(fmt.Sprintf("[PROXY] AUTO «%s»: кандидатов %d, первый — %s:%d",
+			strings.TrimSpace(head.Name), len(out), ranked[0].IP, ranked[0].Port))
 	}
-	return p
+	return out
 }
 
 func (a *App) connectFromTray(proxyID string) error {
@@ -2921,6 +3041,8 @@ func (a *App) connectFromTray(proxyID string) error {
 			matchCount, proxyID, selected.Name, selected.IP, selected.Port))
 	}
 
+	isAuto := strings.EqualFold(selected.Type, "AUTO")
+
 	clickedLabel := strings.TrimSpace(selected.Name)
 	if clickedLabel == "" {
 		if selected.IP != "" {
@@ -2933,7 +3055,15 @@ func (a *App) connectFromTray(proxyID string) error {
 		a.log.Info(fmt.Sprintf("[TRAY] клик по «%s» (id=%s, type=%s)", clickedLabel, proxyID, selected.Type))
 	}
 
-	selected = a.resolveAutoProxy(selected)
+	// ResolveAutoCandidates is the single selection entry point shared with
+	// the frontend: for a non-AUTO entry it resolves to itself, for an AUTO
+	// head it returns up to 5 members ranked best-first. Consuming it here
+	// (instead of resolving one member and giving up, as the tray used to)
+	// gives the tray the same failover the frontend already had.
+	candidates := a.ResolveAutoCandidates(proxyID)
+	if len(candidates) == 0 {
+		return fmt.Errorf("proxy %s not resolvable", proxyID)
+	}
 
 	cfg.Settings.LastSelectedProxyID = proxyID
 	if err := a.config.SaveConfig(cfg); err != nil {
@@ -2944,25 +3074,88 @@ func (a *App) connectFromTray(proxyID string) error {
 	// log output on SubscriptionURL != "" — without this the user sees the
 	// raw member IP in logs whenever they connect via the tray (which is
 	// exactly the leak the user complained about for AUTO routing).
-	result, err := a.Connect(proxy.ProxyConfig{
-		ID:              selected.ID,
-		IP:              selected.IP,
-		Port:            selected.Port,
-		Type:            selected.Type,
-		Username:        selected.Username,
-		Password:        selected.Password,
-		URI:             selected.URI,
-		Extra:           selected.Extra,
-		SubscriptionURL: selected.SubscriptionURL,
-	}, cfg.RoutingRules, cfg.Settings.KillSwitch, cfg.Settings.AdBlock)
-	if err != nil {
-		return err
+	var lastErr error
+	for i, candidate := range candidates {
+		if i > 0 {
+			label := strings.TrimSpace(candidate.Name)
+			if label == "" {
+				label = fmt.Sprintf("%s:%d", candidate.IP, candidate.Port)
+			}
+			if a.log != nil {
+				a.log.Info(fmt.Sprintf("[TRAY] AUTO: узел не поднялся, пробуем следующий (%s)", label))
+			}
+			// Tear down only the engine here, NOT a.Disconnect(): that also
+			// disables the kill switch (app.go's Disconnect, ~line 733-736),
+			// which would drop firewall protection for the gap between this
+			// failed candidate and the next connect attempt — precisely when
+			// there is no tunnel up and the kill switch is the only thing
+			// stopping a leak. Leaving the kill switch enabled here is the
+			// whole point of this branch. The tray/title/proxy:disconnected
+			// event are left alone too: we're still mid-failover, not actually
+			// disconnected, so telling the UI otherwise would be wrong.
+			if a.proxy != nil {
+				_ = a.proxy.Disconnect()
+			}
+		}
+		result, err := a.Connect(proxy.ProxyConfig{
+			ID:              candidate.ID,
+			IP:              candidate.IP,
+			Port:            candidate.Port,
+			Type:            candidate.Type,
+			Username:        candidate.Username,
+			Password:        candidate.Password,
+			URI:             candidate.URI,
+			Extra:           candidate.Extra,
+			SubscriptionURL: candidate.SubscriptionURL,
+		}, cfg.RoutingRules, cfg.Settings.KillSwitch)
+		// key is "" (and every RecordConnectOutcome/setLastAutoNodeKey call
+		// below a silent no-op) unless this is an AUTO group — mirrors the
+		// frontend's `if (isAuto)` guard in useDaemonControl.js. A plain
+		// server connected from the tray has no AUTO cache to report into;
+		// recording one would overwrite the global lastAutoNodeKey with a key
+		// no AUTO group's cache contains (every row would then read Known
+		// but resolve to nothing) and pile junk entries into node_stats.json.
+		// See autoOutcomeKey for why the key comes from the cache, not from
+		// AutoNodeKey(candidate) directly.
+		key := a.autoOutcomeKey(proxyID, isAuto, i)
+		if err != nil {
+			// Never pass err.Error() — it embeds the remote address and this
+			// store is written to disk unencrypted. sanitizeStatReason in
+			// nodestats.go is the backstop, but call sites must not rely on it.
+			if key != "" {
+				proxy.RecordConnectOutcome(key, false, "error")
+			}
+			lastErr = err
+			continue
+		}
+		if result.Success {
+			if key != "" {
+				proxy.RecordConnectOutcome(key, true, "")
+				a.setLastAutoNodeKey(key)
+			}
+			a.refreshTrayProxyList()
+			return nil
+		}
+		// result.Message is a user-facing Russian string that can contain a
+		// host:port — same leak concern as err.Error() above.
+		if key != "" {
+			proxy.RecordConnectOutcome(key, false, "error")
+		}
+		lastErr = errors.New(result.Message)
 	}
-	if !result.Success {
-		return errors.New(result.Message)
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no candidate connected")
 	}
-	a.refreshTrayProxyList()
-	return nil
+	// Every candidate failed. Unlike the between-candidates case above, there
+	// is no next attempt left to protect, so the reason to keep the kill
+	// switch armed and the engine silent is gone — and leaving it that way
+	// would strand the user behind firewall rules with no engine running and
+	// nothing telling the UI it's disconnected. Run the full Disconnect() here
+	// to restore the pre-failover end state: kill switch disabled, tray/title
+	// reset, proxy:disconnected emitted. a.Disconnect() itself no-ops when
+	// a.proxy is nil.
+	_ = a.Disconnect()
+	return lastErr
 }
 
 // resolveProxyID returns the canonical ID for a ProxyConfig. Callers must
@@ -3149,6 +3342,17 @@ func (a *App) refreshSmartBlockedOnce(cachePath, cidrCachePath string) {
 			a.log.Info(fmt.Sprintf("[SMART] Списки обновлены (%s), записей: %d", strings.ToUpper(res.Country), len(res.Domains)))
 		} else {
 			a.log.Info(fmt.Sprintf("[SMART] Списки обновлены, записей: %d", len(res.Domains)))
+		}
+		// Compile the fresh list into a binary rule-set off the connect path, so
+		// the next connect finds it ready instead of paying ~140ms for the
+		// compile. Best-effort: the manager compiles on demand anyway.
+		if len(res.Domains) > 0 {
+			domains := append([]string(nil), res.Domains...)
+			go func() {
+				if _, err := proxy.CompileSmartRuleSet(a.getUserDataPath(), domains); err != nil {
+					a.log.Warning(fmt.Sprintf("[SMART] Не удалось скомпилировать rule-set: %v", err))
+				}
+			}()
 		}
 	}
 

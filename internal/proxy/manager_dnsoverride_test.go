@@ -99,7 +99,6 @@ func TestConnect_PropagatesDNSLeakProtection(t *testing.T) {
 		nil,
 		nil,
 		false,
-		false,
 		0,
 		false,
 		nil,

@@ -65,9 +65,16 @@ func TestAmneziaWGURIRoundTripAWG2Fields(t *testing.T) {
 	if !ok {
 		t.Fatalf("amnezia missing in extra: %+v", ex)
 	}
-	for _, k := range []string{"jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4", "itime", "i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3"} {
+	for _, k := range []string{"jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4", "i1", "i2", "i3", "i4", "i5"} {
 		if _, ok := am[k]; !ok {
 			t.Fatalf("amnezia missing key %q: %+v", k, am)
+		}
+	}
+	// j1-j3 and itime have no UAPI device key in the engine; the parser must
+	// drop them rather than let them reach ipcConf and fail IpcSet.
+	for _, k := range []string{"j1", "j2", "j3", "itime"} {
+		if _, ok := am[k]; ok {
+			t.Fatalf("amnezia carries engine-unsupported key %q: %+v", k, am)
 		}
 	}
 
@@ -95,19 +102,13 @@ func TestAmneziaWGURIRoundTripAWG2Fields(t *testing.T) {
 	if a.I1 != "<b 0x01>" || a.I5 != "<wt 1000>" {
 		t.Fatalf("I*: %+v", a)
 	}
-	if a.J1 != "<b 0xAA>" || a.J3 != "<c>" {
-		t.Fatalf("J*: %+v", a)
-	}
-	if a.ITime != 300 {
-		t.Fatalf("itime: %d", a.ITime)
-	}
 
 	j, err := json.Marshal(ep)
 	if err != nil {
 		t.Fatal(err)
 	}
 	js := string(j)
-	for _, want := range []string{`"jc":5`, `"jmin":10`, `"jmax":50`, `"s1":16`, `"h1":"1"`, `"itime":300`} {
+	for _, want := range []string{`"jc":5`, `"jmin":10`, `"jmax":50`, `"s1":16`, `"h1":"1"`} {
 		if !strings.Contains(js, want) {
 			t.Fatalf("missing %q in marshalled JSON: %s", want, js)
 		}
@@ -117,14 +118,14 @@ func TestAmneziaWGURIRoundTripAWG2Fields(t *testing.T) {
 	var rt struct {
 		Amnezia struct {
 			I1 string `json:"i1"`
-			J1 string `json:"j1"`
+			I5 string `json:"i5"`
 		} `json:"amnezia"`
 	}
 	if err := json.Unmarshal(j, &rt); err != nil {
 		t.Fatal(err)
 	}
-	if rt.Amnezia.I1 != a.I1 || rt.Amnezia.J1 != a.J1 {
-		t.Fatalf("string round-trip mismatch: i1=%q j1=%q", rt.Amnezia.I1, rt.Amnezia.J1)
+	if rt.Amnezia.I1 != a.I1 || rt.Amnezia.I5 != a.I5 {
+		t.Fatalf("string round-trip mismatch: i1=%q i5=%q", rt.Amnezia.I1, rt.Amnezia.I5)
 	}
 }
 
@@ -146,10 +147,10 @@ func TestAmneziaWGURICaseInsensitiveCapitalKeys(t *testing.T) {
 		t.Fatalf("expected endpoint with amnezia, got %+v", cfg.Endpoints)
 	}
 	a := cfg.Endpoints[0].Amnezia
-	if a.JC != 4 || a.S1 != 15 || a.H1 != "7" || a.ITime != 120 {
+	if a.JC != 4 || a.S1 != 15 || a.H1 != "7" {
 		t.Fatalf("capitalized keys: %+v", a)
 	}
-	if a.I1 != "<b 0x01>" || a.J1 != "<c>" {
+	if a.I1 != "<b 0x01>" {
 		t.Fatalf("capitalized string keys: %+v", a)
 	}
 	// Jmin > Jmax should be normalized (swap).
@@ -298,5 +299,44 @@ func TestAmneziaFromExtraNormalizesJMinJMax(t *testing.T) {
 	}
 	if am.S1 != 0 || am.JC != 0 {
 		t.Fatalf("negative clamp failed: %+v", am)
+	}
+}
+
+// A pasted awg:// or wg:// line reaches us through ParseSubscriptionBody: the
+// frontend parser deliberately returns nothing for schemes it does not know, so
+// AddProxyView hands the raw text to this path instead of inventing an HTTP
+// entry out of it. Pin that contract — the paste flow is only as good as this.
+func TestParseSubscriptionBodySingleWireGuardLink(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		line string
+		want string
+	}{
+		{
+			name: "awg",
+			line: "awg://1.2.3.4:51820?private_key=PRIV&public_key=PUB&address=10.0.0.2%2F32&allowed_ips=0.0.0.0%2F0&jc=4&s1=64#local",
+			want: "AMNEZIAWG",
+		},
+		{
+			name: "wg",
+			line: "wg://1.2.3.4:51820?private_key=PRIV&public_key=PUB&address=10.0.0.2%2F32&allowed_ips=0.0.0.0%2F0#local",
+			want: "WIREGUARD",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entries, err := ParseSubscriptionBody(tc.line)
+			if err != nil {
+				t.Fatalf("ParseSubscriptionBody: %v", err)
+			}
+			if len(entries) != 1 {
+				t.Fatalf("got %d entries, want 1", len(entries))
+			}
+			if entries[0].Type != tc.want {
+				t.Fatalf("type = %q, want %q", entries[0].Type, tc.want)
+			}
+			if entries[0].IP != "1.2.3.4" || entries[0].Port != 51820 {
+				t.Fatalf("endpoint = %s:%d", entries[0].IP, entries[0].Port)
+			}
+		})
 	}
 }

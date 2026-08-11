@@ -15,9 +15,17 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import wailsAPI from "../utils/wailsAPI";
+import { useToast } from "../context/ToastContext";
+
+// Shown once per app launch. Deliberately a module variable rather than a
+// setting: "once per launch" literally means it should reset on restart, and
+// the running status label already carries the information on every later
+// connect — this toast only explains WHY the wait is long, which is worth
+// saying once.
+let autoResolveHintShown = false;
 
 export const useDaemonControl = (
     isConnected,
@@ -40,47 +48,30 @@ export const useDaemonControl = (
     statusGenerationRef,
 ) => {
     const { t } = useTranslation();
+    const { showToast } = useToast();
 
     const AUTO_MAX_ATTEMPTS = 5;
+
+    // True only while an AUTO group's candidates are being resolved. That
+    // resolve runs a two-phase probe over every member and takes seconds, and
+    // it used to happen with nothing at all on screen.
+    const [isResolving, setIsResolving] = useState(false);
 
     const bumpGen = () => {
         if (statusGenerationRef) statusGenerationRef.current += 1;
     };
 
-    const getConnectCandidates = useCallback((proxyToResolve) => {
+    // Ranking lives in the backend (App.ResolveAutoCandidates) so the tray and
+    // the UI cannot drift apart. This used to sort AUTO members by the cached
+    // ping sweep, which measured a bare TCP connect and knew nothing about
+    // past connect failures.
+    const getConnectCandidates = useCallback(async (proxyToResolve) => {
         if (proxyToResolve?.type?.toUpperCase() !== "AUTO") {
             return [proxyToResolve];
         }
-        try {
-            const extra = typeof proxyToResolve.extra === 'string'
-                ? JSON.parse(proxyToResolve.extra)
-                : (proxyToResolve.extra || {});
-            const memberIds = (extra.members || []).map(String);
-            const members = proxies.filter(p => memberIds.includes(String(p.id)));
-            if (members.length === 0) return [proxyToResolve];
-
-            const pingScore = (id) => {
-                const v = pings[id];
-                if (!v) return null;
-                if (v === "Unknown") return Number.MAX_SAFE_INTEGER - 1;
-                const m = /^(\d+)/.exec(String(v));
-                return m ? parseInt(m[1], 10) : null;
-            };
-
-            const scored = [];
-            const unscored = [];
-            for (const member of members) {
-                const score = pingScore(member.id);
-                if (score !== null) scored.push({ member, score });
-                else unscored.push(member);
-            }
-            scored.sort((a, b) => a.score - b.score);
-            const ordered = [...scored.map(x => x.member), ...unscored];
-            return ordered.length > 0 ? ordered : [proxyToResolve];
-        } catch (e) {
-            return [proxyToResolve];
-        }
-    }, [proxies, pings]);
+        const ranked = await wailsAPI.resolveAutoCandidates(proxyToResolve.id);
+        return ranked.length > 0 ? ranked : [proxyToResolve];
+    }, []);
 
     const isTerminalErrorCode = (code) =>
         code === "tun_privileges" || code === "proxy_not_supported";
@@ -137,23 +128,52 @@ export const useDaemonControl = (
                 setIsConnecting(true);
                 if (targetProxy?.type?.toUpperCase() === "SECTION") {
                     setIsConnecting(false);
-                    showAlertDialog({
-                        title: t("common.notice"),
-                        message:
-                            t("proxyList.sectionNoConnect") ||
-                            "This row is a subscription group label — pick a server below.",
+                    // A toast, not a modal: there is nothing to confirm here,
+                    // so an OK button is just an extra click.
+                    showToast({
                         variant: "info",
+                        message: t("proxyList.sectionNoConnect"),
                     });
                     bumpGen();
                     isSwitchingRef.current = false;
                     return;
                 }
                 const isAuto = targetProxy?.type?.toUpperCase() === "AUTO";
-                const candidates = getConnectCandidates(targetProxy).slice(0, isAuto ? AUTO_MAX_ATTEMPTS : 1);
+
+                // Tell the UI about the choice BEFORE awaiting the resolve.
+                // For an AUTO group that await runs a two-phase probe over
+                // every member and takes seconds; doing it first left the
+                // screen completely unchanged for that whole time, which reads
+                // as "the click didn't register".
                 addLog(`Подключение к ${targetProxy.name}...`, "info");
                 setActiveProxy(targetProxy);
                 if (String(settings?.lastSelectedProxyId) !== String(targetProxy.id)) {
                     updateSetting("lastSelectedProxyId", targetProxy.id);
+                }
+
+                let candidates;
+                if (isAuto && !autoResolveHintShown) {
+                    autoResolveHintShown = true;
+                    showToast({
+                        variant: "info",
+                        message: t("toast.autoResolveHint"),
+                        // Longer than the default: this sentence takes more
+                        // than four seconds to read.
+                        duration: 6000,
+                    });
+                }
+                // Scoped narrowly around the one await: this function and
+                // selectAndConnect have no outer finally, they reset their
+                // flags twice over (tail of try, and catch). Joining that
+                // scheme is easy to desynchronise; this is shorter and safer.
+                if (isAuto) setIsResolving(true);
+                try {
+                    candidates = (await getConnectCandidates(targetProxy)).slice(
+                        0,
+                        isAuto ? AUTO_MAX_ATTEMPTS : 1,
+                    );
+                } finally {
+                    if (isAuto) setIsResolving(false);
                 }
 
                 let res = null;
@@ -167,9 +187,20 @@ export const useDaemonControl = (
                     res = await wailsAPI.connect(
                         { ...candidate, port: parseInt(candidate.port, 10) || 0, id: targetProxy.id, name: targetProxy.name },
                         routingRules,
-                        settings.killswitch || false,
-                        settings.adblock || false
+                        settings.killswitch || false
                     );
+                    // Whether a connect actually succeeded is the most honest
+                    // signal about a node, and it used to be discarded. Only
+                    // AUTO reports: a single server has nothing to rank against.
+                    if (isAuto) {
+                        await wailsAPI.reportAutoConnectOutcome(
+                            targetProxy.id,
+                            i,
+                            candidate.ip,
+                            parseInt(candidate.port, 10) || 0,
+                            !!res.success,
+                        );
+                    }
                     if (res.success) break;
                     if (isTerminalErrorCode(res.errorCode)) break;
                     if (!isAuto) break;
@@ -242,6 +273,7 @@ export const useDaemonControl = (
         setIsDisconnecting,
         updateSetting,
         showAlertDialog,
+        showToast,
         t,
         getConnectCandidates,
     ]);
@@ -253,12 +285,11 @@ export const useDaemonControl = (
                 return;
 
             if (proxy?.type?.toUpperCase() === "SECTION") {
-                showAlertDialog({
-                    title: t("common.notice"),
-                    message:
-                        t("proxyList.sectionNoConnect") ||
-                        "This row is a subscription group label — pick a server below.",
+                // A toast, not a modal: there is nothing to confirm here, so an
+                // OK button is just an extra click.
+                showToast({
                     variant: "info",
+                    message: t("proxyList.sectionNoConnect"),
                 });
                 return;
             }
@@ -270,11 +301,40 @@ export const useDaemonControl = (
                 if (setActiveTab) setActiveTab("home");
 
                 const isAuto = proxy?.type?.toUpperCase() === "AUTO";
-                const candidates = getConnectCandidates(proxy).slice(0, isAuto ? AUTO_MAX_ATTEMPTS : 1);
 
+                // Tell the UI about the choice BEFORE awaiting the resolve.
+                // For an AUTO group that await runs a two-phase probe over
+                // every member and takes seconds; doing it first left the
+                // screen completely unchanged for that whole time, which reads
+                // as "the click didn't register".
                 setActiveProxy(proxy);
                 if (String(settings?.lastSelectedProxyId) !== String(proxy.id)) {
                     updateSetting("lastSelectedProxyId", proxy.id);
+                }
+
+                let candidates;
+                if (isAuto && !autoResolveHintShown) {
+                    autoResolveHintShown = true;
+                    showToast({
+                        variant: "info",
+                        message: t("toast.autoResolveHint"),
+                        // Longer than the default: this sentence takes more
+                        // than four seconds to read.
+                        duration: 6000,
+                    });
+                }
+                // Scoped narrowly around the one await: this function and
+                // toggleConnection have no outer finally, they reset their
+                // flags twice over (tail of try, and catch). Joining that
+                // scheme is easy to desynchronise; this is shorter and safer.
+                if (isAuto) setIsResolving(true);
+                try {
+                    candidates = (await getConnectCandidates(proxy)).slice(
+                        0,
+                        isAuto ? AUTO_MAX_ATTEMPTS : 1,
+                    );
+                } finally {
+                    if (isAuto) setIsResolving(false);
                 }
                 addLog(`Переключение на: ${proxy.name}...`, "info");
 
@@ -297,9 +357,20 @@ export const useDaemonControl = (
                     res = await wailsAPI.connect(
                         { ...candidate, port: parseInt(candidate.port, 10) || 0, id: proxy.id, name: proxy.name },
                         routingRules,
-                        settings.killswitch || false,
-                        settings.adblock || false
+                        settings.killswitch || false
                     );
+                    // Whether a connect actually succeeded is the most honest
+                    // signal about a node, and it used to be discarded. Only
+                    // AUTO reports: a single server has nothing to rank against.
+                    if (isAuto) {
+                        await wailsAPI.reportAutoConnectOutcome(
+                            proxy.id,
+                            i,
+                            candidate.ip,
+                            parseInt(candidate.port, 10) || 0,
+                            !!res.success,
+                        );
+                    }
                     if (res.success) break;
                     if (isTerminalErrorCode(res.errorCode)) break;
                     if (!isAuto) break;
@@ -367,6 +438,7 @@ export const useDaemonControl = (
             isSwitchingRef,
             updateSetting,
             showAlertDialog,
+            showToast,
             t,
             getConnectCandidates,
         ],
@@ -439,5 +511,6 @@ export const useDaemonControl = (
         selectAndConnect,
         deleteProxy,
         cancelConnect,
+        isResolving,
     };
 };

@@ -114,7 +114,6 @@ func TestConnect_SerializesConcurrentConnects(t *testing.T) {
 			nil,
 			nil,
 			false,
-			false,
 			0,
 			false,
 			nil,

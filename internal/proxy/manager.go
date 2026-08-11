@@ -105,7 +105,6 @@ type Manager struct {
 	pendingProxy *ProxyConfig
 	pendingMode  ProxyMode
 	killSwitch   bool
-	adBlock      bool
 	routingMode  RoutingMode
 	whitelist    []string
 	appWhitelist []string
@@ -157,8 +156,6 @@ type Manager struct {
 	KillSwitchFirewallEngage    func(ProxyConfig, []string)
 	KillSwitchFirewallDisengage func()
 
-	adBlockCoord AdBlockCoordinator
-	mitmPort     int
 
 	// secrets encrypts the persistent server-IP pin cache (server_pins.json)
 	// with the app's hardware-keyed CryptoService — those hostname→backend-IP
@@ -257,8 +254,26 @@ func (m *Manager) effectiveAppWhitelist(userRoots []string) []string {
 	if len(userRoots) == 0 {
 		return nil
 	}
-	snap := processtree.Scan(userRoots)
+	snap := processtree.Scan(basenameRoots(userRoots))
 	return mergeAppWhitelist(userRoots, snap.Descendants)
+}
+
+// basenameRoots drops path-qualified entries from the process-tree root set.
+// processtree.normalizeRoots strips a root down to its basename, so passing
+// "Battle.net\Agent\Agent.exe" through would widen it back into a bare
+// "agent.exe" and match every unrelated agent on the machine — exactly the
+// ambiguity the path-qualified form exists to avoid. Such entries still work as
+// route and DNS rules; their parent process is normally a root already, so the
+// scan discovers the descendants regardless.
+func basenameRoots(entries []string) []string {
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if strings.ContainsAny(e, `\/`) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // warnProbeDomainOverlap logs a one-line notice when the user's
@@ -399,35 +414,6 @@ func (m *Manager) LoadBlockedLists(paths ...string) {
 	m.router.LoadBlockedLists(paths...)
 }
 
-// SetAdBlockCoordinator wires HTTPS MITM filter lifecycle (optional).
-func (m *Manager) SetAdBlockCoordinator(c AdBlockCoordinator) {
-	m.mu.Lock()
-	m.adBlockCoord = c
-	m.mu.Unlock()
-}
-
-func (m *Manager) prepareAdBlock(cfg *EngineConfig, adBlock bool, upstreamPort int) error {
-	m.stopAdBlockMITM()
-	cfg.MITMPort = 0
-	if !adBlock {
-		cfg.AdBlock = false
-		return nil
-	}
-	cfg.AdBlock = true
-	// HTTPS MITM is not wired through sing-box outbounds: routing browser TLS to a
-	// local http outbound breaks tunnel mode (Steam, games, WebView) with
-	// "unexpected EOF" and is fragile with process detection on Windows.
-	// Network blocking via sing-box rule_set reject remains active.
-	_ = upstreamPort
-	return nil
-}
-
-func (m *Manager) stopAdBlockMITM() {
-	if m.adBlockCoord != nil {
-		m.adBlockCoord.StopMITM()
-	}
-	m.mitmPort = 0
-}
 
 // setConnectCancel stores the cancel func for the active Connect operation.
 func (m *Manager) setConnectCancel(cancel context.CancelFunc) {
@@ -524,7 +510,7 @@ func (m *Manager) startEngine(ctx context.Context, cfg EngineConfig) (err error,
 // re-resolves fresh — seamless to the user.
 func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode,
 	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
-	killSwitch, adBlock bool,
+	killSwitch bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
 	dnsLeakProtection bool) ConnectResultDTO {
 
@@ -538,7 +524,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 	}
 
 	res := m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist, appForceVPN,
-		killSwitch, adBlock, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
+		killSwitch, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
 		dnsLeakProtection)
 
 	if shouldRetryWithoutPin(usedCachedPin, res.ErrorCode) {
@@ -546,7 +532,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 		m.log.Warning("[PROXY] Закэшированный IP сервера устарел — переподключение по домену")
 		proxy.ResolvedIP = ""
 		res = m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist, appForceVPN,
-			killSwitch, adBlock, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
+			killSwitch, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
 			dnsLeakProtection)
 	}
 	return res
@@ -554,7 +540,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 
 func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode ProxyMode,
 	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
-	killSwitch, adBlock bool,
+	killSwitch bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
 	dnsLeakProtection bool) ConnectResultDTO {
 
@@ -729,17 +715,16 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	if routingMode == ModeSmart && m.router != nil {
 		engineCfg.BlockedDomains = m.router.GetBlockedDomains()
 		engineCfg.BlockedCIDRs = m.router.GetBlockedCIDRs()
-	}
-	if err := m.prepareAdBlock(&engineCfg, adBlock, actualLocalPort); err != nil {
-		m.mu.Unlock()
-		return ConnectResultDTO{
-			Success: false,
-			Message: fmt.Sprintf("Блокировка рекламы: %v", err),
-			Reason:  err.Error(),
+		// Pre-compile the block-list into a binary rule-set so the engine does
+		// not have to parse and index ~78k domain_suffix entries out of the
+		// config on every connect. Not fatal: buildRoute falls back to inline.
+		if path, err := CompileSmartRuleSet(engineCfg.DataDir, engineCfg.BlockedDomains); err != nil {
+			m.log.Warning(fmt.Sprintf("[SMART] Rule-set не скомпилирован, используется инлайн-список: %v", err))
+		} else {
+			engineCfg.SmartRuleSetPath = path
 		}
 	}
 	if code, err := validateEngineConfig(engineCfg); err != nil {
-		m.stopAdBlockMITM()
 		m.mu.Unlock()
 		return ConnectResultDTO{
 			Success:   false,
@@ -785,7 +770,6 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	// sing-box начнёт умирать сразу после установки соединения (DNS context canceled).
 	tStart := time.Now()
 	if startErr, tunnelFailed, reason, errorCode := m.startEngine(ctx, engineCfg); startErr != nil {
-		m.stopAdBlockMITM()
 		m.mu.Lock()
 		m.clearPendingLocked()
 		m.mu.Unlock()
@@ -802,7 +786,6 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 				m.mode = mode
 				m.proxy = &proxy
 				m.killSwitch = killSwitch
-				m.adBlock = adBlock
 				m.routingMode = routingMode
 				m.whitelist = append([]string(nil), whitelist...)
 				m.appWhitelist = append([]string(nil), appWhitelist...)
@@ -845,9 +828,30 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	startDur = time.Since(tStart)
 	m.emitStatus()
 
+	// The DNS override and the post-start probe are independent: the probe
+	// dials the local inbound (127.0.0.1) and never touches the OS resolver.
+	// Running them one after the other added the full DNS cost (~1.5s of a
+	// ~3.5s connect) to every connect, so the override goes to its own
+	// goroutine and we join it on both the success and the abort path below.
+	// Neither applySystemDNSOverride nor applyTunnelAdapterDNS touches manager
+	// state beyond m.sysDNS and the logger, so running them off the lock is safe.
+	tDNS := time.Now()
+	dnsDone := make(chan struct{})
+	go func() {
+		defer close(dnsDone)
+		m.applySystemDNSOverride(isEndpointProtocol, dnsServers)
+		m.applyTunnelAdapterDNS(mode, tunIPv4)
+	}()
+
 	tProbe := time.Now()
 	proxyExtra := parseExtra(proxy)
 	if code, reason := runPostStartProbe(connectCtx, proxyTypeLower, proxy.IP, proxy.Port, actualLocalPort, mode, proxyExtra); code != "" {
+		// The override is already in flight — let it finish, then undo it.
+		// Without this an aborted connect leaves the machine pointing at our
+		// resolvers with no session behind them.
+		<-dnsDone
+		m.revertDNSOverride()
+		_ = m.takeDNSTimings()
 		_ = m.engine.Stop()
 		m.mu.Lock()
 		m.clearPendingLocked()
@@ -924,10 +928,10 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	// WG/AWG endpoint protocols are skipped — wireguard manages DNS via
 	// peer config and would race with us. Health-probe domains intentionally
 	// keep going through the proxy regardless.
-	tDNS := time.Now()
-	m.applySystemDNSOverride(isEndpointProtocol, dnsServers)
-	m.applyTunnelAdapterDNS(mode, tunIPv4)
+	// Started right after the engine came up, in parallel with the probe above.
+	<-dnsDone
 	dnsDur = time.Since(tDNS)
+	dnsTimings := m.takeDNSTimings()
 
 	m.captureLiveServerIP(&proxy)
 	m.clearPendingLocked()
@@ -935,7 +939,6 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	m.mode = mode
 	m.proxy = &proxy
 	m.killSwitch = killSwitch
-	m.adBlock = adBlock
 	m.routingMode = routingMode
 	m.whitelist = append([]string(nil), whitelist...)
 	m.appWhitelist = append([]string(nil), appWhitelist...)
@@ -971,6 +974,9 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	m.log.Info(fmt.Sprintf("[PROXY] Тайминг подключения: resolve=%dms start=%dms probe=%dms dns=%dms total=%dms",
 		resolveDur.Milliseconds(), startDur.Milliseconds(), probeDur.Milliseconds(),
 		dnsDur.Milliseconds(), time.Since(connectStart).Milliseconds()))
+	if dnsTimings != "" {
+		m.log.Info("[PROXY] Тайминг DNS: " + dnsTimings)
+	}
 
 	return ConnectResultDTO{
 		Success:     true,
@@ -1063,6 +1069,31 @@ func (m *Manager) applyTunnelAdapterDNS(mode ProxyMode, tunIPv4 string) {
 		return
 	}
 	m.log.Success("[СИСТЕМА] Системный DNS направлен в туннель (резолв через VPN)")
+}
+
+// revertDNSOverride undoes applySystemDNSOverride/applyTunnelAdapterDNS after a
+// connect aborts past the point where the override was already applied. Since
+// the override now runs in parallel with the post-start probe, a failed probe
+// can leave the machine pointing at our resolvers with no session behind them.
+// The tunnel adapter needs no separate reset — it disappears with the engine —
+// so restoring the snapshot covers everything that outlives the failed attempt.
+func (m *Manager) revertDNSOverride() {
+	if m.sysDNS == nil {
+		return
+	}
+	if err := m.sysDNS.Restore(); err != nil {
+		m.log.Warning(fmt.Sprintf("[СИСТЕМА] Не удалось вернуть системный DNS после неудачного подключения: %v", err))
+	}
+}
+
+// takeDNSTimings returns the per-step breakdown of the last system DNS override
+// for the connect log, or "" when the platform impl doesn't record one.
+func (m *Manager) takeDNSTimings() string {
+	src, ok := m.sysDNS.(dnsTimingSource)
+	if !ok {
+		return ""
+	}
+	return src.TakeDNSTimings()
 }
 
 // resolvePinnedServerIP resolves a domain server address to a single IP once,
@@ -1206,7 +1237,7 @@ func dnsOverrideServers(custom []string) []string {
 // Caller must hold m.mu.
 func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode ProxyMode,
 	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
-	killSwitch, adBlock bool,
+	killSwitch bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
 	dnsLeakProtection bool) ConnectResultDTO {
 	if m.connected {
@@ -1278,16 +1309,16 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 	if routingMode == ModeSmart && m.router != nil {
 		engineCfg.BlockedDomains = m.router.GetBlockedDomains()
 		engineCfg.BlockedCIDRs = m.router.GetBlockedCIDRs()
-	}
-	if err := m.prepareAdBlock(&engineCfg, adBlock, actualLocalPort); err != nil {
-		return ConnectResultDTO{
-			Success: false,
-			Message: fmt.Sprintf("Блокировка рекламы: %v", err),
-			Reason:  err.Error(),
+		// Pre-compile the block-list into a binary rule-set so the engine does
+		// not have to parse and index ~78k domain_suffix entries out of the
+		// config on every connect. Not fatal: buildRoute falls back to inline.
+		if path, err := CompileSmartRuleSet(engineCfg.DataDir, engineCfg.BlockedDomains); err != nil {
+			m.log.Warning(fmt.Sprintf("[SMART] Rule-set не скомпилирован, используется инлайн-список: %v", err))
+		} else {
+			engineCfg.SmartRuleSetPath = path
 		}
 	}
 	if code, err := validateEngineConfig(engineCfg); err != nil {
-		m.stopAdBlockMITM()
 		return ConnectResultDTO{
 			Success:   false,
 			Message:   err.Error(),
@@ -1319,7 +1350,6 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 	}
 
 	if startErr, tunnelFailed, reason, errorCode := m.startEngine(ctx, engineCfg); startErr != nil {
-		m.stopAdBlockMITM()
 		m.clearPendingLocked()
 		m.emitStatusLocked()
 		m.log.Error(fmt.Sprintf("[PROXY] Ошибка запуска движка: %v", startErr))
@@ -1376,7 +1406,6 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 	m.mode = mode
 	m.proxy = &proxy
 	m.killSwitch = killSwitch
-	m.adBlock = adBlock
 	m.routingMode = routingMode
 	m.whitelist = append([]string(nil), whitelist...)
 	m.appWhitelist = append([]string(nil), appWhitelist...)
@@ -1909,7 +1938,6 @@ func (m *Manager) Disconnect() error {
 			}
 		}
 	}()
-	m.stopAdBlockMITM()
 	wg.Wait()
 
 	m.mu.Lock()
@@ -1938,7 +1966,6 @@ func (m *Manager) disconnectLocked() error {
 
 	m.stopProcessTrackerLocked()
 	m.stopHealthWatchdogLocked()
-	m.stopAdBlockMITM()
 
 	// Same rationale as Disconnect(): tear down engine, system proxy and system
 	// DNS concurrently — independent subsystems, cost max() not sum(). This also
@@ -2002,7 +2029,6 @@ func (m *Manager) SetMode(mode ProxyMode) error {
 	wasConnected := m.connected
 	proxy := m.proxy
 	killSwitch := m.killSwitch
-	adBlock := m.adBlock
 	routingMode := m.routingMode
 	whitelist := append([]string(nil), m.whitelist...)
 	appWhitelist := append([]string(nil), m.appWhitelist...)
@@ -2025,7 +2051,6 @@ func (m *Manager) SetMode(mode ProxyMode) error {
 			appWhitelist,
 			appForceVPN,
 			killSwitch,
-			adBlock,
 			m.localPort,
 			m.listenLAN,
 			m.dnsServers,
@@ -2083,7 +2108,6 @@ func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode Rou
 	p := *m.proxy
 	mode := m.mode
 	killSwitch := m.killSwitch
-	adBlock := m.adBlock
 	lPort := m.localPort
 	listenLAN := m.listenLAN
 	dServers := m.dnsServers
@@ -2091,14 +2115,7 @@ func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode Rou
 	tIPv6 := m.tunIPv6
 	dnsLeak := m.dnsLeakProtection
 
-	return m.connectLocked(ctx, p, mode, routingMode, whitelist, appWhitelist, appForceVPN, killSwitch, adBlock, lPort, listenLAN, dServers, tIPv4, tIPv6, dnsLeak)
-}
-
-// IsAdBlockActive reports whether the running sing-box engine has ad blocking enabled.
-func (m *Manager) IsAdBlockActive() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.adBlock
+	return m.connectLocked(ctx, p, mode, routingMode, whitelist, appWhitelist, appForceVPN, killSwitch, lPort, listenLAN, dServers, tIPv4, tIPv6, dnsLeak)
 }
 
 func (m *Manager) GetStatus() StatusDTO {

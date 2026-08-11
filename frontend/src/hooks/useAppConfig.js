@@ -24,7 +24,6 @@ import { mergeSubscriptionRefreshCountries } from "../utils/proxyParser";
 const defaultSettings = {
     autostart: false,
     killswitch: false,
-    adblock: false,
     mode: "proxy",
     language: "ru",
     theme: "dark",

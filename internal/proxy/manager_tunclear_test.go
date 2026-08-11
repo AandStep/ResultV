@@ -54,7 +54,7 @@ func connectWithTunStubs(t *testing.T, mode ProxyMode, present bool) bool {
 		mode,
 		ModeGlobal,
 		nil, nil, nil,
-		false, false,
+		false,
 		0, false, nil, "", "",
 		false,
 	)

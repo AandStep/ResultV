@@ -17,7 +17,8 @@
       "error": "Connection Error",
       "unprotected": "Unprotected",
       "connecting": "Connecting...",
-      "disconnecting": "Disconnecting..."
+      "disconnecting": "Disconnecting...",
+      "resolving": "Finding a server"
     },
     "desc": {
       "protected": "Your traffic is routed through proxy.",
@@ -25,7 +26,8 @@
       "error": "Node unreachable. Check details or select another server.",
       "unprotected": "Your real IP is exposed.",
       "connecting": "Establishing connection to the server...",
-      "disconnecting": "Closing connection..."
+      "disconnecting": "Closing connection...",
+      "resolving": "Picking the best server for you..."
     },
     "noProxies": "No proxies? ",
     "buyDiscount": "Buy them with a 5% discount",
@@ -151,8 +153,13 @@
     "awgGroupHandshake": "Handshake junk (Jc/Jmin/Jmax)",
     "awgGroupSizes": "Packet sizes S1–S4",
     "awgGroupHeaders": "Magic headers H1–H4",
-    "awgGroupSpecial": "AWG 2.0: special junk I1–I5 / Itime",
-    "awgGroupHandshakeJunk": "AWG 2.0: handshake junk J1–J3"
+    "awgGroupSpecial": "AWG 2.0: signature packets I1–I5",
+    "awgGroupProtection": "AWG 3.0: header protection",
+    "awgGroupTimings": "AWG 3.0: timings (seconds, \"n\" or \"low-high\")",
+    "awgHeaderProtectionKey": "Header protection key",
+    "awgHexKeyHint": "base64, like private_key; requires S1–S4 ≥ 12",
+    "awgContentPadding": "Content padding addition",
+    "awgMaxHandshakes": "Max handshake attempts"
   },
   "settings": {
     "title": "Application Settings",
@@ -195,26 +202,6 @@
       "title": "DNS leak protection",
       "desc": "Blocks Windows' parallel DNS queries from escaping via the LAN adapter. Protects against ISP DNS hijacking (Rostelecom, MSK-IX, etc.). On Windows, changing system DNS requires administrator privileges. Disable only if it interferes with local-network workflows."
     },
-    "adblock": {
-      "title": "Ad Blocker",
-      "desc": "Blocks ad and tracker domains in VPN traffic (sing-box). Works without installing a certificate. On-page banners and in-video YouTube ads need HTTPS filtering (currently disabled for stability).",
-      "network_active": "Blocking active in tunnel",
-      "network_inactive": "Enable ad blocking and connect to a server",
-      "needs_reconnect": "Reconnect to apply ad blocking",
-      "rulesets_updated": "Block lists: {{ready}}/{{total}} · updated {{date}}",
-      "rulesets_partial": "Block lists: {{ready}}/{{total}} (not all downloaded)",
-      "rulesets_unknown": "Block lists not downloaded yet — tap Update",
-      "update_progress": "Downloading {{item}} ({{current}}/{{total}})…",
-      "ca_ok": "MITM root certificate installed (for future in-page filtering)",
-      "ca_missing": "MITM certificate not installed — does not affect network blocking",
-      "install_ca": "Install certificate",
-      "update_filters": "Update block lists",
-      "blocked_stats": "MITM blocked: {{network}} network · {{cosmetic}} cosmetic",
-      "update_ok": "Block lists updated",
-      "update_fail": "Block list update failed",
-      "ca_install_ok": "Certificate installed",
-      "ca_install_fail": "Certificate install failed (admin rights may be required)"
-    },
     "subscription_auto_update": {
       "title": "Automatic refresh",
       "desc": "Periodically refresh all added subscriptions."
@@ -230,7 +217,7 @@
     "subscription_user_agent": {
       "title": "User agent",
       "desc": "Clear the field to use the default ResultV/<version>/Windows/<OS version> value.",
-      "placeholder": "ResultV/3.2.8/Windows/11_10.0.26200"
+      "placeholder": "ResultV/3.3.0/Windows/11_10.0.26200"
     },
     "dns": {
       "title": "DNS Servers",
@@ -312,7 +299,8 @@
     },
     "forceApps": {
       "title": "Apps via VPN",
-      "desc": "All traffic of these apps always goes through the VPN — for apps whose traffic Smart mode can't match by lists (domainless connections). Works only in TUNNEL mode."
+      "desc": "All traffic of these apps always goes through the VPN — for apps whose traffic Smart mode can't match by lists (domainless connections). Works only in TUNNEL mode.",
+      "popular": "Popular programs to send via VPN:"
     },
     "forceDomains": {
       "title": "Sites via VPN",
@@ -395,7 +383,8 @@
       "connected": "Connected",
       "connect": "Connect",
       "connecting": "Connecting",
-      "disconnect": "Disconnect"
+      "disconnect": "Disconnect",
+      "resolving": "Finding a server"
     }
   },
   "logs": {
@@ -509,5 +498,16 @@
     "adminTitle": "Administrator rights required",
     "adminMessage": "Tunnel mode needs administrator privileges for the virtual network adapter. Click the button below and approve the UAC prompt — the app will restart elevated.",
     "restartAsAdmin": "Restart as administrator"
+  },
+  "toast": {
+    "autoResolveHint": "Connecting to an auto server can take longer — we're picking the best node for you."
+  },
+  "changelog": {
+    "title": "What's new",
+    "dismiss": "Got it",
+    "typeFeature": "New",
+    "typeImprove": "Improvement",
+    "typeFix": "Fix",
+    "typeOther": "Change"
   }
 }

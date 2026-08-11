@@ -34,6 +34,8 @@ if [ -n "${MANIFEST_URL_OVERRIDE:-}" ]; then
 fi
 
 echo "==> wails build (darwin/universal)"
+# Feature tags come from wails.json ("build:tags"); wails merges them with any
+# -tags passed here.
 if [ -n "$LDFLAGS" ]; then
   wails build -clean -platform darwin/universal -ldflags "$LDFLAGS"
 else

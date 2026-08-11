@@ -26,6 +26,9 @@ import {
   Disconnect,
   DetectCountry,
   PingProxy,
+  ResolveAutoCandidates,
+  ReportAutoConnectOutcome,
+  GetAutoGroupStatus,
   GetConfig,
   SaveConfig,
   ImportConfig,
@@ -44,11 +47,6 @@ import {
   IsAutostartEnabled,
   SetAutostart,
   ToggleKillSwitch,
-  ToggleAdBlock,
-  GetAdBlockStatus,
-  UpdateAdBlockFilters,
-  InstallAdBlockCA,
-  IsAdBlockCAInstalled,
   UpdateRules,
   SyncProxies,
   FetchSubscription,
@@ -61,13 +59,16 @@ import {
   CancelUpdate,
   GetLeftoverRecoveryReport,
   ResetLeftoverReport,
+  GetChangelog,
+  ShouldShowChangelog,
+  AckChangelog,
 } from '../../wailsjs/go/main/App';
 
 export const wailsAPI = {
   
-  connect: async (proxyStr, options, mode, processName) => {
+  connect: async (proxyStr, options, killSwitch) => {
     try {
-      return await Connect(proxyStr, options, mode, processName);
+      return await Connect(proxyStr, options, killSwitch);
     } catch (e) {
       console.error("wailsAPI.connect error:", e);
       throw e;
@@ -100,7 +101,45 @@ export const wailsAPI = {
     }
   },
 
-  
+  // Ranked AUTO-group connect candidates from the backend (App.ResolveAutoCandidates):
+  // member lookup, dead-node filtering, two-phase probing, ranking and the
+  // ≤5 cap all happen there, so both the tray and this UI path agree.
+  async resolveAutoCandidates(proxyId) {
+    try {
+      return (await ResolveAutoCandidates(String(proxyId))) || [];
+    } catch {
+      return [];
+    }
+  },
+
+  // Feeds a real connect result back into per-node statistics. The AUTO
+  // head's id, the candidate's index in the list ResolveAutoCandidates
+  // returned, the address and success/failure are sent: the backend rebuilds
+  // the node key from its own cached candidate entry at that index (checked
+  // against the address so a stale cache can't misattribute the outcome to
+  // the wrong node — see app.go's ReportAutoConnectOutcome), and no failure
+  // text crosses over — res.message is user-facing and can contain a
+  // host:port, while node_stats.json is stored unencrypted.
+  async reportAutoConnectOutcome(proxyId, candidateIndex, ip, port, ok) {
+    try {
+      await ReportAutoConnectOutcome(String(proxyId), candidateIndex, String(ip), port, !!ok);
+    } catch {
+      // Statistics are best-effort; never let them break a connect attempt.
+    }
+  },
+
+  // Which member proxyId's AUTO group currently resolves to and its measured
+  // RTT (App.GetAutoGroupStatus), so the row can show that node's RTT instead
+  // of the group minimum. `{}` (known: undefined) reads the same as "unknown"
+  // to autoRowPingLabel as an empty success response would.
+  async getAutoGroupStatus(proxyId) {
+    try {
+      return (await GetAutoGroupStatus(String(proxyId))) || {};
+    } catch {
+      return {};
+    }
+  },
+
   getConfig: async () => {
     try {
       return await GetConfig();
@@ -307,50 +346,6 @@ export const wailsAPI = {
     }
   },
 
-  toggleAdBlock: async (enabled) => {
-    try {
-      await ToggleAdBlock(enabled);
-    } catch (e) {
-      console.error("wailsAPI.toggleAdBlock error:", e);
-      throw e;
-    }
-  },
-
-  getAdBlockStatus: async () => {
-    try {
-      return await GetAdBlockStatus();
-    } catch (e) {
-      console.error("wailsAPI.getAdBlockStatus error:", e);
-      return null;
-    }
-  },
-
-  updateAdBlockFilters: async () => {
-    try {
-      await UpdateAdBlockFilters();
-    } catch (e) {
-      console.error("wailsAPI.updateAdBlockFilters error:", e);
-      throw e;
-    }
-  },
-
-  installAdBlockCA: async () => {
-    try {
-      await InstallAdBlockCA();
-    } catch (e) {
-      console.error("wailsAPI.installAdBlockCA error:", e);
-      throw e;
-    }
-  },
-
-  isAdBlockCAInstalled: async () => {
-    try {
-      return await IsAdBlockCAInstalled();
-    } catch (e) {
-      console.error("wailsAPI.isAdBlockCAInstalled error:", e);
-      return false;
-    }
-  },
 
   updateRules: async (url) => {
     try {
@@ -498,6 +493,35 @@ export const wailsAPI = {
       await ResetLeftoverReport();
     } catch (e) {
       console.error("wailsAPI.resetLeftoverReport error:", e);
+    }
+  },
+
+  // Release notes of the RUNNING build, read from the update.json embedded at
+  // compile time — not from the network. Whether they are due this launch is
+  // shouldShowChangelog's call, kept in Go so the policy has one home.
+  getChangelog: async (lang) => {
+    try {
+      return await GetChangelog(lang || "");
+    } catch (e) {
+      console.error("wailsAPI.getChangelog error:", e);
+      return null;
+    }
+  },
+
+  shouldShowChangelog: async () => {
+    try {
+      return await ShouldShowChangelog();
+    } catch (e) {
+      console.error("wailsAPI.shouldShowChangelog error:", e);
+      return false;
+    }
+  },
+
+  ackChangelog: async () => {
+    try {
+      await AckChangelog();
+    } catch (e) {
+      console.error("wailsAPI.ackChangelog error:", e);
     }
   },
 };

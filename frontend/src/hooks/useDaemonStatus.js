@@ -169,7 +169,7 @@ export const useDaemonStatus = (
             // runPostStartProbe is still verifying end-to-end traffic (1-3s for
             // WG/Hysteria/VLESS handshakes), so we keep the spinner up — but it
             // must also come back DOWN when establishing ends, not only go up.
-            // A hot-reload reconnect (rules/adblock change) goes
+            // A hot-reload reconnect (routing-rules change) goes
             // establishing→connected with no control op in flight; the old
             // raise-only code then left isConnecting stuck true forever, so the
             // UI showed an endless "connecting" spinner even though traffic

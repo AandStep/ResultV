@@ -41,7 +41,8 @@ import {
   isVpnType,
   formatProxyDisplayName,
 } from "../utils/proxyParser";
-import { parseExtra, sortProxiesByOption } from "../utils/pingSort";
+import { sortProxiesByOption, autoRowPingLabel } from "../utils/pingSort";
+import wailsAPI from "../utils/wailsAPI";
 
 const WEBSITE_URL = "https://result-proxy.ru/";
 const TELEGRAM_URL = "https://t.me/resultvpn";
@@ -94,6 +95,7 @@ export const HomeView = () => {
   const {
     isConnected,
     isConnecting,
+    isResolving,
     isDisconnecting,
     isProxyDead,
     failedProxy,
@@ -133,6 +135,35 @@ export const HomeView = () => {
   useEffect(() => {
     if (!isProxyListOpen) setIsHomeSortOpen(false);
   }, [isProxyListOpen]);
+
+  // The chosen node is known only after a connect, so this refreshes when the
+  // active proxy changes rather than on every render. isConnected is also a
+  // dep: neither proxies nor activeProxy reliably change identity when a
+  // connect completes — activeProxy is set BEFORE wailsAPI.connect
+  // (useDaemonControl.js) and the status poller resolves it back to the same
+  // object already in `proxies`. isConnected does flip false->true right
+  // after a successful connect (useDaemonControl.js sets it post-success;
+  // useDaemonStatus.js also mirrors the backend's isConnected flag every
+  // status tick), so it is the reliable signal that a connect just finished
+  // and the AUTO row should re-fetch.
+  const [autoStatusById, setAutoStatusById] = useState({});
+  useEffect(() => {
+    let cancelled = false;
+    const autoIds = proxies
+      .filter((p) => p.type?.toUpperCase() === "AUTO")
+      .map((p) => String(p.id));
+    if (autoIds.length === 0) return;
+    (async () => {
+      const next = {};
+      for (const id of autoIds) {
+        next[id] = await wailsAPI.getAutoGroupStatus(id);
+      }
+      if (!cancelled) setAutoStatusById(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [proxies, activeProxy, isConnected]);
 
   const displayProxy = useMemo(() => {
     const chain = [
@@ -247,22 +278,22 @@ export const HomeView = () => {
   const hasProviders = proxies.some((p) => p.provider);
 
   const sortedFavoriteProxies = useMemo(
-    () => sortProxiesByOption(favoriteProxies, homeSortBy, pings),
-    [favoriteProxies, homeSortBy, pings],
+    () => sortProxiesByOption(favoriteProxies, homeSortBy, pings, autoStatusById),
+    [favoriteProxies, homeSortBy, pings, autoStatusById],
   );
 
   const sortedProviderFlatGroups = useMemo(
     () =>
       providerFlatGroups.map((g) => ({
         ...g,
-        proxies: sortProxiesByOption(g.proxies, homeSortBy, pings),
+        proxies: sortProxiesByOption(g.proxies, homeSortBy, pings, autoStatusById),
       })),
-    [providerFlatGroups, homeSortBy, pings],
+    [providerFlatGroups, homeSortBy, pings, autoStatusById],
   );
 
   const sortedNonFavoriteProxies = useMemo(
-    () => sortProxiesByOption(nonFavoriteProxies, homeSortBy, pings),
-    [nonFavoriteProxies, homeSortBy, pings],
+    () => sortProxiesByOption(nonFavoriteProxies, homeSortBy, pings, autoStatusById),
+    [nonFavoriteProxies, homeSortBy, pings, autoStatusById],
   );
 
   const statsFillRemainingHeight =
@@ -306,7 +337,7 @@ export const HomeView = () => {
           className={`text-3xl font-bold ${
             isDisconnecting
               ? "text-amber-400"
-              : isConnecting
+              : isConnecting || isResolving
                 ? "text-amber-400"
                 : isConnected
                   ? isProxyDead
@@ -319,25 +350,29 @@ export const HomeView = () => {
         >
           {isDisconnecting
             ? t("home.status.disconnecting")
-            : isConnecting
-              ? t("home.status.connecting")
-              : isConnected
-                ? isProxyDead
-                  ? t("home.status.lost")
-                  : t("home.status.protected")
-                : isError
-                  ? t("home.status.error")
-                  : t("home.status.unprotected")}
+            : isResolving
+              ? t("home.status.resolving")
+              : isConnecting
+                ? t("home.status.connecting")
+                : isConnected
+                  ? isProxyDead
+                    ? t("home.status.lost")
+                    : t("home.status.protected")
+                  : isError
+                    ? t("home.status.error")
+                    : t("home.status.unprotected")}
         </h2>
         {!(isConnected && !isProxyDead) && (
           <p className="text-zinc-400">
-            {isConnecting
-              ? t("home.desc.connecting")
-              : isConnected
-                ? t("home.desc.lost")
-                : isError
-                  ? t("home.desc.error")
-                  : t("home.desc.unprotected")}
+            {isResolving
+              ? t("home.desc.resolving")
+              : isConnecting
+                ? t("home.desc.connecting")
+                : isConnected
+                  ? t("home.desc.lost")
+                  : isError
+                    ? t("home.desc.error")
+                    : t("home.desc.unprotected")}
           </p>
         )}
       </div>
@@ -348,10 +383,16 @@ export const HomeView = () => {
         ></div>
         <button
           disabled={
-            isDisconnecting || (!hasProxies && !isConnected && !isConnecting)
+            // Resolving is not cancellable: cancelConnect tells the backend to
+            // abort a connection that has not started yet, and the resolve's
+            // own await would carry on regardless. Offering a cancel that does
+            // nothing is the same lie as showing "Connecting" during a resolve.
+            isDisconnecting ||
+            isResolving ||
+            (!hasProxies && !isConnected && !isConnecting)
           }
           onClick={
-            isDisconnecting
+            isDisconnecting || isResolving
               ? undefined
               : isConnecting
                 ? cancelConnect
@@ -360,7 +401,7 @@ export const HomeView = () => {
                   : toggleConnection
           }
           className={`relative border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none flex items-center justify-center w-48 h-48 rounded-full transition-all duration-300 transform active:scale-95 ${
-            isDisconnecting
+            isDisconnecting || isResolving
               ? "bg-gradient-to-br from-zinc-800 to-zinc-900 border-4 border-amber-500 text-amber-400 shadow-2xl shadow-amber-500/30 scale-95 cursor-wait"
               : isConnecting
                 ? "bg-gradient-to-br from-zinc-800 to-zinc-900 border-4 border-amber-500 text-amber-400 shadow-2xl shadow-amber-500/30 scale-95 hover:border-rose-500 hover:text-rose-400 cursor-pointer"
@@ -375,7 +416,7 @@ export const HomeView = () => {
                       : "bg-gradient-to-br from-zinc-800 to-zinc-900 border-4 border-zinc-800 text-zinc-400 hover:border-[#007E3A] hover:text-[#007E3A] shadow-2xl"
           }`}
         >
-          {isDisconnecting || isConnecting ? (
+          {isDisconnecting || isConnecting || isResolving ? (
             <div className="w-20 h-20 flex items-center justify-center">
               <div className="w-16 h-16 rounded-full border-4 border-amber-500/30 border-t-amber-400 animate-spin" />
             </div>
@@ -779,17 +820,10 @@ export const HomeView = () => {
     const isFav = favoriteIds.has(String(proxy.id));
     const isSectionRow = proxy.type?.toUpperCase() === "SECTION";
     const isAutoRow = proxy.type?.toUpperCase() === "AUTO";
+    // RTT of the node actually resolved to, falling back to the member
+    // minimum only before the first connect (see autoRowPingLabel).
     const autoBestPing = isAutoRow
-      ? (() => {
-          const extra = parseExtra(proxy.extra);
-          const memberIds = (extra?.members || []).map(String);
-          const arr = memberIds
-            .map((id) => pings[id])
-            .filter((p) => p && /^\d+/.test(String(p)));
-          return arr.length
-            ? arr.sort((a, b) => parseInt(a, 10) - parseInt(b, 10))[0]
-            : null;
-        })()
+      ? autoRowPingLabel(proxy, pings, autoStatusById[proxy.id])
       : null;
     const pingPending = isPingPending(proxy);
     const pingLabel = pingPending

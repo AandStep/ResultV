@@ -212,7 +212,81 @@ func intListFromExtra(extra map[string]interface{}, key string) []int {
 	}
 }
 
-func amneziaFromExtra(extra map[string]interface{}) *SBWireGuardAmnezia {
+// awg3Keys lists the AmneziaWG 3.0 device knobs in the order they are written
+// into ipcConf. See appendAWG3Lines for how they reach the engine.
+var awg3Keys = []string{
+	"header_protection_key",
+	"content_padding_addition",
+	"rekey_after_time",
+	"rekey_timeout",
+	"reject_after_time",
+	"keepalive_timeout",
+	"max_handshake_attempts",
+}
+
+// normalizeAWGKey folds the spellings providers use for the same knob:
+// "HeaderProtectionKey" (amneziawg .conf style), "header_protection_key"
+// (JSON subscriptions) and "header-protection-key" all collapse to one form.
+func normalizeAWGKey(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(s)) {
+		if r != '_' && r != '-' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// awg3FromExtra picks the AmneziaWG 3.0 knobs out of the amnezia block,
+// keyed by their canonical UAPI name.
+func awg3FromExtra(m map[string]interface{}) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	canonical := make(map[string]string, len(awg3Keys))
+	for _, k := range awg3Keys {
+		canonical[normalizeAWGKey(k)] = k
+	}
+	out := map[string]string{}
+	for rawKey, rawVal := range m {
+		name, ok := canonical[normalizeAWGKey(rawKey)]
+		if !ok {
+			continue
+		}
+		if v := stringFromExtraValue(rawVal); v != "" {
+			out[name] = v
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// applyAWG3Knobs copies the AmneziaWG 3.0 knobs onto the amnezia block.
+func applyAWG3Knobs(am *SBWireGuardAmnezia, knobs map[string]string) {
+	if am == nil || len(knobs) == 0 {
+		return
+	}
+	for name, target := range map[string]*string{
+		"header_protection_key":    &am.HeaderProtectionKey,
+		"content_padding_addition": &am.ContentPaddingAddition,
+		"rekey_after_time":         &am.RekeyAfterTime,
+		"rekey_timeout":            &am.RekeyTimeout,
+		"reject_after_time":        &am.RejectAfterTime,
+		"keepalive_timeout":        &am.KeepaliveTimeout,
+		"max_handshake_attempts":   &am.MaxHandshakeAttempts,
+	} {
+		if v, ok := knobs[name]; ok {
+			*target = v
+		}
+	}
+}
+
+// amneziaBlock returns the raw "amnezia" sub-object of a proxy's extra data.
+// Both the endpoint builder and the config validator read through it so they
+// can never disagree about what the engine will be handed.
+func amneziaBlock(extra map[string]interface{}) map[string]interface{} {
 	v, ok := extra["amnezia"]
 	if !ok || v == nil {
 		return nil
@@ -226,6 +300,11 @@ func amneziaFromExtra(extra map[string]interface{}) *SBWireGuardAmnezia {
 			}
 		}
 	}
+	return m
+}
+
+func amneziaFromExtra(extra map[string]interface{}) *SBWireGuardAmnezia {
+	m := amneziaBlock(extra)
 	if m == nil {
 		return nil
 	}
@@ -241,20 +320,18 @@ func amneziaFromExtra(extra map[string]interface{}) *SBWireGuardAmnezia {
 		H2:    amneziaHeaderString(m["h2"]),
 		H3:    amneziaHeaderString(m["h3"]),
 		H4:    amneziaHeaderString(m["h4"]),
-		I1:    stringFromExtraValue(m["i1"]),
-		I2:    stringFromExtraValue(m["i2"]),
-		I3:    stringFromExtraValue(m["i3"]),
-		I4:    stringFromExtraValue(m["i4"]),
-		I5:    stringFromExtraValue(m["i5"]),
-		J1:    stringFromExtraValue(m["j1"]),
-		J2:    stringFromExtraValue(m["j2"]),
-		J3:    stringFromExtraValue(m["j3"]),
-		ITime: int64(intFromAny(m["itime"])),
+		I1:   stringFromExtraValue(m["i1"]),
+		I2:   stringFromExtraValue(m["i2"]),
+		I3:   stringFromExtraValue(m["i3"]),
+		I4:   stringFromExtraValue(m["i4"]),
+		I5:   stringFromExtraValue(m["i5"]),
 	}
-	if *am == (SBWireGuardAmnezia{}) {
+	knobs := awg3FromExtra(m)
+	if *am == (SBWireGuardAmnezia{}) && len(knobs) == 0 {
 		return nil
 	}
 	normalizeAmnezia(am)
+	applyAWG3Knobs(am, knobs)
 	return am
 }
 
@@ -304,9 +381,6 @@ func normalizeAmnezia(am *SBWireGuardAmnezia) {
 	if am.S4 < 0 {
 		am.S4 = 0
 	}
-	if am.ITime < 0 {
-		am.ITime = 0
-	}
 	const maxJunkLen = 4096
 	clip := func(s string) string {
 		if len(s) > maxJunkLen {
@@ -319,7 +393,4 @@ func normalizeAmnezia(am *SBWireGuardAmnezia) {
 	am.I3 = clip(am.I3)
 	am.I4 = clip(am.I4)
 	am.I5 = clip(am.I5)
-	am.J1 = clip(am.J1)
-	am.J2 = clip(am.J2)
-	am.J3 = clip(am.J3)
 }

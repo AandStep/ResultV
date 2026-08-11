@@ -32,8 +32,10 @@ import { EventsOn, EventsOff } from "../wailsjs/runtime/runtime";
 import logo from "./assets/logo.png";
 import { useTranslation } from "react-i18next";
 import { useCheckUpdate } from "./hooks/useCheckUpdate";
+import { useChangelog } from "./hooks/useChangelog";
 import UpdateNotificationModal from "./components/ui/UpdateNotificationModal";
 import UpdaterModal from "./components/ui/UpdaterModal";
+import ChangelogModal from "./components/ui/ChangelogModal";
 import ProtocolWarningModal from "./components/ui/ProtocolWarningModal";
 import AppDialogModal from "./components/ui/AppDialogModal";
 import DeepLinkImportModal from "./components/ui/DeepLinkImportModal";
@@ -52,6 +54,7 @@ const AppContent = () => {
     } = useConfigContext();
     const { updateAvailable, latestVersionData, currentVersion, hasPlatformAsset } =
         useCheckUpdate();
+    const { changelog, dismiss: dismissChangelog } = useChangelog(isConfigLoaded);
     const latestVersion = latestVersionData?.version || "";
     const [dismissedUpdateVersion, setDismissedUpdateVersion] = React.useState(
         () => window.sessionStorage.getItem("updateDismissedVersion") || "",
@@ -145,7 +148,12 @@ const AppContent = () => {
             {activeTab === "logs" && <LogsView />}
             {activeTab === "settings" && <SettingsView />}
 
-            {updateAvailable && !isUpdateDismissed && (
+            <ChangelogModal changelog={changelog} onClose={dismissChangelog} />
+
+            {/* Both can be due at once — you updated 3.1 → 3.2 while 3.3 is
+                already out. What changed in the build you are running comes
+                first; the offer to update again waits its turn. */}
+            {!changelog && updateAvailable && !isUpdateDismissed && (
                 hasPlatformAsset
                 ? <UpdaterModal
                     currentVersion={currentVersion}

@@ -7,6 +7,8 @@ import {logger} from '../models';
 import {system} from '../models';
 import {updater} from '../models';
 
+export function AckChangelog():Promise<void>;
+
 export function AddRoutingList(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<config.RoutingList>;
 
 export function AddSubscription(arg1:string,arg2:string,arg3:boolean,arg4:string,arg5:Array<string>):Promise<Array<config.ProxyEntry>>;
@@ -17,7 +19,7 @@ export function CancelConnect():Promise<void>;
 
 export function CancelUpdate():Promise<void>;
 
-export function Connect(arg1:proxy.ProxyConfig,arg2:config.RoutingRules,arg3:boolean,arg4:boolean):Promise<proxy.ConnectResultDTO>;
+export function Connect(arg1:proxy.ProxyConfig,arg2:config.RoutingRules,arg3:boolean):Promise<proxy.ConnectResultDTO>;
 
 export function DebugFrontendLog(arg1:string):Promise<void>;
 
@@ -35,7 +37,9 @@ export function ExportConfig(arg1:string):Promise<string>;
 
 export function FetchSubscription(arg1:string,arg2:boolean):Promise<main.SubscriptionPreview>;
 
-export function GetAdBlockStatus():Promise<main.AdBlockStatusDTO>;
+export function GetAutoGroupStatus(arg1:string):Promise<main.AutoGroupStatus>;
+
+export function GetChangelog(arg1:string):Promise<main.Changelog>;
 
 export function GetConfig():Promise<config.AppConfig>;
 
@@ -63,10 +67,6 @@ export function HandleDeepLink(arg1:string):Promise<void>;
 
 export function ImportConfig(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
-export function InstallAdBlockCA():Promise<void>;
-
-export function IsAdBlockCAInstalled():Promise<boolean>;
-
 export function IsAdmin():Promise<boolean>;
 
 export function IsAutostartEnabled():Promise<boolean>;
@@ -83,7 +83,11 @@ export function RefreshRoutingList(arg1:string):Promise<config.RoutingList>;
 
 export function RefreshSubscription(arg1:string):Promise<Array<config.ProxyEntry>>;
 
+export function ReportAutoConnectOutcome(arg1:string,arg2:number,arg3:string,arg4:number,arg5:boolean):Promise<void>;
+
 export function ResetLeftoverReport():Promise<string>;
+
+export function ResolveAutoCandidates(arg1:string):Promise<Array<config.ProxyEntry>>;
 
 export function RestartAsAdmin():Promise<void>;
 
@@ -97,19 +101,13 @@ export function SetStartInTray(arg1:boolean):Promise<void>;
 
 export function SetTrayIcon(arg1:Array<number>):Promise<void>;
 
-export function StartMITM(arg1:number):Promise<number>;
+export function ShouldShowChangelog():Promise<boolean>;
 
 export function StartUpdate():Promise<void>;
 
-export function StopMITM():Promise<void>;
-
 export function SyncProxies(arg1:Array<config.ProxyEntry>):Promise<void>;
 
-export function ToggleAdBlock(arg1:boolean):Promise<void>;
-
 export function ToggleKillSwitch(arg1:boolean):Promise<void>;
-
-export function UpdateAdBlockFilters():Promise<void>;
 
 export function UpdateRoutingList(arg1:config.RoutingList):Promise<void>;
 

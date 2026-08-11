@@ -28,6 +28,8 @@ fi
 echo "==> wails build (linux/amd64) version=$VERSION"
 # webkit2_41 selects libwebkit2gtk-4.1 (Ubuntu 22.04+/24.04, Debian 12+).
 # Drop the tag if you target distros that still ship webkit2gtk-4.0.
+# Feature tags (with_grpc, with_quic, …) come from wails.json ("build:tags");
+# wails merges them with the platform tag passed here.
 BUILD_TAGS="${WAILS_TAGS:-webkit2_41}"
 if [ -n "$LDFLAGS" ]; then
   wails build -clean -platform linux/amd64 -tags "$BUILD_TAGS" -ldflags "$LDFLAGS"

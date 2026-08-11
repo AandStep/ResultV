@@ -90,6 +90,9 @@ jobs:
           if ($manifestOverride) {
             $ldflags = "$ldflags -X resultproxy-wails/internal/updater.ManifestURLOverride=$manifestOverride".Trim()
           }
+          # Build tags live in wails.json ("build:tags") so every build path —
+          # this workflow, build-linux.sh, build-macos.sh and a bare `wails build`
+          # on a dev machine — compiles the same feature set.
           if ($ldflags) {
             wails build -clean -nsis -platform windows/amd64 -ldflags $ldflags
           } else {
@@ -292,20 +295,36 @@ jobs:
           const pickLang = (v, lang) => {
             if (v == null) return '';
             if (typeof v === 'string') return v;
-            return v[lang] || v.ru || v.en || Object.values(v)[0] || '';
+            // "type" is a note entry's kind, not a translation — excluded from
+            // the last-resort fallback so a note missing both ru and en cannot
+            // render as the literal word "fix".
+            const langValues = Object.entries(v)
+              .filter(([k]) => k !== 'type')
+              .map(([, value]) => value);
+            return v[lang] || v.ru || v.en || langValues[0] || '';
           };
 
-          const formatBullets = (text) => {
-            const t = String(text || '').trim();
-            if (!t) return '';
-            let out = t.replace(/\. /g, '.\n-');
-            if (!out.startsWith('-')) out = '-' + out;
-            if (out.endsWith('-')) out = out.slice(0, -1);
-            return out;
+          // releaseNotes is an array of typed entries, the same structure the
+          // in-app "what's new" modal renders from the embedded update.json.
+          // The old guess-the-bullets pass over a prose paragraph is gone —
+          // the entries are already the bullets.
+          const TYPE_EMOJI = { feature: '✨', improve: '🚀', fix: '🛠' };
+
+          const formatBullets = (notes, lang) => {
+            if (!Array.isArray(notes)) return '';
+            return notes
+              .map((entry) => {
+                const text = pickLang(entry, lang).trim();
+                if (!text) return '';
+                const emoji = TYPE_EMOJI[String(entry.type || '').toLowerCase()];
+                return emoji ? `- ${emoji} ${text}` : `- ${text}`;
+              })
+              .filter(Boolean)
+              .join('\n');
           };
 
-          const ruNotes = formatBullets(pickLang(update.releaseNotes, 'ru'));
-          const enNotes = formatBullets(pickLang(update.releaseNotes, 'en'));
+          const ruNotes = formatBullets(update.releaseNotes, 'ru');
+          const enNotes = formatBullets(update.releaseNotes, 'en');
           const ruTitle = pickLang(update.releaseTitle, 'ru').trim() || 'Bug Fixes & Improvements';
           const enTitle = pickLang(update.releaseTitle, 'en').trim() || ruTitle;
           const host = new URL(update.downloadUrl).hostname;

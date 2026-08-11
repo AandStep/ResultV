@@ -69,12 +69,14 @@ func TestAmneziaWGEndpointConfigIncludesAmneziaSection(t *testing.T) {
 		"public_key":  "pub",
 		"allowed_ips": []string{"0.0.0.0/0"},
 		"amnezia": map[string]interface{}{
-			"jc":    7,
-			"jmin":  10,
-			"jmax":  20,
-			"s1":    1,
-			"h1":    11,
-			"i1":    "abc",
+			"jc":   7,
+			"jmin": 10,
+			"jmax": 20,
+			"s1":   1,
+			"h1":   11,
+			"i1":   "abc",
+			// j1/itime are engine-unsupported and must be dropped, see
+			// TestAmneziaDropsKeysUnsupportedByEngine.
 			"j1":    "def",
 			"itime": 42,
 		},
@@ -102,8 +104,8 @@ func TestAmneziaWGEndpointConfigIncludesAmneziaSection(t *testing.T) {
 	if ep.Amnezia.JC != 7 || ep.Amnezia.JMin != 10 || ep.Amnezia.JMax != 20 {
 		t.Fatalf("unexpected amnezia jitter values: %+v", ep.Amnezia)
 	}
-	if ep.Amnezia.ITime != 42 {
-		t.Fatalf("unexpected amnezia itime: %+v", ep.Amnezia)
+	if ep.Amnezia.I1 != "abc" {
+		t.Fatalf("unexpected amnezia i1: %+v", ep.Amnezia)
 	}
 }
 

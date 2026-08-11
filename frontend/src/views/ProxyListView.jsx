@@ -40,7 +40,11 @@ import {
   mergeSubscriptionRefreshCountries,
 } from "../utils/proxyParser";
 import wailsAPI from "../utils/wailsAPI";
-import { parseExtra, getPingSortMetric } from "../utils/pingSort";
+import {
+  parseExtra,
+  getPingSortMetric,
+  autoRowPingLabel,
+} from "../utils/pingSort";
 import impLogo from "../assets/implogo.png";
 
 function formatTrafficBytes(n) {
@@ -157,6 +161,7 @@ export const ProxyListView = () => {
     activeProxy,
     isConnected,
     isConnecting,
+    isResolving,
     failedProxy,
     pings,
     refreshPings,
@@ -173,6 +178,36 @@ export const ProxyListView = () => {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  // The chosen node is known only after a connect, so this refreshes when the
+  // active proxy changes rather than on every render. isConnected is also a
+  // dep: this view stays permanently mounted (hidden via CSS) so it never
+  // re-runs on its own, and neither proxies nor activeProxy reliably change
+  // identity when a connect completes — activeProxy is set BEFORE
+  // wailsAPI.connect (useDaemonControl.js) and the status poller resolves it
+  // back to the same object already in `proxies`. isConnected does flip
+  // false->true right after a successful connect (useDaemonControl.js sets
+  // it post-success; useDaemonStatus.js also mirrors the backend's
+  // isConnected flag every status tick), so it is the reliable signal that a
+  // connect just finished and the AUTO row should re-fetch.
+  const [autoStatusById, setAutoStatusById] = useState({});
+  useEffect(() => {
+    let cancelled = false;
+    const autoIds = proxies
+      .filter((p) => p.type?.toUpperCase() === "AUTO")
+      .map((p) => String(p.id));
+    if (autoIds.length === 0) return;
+    (async () => {
+      const next = {};
+      for (const id of autoIds) {
+        next[id] = await wailsAPI.getAutoGroupStatus(id);
+      }
+      if (!cancelled) setAutoStatusById(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [proxies, activeProxy, isConnected]);
 
   const autoMemberIds = useMemo(() => {
     const ids = new Set();
@@ -204,11 +239,13 @@ export const ProxyListView = () => {
       result.sort((a, b) => (a.provider || "").localeCompare(b.provider || ""));
     } else if (sortBy === "ping") {
       result.sort(
-        (a, b) => getPingSortMetric(a, pings) - getPingSortMetric(b, pings),
+        (a, b) =>
+          getPingSortMetric(a, pings, autoStatusById) -
+          getPingSortMetric(b, pings, autoStatusById),
       );
     }
     return result;
-  }, [proxies, searchQuery, sortBy, autoMemberIds, pings]);
+  }, [proxies, searchQuery, sortBy, autoMemberIds, pings, autoStatusById]);
 
   const groupedProxies = useMemo(() => {
     const groups = {};
@@ -364,6 +401,9 @@ export const ProxyListView = () => {
   const renderProxyCard = (proxy) => {
     const isActive = isConnected && activeProxy?.id === proxy.id;
     const isCardConnecting = isConnecting && activeProxy?.id === proxy.id;
+    const isCardResolving = isResolving && activeProxy?.id === proxy.id;
+    // Both phases look identical on the card; only the label differs.
+    const isCardBusy = isCardConnecting || isCardResolving;
     const isCardFailed = !!failedProxy && failedProxy.id === proxy.id;
     const isFromSubscription = Boolean(proxy.subscriptionUrl);
     const isAutoProxy = proxy.type?.toUpperCase() === "AUTO";
@@ -378,18 +418,10 @@ export const ProxyListView = () => {
         ? t("proxyList.sectionType")
         : protocolInfo;
 
-    // For AUTO cards: compute best ping from member servers.
+    // For AUTO cards: RTT of the node actually resolved to, falling back to
+    // the member minimum only before the first connect (see autoRowPingLabel).
     const autoBestPing = isAutoProxy
-      ? (() => {
-          const extra = parseExtra(proxy.extra);
-          const memberIds = (extra?.members || []).map(String);
-          const arr = memberIds
-            .map((id) => pings[id])
-            .filter((p) => p && /^\d+/.test(String(p)));
-          return arr.length
-            ? arr.sort((a, b) => parseInt(a, 10) - parseInt(b, 10))[0]
-            : null;
-        })()
+      ? autoRowPingLabel(proxy, pings, autoStatusById[proxy.id])
       : null;
 
     const pingPending = isPingPending(proxy);
@@ -416,7 +448,7 @@ export const ProxyListView = () => {
       <div
         key={proxy.id}
         onClick={() => handleCardConnect(proxy)}
-        className={`bg-zinc-900 p-4 rounded-[12px] border transition-all flex flex-col cursor-pointer group/card outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${isCardConnecting ? "border-amber-500 shadow-[0_0_20px_rgba(245,158,11,0.15)]" : isCardFailed ? "border-rose-500 shadow-[0_0_20px_rgba(244,63,94,0.15)]" : isActive ? "border-[#00A819] shadow-[0_0_20px_rgba(0,168,25,0.1)]" : inactiveCardBorder}`}
+        className={`bg-zinc-900 p-4 rounded-[12px] border transition-all flex flex-col cursor-pointer group/card outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${isCardBusy ? "border-amber-500 shadow-[0_0_20px_rgba(245,158,11,0.15)]" : isCardFailed ? "border-rose-500 shadow-[0_0_20px_rgba(244,63,94,0.15)]" : isActive ? "border-[#00A819] shadow-[0_0_20px_rgba(0,168,25,0.1)]" : inactiveCardBorder}`}
       >
         <div className="flex items-start gap-3 mb-4">
           <div
@@ -524,15 +556,17 @@ export const ProxyListView = () => {
                   e.stopPropagation();
                   handleCardConnect(proxy);
                 }}
-                className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-colors shrink-0 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${isCardConnecting ? "bg-amber-500/15 text-amber-400 font-bold" : isCardFailed ? "bg-rose-500/15 text-rose-400 font-bold hover:bg-rose-500/25" : isActive ? "bg-[#00A819] text-zinc-950 font-bold" : "bg-[#007E3A]/10 text-[#00A819] hover:bg-[#007E3A]/20"}`}
+                className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-colors shrink-0 border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none ${isCardBusy ? "bg-amber-500/15 text-amber-400 font-bold" : isCardFailed ? "bg-rose-500/15 text-rose-400 font-bold hover:bg-rose-500/25" : isActive ? "bg-[#00A819] text-zinc-950 font-bold" : "bg-[#007E3A]/10 text-[#00A819] hover:bg-[#007E3A]/20"}`}
               >
-                {isCardConnecting
-                  ? t("proxyList.status.connecting")
-                  : isCardFailed
-                    ? t("proxyList.status.disconnect")
-                    : isActive
-                      ? t("proxyList.status.connected")
-                      : t("proxyList.status.connect")}
+                {isCardResolving
+                  ? t("proxyList.status.resolving")
+                  : isCardConnecting
+                    ? t("proxyList.status.connecting")
+                    : isCardFailed
+                      ? t("proxyList.status.disconnect")
+                      : isActive
+                        ? t("proxyList.status.connected")
+                        : t("proxyList.status.connect")}
               </button>
             )}
           </div>

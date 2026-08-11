@@ -87,13 +87,18 @@ type EngineConfig struct {
 	// buildRoute routes these through the proxy while everything else goes
 	// direct (Final="direct"). Ignored in Global/Whitelist modes.
 	BlockedDomains []string
+	// SmartRuleSetPath is the path to the block-list compiled into a binary
+	// sing-box rule-set (see CompileSmartRuleSet). When set, buildRoute
+	// references it by tag instead of inlining tens of thousands of
+	// domain_suffix entries into the config. Empty means "not compiled" and
+	// buildRoute falls back to the inline form — the compile step must never be
+	// able to block a connect.
+	SmartRuleSetPath string
 	// BlockedCIDRs is the IP-subnet block-list (Telegram MTProto data-center
 	// ranges, from Router.GetBlockedCIDRs). Telegram's native clients dial
 	// these IPs directly without a domain/SNI, so domain rules can't catch
 	// them — Smart mode adds an ip_cidr → proxy rule. Smart-only.
 	BlockedCIDRs []string
-	AdBlock      bool
-	MITMPort     int // local HTTPS MITM proxy port; 0 disables MITM layer
 	KillSwitch   bool
 	LocalPort    int
 	DNSServers   []string
@@ -213,6 +218,13 @@ type SBDNS struct {
 	Servers  []SBDNSServer `json:"servers"`
 	Rules    []SBDNSRule   `json:"rules,omitempty"`
 	Strategy string        `json:"strategy,omitempty"`
+	// Final names the DNS server used when no rule matches. sing-box falls
+	// back to the FIRST registered transport when this is empty
+	// (dns/transport_manager.go), so Smart mode must name "local" explicitly
+	// to keep non-blocked lookups on the system resolver. A non-empty tag with
+	// no matching server is a hard start failure ("default DNS server not
+	// found"), so only ever set a tag that is registered.
+	Final string `json:"final,omitempty"`
 }
 
 type SBDNSServer struct {
@@ -348,15 +360,29 @@ type SBWireGuardAmnezia struct {
 	H2    string `json:"h2,omitempty"`
 	H3    string `json:"h3,omitempty"`
 	H4    string `json:"h4,omitempty"`
-	I1    string `json:"i1,omitempty"`
-	I2    string `json:"i2,omitempty"`
-	I3    string `json:"i3,omitempty"`
-	I4    string `json:"i4,omitempty"`
-	I5    string `json:"i5,omitempty"`
-	J1    string `json:"j1,omitempty"`
-	J2    string `json:"j2,omitempty"`
-	J3    string `json:"j3,omitempty"`
-	ITime int64  `json:"itime,omitempty"`
+	I1 string `json:"i1,omitempty"`
+	I2 string `json:"i2,omitempty"`
+	I3 string `json:"i3,omitempty"`
+	I4 string `json:"i4,omitempty"`
+	I5 string `json:"i5,omitempty"`
+	// J1-J3 and ITime are deliberately absent: the wireguard-go fork behind
+	// the engine has never had those device keys in its UAPI (device/uapi.go
+	// stops at i5 and its default branch returns "invalid UAPI device key").
+	// sing-box-extended used to declare and emit them anyway, which made
+	// IpcSet fail outright; it dropped them in v1.13.16-extended-2.6.1.
+
+	// AmneziaWG 3.0, available since sing-box-extended
+	// v1.13.16-extended-2.6.1. HeaderProtectionKey is base64 like the other
+	// WireGuard keys — upstream decodes it and hex-encodes it for the UAPI.
+	// The rest are emitted as strings ("n" or "low-high") so upstream can
+	// parse them into *Xbadoption.Range and randomize per use.
+	HeaderProtectionKey    string `json:"header_protection_key,omitempty"`
+	ContentPaddingAddition string `json:"content_padding_addition,omitempty"`
+	RekeyAfterTime         string `json:"rekey_after_time,omitempty"`
+	RekeyTimeout           string `json:"rekey_timeout,omitempty"`
+	RejectAfterTime        string `json:"reject_after_time,omitempty"`
+	KeepaliveTimeout       string `json:"keepalive_timeout,omitempty"`
+	MaxHandshakeAttempts   string `json:"max_handshake_attempts,omitempty"`
 }
 
 type SBUTLS struct {
@@ -450,10 +476,42 @@ func appWhitelistPathRegexes(names []string) []string {
 			continue
 		}
 		seen[key] = struct{}{}
-		esc := regexp.QuoteMeta(n)
-		out = append(out, `(?i)(^|[\\/])`+esc+`$`)
+		rx := processPathRegex(n)
+		if rx == "" {
+			continue
+		}
+		out = append(out, rx)
 	}
 	return out
+}
+
+// processPathRegex compiles one app-list entry into a sing-box
+// process_path_regex.
+//
+// A bare basename ("wow.exe") anchors on any path separator, so it matches the
+// executable wherever the game is installed — the long-standing behaviour.
+//
+// An entry carrying path components ("Battle.net\Agent\Agent.exe") anchors the
+// whole tail instead. Blizzard's updater is named Agent.exe; as a bare basename
+// it would also match Docker's, 1C's and every corporate agent on the machine,
+// silently routing an unrelated process the wrong way. Separators are accepted
+// in either slash direction and matched in either direction, because entries
+// are authored by hand and Windows paths arrive both ways.
+func processPathRegex(entry string) string {
+	parts := strings.FieldsFunc(entry, func(r rune) bool {
+		return r == '\\' || r == '/'
+	})
+	quoted := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p == "" {
+			continue
+		}
+		quoted = append(quoted, regexp.QuoteMeta(p))
+	}
+	if len(quoted) == 0 {
+		return ""
+	}
+	return `(?i)(^|[\\/])` + strings.Join(quoted, `[\\/]`) + `$`
 }
 
 func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
@@ -479,7 +537,7 @@ func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 			Listen:     host,
 			ListenPort: port,
 		}},
-		Outbounds:    appendOutbounds(buildOutbounds(cfg.Proxy), cfg),
+		Outbounds:    buildOutbounds(cfg.Proxy),
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
 	}
@@ -638,24 +696,12 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 		DNS:          buildDNS(cfg),
 		Endpoints:    endpoints,
 		Inbounds:     []SBInbound{tun, probeIn},
-		Outbounds:    appendOutbounds(outbounds, cfg),
+		Outbounds:    outbounds,
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
 	}
 
 	return sbCfg, nil
-}
-
-func appendOutbounds(base []SBOutbound, cfg EngineConfig) []SBOutbound {
-	if cfg.AdBlock && cfg.MITMPort > 0 {
-		base = append(base, SBOutbound{
-			Type:       "http",
-			Tag:        adBlockMITMOutbound,
-			Server:     "127.0.0.1",
-			ServerPort: cfg.MITMPort,
-		})
-	}
-	return base
 }
 
 func effectiveTunStack(stack string) string {
@@ -741,6 +787,30 @@ func outboundTLSDiagnostic(proxy ProxyConfig) string {
 		return "reality"
 	}
 	return "tls"
+}
+
+// smartRuleSetActive reports whether buildRoute registers the compiled
+// Smart-mode block-list rule-set. buildDNS references the very same tag, and a
+// DNS rule pointing at an unregistered rule_set fails the start — so both sides
+// ask this one function instead of repeating the condition and drifting apart.
+func smartRuleSetActive(cfg EngineConfig) bool {
+	return cfg.RoutingMode == ModeSmart &&
+		len(cfg.BlockedDomains) > 0 &&
+		cfg.SmartRuleSetPath != ""
+}
+
+// firstDetourServerTag returns the tag of the first DNS server routed through
+// the given detour. That server is already the de-facto default today: with no
+// dns.final, sing-box uses the first registered transport and reaches the rest
+// only through rules. Pointing Smart mode's tunnel rules at it therefore
+// preserves current behaviour for blocked domains exactly.
+func firstDetourServerTag(servers []SBDNSServer, detour string) string {
+	for _, s := range servers {
+		if s.Detour == detour && s.Tag != "" {
+			return s.Tag
+		}
+	}
+	return ""
 }
 
 func buildDNS(cfg EngineConfig) *SBDNS {
@@ -829,7 +899,38 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			})
 		}
 
-		dns.Rules = appendAdBlockDNSRules(cfg, dns.Rules)
+		// Smart mode: make DNS mirror the traffic split. buildRoute sets
+		// Final="direct" here, so everything outside the block-list leaves from
+		// the user's real address — yet every lookup still exited through the
+		// tunnel. GeoDNS services (Battle.net/WoW, Akamai, game CDNs) answered
+		// for the exit node's region while the game connected directly: that
+		// mismatch is what produced the high ping, the launcher's "VPN
+		// detected" and the mid-session drops.
+		//
+		// Blocked domains keep resolving through the tunnel — a local answer
+		// for a censored domain is a poisoned answer. Force-VPN apps do too:
+		// their whole reason for being on that list is that the local answer is
+		// unusable.
+		if smartRuleSetActive(cfg) {
+			if tunnelTag := firstDetourServerTag(dns.Servers, detour); tunnelTag != "" {
+				if rx := appWhitelistPathRegexes(cfg.AppForceVPN); len(rx) > 0 {
+					dns.Rules = append(dns.Rules, SBDNSRule{
+						ProcessPathRegex: rx,
+						Server:           tunnelTag,
+					})
+				}
+				dns.Rules = append(dns.Rules, SBDNSRule{
+					RuleSet: []string{smartRuleSetTag},
+					Server:  tunnelTag,
+				})
+				// Everything else lands on the system resolver, which is what
+				// restores correct GeoDNS answers. The "local" server is
+				// appended unconditionally in both branches above, so this tag
+				// always resolves.
+				dns.Final = "local"
+			}
+		}
+
 		return dns
 	}
 
@@ -868,19 +969,7 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 	}
 
 	dns := &SBDNS{Servers: servers}
-	dns.Rules = appendAdBlockDNSRules(cfg, dns.Rules)
 	return dns
-}
-
-func appendAdBlockDNSRules(cfg EngineConfig, rules []SBDNSRule) []SBDNSRule {
-	if !cfg.AdBlock {
-		return rules
-	}
-	tags := adBlockRuleSetTags()
-	return append(rules, SBDNSRule{
-		RuleSet: tags,
-		Action:  "reject",
-	})
 }
 
 func splitDNSServer(raw string) (string, int) {
@@ -911,9 +1000,6 @@ func splitDNSServer(raw string) (string, int) {
 func buildRoute(cfg EngineConfig) *SBRoute {
 	findProcess := len(cfg.AppWhitelist) > 0 ||
 		(cfg.Mode == ProxyModeTunnel && len(cfg.AppForceVPN) > 0)
-	if cfg.AdBlock && cfg.MITMPort > 0 {
-		findProcess = true
-	}
 	// Smart mode inverts the default: everything goes direct and only the
 	// censored block-list is tunneled (see the blocked-domain rule below).
 	// Global/Whitelist keep proxy as the catch-all.
@@ -925,9 +1011,6 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		Final:       final,
 		AutoDetect:  true,
 		FindProcess: findProcess,
-	}
-	if cfg.AdBlock {
-		route.RuleSet = buildAdBlockRuleSets(effectiveDataDir(cfg))
 	}
 	route.RuleSet = append(route.RuleSet, buildRoutingListRuleSets(cfg.RoutingLists)...)
 
@@ -981,7 +1064,6 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	// inserted here, after the DNS/server infra rules but before every built-in.
 	rules = appendRoutingListRouteRules(cfg.RoutingLists, rules)
 
-	rules = appendAdBlockRouteRules(cfg, rules)
 
 	if cfg.Mode == ProxyModeTunnel {
 		// Probe domains must go through the proxy/endpoint outbound, even when
@@ -1052,12 +1134,30 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	// "send this via VPN". The block-list domains are already normalized
 	// suffixes. App-whitelist (process) direct rules above keep priority, so
 	// an excluded app's traffic stays direct even for blocked domains.
+	//
+	// A pre-compiled binary rule-set is preferred when the caller supplied one:
+	// inlining ~78k suffixes costs ~160 ms of config marshal/parse/index per
+	// connect. Same rule, same position — only the matcher's storage differs.
 	if cfg.RoutingMode == ModeSmart && len(cfg.BlockedDomains) > 0 {
-		rules = append(rules, SBRouteRule{
-			Action:       "route",
-			DomainSuffix: append([]string(nil), cfg.BlockedDomains...),
-			Outbound:     "proxy",
-		})
+		if smartRuleSetActive(cfg) {
+			route.RuleSet = append(route.RuleSet, SBRuleSet{
+				Type:         "local",
+				Tag:          smartRuleSetTag,
+				Format:       "binary",
+				LocalOptions: SBLocalRuleSet{Path: cfg.SmartRuleSetPath},
+			})
+			rules = append(rules, SBRouteRule{
+				Action:   "route",
+				RuleSet:  []string{smartRuleSetTag},
+				Outbound: "proxy",
+			})
+		} else {
+			rules = append(rules, SBRouteRule{
+				Action:       "route",
+				DomainSuffix: append([]string(nil), cfg.BlockedDomains...),
+				Outbound:     "proxy",
+			})
+		}
 	}
 
 	// Smart mode: tunnel IP-only blocked ranges (Telegram MTProto data centers).
@@ -1131,53 +1231,6 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	return route
 }
 
-func appendAdBlockRouteRules(cfg EngineConfig, rules []SBRouteRule) []SBRouteRule {
-	if !cfg.AdBlock {
-		return rules
-	}
-	tags := adBlockRuleSetTags()
-	rules = append(rules, SBRouteRule{
-		RuleSet: tags,
-		Action:  "reject",
-	})
-
-	if cfg.MITMPort <= 0 {
-		return rules
-	}
-
-	browserRX := browserProcessPathRegexes()
-	if len(browserRX) == 0 {
-		return rules
-	}
-
-	// Pinning-sensitive domains bypass MITM (direct).
-	for _, d := range adBlockPinningBypassDomains {
-		rules = append(rules, SBRouteRule{
-			Action:   "route",
-			Domain:   []string{d},
-			Outbound: "direct",
-		})
-	}
-
-	// Force TCP TLS through local MITM proxy for browsers.
-	rules = append(rules, SBRouteRule{
-		Action:           "route",
-		ProcessPathRegex: browserRX,
-		Network:          []string{"tcp"},
-		Port:             []int{443},
-		Outbound:         adBlockMITMOutbound,
-	})
-
-	// Block QUIC/HTTP3 so browsers fall back to TCP (MITM cannot inspect QUIC).
-	rules = append(rules, SBRouteRule{
-		Action:           "reject",
-		ProcessPathRegex: browserRX,
-		Network:          []string{"udp"},
-		Port:             []int{443},
-	})
-
-	return rules
-}
 
 // OverlappingProbeDomains returns user-whitelist entries that match (exactly
 // or as a parent suffix) one of the tunnelProbeDomains. These are forced
