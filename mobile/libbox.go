@@ -151,6 +151,9 @@ var tunnelActive atomic.Bool
 // process that never connects still gets real handshake RTTs.
 func SetTunnelActive(active bool) {
 	tunnelActive.Store(active)
+	// The auto sweep runs its own WireGuard probe and needs the same rule: no
+	// keyed handshake against a server whose session we are currently using.
+	proxy.SetAutoKeyedWGProbe(!active)
 }
 
 // keyedWGProbeAllowed reports whether PingEntry may use the keyed handshake
