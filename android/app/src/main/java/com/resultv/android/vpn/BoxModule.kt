@@ -114,7 +114,20 @@ object BoxModule {
         server.start()
         // OverrideOptions is empty — no per-app routing yet.
         val tStart = System.currentTimeMillis()
-        startOrRecover(service, server, configJson)
+        try {
+            startOrRecover(service, server, configJson)
+        } catch (t: Throwable) {
+            // server.start() above already stood up the command socket (and
+            // startOrReloadService may have gotten as far as opening a tun)
+            // before failing. commandServer is only assigned below, on
+            // success, so without this the failed `server` is never
+            // referenced again and leaks — AUTO failover retries start()
+            // immediately on a fresh CommandServer, so a five-deep failover
+            // would otherwise orphan five of them for the process's life.
+            try { server.closeService() } catch (_: Throwable) {}
+            try { server.close() } catch (_: Throwable) {}
+            throw t
+        }
         Log.i(TAG, "startOrReloadService=${System.currentTimeMillis() - tStart}ms")
         commandServer = server
         Log.i(TAG, "BoxModule started")

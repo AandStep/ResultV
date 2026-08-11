@@ -90,6 +90,11 @@ class ResultVpnService : VpnService() {
             ACTION_STOP -> {
                 Log.i(TAG, "received STOP")
                 AppLog.info(getString(R.string.log_disconnecting))
+                // A genuine user-initiated disconnect must not pin the next
+                // connect to this session's ranking — re-rank from scratch.
+                // Caching across an in-place RELOAD is the settled behaviour
+                // (see buildConfigForReload); this is a real stop, not that.
+                AutoSelection.reset()
                 reloadWatcher?.cancel(); reloadWatcher = null
                 stopKillSwitchWatchdog()
                 stopFilterProxyWatchdog()
@@ -176,48 +181,7 @@ class ResultVpnService : VpnService() {
                         withContext(Dispatchers.Main) { stopSelf() }
                         return@launch
                     }
-                    worker.execute {
-                        val t0 = System.currentTimeMillis()
-                        try {
-                            // openTun during start() must see filterProxyRunning=false
-                            // (browser ad-block attaches after, off the critical path).
-                            BoxModule.filterProxyRunning = false
-                            BoxModule.start(this@ResultVpnService, config)
-                            val connectedAt = System.currentTimeMillis()
-                            Log.i(TAG, "connect timing: BoxModule.start=${connectedAt - t0}ms")
-                            val connected = VpnStatus.Connected(connectedAt)
-                            VpnState.set(connected)
-                            if (!isReload) {
-                                AppLog.success(connectedMsg)
-                                AppLog.info(
-                                    R.string.log_connect_timing,
-                                    connectedAt - t0,
-                                    source = AppLog.resolve(R.string.log_source_proxy),
-                                )
-                            }
-                            renotify(buildNotification(connected))
-                            startReloadWatcher()
-                            startKillSwitchWatchdog()
-                            // Subscribe to libbox status stream so HomeScreen's
-                            // traffic cards show real uplink/downlink.
-                            TrafficWatcher.start()
-                            // Structured per-host [CONN] lines (domain -> ip:port).
-                            ConnectionWatcher.start()
-                            // Attach browser ad-block now that the tunnel is up.
-                            attachBrowserAdBlockAsync()
-                            // Fallback: connected before the lists finished warming.
-                            // Finish warming them and apply on the fly — no reconnect.
-                            if (!listsReady) scheduleListReadyReload()
-                        } catch (t: Throwable) {
-                            Log.e(TAG, "BoxModule.start failed", t)
-                            val msg = t.message ?: t.javaClass.simpleName
-                            VpnState.set(VpnStatus.Error(msg))
-                            AppLog.error(getString(R.string.log_conn_failed, msg))
-                            closeTun()
-                            stopForeground(STOP_FOREGROUND_REMOVE)
-                            stopSelf()
-                        }
-                    }
+                    worker.execute { startWithConfig(config, isReload, connectedMsg, listsReady) }
                 }
                 return START_STICKY
             }
@@ -248,13 +212,132 @@ class ResultVpnService : VpnService() {
         // the effective IPv6 flag (see NetworkProbe / BuildOptionsBuilder).
         NetworkProbe.init(app)
         NetworkProbe.refreshAsync()
+        // Node statistics back the AUTO ranking and must be on disk before any
+        // connect can consult them.
+        runCatching { mobile.Mobile.initAutoStats(filesDir.absolutePath) }
     }
 
-    /** Rebuild a sing-box config from whatever profile is currently active. */
+    /**
+     * Rebuild a sing-box config from whatever profile is currently active.
+     *
+     * AUTO profiles resolve to a specific member here — probing when nothing is
+     * cached yet — and the answer is cached on AutoSelection. Both this method's
+     * own AUTO branch and every reload call site read that cache through
+     * [buildConfigForReload] rather than probing again, so the member connect
+     * picked stays pinned until a genuine disconnect or a failover moves it.
+     */
     private fun buildConfigFromActiveProfile(): String? {
         val active = ProfileRepository.state.value.active ?: return null
         warnAboutUnsupportedAwgKnobs(active)
-        return BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath)
+        if (!active.isAuto) {
+            AutoSelection.reset()
+            return buildConfigForReload(active)
+        }
+        if (AutoSelection.currentFor(active.id) == null) {
+            val member = AutoSelection.resolve(active, filesDir.absolutePath)
+            if (member == null) {
+                // Nothing reachable in the sweep. Fall back to the group head rather
+                // than refusing to connect: a probe that saw nothing is not proof
+                // the tunnel would not come up.
+                Log.w(TAG, "AUTO resolve returned no candidates — falling back to the group head")
+                return buildConfigForReload(active)
+            }
+            AppLog.info(getString(R.string.log_auto_selected, member.name, member.rttMs))
+        }
+        return buildConfigForReload(active)
+    }
+
+    /**
+     * Build a config for [active], consulting the cached AUTO resolution but
+     * NEVER triggering a new probe. Every reload call site (lists ready, kill
+     * switch, browser ad-block attach, proxy-unhealthy) goes through this —
+     * probing on a reload would mean any of those could silently move the user
+     * onto a different node, including one the ranking may have just demoted.
+     *
+     * An AUTO profile with no cached member (e.g. after a process restart wiped
+     * AutoSelection's in-memory state) falls back to the group head rather than
+     * blocking the reload on a fresh probe sweep.
+     */
+    private fun buildConfigForReload(active: Profile, panic: Boolean = false): String? {
+        if (active.isAuto) {
+            AutoSelection.currentFor(active.id)?.let { member ->
+                return BuildOptionsBuilder.buildConfigFromEntry(member.entryJson, filesDir.absolutePath, panic)
+            }
+        }
+        return BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath, panic)
+    }
+
+    /**
+     * Start the engine on [config] and bring up everything that hangs off a live
+     * tunnel. Runs on the worker thread.
+     *
+     * Extracted from onStartCommand so the AUTO failover path can re-enter it
+     * with the next candidate's config without duplicating the success path.
+     */
+    private fun startWithConfig(
+        config: String,
+        isReload: Boolean,
+        connectedMsg: String,
+        listsReady: Boolean,
+    ) {
+        val t0 = System.currentTimeMillis()
+        try {
+            // openTun during start() must see filterProxyRunning=false
+            // (browser ad-block attaches after, off the critical path).
+            BoxModule.filterProxyRunning = false
+            BoxModule.start(this@ResultVpnService, config)
+            val connectedAt = System.currentTimeMillis()
+            // Real end-to-end success — the strongest signal the node ranking
+            // gets, and the one that outweighs any amount of probe latency.
+            AutoSelection.recordOutcome(ok = true)
+            Log.i(TAG, "connect timing: BoxModule.start=${connectedAt - t0}ms")
+            val connected = VpnStatus.Connected(connectedAt)
+            VpnState.set(connected)
+            if (!isReload) {
+                AppLog.success(connectedMsg)
+                AppLog.info(
+                    R.string.log_connect_timing,
+                    connectedAt - t0,
+                    source = AppLog.resolve(R.string.log_source_proxy),
+                )
+            }
+            renotify(buildNotification(connected))
+            startReloadWatcher()
+            startKillSwitchWatchdog()
+            // Subscribe to libbox status stream so HomeScreen's traffic cards
+            // show real uplink/downlink.
+            TrafficWatcher.start()
+            // Structured per-host [CONN] lines (domain -> ip:port).
+            ConnectionWatcher.start()
+            // Attach browser ad-block now that the tunnel is up.
+            attachBrowserAdBlockAsync()
+            // Fallback: connected before the lists finished warming.
+            if (!listsReady) scheduleListReadyReload()
+        } catch (t: Throwable) {
+            Log.e(TAG, "BoxModule.start failed", t)
+            val msg = t.message ?: t.javaClass.simpleName
+            AutoSelection.recordOutcome(ok = false, reason = "connect_failed")
+            // AUTO: a dead member is a reason to move, not to stop — the group
+            // still has other members, and the one that just failed has already
+            // been penalised in the node stats, so it sinks on its own without a
+            // separate blacklist. advance() returns null once the ranked list is
+            // exhausted, which is a real connect failure.
+            val next = AutoSelection.advance()
+            if (next != null) {
+                val retry = BuildOptionsBuilder
+                    .buildConfigFromEntry(next.entryJson, filesDir.absolutePath)
+                if (retry != null) {
+                    AppLog.warning(getString(R.string.log_auto_failover, next.name))
+                    worker.execute { startWithConfig(retry, isReload, connectedMsg, listsReady) }
+                    return
+                }
+            }
+            VpnState.set(VpnStatus.Error(msg))
+            AppLog.error(getString(R.string.log_conn_failed, msg))
+            closeTun()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
     }
 
     /**
@@ -345,7 +428,7 @@ class ResultVpnService : VpnService() {
             val gotSmart = sl != null && sl.ready && sl.source != "builtin"
             if (!BoxModule.isRunning || (!gotAdBlock && !gotSmart)) return@launch
             val active = ProfileRepository.state.value.active ?: return@launch
-            val cfg = BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath) ?: return@launch
+            val cfg = buildConfigForReload(active) ?: return@launch
             Log.i(TAG, "lists ready post-connect — reloading (adblock=$gotAdBlock smart=$gotSmart)")
             worker.execute { BoxModule.reload(cfg) }
         }
@@ -374,7 +457,7 @@ class ResultVpnService : VpnService() {
             // startBrowserAdBlockIfEnabled leaves filterProxyRunning=false otherwise.
             if (BoxModule.filterProxyRunning && BoxModule.isRunning) {
                 val active = ProfileRepository.state.value.active ?: return@execute
-                val cfg = BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath) ?: return@execute
+                val cfg = buildConfigForReload(active) ?: return@execute
                 BoxModule.reload(cfg)
             }
         }
@@ -450,7 +533,7 @@ class ResultVpnService : VpnService() {
         SettingsRepository.setBrowserAdBlock(false)
         AppLog.warning(getString(R.string.log_browser_adblock_disabled))
         val active = ProfileRepository.state.value.active ?: return
-        val cfg = BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath) ?: return
+        val cfg = buildConfigForReload(active) ?: return
         worker.execute { BoxModule.reload(cfg) }
     }
 
@@ -462,6 +545,9 @@ class ResultVpnService : VpnService() {
         // can re-establish — addresses the Phase-3 plan tail.
         Log.i(TAG, "VPN permission revoked")
         AppLog.warning(getString(R.string.log_revoked), getString(R.string.log_source_system))
+        // Same reasoning as ACTION_STOP: the session is over, so the next
+        // connect should re-probe rather than resume this one's ranking.
+        AutoSelection.reset()
         reloadWatcher?.cancel(); reloadWatcher = null
         stopKillSwitchWatchdog()
         // Stop the proxy watchdog BEFORE tearing the engine down — otherwise it
@@ -494,6 +580,10 @@ class ResultVpnService : VpnService() {
         closeTun()
         if (!reloadInProgress) {
             VpnState.set(VpnStatus.Idle)
+            // Only a genuine teardown, not a reload-driven restart (this same
+            // onDestroy also runs mid-triggerReload, where the whole point is
+            // that the next instance picks the cached member back up).
+            AutoSelection.reset()
         }
         worker.execute {
             BoxModule.filterProxyRunning = false
@@ -560,7 +650,7 @@ class ResultVpnService : VpnService() {
      */
     private fun reloadKillSwitch(panic: Boolean) {
         val active = ProfileRepository.state.value.active ?: return
-        val cfg = BuildOptionsBuilder.buildConfig(active, filesDir.absolutePath, panic = panic)
+        val cfg = buildConfigForReload(active, panic = panic)
         if (cfg == null) {
             Log.w(TAG, "kill switch reload skipped — config build failed")
             AppLog.error(

@@ -78,12 +78,15 @@ internal object BuildOptionsBuilder {
     /**
      * Build a config from a raw ProxyEntry override JSON. Used by the AUTO
      * failover path so callers can swap which member is being tried without
-     * mutating the user-visible Profile.
+     * mutating the user-visible Profile, and by the AUTO-aware reload path
+     * (which needs panic to reach the kill switch the same way [buildConfig]
+     * does — without this parameter, routing a kill-switch reload through an
+     * AUTO member would silently disarm it).
      */
-    fun buildConfigFromEntry(entryJson: String, dataDir: String): String? {
+    fun buildConfigFromEntry(entryJson: String, dataDir: String, panic: Boolean = false): String? {
         if (entryJson.isBlank()) return null
         return try {
-            Mobile.buildSingBoxConfigFromEntryV2(entryJson, dataDir, currentOptionsJson())
+            Mobile.buildSingBoxConfigFromEntryV2(entryJson, dataDir, currentOptionsJson(panic))
         } catch (t: Throwable) {
             null
         }
