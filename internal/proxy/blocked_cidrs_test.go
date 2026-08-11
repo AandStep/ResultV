@@ -264,3 +264,43 @@ func TestGlobalModeOmitsIPCIDRRule(t *testing.T) {
 		t.Errorf("Global mode should not carry the Smart ip_cidr rule:\n%s", raw)
 	}
 }
+
+func TestNormalizeBlockedCIDRsDropsProviderWideIPv4(t *testing.T) {
+	got := normalizeBlockedCIDRs([]string{
+		"104.16.0.0/12",    // all of Cloudflare — Re:filter's discord_ips.lst
+		"172.64.0.0/13",    // ditto, itdog's discord.lst
+		"194.221.0.0/16",   // widest legitimate entry we ship (Telegram)
+		"149.154.160.0/20", // Telegram DC
+		"2a0a:f280::/32",   // IPv6 /32 is a normal allocation, never filtered
+	})
+	want := []string{"194.221.0.0/16", "149.154.160.0/20", "2a0a:f280::/32"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+// The guard must stay out of normalizeCIDRs. This branch has no user-supplied
+// CIDR list today; when one arrives, 10.0.0.0/8 in a direct rule is the normal
+// way to keep RFC1918 traffic off the tunnel, and dropping it silently would
+// break the user's own routing with nothing to show for it.
+func TestNormalizeCIDRsKeepsWideRanges(t *testing.T) {
+	got := normalizeCIDRs([]string{"10.0.0.0/8", "172.16.0.0/12"})
+	if len(got) != 2 {
+		t.Fatalf("normalizeCIDRs must not apply the block-list width guard, got %v", got)
+	}
+}
+
+// The builtin fallback must survive its own guard, or a device with no network
+// on first connect gets an empty Telegram list.
+func TestDefaultBlockedCIDRsSurviveTheWidthGuard(t *testing.T) {
+	defaults := defaultBlockedCIDRs()
+	if got := normalizeBlockedCIDRs(defaults); len(got) != len(normalizeCIDRs(defaults)) {
+		t.Fatalf("width guard dropped a builtin entry: %d of %d survived",
+			len(got), len(normalizeCIDRs(defaults)))
+	}
+}

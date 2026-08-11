@@ -40,6 +40,8 @@ import (
 // normalizeCIDRs validates and de-duplicates a list of CIDR strings. Bare IPs
 // are widened to host CIDRs (/32 or /128); blanks, comments and unparseable
 // entries are dropped. Output is canonicalised via net.IPNet.String().
+// Entries are kept whatever their prefix width. Callers handling a curated
+// block-list want normalizeBlockedCIDRs instead.
 func normalizeCIDRs(in []string) []string {
 	if len(in) == 0 {
 		return []string{}
@@ -72,6 +74,37 @@ func normalizeCIDRs(in []string) []string {
 		}
 		seen[n] = struct{}{}
 		out = append(out, n)
+	}
+	return out
+}
+
+// maxBlockedCIDRPrefixIPv4 is the widest IPv4 prefix a third-party block-list
+// entry may carry. Re:filter's discord_ips.lst ships 104.16.0.0/12 — the whole
+// of Cloudflare — and itdog's discord.lst 172.64.0.0/13. An ip_cidr rule on
+// either drags every Cloudflare-hosted service into the tunnel. /16 is the
+// widest legitimate entry we ship (194.221.0.0/16, Telegram). IPv6 is left
+// alone: a /32 there (2a0a:f280::/32) is an ordinary service allocation.
+const maxBlockedCIDRPrefixIPv4 = 16
+
+// normalizeBlockedCIDRs normalizes a curated block-list and additionally drops
+// IPv4 prefixes wider than maxBlockedCIDRPrefixIPv4.
+//
+// The guard lives here rather than inside normalizeCIDRs because it must never
+// reach a list the user supplied themselves: there a wide range is the point,
+// not a mistake. This branch has no such list yet — keeping the two functions
+// apart means adding one later cannot silently inherit the guard.
+func normalizeBlockedCIDRs(in []string) []string {
+	normalized := normalizeCIDRs(in)
+	out := make([]string, 0, len(normalized))
+	for _, s := range normalized {
+		_, ipNet, err := net.ParseCIDR(s)
+		if err != nil {
+			continue
+		}
+		if ones, bits := ipNet.Mask.Size(); bits == 32 && ones < maxBlockedCIDRPrefixIPv4 {
+			continue
+		}
+		out = append(out, s)
 	}
 	return out
 }
@@ -160,7 +193,7 @@ func parseCIDRPayload(raw []byte) []string {
 			out = append(out, s)
 		}
 	}
-	return normalizeCIDRs(out)
+	return normalizeBlockedCIDRs(out)
 }
 
 // FetchBlockedCIDRs downloads the IP-only blocked-service subnets (Telegram
@@ -204,7 +237,7 @@ func (p *HTTPBlockedListProvider) FetchBlockedCIDRs(ctx context.Context) ([]stri
 		}
 		merged = append(merged, parseCIDRPayload(body)...)
 	}
-	merged = normalizeCIDRs(merged)
+	merged = normalizeBlockedCIDRs(merged)
 	if len(merged) == 0 {
 		if lastErr != nil {
 			return nil, lastErr
@@ -229,7 +262,7 @@ func LoadBlockedCIDRsCache(path string) (BlockedCIDRsCache, error) {
 	if err := json.Unmarshal(data, &out); err != nil {
 		return out, err
 	}
-	out.CIDRs = normalizeCIDRs(out.CIDRs)
+	out.CIDRs = normalizeBlockedCIDRs(out.CIDRs)
 	if len(out.CIDRs) == 0 {
 		return out, fmt.Errorf("cidr cache is empty")
 	}
@@ -237,7 +270,7 @@ func LoadBlockedCIDRsCache(path string) (BlockedCIDRsCache, error) {
 }
 
 func SaveBlockedCIDRsCache(path string, cache BlockedCIDRsCache) error {
-	cache.CIDRs = normalizeCIDRs(cache.CIDRs)
+	cache.CIDRs = normalizeBlockedCIDRs(cache.CIDRs)
 	if len(cache.CIDRs) == 0 {
 		return fmt.Errorf("cidrs are empty")
 	}
@@ -282,7 +315,7 @@ func LoadCachedBlockedCIDRs(cachePath string) BlockedCIDRsResolveResult {
 		}
 	}
 	return BlockedCIDRsResolveResult{
-		CIDRs:  normalizeCIDRs(defaultBlockedCIDRs()),
+		CIDRs:  normalizeBlockedCIDRs(defaultBlockedCIDRs()),
 		Source: "builtin",
 	}
 }
@@ -303,7 +336,7 @@ func ResolveBlockedCIDRs(ctx context.Context, fetcher CIDRFetcher, cachePath str
 			if saveErr := SaveBlockedCIDRsCache(cachePath, cache); saveErr != nil {
 				lastErr = fmt.Errorf("save cidr cache: %w", saveErr)
 			}
-			return BlockedCIDRsResolveResult{CIDRs: normalizeCIDRs(cidrs), Source: "remote", Err: lastErr}
+			return BlockedCIDRsResolveResult{CIDRs: normalizeBlockedCIDRs(cidrs), Source: "remote", Err: lastErr}
 		}
 		lastErr = err
 	}
@@ -319,7 +352,7 @@ func ResolveBlockedCIDRs(ctx context.Context, fetcher CIDRFetcher, cachePath str
 	}
 
 	return BlockedCIDRsResolveResult{
-		CIDRs:  normalizeCIDRs(defaultBlockedCIDRs()),
+		CIDRs:  normalizeBlockedCIDRs(defaultBlockedCIDRs()),
 		Source: "builtin",
 		Err:    lastErr,
 	}
