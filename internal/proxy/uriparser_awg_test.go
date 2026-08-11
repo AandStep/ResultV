@@ -301,3 +301,42 @@ func TestAmneziaFromExtraNormalizesJMinJMax(t *testing.T) {
 		t.Fatalf("negative clamp failed: %+v", am)
 	}
 }
+
+// A pasted awg:// or wg:// line reaches us through ParseSubscriptionBody: the
+// frontend parser deliberately returns nothing for schemes it does not know, so
+// AddProxyView hands the raw text to this path instead of inventing an HTTP
+// entry out of it. Pin that contract — the paste flow is only as good as this.
+func TestParseSubscriptionBodySingleWireGuardLink(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		line string
+		want string
+	}{
+		{
+			name: "awg",
+			line: "awg://1.2.3.4:51820?private_key=PRIV&public_key=PUB&address=10.0.0.2%2F32&allowed_ips=0.0.0.0%2F0&jc=4&s1=64#local",
+			want: "AMNEZIAWG",
+		},
+		{
+			name: "wg",
+			line: "wg://1.2.3.4:51820?private_key=PRIV&public_key=PUB&address=10.0.0.2%2F32&allowed_ips=0.0.0.0%2F0#local",
+			want: "WIREGUARD",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entries, err := ParseSubscriptionBody(tc.line)
+			if err != nil {
+				t.Fatalf("ParseSubscriptionBody: %v", err)
+			}
+			if len(entries) != 1 {
+				t.Fatalf("got %d entries, want 1", len(entries))
+			}
+			if entries[0].Type != tc.want {
+				t.Fatalf("type = %q, want %q", entries[0].Type, tc.want)
+			}
+			if entries[0].IP != "1.2.3.4" || entries[0].Port != 51820 {
+				t.Fatalf("endpoint = %s:%d", entries[0].IP, entries[0].Port)
+			}
+		})
+	}
+}

@@ -189,7 +189,14 @@ const parseLine = (line) => {
     if (line.startsWith("hy2://")) return parseHysteria2(line);
     if (line.startsWith("hysteria2://")) return parseHysteria2(line);
 
-    
+    // A scheme this parser does not know (awg://, wg://, anything added later)
+    // must not reach the bare host:port branches below: they would split
+    // "awg://1.2.3.4:51820?..." on ":" and invent an HTTP proxy out of it.
+    // Returning null lets AddProxyView fall back to the Go parser, which does
+    // understand those schemes.
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(line)) return null;
+
+
     if (line.includes("@")) {
         const [server, auth] = line.split("@");
         const [ip, port] = server.split(":");

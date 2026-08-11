@@ -11,6 +11,11 @@
       "en": "In Smart mode DNS went through the tunnel, which could cause disconnects and high ping in games. Now everything that is not blocked queries your own DNS"
     },
     {
+      "type": "fix",
+      "ru": "Добавление серверов awg и wg теперь доступно по ссылкам, а не только через файлы",
+      "en": "AWG and WG servers can now be added from a link, not only from a file"
+    },
+    {
       "type": "improve",
       "ru": "Для комфортной игры теперь достаточно включить Smart режим. Быстрый выбор Battle.net в исключениях остается на случай, если у вас он не работает без ВПН",
       "en": "Smart mode on its own is now enough for comfortable gaming. The Battle.net shortcut in the exclusions stays for the case where it does not work for you without a VPN"
