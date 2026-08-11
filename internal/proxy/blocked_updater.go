@@ -137,7 +137,7 @@ func LoadCachedBlockedCIDRs(cachePath string) BlockedCIDRsResolveResult {
 		}
 	}
 	return BlockedCIDRsResolveResult{
-		CIDRs:  normalizeCIDRs(defaultBlockedCIDRs()),
+		CIDRs:  normalizeBlockedCIDRs(defaultBlockedCIDRs()),
 		Source: "builtin",
 	}
 }
@@ -173,7 +173,7 @@ func ResolveBlockedCIDRs(ctx context.Context, fetcher CIDRFetcher, cachePath str
 			if saveErr := SaveBlockedCIDRsCache(cachePath, cache); saveErr != nil {
 				lastErr = fmt.Errorf("save cidr cache: %w", saveErr)
 			}
-			return BlockedCIDRsResolveResult{CIDRs: normalizeCIDRs(cidrs), Source: "remote", Err: lastErr}
+			return BlockedCIDRsResolveResult{CIDRs: normalizeBlockedCIDRs(cidrs), Source: "remote", Err: lastErr}
 		}
 		lastErr = err
 	}
@@ -189,7 +189,7 @@ func ResolveBlockedCIDRs(ctx context.Context, fetcher CIDRFetcher, cachePath str
 	}
 
 	return BlockedCIDRsResolveResult{
-		CIDRs:  normalizeCIDRs(defaultBlockedCIDRs()),
+		CIDRs:  normalizeBlockedCIDRs(defaultBlockedCIDRs()),
 		Source: "builtin",
 		Err:    lastErr,
 	}
