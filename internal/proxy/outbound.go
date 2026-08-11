@@ -568,13 +568,33 @@ func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 		if serviceName == "" {
 			serviceName = getStringField(extra, "service_name", "")
 		}
+		// Translate Xray's serviceName semantics into an explicit gRPC path.
+		// sing-box misreads an old-school name that carries an inner slash
+		// ("host-name/hash", the scheme several providers use), which breaks
+		// every connection on such a node. Only correct with the full gRPC
+		// transport — see xrayGRPCServiceName.
+		if grpcFullTransport {
+			serviceName = xrayGRPCServiceName(serviceName)
+		}
+		// Default idle/ping timeouts when the config omits them. sing-box's gRPC
+		// client only arms HTTP/2 keepalive PINGs when idle_timeout > 0 (see
+		// v2raygrpc/client.go WithKeepaliveParams); with both unset a half-open
+		// session — the peer/ISP silently dropped the underlying TCP but sent no
+		// RST/FIN — is never detected and the transport wedges forever, taking the
+		// whole tunnel down until a manual reconnect. On mobile that half-open state
+		// is the norm, not the exception: every Wi-Fi↔LTE handover strands the old
+		// socket. 15s idle / 15s ping ack is the long-standing v2ray/xray-recommended
+		// floor: cheap on the wire, well under any server "too_many_pings" GOAWAY
+		// threshold. User-supplied values win.
 		idleTimeout := firstNonEmpty(
 			getStringField(extra, "idle_timeout", ""),
 			getStringField(extra, "idleTimeout", ""),
+			"15s",
 		)
 		pingTimeout := firstNonEmpty(
 			getStringField(extra, "ping_timeout", ""),
 			getStringField(extra, "pingTimeout", ""),
+			"15s",
 		)
 		permit := getBoolField(extra, "permit_without_stream") || getBoolField(extra, "permitWithoutStream")
 		out.Transport = &SBOutboundTransport{

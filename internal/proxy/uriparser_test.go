@@ -362,8 +362,8 @@ func TestVLESSURIGrpcServiceNameBuildsOutboundTransport(t *testing.T) {
 	if out.Transport.Type != "grpc" {
 		t.Fatalf("transport type: %s", out.Transport.Type)
 	}
-	if out.Transport.ServiceName != "api" {
-		t.Fatalf("transport service_name: %v", out.Transport.ServiceName)
+	if want := wantGRPCServiceName("api"); out.Transport.ServiceName != want {
+		t.Fatalf("transport service_name: %v, want %v", out.Transport.ServiceName, want)
 	}
 }
 
@@ -463,8 +463,8 @@ func TestTrojanURIGrpcAndTLSAliasesBuildsOutbound(t *testing.T) {
 	if out.Transport == nil || out.Transport.Type != "grpc" {
 		t.Fatalf("transport: %+v", out.Transport)
 	}
-	if out.Transport.ServiceName != "api" {
-		t.Fatalf("service_name: %v", out.Transport.ServiceName)
+	if want := wantGRPCServiceName("api"); out.Transport.ServiceName != want {
+		t.Fatalf("service_name: %v, want %v", out.Transport.ServiceName, want)
 	}
 	if out.Transport.Authority != "" {
 		t.Fatalf("authority must be empty in sing-box grpc transport, got %q", out.Transport.Authority)
@@ -514,8 +514,8 @@ func TestTrojanURINetworkGrpcParamBuildsOutbound(t *testing.T) {
 	if out.Transport == nil || out.Transport.Type != "grpc" {
 		t.Fatalf("transport: %+v", out.Transport)
 	}
-	if out.Transport.ServiceName != "api" {
-		t.Fatalf("service_name: %v", out.Transport.ServiceName)
+	if want := wantGRPCServiceName("api"); out.Transport.ServiceName != want {
+		t.Fatalf("service_name: %v, want %v", out.Transport.ServiceName, want)
 	}
 	if out.Transport.Authority != "" {
 		t.Fatalf("authority must be empty in sing-box grpc transport, got %q", out.Transport.Authority)

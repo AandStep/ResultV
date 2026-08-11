@@ -32,8 +32,10 @@ $Output = Join-Path $RepoRoot "android\libs\libbox.aar"
 $OutputDir = Split-Path -Parent $Output
 if (-not (Test-Path $OutputDir)) { New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null }
 
-# Base tags
-$Tags = "mobile,with_gvisor,with_utls,with_clash_api,with_quic,with_wireguard"
+# Base tags — shared with build-android-aar.sh so the two build paths cannot
+# drift. Behaviour is tag-dependent (see internal/proxy/grpc_transport_full.go),
+# so a path that drops a tag ships a binary nobody tested.
+$Tags = (Get-Content (Join-Path $RepoRoot "scripts\android-build-tags.txt") -Raw).Trim()
 
 if ($WithNaive) {
     $Tags += ",with_naive_outbound"

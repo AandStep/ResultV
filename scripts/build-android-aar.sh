@@ -82,8 +82,12 @@ fi
 # gomobile shells out to javac; make sure the resolved JDK is on PATH.
 PATH="${JAVA_HOME}/bin:${PATH:-}"
 
-# Base tags — always included
-TAGS="mobile,with_gvisor,with_utls,with_clash_api,with_quic,with_wireguard"
+# Base tags — always included. Kept in a file rather than inline so this
+# script, build-android-aar.ps1 and anyone running `go test`/`go vet` by hand
+# all compile the same feature set: behaviour is tag-dependent (see
+# internal/proxy/grpc_transport_full.go), and a build path that quietly drops a
+# tag ships a binary nobody tested.
+TAGS="$(tr -d ' \t\r\n' < "${REPO_ROOT}/scripts/android-build-tags.txt")"
 
 # Optional: NaiveProxy support (blocked by NDK 27.x ld.lld, see Known issues)
 if [[ "${1:-}" == "--with-naive" ]]; then
