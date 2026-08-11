@@ -148,9 +148,13 @@ type SBLog struct {
 }
 
 type SBDNS struct {
-	Servers  []SBDNSServer `json:"servers"`
-	Rules    []SBDNSRule   `json:"rules,omitempty"`
-	Strategy string        `json:"strategy,omitempty"`
+	Servers []SBDNSServer `json:"servers"`
+	Rules   []SBDNSRule   `json:"rules,omitempty"`
+	// Final names the DNS server used when no rule matches. sing-box falls
+	// back to the first server when it is empty, which is the tunnel resolver
+	// here — so this is only ever set when the traffic split says otherwise.
+	Final    string `json:"final,omitempty"`
+	Strategy string `json:"strategy,omitempty"`
 }
 
 type SBDNSServer struct {
@@ -541,6 +545,15 @@ func buildOutbounds(proxy ProxyConfig) []SBOutbound {
 	return outbounds
 }
 
+// smartRuleSetActive reports whether buildRoute registers the compiled
+// Smart-mode block-list rule-set. buildDNS references that same tag, and a DNS
+// rule pointing at an unregistered rule_set fails the start outright — so both
+// sides ask this one function instead of repeating the condition and drifting
+// apart.
+func smartRuleSetActive(cfg EngineConfig) bool {
+	return cfg.SmartMode && localSmartSRSUsable(SmartSRSPath(effectiveDataDir(cfg)))
+}
+
 func buildDNS(cfg EngineConfig) *SBDNS {
 	if cfg.Mode == ProxyModeTunnel {
 
@@ -643,6 +656,34 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 					RuleSet: tags,
 					Action:  "reject",
 				})
+			}
+		}
+
+		// Smart mode: make DNS mirror the traffic split. buildRoute sets
+		// Final="direct" here, so everything outside the block-list leaves from
+		// the user's real address — yet every lookup still exited through the
+		// tunnel. GeoDNS services (Battle.net, Akamai, game CDNs) answered for
+		// the exit node's region while the game connected directly: that
+		// mismatch is what produces the high ping, the launcher's "VPN
+		// detected", and the mid-session drops.
+		//
+		// Blocked domains keep resolving through the tunnel — a local answer
+		// for a censored domain is a poisoned answer.
+		//
+		// Endpoint transports (WireGuard/AmneziaWG) run with detour==""; their
+		// lookups already follow the route rules, so there is nothing to split
+		// and no tunnel-side server tag to point at.
+		if detour != "" && smartRuleSetActive(cfg) {
+			if tunnelTag := firstUpstreamDNSTag(servers); tunnelTag != "" {
+				dns.Rules = append(dns.Rules, SBDNSRule{
+					RuleSet: []string{smartRuleSetTag},
+					Server:  tunnelTag,
+				})
+				// Everything else lands on the system resolver, which is what
+				// restores correct GeoDNS answers. The "local" server is
+				// appended unconditionally in both server-list branches above,
+				// so this tag always resolves.
+				dns.Final = "local"
 			}
 		}
 
@@ -800,7 +841,7 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	// keeps the config ~10 KB instead of ~4.6 MB). Inline SmartBlockedDomains
 	// is the fallback and is what desktop still uses.
 	smartDataDir := effectiveDataDir(cfg)
-	smartSRS := cfg.SmartMode && localSmartSRSUsable(SmartSRSPath(smartDataDir))
+	smartSRS := smartRuleSetActive(cfg)
 
 	final := "proxy"
 	// Smart mode flips the default: only listed domains hit the proxy,
