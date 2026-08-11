@@ -7,6 +7,8 @@ import {logger} from '../models';
 import {system} from '../models';
 import {updater} from '../models';
 
+export function AckChangelog():Promise<void>;
+
 export function AddRoutingList(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<config.RoutingList>;
 
 export function AddSubscription(arg1:string,arg2:string,arg3:boolean,arg4:string,arg5:Array<string>):Promise<Array<config.ProxyEntry>>;
@@ -36,6 +38,8 @@ export function ExportConfig(arg1:string):Promise<string>;
 export function FetchSubscription(arg1:string,arg2:boolean):Promise<main.SubscriptionPreview>;
 
 export function GetAutoGroupStatus(arg1:string):Promise<main.AutoGroupStatus>;
+
+export function GetChangelog(arg1:string):Promise<main.Changelog>;
 
 export function GetConfig():Promise<config.AppConfig>;
 
@@ -96,6 +100,8 @@ export function SetMode(arg1:string):Promise<void>;
 export function SetStartInTray(arg1:boolean):Promise<void>;
 
 export function SetTrayIcon(arg1:Array<number>):Promise<void>;
+
+export function ShouldShowChangelog():Promise<boolean>;
 
 export function StartUpdate():Promise<void>;
 

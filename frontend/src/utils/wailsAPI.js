@@ -59,6 +59,9 @@ import {
   CancelUpdate,
   GetLeftoverRecoveryReport,
   ResetLeftoverReport,
+  GetChangelog,
+  ShouldShowChangelog,
+  AckChangelog,
 } from '../../wailsjs/go/main/App';
 
 export const wailsAPI = {
@@ -490,6 +493,35 @@ export const wailsAPI = {
       await ResetLeftoverReport();
     } catch (e) {
       console.error("wailsAPI.resetLeftoverReport error:", e);
+    }
+  },
+
+  // Release notes of the RUNNING build, read from the update.json embedded at
+  // compile time — not from the network. Whether they are due this launch is
+  // shouldShowChangelog's call, kept in Go so the policy has one home.
+  getChangelog: async (lang) => {
+    try {
+      return await GetChangelog(lang || "");
+    } catch (e) {
+      console.error("wailsAPI.getChangelog error:", e);
+      return null;
+    }
+  },
+
+  shouldShowChangelog: async () => {
+    try {
+      return await ShouldShowChangelog();
+    } catch (e) {
+      console.error("wailsAPI.shouldShowChangelog error:", e);
+      return false;
+    }
+  },
+
+  ackChangelog: async () => {
+    try {
+      await AckChangelog();
+    } catch (e) {
+      console.error("wailsAPI.ackChangelog error:", e);
     }
   },
 };

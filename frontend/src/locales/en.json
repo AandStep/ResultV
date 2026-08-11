@@ -501,5 +501,13 @@
   },
   "toast": {
     "autoResolveHint": "Connecting to an auto server can take longer — we're picking the best node for you."
+  },
+  "changelog": {
+    "title": "What's new",
+    "dismiss": "Got it",
+    "typeFeature": "New",
+    "typeImprove": "Improvement",
+    "typeFix": "Fix",
+    "typeOther": "Change"
   }
 }

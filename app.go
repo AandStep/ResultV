@@ -350,6 +350,10 @@ func (a *App) startup(ctx context.Context) {
 		a.log.Success("Конфигурация загружена")
 	}
 
+	// Must run right after config.Init, while WasCreatedFresh still reflects
+	// what Init found on disk.
+	a.seedChangelogVersionOnFreshInstall()
+
 	a.proxy = proxy.NewManager(a.log)
 	a.proxy.Init(a.ctx)
 	// Encrypt the persistent server-IP pin cache with the same hardware-keyed

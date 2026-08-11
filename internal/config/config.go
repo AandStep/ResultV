@@ -132,6 +132,13 @@ type AppSettings struct {
 	// RoutingListUpdateHours is the app-wide auto-update interval for
 	// user routing lists. 0/absent → 24h via EffectiveRoutingListUpdateHours.
 	RoutingListUpdateHours int `json:"routingListUpdateHours,omitempty"`
+
+	// LastChangelogVersion is the product version whose release notes the user
+	// has already seen. Empty in a config written before this field existed —
+	// which is exactly how an upgraded install is told apart from a brand-new
+	// one, since a brand-new install is seeded on first run (see
+	// Manager.WasCreatedFresh).
+	LastChangelogVersion string `json:"lastChangelogVersion,omitempty"`
 }
 
 // EffectiveDNSLeakProtection returns true unless the user has explicitly
@@ -223,6 +230,12 @@ type Manager struct {
 	crypto     *CryptoService
 	cache      AppConfig
 	loaded     bool
+
+	// createdFresh records that Init found no config file at all, i.e. this is
+	// the first run of a brand-new install rather than an upgrade over an
+	// existing one. A config that exists but fails to decrypt does NOT count as
+	// fresh — the user had the app before, we just cannot read their settings.
+	createdFresh bool
 }
 
 func NewManager(crypto *CryptoService) *Manager {
@@ -343,6 +356,16 @@ func (m *Manager) GetConfig() AppConfig {
 	return m.cache
 }
 
+// WasCreatedFresh reports whether Init started from no config file at all.
+// Used to decide whether an empty LastChangelogVersion means "brand-new
+// install, nothing to catch up on" or "upgraded from a build that predates the
+// field, so show them what changed".
+func (m *Manager) WasCreatedFresh() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.createdFresh
+}
+
 func (m *Manager) SaveConfig(cfg AppConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -401,6 +424,7 @@ func (m *Manager) loadLocked() error {
 
 			m.cache = DefaultConfig()
 			m.loaded = true
+			m.createdFresh = true
 			return nil
 		}
 		return fmt.Errorf("reading config file: %w", err)

@@ -33,6 +33,15 @@ export default {
           from: { transform: 'scaleX(1)' },
           to: { transform: 'scaleX(0)' },
         },
+        // The modal entrance every dialog in the app already asks for by class
+        // name (AppDialogModal, UpdaterModal, UpdateNotificationModal). It was
+        // never defined, so Tailwind emitted nothing and those modals simply
+        // appeared. Defining it here makes the three existing call sites behave
+        // the way they read.
+        'fade-in-up': {
+          from: { opacity: '0', transform: 'translateY(8px) scale(0.98)' },
+          to: { opacity: '1', transform: 'translateY(0) scale(1)' },
+        },
       },
       animation: {
         marquee: 'marquee 1s linear infinite alternate',
@@ -40,6 +49,7 @@ export default {
         // on its own; ToastStack overrides animation-duration per toast for the
         // ones that stay longer.
         'toast-drain': 'toast-drain 4s linear forwards',
+        'fade-in-up': 'fade-in-up 220ms ease-out both',
       }
     }
   },
