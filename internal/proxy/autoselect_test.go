@@ -106,6 +106,51 @@ func TestRankAutoCandidates_NoReachableNodesReturnsNil(t *testing.T) {
 	}
 }
 
+// TestRankAutoCandidates_Phase2CancelledFallsBackToPhase1Order pins the
+// "cancelled between phases" case from Fix 3: phase 1 succeeds (every member
+// answers), but the shared deadline is exhausted by the time phase 2 would
+// run — simulated here with a probe stub that ignores ctx entirely and just
+// sleeps past it, exactly like the real dialers do (ProbeAutoNodes checks
+// ctx.Err() only before dispatching a slot; an in-flight probe is not itself
+// cancellable). Before this fix, phase 2's slots came back at their zero
+// value, scored ended up empty, and RankAutoCandidates returned nil —
+// indistinguishable from "nothing is reachable", so the caller fell back to
+// the group head. It must instead degrade to the phase-1 (reachability-only)
+// order, which is strictly better than the group head.
+func TestRankAutoCandidates_Phase2CancelledFallsBackToPhase1Order(t *testing.T) {
+	oldTCP, oldTLS := pingTCPProbe, autoTLSProbe
+	defer func() { pingTCPProbe, autoTLSProbe = oldTCP, oldTLS }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	rtt := map[string]int64{"a": 90, "b": 10}
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) {
+		// Outlives the whole ctx deadline on purpose — this is what a real
+		// dial does: its own internal timeout, not ctx, bounds how long it
+		// runs. By the time both of these return, ctx (and therefore the
+		// phase-2 sub-context derived from it) must already be expired.
+		time.Sleep(80 * time.Millisecond)
+		return rtt[ip], true, ""
+	}
+	autoTLSProbe = func(ip string, _ int, _ string, _ []string) (int64, bool, string) {
+		t.Error("phase 2 must not dispatch once its budget is already spent")
+		return 0, false, ""
+	}
+
+	got, diag := RankAutoCandidates(ctx, mkNodes("a", "b"), "")
+
+	if got == nil {
+		t.Fatal("a phase-2 cancellation must fall back to the phase-1 order, not nil")
+	}
+	if len(got) != 2 || got[0].IP != "b" || got[1].IP != "a" {
+		t.Fatalf("want phase-1 RTT order [b(10ms), a(90ms)], got %+v", got)
+	}
+	if len(diag.Phase1) != 2 {
+		t.Fatalf("diag.Phase1 should still carry both probe rows, got %d: %+v", len(diag.Phase1), diag.Phase1)
+	}
+}
+
 func TestRankAutoCandidates_ReturnsPhase1EvenWhenNoneReachable(t *testing.T) {
 	// This is the diagnostic case that matters most: a dead AUTO group is
 	// exactly when the caller's per-member RTT/reason table needs data, so

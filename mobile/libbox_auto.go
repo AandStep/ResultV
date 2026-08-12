@@ -74,7 +74,17 @@ func InitAutoStats(dataDir string) {
 // timeoutMs bounds the whole sweep. On mobile this is on the connect critical
 // path, so the caller passes a budget rather than letting a group of dead nodes
 // hold the connect for the sum of their timeouts.
-func ResolveAutoCandidates(entryJSON, dataDir string, timeoutMs int) (string, error) {
+//
+// engineRunning states, rather than lets this function infer, whether the
+// sing-box engine is currently carrying traffic. It exists because the
+// obvious signal — the UI-facing "tunnel active" flag mobile.SetTunnelActive
+// maintains — lies during a sweep: ResultVpnService.kt flips that flag to
+// active (VpnState.set(Connecting)) before the coroutine that reaches this
+// function even starts, so gating the keyed WireGuard handshake probe on it
+// would close that probe for every AUTO resolve, including the very first
+// one before any tunnel exists — not just a re-rank of a live connection.
+// Kotlin passes BoxModule.isRunning, which reflects the engine itself.
+func ResolveAutoCandidates(entryJSON, dataDir string, timeoutMs int, engineRunning bool) (string, error) {
 	var entry config.ProxyEntry
 	if err := json.Unmarshal([]byte(entryJSON), &entry); err != nil {
 		return "", fmt.Errorf("resolve auto: parsing entry: %w", err)
@@ -97,6 +107,16 @@ func ResolveAutoCandidates(entryJSON, dataDir string, timeoutMs int) (string, er
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
 	defer cancel()
 
+	// Bracket the sweep with the caller-stated fact instead of the UI flag
+	// (see the doc comment on engineRunning above). Restore whatever was there
+	// before, on every exit from this point on — including a panic unwinding
+	// through RankAutoCandidates — so a concurrent caller (mobile.SetTunnelActive
+	// firing mid-sweep, or another resolve) is never left with a value this
+	// sweep chose rather than one it set itself.
+	prevKeyedWGAllowed := proxy.AutoKeyedWGProbeAllowed()
+	proxy.SetAutoKeyedWGProbe(!engineRunning)
+	defer proxy.SetAutoKeyedWGProbe(prevKeyedWGAllowed)
+
 	ranked, diag := proxy.RankAutoCandidates(ctx, members, previousAutoKey())
 
 	// candidateRTT pairs the millisecond figure with whether it is a real
@@ -107,16 +127,18 @@ func ResolveAutoCandidates(entryJSON, dataDir string, timeoutMs int) (string, er
 		known bool
 	}
 	rtt := map[string]candidateRTT{}
-	// Defensive seed, not the decisive value: every candidate
-	// RankAutoCandidates actually returns carries a successful phase-2 entry
-	// (internal/proxy/autoselect.go:281-334 only forwards OK results), so this
-	// phase-1 pass only matters if that contract ever loosens to let a
-	// phase-1-only result through.
+	// Seed every key from phase 1 first. Usually superseded below by phase
+	// 2's more accurate TLS-handshake figure, but NOT just a defensive
+	// fallback: when RankAutoCandidates' phase-2 budget was cancelled
+	// outright (internal/proxy/autoselect.go's alivePhase1Candidates path),
+	// it returns members straight from the phase-1 sweep with no phase-2
+	// entry at all — this seed is what gives those candidates an RTT.
 	for _, r := range diag.Phase1 {
 		rtt[r.Key] = candidateRTT{ms: r.RTTms, known: r.RTTKnown}
 	}
-	// The figure that actually reaches the caller for every returned
-	// candidate today.
+	// Phase 2's figure, when it ran and the probe succeeded, supersedes
+	// phase 1's — the more accurate measurement, and the one that reaches
+	// the caller for a normally-ranked (non-fallback) candidate.
 	for _, r := range diag.Phase2 {
 		if r.OK {
 			rtt[r.Key] = candidateRTT{ms: r.RTTms, known: r.RTTKnown}

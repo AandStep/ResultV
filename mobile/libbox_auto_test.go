@@ -34,7 +34,7 @@ func autoEnvelope(t *testing.T) string {
 }
 
 func TestResolveAutoCandidatesReturnsWellFormedJSON(t *testing.T) {
-	raw, err := ResolveAutoCandidates(autoEnvelope(t), t.TempDir(), 2000)
+	raw, err := ResolveAutoCandidates(autoEnvelope(t), t.TempDir(), 2000, false)
 	if err != nil {
 		t.Fatalf("ResolveAutoCandidates: %v", err)
 	}
@@ -57,9 +57,34 @@ func TestResolveAutoCandidatesReturnsWellFormedJSON(t *testing.T) {
 }
 
 func TestResolveAutoCandidatesRejectsNonAutoEntry(t *testing.T) {
-	_, err := ResolveAutoCandidates(`{"type":"VLESS","ip":"203.0.113.9","port":443}`, t.TempDir(), 2000)
+	_, err := ResolveAutoCandidates(`{"type":"VLESS","ip":"203.0.113.9","port":443}`, t.TempDir(), 2000, false)
 	if err == nil {
 		t.Fatal("a non-AUTO entry must be rejected, not silently resolved")
+	}
+}
+
+// TestResolveAutoCandidatesRestoresKeyedWGGate pins the "restore afterwards"
+// half of Fix 2: ResolveAutoCandidates overrides proxy's keyed-WireGuard-probe
+// gate for the duration of its own sweep, and must put back whatever value it
+// found — not the value implied by its own engineRunning argument — so a
+// concurrent caller of SetAutoKeyedWGProbe is never overwritten by a sweep
+// that has nothing to do with it.
+func TestResolveAutoCandidatesRestoresKeyedWGGate(t *testing.T) {
+	prev := proxy.AutoKeyedWGProbeAllowed()
+	t.Cleanup(func() { proxy.SetAutoKeyedWGProbe(prev) })
+
+	for _, before := range []bool{true, false} {
+		proxy.SetAutoKeyedWGProbe(before)
+		// engineRunning is the opposite of `before` on purpose: if restore were
+		// buggy and just re-derived the value from engineRunning instead of
+		// snapshotting the prior state, this would still coincidentally pass
+		// when the two happen to agree.
+		if _, err := ResolveAutoCandidates(autoEnvelope(t), t.TempDir(), 500, !before); err != nil {
+			t.Fatalf("ResolveAutoCandidates: %v", err)
+		}
+		if got := proxy.AutoKeyedWGProbeAllowed(); got != before {
+			t.Fatalf("gate not restored: started at %v, got %v after resolve", before, got)
+		}
 	}
 }
 

@@ -252,7 +252,13 @@ func sanitizeStatReason(reason string) string {
 	case "":
 		return ""
 	case "timeout", "connection_refused", "network_unreachable", "no_route_to_host",
-		"connection_closed", "connection_reset", "probe_error", "lan_bind_unavailable":
+		"connection_closed", "connection_reset", "probe_error", "lan_bind_unavailable",
+		// "connect_failed" is what ResultVpnService.kt actually reports to
+		// RecordAutoConnectOutcome on a failed BoxModule.start() (the only
+		// failure detail the connect path produces) — without it here every
+		// real connect failure collapsed to the generic "error" bucket,
+		// discarding the one signal that path bothers to give.
+		"connect_failed":
 		return reason
 	}
 	return "error"

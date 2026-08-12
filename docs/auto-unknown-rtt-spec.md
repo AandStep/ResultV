@@ -36,7 +36,7 @@ Nothing downstream repairs it. WireGuard and AmneziaWG never reach the phase-2 T
 
 Same defect, same code, different frequency.
 
-`android` added a gate that forbids the keyed WireGuard handshake probe while our own tunnel is up, because the keyed probe completes a real handshake and the server may treat it as a session reset. With a tunnel live, WireGuard nodes therefore take the keyless path — which is `PingWireGuard`, which is the sentinel path. That makes the bug fire precisely during a re-rank after a node failure, which is the worst possible moment.
+`android` added a gate that forbids the keyed WireGuard handshake probe while our own tunnel is up, because the keyed probe completes a real handshake and the server may treat it as a session reset. That gate was originally keyed off the UI-facing "tunnel active" flag, which `ResultVpnService.kt` sets to true before the coroutine that resolves an AUTO group even starts — so the gate was closed for every AUTO resolve, including the very first connect before any tunnel existed, not only a re-rank after a node failure as the phrasing here used to suggest. WireGuard nodes therefore took the keyless path — which is `PingWireGuard`, which is the sentinel path — on essentially every resolve. (A later fix rebased the gate on whether the engine is actually running rather than that UI flag; it corrects which resolves are gated, but does not change the point made here — on `android`, this sentinel path was the common case for WireGuard/AmneziaWG groups, not an edge case.)
 
 `dev` has no such gate. It reaches the same sentinel through `PingWireGuard`'s ICMP fallback: any environment where ICMP is blocked or unprivileged ICMP is unavailable. The consequence is identical; it just fires less predictably.
 

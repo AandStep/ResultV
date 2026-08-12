@@ -659,13 +659,30 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			}
 		}
 
-		// Smart mode: make DNS mirror the traffic split. buildRoute sets
-		// Final="direct" here, so everything outside the block-list leaves from
-		// the user's real address — yet every lookup still exited through the
-		// tunnel. GeoDNS services (Battle.net, Akamai, game CDNs) answered for
-		// the exit node's region while the game connected directly: that
-		// mismatch is what produces the high ping, the launcher's "VPN
-		// detected", and the mid-session drops.
+		// Smart mode: the traffic split is buildRoute's Final="direct" —
+		// everything outside the block-list leaves from the user's real
+		// address. DNS was meant to mirror that: GeoDNS services (Battle.net,
+		// Akamai, game CDNs) answer for the exit node's region while the game
+		// connects directly, and that mismatch is what produces the high ping,
+		// the launcher's "VPN detected", and the mid-session drops.
+		//
+		// Mirroring it fully means defaulting DNS to the system resolver
+		// ("local") so an unblocked lookup resolves from wherever the traffic
+		// actually leaves. That needs sing-box's PlatformInterface —
+		// specifically LocalDNSTransport, which routes the query through the
+		// platform's own resolver (on Android, netd). This app does not
+		// implement it: BoxModule.kt's localDNSTransport() returns null, so
+		// sing-box falls back to its built-in local transport, which reads
+		// /etc/resolv.conf — a file Android does not guarantee exists — and,
+		// missing that, targets 127.0.0.1:53. Setting dns.Final = "local"
+		// without LocalDNSTransport would then fail every lookup outside the
+		// block-list on any device without that file, which is worse than the
+		// GeoDNS mismatch this was meant to fix. So dns.Final is deliberately
+		// left unset below: the split stays structural (the block-list rule
+		// still exists and still points at the tunnel resolver) but inert for
+		// everything else, which falls through to sing-box's own default
+		// (servers[0], the tunnel-detour resolver) exactly as it did before
+		// this rule was added. Revisit once LocalDNSTransport is implemented.
 		//
 		// Blocked domains keep resolving through the tunnel — a local answer
 		// for a censored domain is a poisoned answer.
@@ -679,11 +696,6 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 					RuleSet: []string{smartRuleSetTag},
 					Server:  tunnelTag,
 				})
-				// Everything else lands on the system resolver, which is what
-				// restores correct GeoDNS answers. The "local" server is
-				// appended unconditionally in both server-list branches above,
-				// so this tag always resolves.
-				dns.Final = "local"
 			}
 		}
 

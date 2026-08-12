@@ -119,6 +119,18 @@ func TestNodeStatStore_RecordConnectSanitizesReasonItself(t *testing.T) {
 	}
 }
 
+// TestSanitizeStatReasonAllowsConnectFailed is the regression test for Fix 5:
+// ResultVpnService.kt reports "connect_failed" to RecordAutoConnectOutcome on
+// a failed BoxModule.start() — the only failure detail the connect path
+// produces — but it was missing from sanitizeStatReason's vocabulary, so it
+// silently collapsed to the generic "error" bucket like any unrecognised
+// free-text reason.
+func TestSanitizeStatReasonAllowsConnectFailed(t *testing.T) {
+	if got := sanitizeStatReason("connect_failed"); got != "connect_failed" {
+		t.Errorf(`sanitizeStatReason("connect_failed") = %q, want it to pass through unchanged`, got)
+	}
+}
+
 // The store must never blend the unknown-latency sentinel into the rolling
 // average — node_stats.json outlives the process, so one poisoned sample
 // would follow the node across launches.

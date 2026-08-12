@@ -30,6 +30,58 @@ import (
 // on how many nodes exist.
 const AutoMaxCandidates = 5
 
+// autoPhase1BudgetFraction is how much of the caller's remaining deadline
+// phase 1 gets to dispatch NEW probes before phase 2 gets its own share.
+// Phase 1 sweeps every member — often dozens — while phase 2 only re-probes
+// the shortlist (at most autoShortlistSize+1); giving phase 1 the larger
+// share reflects that asymmetry, while still guaranteeing phase 2 a real,
+// non-zero slice instead of whatever phase 1 happened to leave on a ctx both
+// phases used to share undivided (see autoPhaseContext).
+const autoPhase1BudgetFraction = 0.6
+
+// autoPhaseContext derives a bounded sub-context for one probing phase from
+// ctx's deadline. fraction=1.0 (used for phase 2) hands back a context
+// bounded by the SAME absolute deadline ctx already carries — i.e. the
+// remainder of the original budget, timed from ctx's own deadline rather
+// than from whenever phase 1 actually finished, so an over-budget phase 1
+// (ProbeAutoNodes checks ctx.Err() only before dispatching a slot — an
+// in-flight probe is not itself cancellable, so timeoutMs bounds dispatch,
+// not wall clock) does not also rob phase 2 of the slice it was promised.
+//
+// If ctx carries no deadline (context.Background(), as most of this
+// package's tests use, and as ResolveAutoCandidates never does — it always
+// sets one) there is no budget to divide: the phase simply runs under ctx
+// unmodified.
+func autoPhaseContext(ctx context.Context, fraction float64) (context.Context, context.CancelFunc) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return ctx, func() {}
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, time.Duration(float64(remaining)*fraction))
+}
+
+// alivePhase1Candidates converts phase 1's alive, already-RTT-sorted results
+// into the same shape RankAutoCandidates normally returns after phase 2
+// scoring. Used only when phase 2 was cancelled outright (see
+// RankAutoCandidates) — it is not a full ranking (no jitter, no failure
+// history, no TLS-blocking signal), but reachability ordered by how fast
+// each node answered is strictly better than the caller's fallback, the
+// group head, which carries none of that.
+func alivePhase1Candidates(alive []AutoProbeResult, byKey map[string]config.ProxyEntry) []config.ProxyEntry {
+	out := make([]config.ProxyEntry, 0, AutoMaxCandidates)
+	for _, r := range alive {
+		if len(out) >= AutoMaxCandidates {
+			break
+		}
+		out = append(out, byKey[r.Key])
+	}
+	return out
+}
+
 // autoShortlistSize is how many phase-1 survivors get the expensive DepthFull
 // probe. Phase 1 is cheap and wide; phase 2 is accurate and narrow.
 const autoShortlistSize = 5
@@ -255,7 +307,13 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 		byKey[AutoNodeKey(m)] = m
 	}
 
-	fast := ProbeAutoNodes(ctx, members, DepthFast)
+	// See autoPhaseContext: phase 1 is capped below the full remaining budget
+	// so phase 2 is guaranteed a real slice of it, rather than whatever an
+	// uncapped phase 1 (which sweeps every member) happens to leave.
+	phase1Ctx, cancel1 := autoPhaseContext(ctx, autoPhase1BudgetFraction)
+	defer cancel1()
+
+	fast := ProbeAutoNodes(phase1Ctx, members, DepthFast)
 	fast = dropEmptyKeyResults(fast)
 	diag.Phase1 = fast
 	for _, r := range fast {
@@ -291,7 +349,15 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 		}
 	}
 
-	full := ProbeAutoNodes(ctx, shortlist, DepthFull)
+	// Phase 2's budget is the remainder of the ORIGINAL deadline (fraction
+	// 1.0 in autoPhaseContext resolves against ctx's own deadline, not
+	// phase1Ctx's already-capped one) — not derived from how long phase 1
+	// actually took, so an over-budget phase 1 does not also consume the
+	// slice phase 2 was promised.
+	phase2Ctx, cancel2 := autoPhaseContext(ctx, 1.0)
+	defer cancel2()
+
+	full := ProbeAutoNodes(phase2Ctx, shortlist, DepthFull)
 	full = dropEmptyKeyResults(full)
 	diag.Phase2 = full
 	for _, r := range full {
@@ -304,6 +370,18 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 		}
 	}
 	if len(scored) == 0 {
+		if phase2Ctx.Err() != nil {
+			// Phase 2 never got to run, or was cut short mid-sweep — not the
+			// same fact as "every shortlist member's TLS probe actually
+			// failed". Returning nil here (as this used to, unconditionally)
+			// is indistinguishable from "nothing is reachable" to the
+			// caller, which falls back to the group head — turning AUTO off
+			// exactly when the network is too slow for phase 2, which is
+			// when a ranking matters most. Falling back to the phase-1
+			// order instead degrades to a rougher ranking, not to no
+			// ranking at all.
+			return alivePhase1Candidates(alive, byKey), diag
+		}
 		return nil, diag
 	}
 	// Score every candidate exactly once, into a parallel slice, before sorting.

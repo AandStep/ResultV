@@ -261,8 +261,20 @@ class ResultVpnService : VpnService() {
      * An AUTO profile with no cached member (e.g. after a process restart wiped
      * AutoSelection's in-memory state) falls back to the group head rather than
      * blocking the reload on a fresh probe sweep.
+     *
+     * panic defaults to the LIVE kill-switch state, not false: three callers
+     * (scheduleListReadyReload, attachBrowserAdBlockAsync,
+     * onFilterProxyUnhealthy) never pass panic explicitly, and if the kill
+     * switch is engaged when one of them fires, a reload that silently
+     * defaulted to panic=false would rebuild with route.final back to
+     * "proxy" — traffic escaping through a proxy the watchdog already judged
+     * dead — while VpnState.killSwitchEngaged stayed true, so the UI and
+     * notification both kept claiming the kill switch was holding. Reading
+     * the flow's current value here (evaluated fresh on every call, not once
+     * at some earlier point) means a reload preserves panic unless a caller
+     * deliberately overrides it.
      */
-    private fun buildConfigForReload(active: Profile, panic: Boolean = false): String? {
+    private fun buildConfigForReload(active: Profile, panic: Boolean = VpnState.killSwitchEngaged.value): String? {
         if (active.isAuto) {
             AutoSelection.currentFor(active.id)?.let { member ->
                 return BuildOptionsBuilder.buildConfigFromEntry(member.entryJson, filesDir.absolutePath, panic)

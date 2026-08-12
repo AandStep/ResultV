@@ -198,18 +198,37 @@ func ProbeAutoNodes(ctx context.Context, nodes []config.ProxyEntry, depth AutoPr
 // autoKeyedWGAllowed gates the keyed WireGuard handshake probe. The keyed probe
 // completes a real handshake, which a server may treat as a session reset — so
 // it must not run against the node whose tunnel is currently carrying traffic.
-// The mobile bindings are expected to call SetAutoKeyedWGProbe on every
-// connect and disconnect, with the polarity inverted from tunnel state:
-// mobile.SetTunnelActive(true) must translate to SetAutoKeyedWGProbe(false).
-// It defaults to allowed, so a process that never connects still gets real
-// handshake RTTs.
+//
+// Two different callers drive this flag, on two different signals:
+//   - mobile.SetTunnelActive, called on every connect/disconnect, sets it from
+//     the UI-facing tunnel-active flag. This is a default/safety net for any
+//     keyed probe that runs outside a resolve — it is NOT what an AUTO sweep
+//     should trust: ResultVpnService.kt flips the UI to Connecting (and so
+//     tunnelActive to true) before the coroutine that reaches
+//     mobile.ResolveAutoCandidates even starts, so gating a sweep on this flag
+//     closes the keyed probe for every AUTO resolve, not just re-ranks of a
+//     live connection.
+//   - mobile.ResolveAutoCandidates overrides it for the duration of its own
+//     sweep from the caller-supplied engineRunning fact (BoxModule.isRunning
+//     on the Kotlin side) instead of the UI flag above, then restores
+//     whatever value was in place before the sweep began, so it never leaves
+//     a concurrent caller looking at a value this sweep chose.
+//
+// It defaults to allowed (see init below), so a process that resolves an AUTO
+// group before ever calling SetTunnelActive still gets real handshake RTTs.
 var autoKeyedWGAllowed atomic.Bool
 
 func init() { autoKeyedWGAllowed.Store(true) }
 
 // SetAutoKeyedWGProbe is called from the mobile bindings on every connect and
-// disconnect.
+// disconnect, and internally by ResolveAutoCandidates to bracket a sweep.
 func SetAutoKeyedWGProbe(allowed bool) { autoKeyedWGAllowed.Store(allowed) }
+
+// AutoKeyedWGProbeAllowed reports the gate's current value. Exported so
+// ResolveAutoCandidates can save it before overriding the gate for its own
+// sweep and restore exactly that value afterwards, rather than guessing at
+// what a concurrent caller last set.
+func AutoKeyedWGProbeAllowed() bool { return autoKeyedWGAllowed.Load() }
 
 // autoWireGuardProbe measures a WireGuard/AmneziaWG node. With the tunnel down
 // it completes a real keyed handshake, which is the only thing that proves the

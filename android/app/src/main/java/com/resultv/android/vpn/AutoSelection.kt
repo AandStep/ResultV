@@ -84,7 +84,15 @@ object AutoSelection {
     fun resolve(profile: Profile, dataDir: String, timeoutMs: Int = 8_000): Candidate? {
         if (!profile.isAuto || profile.entryJson.isBlank()) return null
         val raw = try {
-            Mobile.resolveAutoCandidates(profile.entryJson, dataDir, timeoutMs.toLong())
+            // BoxModule.isRunning, not VpnState — VpnState.set(Connecting) fires
+            // before this coroutine starts (ResultVpnService.kt), so the
+            // UI-facing status flips "active" before a single probe has run.
+            // Gating the keyed WireGuard handshake probe on that would close it
+            // for every AUTO resolve, including the very first connect before
+            // any tunnel exists. The engine's own running state is the fact
+            // that actually matters: only a live libbox session can be knocked
+            // over by a second handshake for the same peer.
+            Mobile.resolveAutoCandidates(profile.entryJson, dataDir, timeoutMs.toLong(), BoxModule.isRunning)
         } catch (t: Throwable) {
             Log.w(TAG, "resolve failed for ${profile.name}: ${t.message}")
             return null
