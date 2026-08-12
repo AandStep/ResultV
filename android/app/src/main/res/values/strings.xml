@@ -411,7 +411,7 @@
     <string name="log_awg_knobs_dropped">AmneziaWG: the engine does not support %1$s — connecting without them. Obfuscation is weaker; if the server requires them, the handshake will not complete.</string>
     <string name="log_adblock_proxy_start_failed">Browser ad-block failed to start (%1$s) — browser uses normal routing.</string>
     <string name="log_traffic_stats_failed">Traffic statistics unavailable this session: %1$s</string>
-    <string name="log_auto_selected">AUTO: selected %1$s (%2$d ms)</string>
+    <string name="log_auto_selected">AUTO: selected %1$s (%2$s)</string>
     <string name="log_auto_failover">AUTO: node unavailable, trying %1$s</string>
 
     <!-- Subscription refresh and deep-link import logging -->

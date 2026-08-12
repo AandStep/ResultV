@@ -260,8 +260,8 @@ func TestRankAutoCandidates_CancelledProbesAreNotRecordedUnderEmptyKey(t *testin
 
 func TestScoreNode_PenalisesJitterOverRawLatency(t *testing.T) {
 	now := time.Now()
-	steady := scoreNode(AutoProbeResult{RTTms: 60, JitterMs: 2}, NodeStat{}, false, 1.0, now)
-	jumpy := scoreNode(AutoProbeResult{RTTms: 50, JitterMs: 40}, NodeStat{}, false, 1.0, now)
+	steady := scoreNode(AutoProbeResult{RTTms: 60, JitterMs: 2, RTTKnown: true}, NodeStat{}, false, 1.0, now)
+	jumpy := scoreNode(AutoProbeResult{RTTms: 50, JitterMs: 40, RTTKnown: true}, NodeStat{}, false, 1.0, now)
 
 	if jumpy <= steady {
 		t.Errorf("нестабильный узел (50ms±40) не должен обыгрывать стабильный (60ms±2): %v vs %v", jumpy, steady)
@@ -270,9 +270,9 @@ func TestScoreNode_PenalisesJitterOverRawLatency(t *testing.T) {
 
 func TestScoreNode_PenalisesConsecutiveFailuresAndCapsAtThree(t *testing.T) {
 	now := time.Now()
-	clean := scoreNode(AutoProbeResult{RTTms: 100}, NodeStat{}, false, 1.0, now)
-	three := scoreNode(AutoProbeResult{RTTms: 100}, NodeStat{ConsecFails: 3}, false, 1.0, now)
-	ten := scoreNode(AutoProbeResult{RTTms: 100}, NodeStat{ConsecFails: 10}, false, 1.0, now)
+	clean := scoreNode(AutoProbeResult{RTTms: 100, RTTKnown: true}, NodeStat{}, false, 1.0, now)
+	three := scoreNode(AutoProbeResult{RTTms: 100, RTTKnown: true}, NodeStat{ConsecFails: 3}, false, 1.0, now)
+	ten := scoreNode(AutoProbeResult{RTTms: 100, RTTKnown: true}, NodeStat{ConsecFails: 10}, false, 1.0, now)
 
 	if three <= clean {
 		t.Error("серия отказов должна ухудшать скор")
@@ -284,8 +284,8 @@ func TestScoreNode_PenalisesConsecutiveFailuresAndCapsAtThree(t *testing.T) {
 
 func TestScoreNode_RecentConnectFailurePenaltyExpires(t *testing.T) {
 	now := time.Now()
-	fresh := scoreNode(AutoProbeResult{RTTms: 100}, NodeStat{LastFailAt: now.Add(-1 * time.Minute)}, false, 1.0, now)
-	stale := scoreNode(AutoProbeResult{RTTms: 100}, NodeStat{LastFailAt: now.Add(-30 * time.Minute)}, false, 1.0, now)
+	fresh := scoreNode(AutoProbeResult{RTTms: 100, RTTKnown: true}, NodeStat{LastFailAt: now.Add(-1 * time.Minute)}, false, 1.0, now)
+	stale := scoreNode(AutoProbeResult{RTTms: 100, RTTKnown: true}, NodeStat{LastFailAt: now.Add(-30 * time.Minute)}, false, 1.0, now)
 
 	if fresh <= stale {
 		t.Error("свежий провал должен штрафоваться сильнее старого")
@@ -317,7 +317,7 @@ func TestScoreNode_ToleranceCreditIsExactlyFifty(t *testing.T) {
 
 	now := time.Now()
 	const rtt = 100.0
-	got := scoreNode(AutoProbeResult{RTTms: rtt}, NodeStat{}, true, 1.0, now)
+	got := scoreNode(AutoProbeResult{RTTms: rtt, RTTKnown: true}, NodeStat{}, true, 1.0, now)
 	want := rtt - 50.0
 
 	if got != want {
@@ -538,5 +538,30 @@ func TestRankAutoCandidates_ClassPenaltyChangesFinalOrder(t *testing.T) {
 	}
 	if got[len(got)-1].IP != "p1" {
 		t.Errorf("оштрафованный p1 (80ms*%v=%vms) должен проигрывать обоим obfs-узлам (100ms, 110ms без штрафа), получили %+v", autoBlockedClassPenalty, 80*autoBlockedClassPenalty, got)
+	}
+}
+
+// The node we could not measure must not outrank the node we measured and
+// found excellent. Before this was fixed, an unknown latency scored -1 and
+// won outright.
+func TestScoreNodeRanksUnknownRTTBelowMeasured(t *testing.T) {
+	now := time.Now()
+	unknown := scoreNode(AutoProbeResult{Key: "u", OK: true, RTTms: -1, RTTKnown: false}, NodeStat{}, false, 1.0, now)
+	measured := scoreNode(AutoProbeResult{Key: "m", OK: true, RTTms: 200, RTTKnown: true}, NodeStat{}, false, 1.0, now)
+	if !(measured < unknown) {
+		t.Fatalf("a measured 200ms node must beat an unmeasured one: measured=%v unknown=%v", measured, unknown)
+	}
+}
+
+// ...but it must still beat a node that keeps refusing to connect: unknown
+// latency is missing information, not evidence of a bad node.
+func TestScoreNodeRanksUnknownRTTAboveFailingNode(t *testing.T) {
+	now := time.Now()
+	unknown := scoreNode(AutoProbeResult{Key: "u", OK: true, RTTms: -1, RTTKnown: false}, NodeStat{}, false, 1.0, now)
+	failing := scoreNode(
+		AutoProbeResult{Key: "f", OK: true, RTTms: 20, RTTKnown: true},
+		NodeStat{ConsecFails: 2, LastFailAt: now.Add(-time.Minute)}, false, 1.0, now)
+	if !(unknown < failing) {
+		t.Fatalf("an unmeasured node must beat one that will not connect: unknown=%v failing=%v", unknown, failing)
 	}
 }

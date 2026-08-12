@@ -62,6 +62,25 @@ const (
 	autoConsecFailCap = 3
 )
 
+// autoUnknownRTTms stands in for a node that answered but could not be timed
+// (AutoProbeResult.RTTKnown false). It has to sit above any latency we would
+// actually be happy with and below the point where a node is unusable: the
+// node is not known to be slow, but preferring it over one we measured and
+// liked would be preferring ignorance. 500ms is past every RTT a node in this
+// client's rotation realistically shows, and far below the failure penalties,
+// so an unmeasured node still outranks one that will not connect.
+const autoUnknownRTTms = 500.0
+
+// effectiveRTTms is the latency the ranking should reason about — the measured
+// one, or the stand-in when there is none. Every comparison of RTTms goes
+// through here; comparing the raw field is what let the -1 sentinel win.
+func effectiveRTTms(r AutoProbeResult) float64 {
+	if !r.RTTKnown {
+		return autoUnknownRTTms
+	}
+	return float64(r.RTTms)
+}
+
 // scoreNode ranks a node; lower is better.
 //
 // Jitter is weighted double because a node that swings between 20ms and
@@ -71,7 +90,7 @@ const (
 // comes from detectClassWeights and is 1.0 unless the phase-1 sweep shows
 // plain-protocol nodes dying while obfuscated ones stay healthy.
 func scoreNode(r AutoProbeResult, st NodeStat, isCurrent bool, classWeight float64, now time.Time) float64 {
-	base := float64(r.RTTms) + 2*float64(r.JitterMs)
+	base := effectiveRTTms(r) + 2*float64(r.JitterMs)
 	score := base * classWeight
 
 	fails := st.ConsecFails
@@ -252,7 +271,7 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 	if len(alive) == 0 {
 		return nil, diag
 	}
-	sort.SliceStable(alive, func(i, j int) bool { return alive[i].RTTms < alive[j].RTTms })
+	sort.SliceStable(alive, func(i, j int) bool { return effectiveRTTms(alive[i]) < effectiveRTTms(alive[j]) })
 
 	shortlist := make([]config.ProxyEntry, 0, autoShortlistSize+1)
 	seen := make(map[string]bool, autoShortlistSize+1)

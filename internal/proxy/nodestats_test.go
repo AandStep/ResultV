@@ -118,3 +118,15 @@ func TestNodeStatStore_RecordConnectSanitizesReasonItself(t *testing.T) {
 		t.Errorf("known-vocabulary reason should pass through, got %q", got)
 	}
 }
+
+// The store must never blend the unknown-latency sentinel into the rolling
+// average — node_stats.json outlives the process, so one poisoned sample
+// would follow the node across launches.
+func TestRecordProbeIgnoresUnknownLatency(t *testing.T) {
+	s := NewNodeStatStore(t.TempDir())
+	s.RecordProbe("k", 40, 5, true, "")
+	s.RecordProbe("k", -1, 0, true, "")
+	if got := s.Get("k").EWMARTTms; got != 40 {
+		t.Fatalf("an unknown-latency sample must leave the average untouched, got %v", got)
+	}
+}

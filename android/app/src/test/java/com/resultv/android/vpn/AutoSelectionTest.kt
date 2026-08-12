@@ -1,6 +1,7 @@
 package com.resultv.android.vpn
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -42,7 +43,7 @@ class AutoSelectionTest {
         // Six candidates, one more than MAX_ATTEMPTS (5) — installed directly
         // via installForTest so no JSON parsing is involved, only the cap.
         val sixCandidates = (1..6).map {
-            AutoSelection.Candidate(key = "k$it", name = "N$it", rttMs = it * 10, entryJson = "{}")
+            AutoSelection.Candidate(key = "k$it", name = "N$it", rttMs = it * 10, rttKnown = true, entryJson = "{}")
         }
         AutoSelection.installForTest("p1", sixCandidates)
         assertEquals("k1", AutoSelection.current()?.key)
@@ -69,5 +70,18 @@ class AutoSelectionTest {
         AutoSelection.installForTest("p1", AutoSelection.parseCandidates(payload))
         assertNull(AutoSelection.currentFor("p2"))
         assertEquals("k1", AutoSelection.currentFor("p1")?.key)
+    }
+
+    @Test
+    fun `carries the rtt-known flag through parsing`() {
+        val mixed = """
+            {"candidates":[
+              {"key":"k1","name":"A","rttMs":41,"rttKnown":true,"entry":{"ip":"203.0.113.1"}},
+              {"key":"k2","name":"B","rttMs":-1,"rttKnown":false,"entry":{"ip":"203.0.113.2"}}
+            ]}
+        """.trimIndent()
+        val got = AutoSelection.parseCandidates(mixed)
+        assertTrue(got[0].rttKnown)
+        assertFalse(got[1].rttKnown)
     }
 }

@@ -526,3 +526,31 @@ func TestAutoWireGuardProbeFallsBackWhileTunnelActive(t *testing.T) {
 			keylessCalls, ok, rtt, stage)
 	}
 }
+
+// A transport probe that reports "reachable, latency unknown" (-1, the
+// sentinel PingProxyUDP returns on a read timeout) must be recorded as
+// unknown, not as a measurement of minus one millisecond.
+func TestProbeOneMarksUnknownRTT(t *testing.T) {
+	prev := pingTCPProbe
+	pingTCPProbe = func(ip string, port int) (int64, bool, string) { return -1, true, "" }
+	t.Cleanup(func() { pingTCPProbe = prev })
+
+	got := probeOne(config.ProxyEntry{IP: "203.0.113.9", Port: 443, Type: "VLESS"}, DepthFast)
+	if !got.OK {
+		t.Fatalf("an unknown-latency probe is still a reachable node: %+v", got)
+	}
+	if got.RTTKnown {
+		t.Fatalf("RTTKnown must be false when the probe reported no latency: %+v", got)
+	}
+}
+
+func TestProbeOneMarksMeasuredRTT(t *testing.T) {
+	prev := pingTCPProbe
+	pingTCPProbe = func(ip string, port int) (int64, bool, string) { return 37, true, "" }
+	t.Cleanup(func() { pingTCPProbe = prev })
+
+	got := probeOne(config.ProxyEntry{IP: "203.0.113.9", Port: 443, Type: "VLESS"}, DepthFast)
+	if !got.RTTKnown || got.RTTms != 37 {
+		t.Fatalf("a real measurement must survive intact: %+v", got)
+	}
+}

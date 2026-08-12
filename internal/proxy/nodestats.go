@@ -122,13 +122,19 @@ func (s *NodeStatStore) Get(key string) NodeStat {
 // is unencrypted on the promise that it holds no addresses, and that promise
 // should not depend on every present and future probe function remembering
 // never to interpolate one.
+//
+// A sample with a negative RTT is the "reachable but untimed" sentinel
+// (engine.go:1150) and updates nothing but LastReason: blending it in would
+// write a negative rolling average to node_stats.json, where it would outlive
+// the process and follow the node across launches. The guard lives here rather
+// than only at the call site because this file is what persists.
 func (s *NodeStatStore) RecordProbe(key string, rttMs, jitterMs int64, ok bool, reason string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	st := s.stats[key]
 	st.LastReason = sanitizeStatReason(reason)
-	if ok {
+	if ok && rttMs >= 0 {
 		if st.EWMARTTms == 0 {
 			st.EWMARTTms = float64(rttMs)
 			st.JitterMs = float64(jitterMs)
@@ -136,7 +142,7 @@ func (s *NodeStatStore) RecordProbe(key string, rttMs, jitterMs int64, ok bool, 
 			st.EWMARTTms = st.EWMARTTms*(1-nodeStatAlpha) + float64(rttMs)*nodeStatAlpha
 			st.JitterMs = st.JitterMs*(1-nodeStatAlpha) + float64(jitterMs)*nodeStatAlpha
 		}
-	} else {
+	} else if !ok {
 		st.LastFailAt = time.Now()
 	}
 	s.stats[key] = st

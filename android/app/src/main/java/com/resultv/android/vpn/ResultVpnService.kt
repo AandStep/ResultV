@@ -242,7 +242,11 @@ class ResultVpnService : VpnService() {
                 Log.w(TAG, "AUTO resolve returned no candidates — falling back to the group head")
                 return buildConfigForReload(active)
             }
-            AppLog.info(getString(R.string.log_auto_selected, member.name, member.rttMs))
+            // rttMs is Go's "reachable but could not time it" sentinel (-1) when
+            // rttKnown is false; formatting it as a number here is exactly the bug
+            // this task fixes, so render a dash instead.
+            val rttText = if (member.rttKnown) "${member.rttMs} ms" else "—"
+            AppLog.info(getString(R.string.log_auto_selected, member.name, rttText))
         }
         return buildConfigForReload(active)
     }

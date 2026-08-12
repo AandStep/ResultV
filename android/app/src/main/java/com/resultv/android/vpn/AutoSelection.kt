@@ -25,6 +25,12 @@ object AutoSelection {
         val key: String,
         val name: String,
         val rttMs: Int,
+        /**
+         * False when rttMs is not a real measurement — Go's "reachable but
+         * could not time it" sentinel, which used to reach the UI as a
+         * misleading "-1 ms". Callers must check this before formatting rttMs.
+         */
+        val rttKnown: Boolean,
         /** Marshaled ProxyEntry, fed back to the Go config builder verbatim. */
         val entryJson: String,
     )
@@ -120,6 +126,7 @@ object AutoSelection {
                         key = key,
                         name = o.optString("name"),
                         rttMs = o.optInt("rttMs"),
+                        rttKnown = o.optBoolean("rttKnown"),
                         entryJson = entry.toString(),
                     )
                 )

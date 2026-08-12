@@ -31,10 +31,11 @@ import (
 // caller feeds straight back to BuildSingBoxConfigFromEntryV2 — Kotlin never
 // rebuilds it, so a candidate cannot drift from what was measured.
 type autoCandidate struct {
-	Key   string          `json:"key"`
-	Name  string          `json:"name"`
-	RTTms int64           `json:"rttMs"`
-	Entry json.RawMessage `json:"entry"`
+	Key      string          `json:"key"`
+	Name     string          `json:"name"`
+	RTTms    int64           `json:"rttMs"`
+	RTTKnown bool            `json:"rttKnown"`
+	Entry    json.RawMessage `json:"entry"`
 }
 
 type autoResolveResult struct {
@@ -98,20 +99,27 @@ func ResolveAutoCandidates(entryJSON, dataDir string, timeoutMs int) (string, er
 
 	ranked, diag := proxy.RankAutoCandidates(ctx, members, previousAutoKey())
 
-	rtt := map[string]int64{}
+	// candidateRTT pairs the millisecond figure with whether it is a real
+	// measurement, so the two cannot drift apart as they are seeded and
+	// re-seeded below (a bare map[string]int64 would silently drop RTTKnown).
+	type candidateRTT struct {
+		ms    int64
+		known bool
+	}
+	rtt := map[string]candidateRTT{}
 	// Defensive seed, not the decisive value: every candidate
 	// RankAutoCandidates actually returns carries a successful phase-2 entry
 	// (internal/proxy/autoselect.go:281-334 only forwards OK results), so this
 	// phase-1 pass only matters if that contract ever loosens to let a
 	// phase-1-only result through.
 	for _, r := range diag.Phase1 {
-		rtt[r.Key] = r.RTTms
+		rtt[r.Key] = candidateRTT{ms: r.RTTms, known: r.RTTKnown}
 	}
 	// The figure that actually reaches the caller for every returned
 	// candidate today.
 	for _, r := range diag.Phase2 {
 		if r.OK {
-			rtt[r.Key] = r.RTTms
+			rtt[r.Key] = candidateRTT{ms: r.RTTms, known: r.RTTKnown}
 		}
 	}
 
@@ -123,10 +131,11 @@ func ResolveAutoCandidates(entryJSON, dataDir string, timeoutMs int) (string, er
 		}
 		key := proxy.AutoNodeKey(m)
 		out.Candidates = append(out.Candidates, autoCandidate{
-			Key:   key,
-			Name:  m.Name,
-			RTTms: rtt[key],
-			Entry: raw,
+			Key:      key,
+			Name:     m.Name,
+			RTTms:    rtt[key].ms,
+			RTTKnown: rtt[key].known,
+			Entry:    raw,
 		})
 	}
 	b, err := json.Marshal(out)

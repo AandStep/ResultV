@@ -61,6 +61,12 @@ type AutoProbeResult struct {
 	RTTms    int64
 	JitterMs int64
 	OK       bool
+	// RTTKnown distinguishes "reachable, and this is how long it took" from
+	// "reachable, but we could not time it". PingProxyUDP reports the second
+	// case as RTTms = -1 (engine.go:1150), a sentinel meant for a UI that
+	// renders it as a dash — arithmetic on it makes the least-known node the
+	// best-scoring one.
+	RTTKnown bool
 	Stage    string
 	Reason   string
 }
@@ -371,6 +377,7 @@ func probeOne(e config.ProxyEntry, depth AutoProbeDepth) AutoProbeResult {
 
 	rtt, ok, stage, reason := probeTransport(e)
 	res.RTTms, res.OK, res.Stage, res.Reason = rtt, ok, stage, reason
+	res.RTTKnown = ok && rtt >= 0
 	if !ok || depth == DepthFast {
 		return res
 	}
@@ -392,6 +399,7 @@ func probeOne(e config.ProxyEntry, depth AutoProbeDepth) AutoProbeResult {
 	}
 
 	res.RTTms, res.JitterMs = medianAndJitter(samples)
+	res.RTTKnown = true // a completed handshake is always a real measurement
 	res.Stage = "tls"
 	return res
 }
