@@ -2619,106 +2619,53 @@ func (a *App) setLastSelectedProxy(proxyID string) error {
 	return nil
 }
 
-// autoMemberProbe is one row of the AUTO-group diagnostic table. It holds the
-// FINAL verdict for a member — for anything phase 2 (DepthFull) re-probed,
-// that means phase 2's outcome, not phase 1's; see buildAutoMemberRows.
-type autoMemberProbe struct {
-	Name  string
-	Addr  string
-	Type  string
-	RTTms int64
-	OK    bool
-	// Stage is the probe stage the verdict came from ("tcp", "udp", "tls",
-	// ...). Only meaningful when !OK — it lets the table say a member died
-	// at the TLS handshake specifically, the failure mode finding #1's bug
-	// produced and that a bare RTT/reason pair cannot distinguish from a
-	// plain connect failure.
-	Stage  string
-	Reason string
-}
-
-// buildAutoMemberRows turns two probe phases into one row per member for the
-// diagnostic table, in phase-1 sweep order.
+// proxyLogLabel names a proxy entry for the log without exposing a
+// subscription provider's backend address.
 //
-// Phase 1 (DepthFast) alone used to be the only input here, which hid exactly
-// the failures a TLS-stage bug produces: a member that passes TCP and then
-// dies on the TLS handshake in phase 2 (DepthFull, shortlist only) would show
-// as a healthy "NNms" row while being silently absent from RankAutoCandidates'
-// output. Phase 1 already covers every member (ProbeAutoNodes runs over the
-// full list), so it seeds one row per member; phase 2 then overwrites that
-// row for whichever members it actually re-probed, since phase 2's verdict is
-// the final one for those nodes — phase 1's was only provisional.
-func buildAutoMemberRows(members []config.ProxyEntry, phase1, phase2 []proxy.AutoProbeResult) []autoMemberProbe {
-	byKey := make(map[string]config.ProxyEntry, len(members))
-	for _, m := range members {
-		byKey[proxy.AutoNodeKey(m)] = m
+// A provider's node domains and IPs are theirs, not ours to publish: the log
+// is user-visible and exportable, so one shared log hands out the whole
+// backend list. internal/proxy has enforced this from the start — every
+// address it prints sits behind `SubscriptionURL == ""` (manager.Connect,
+// BuildTunnelModeConfig's readiness line) and newSingBoxLogWriter scrubs the
+// server out of engine output — but app.go's AUTO paths printed member
+// host:port directly. This is the missing guard, in one place so the next
+// caller inherits it.
+//
+// Manual entries keep "name (host:port)": the user owns that server, already
+// sees the address in the UI, and there the address IS the diagnostic.
+func proxyLogLabel(p config.ProxyEntry) string {
+	name := strings.TrimSpace(p.Name)
+	country := strings.ToUpper(strings.TrimSpace(p.Country))
+	addr := strings.TrimSpace(p.IP)
+
+	if strings.TrimSpace(p.SubscriptionURL) == "" && addr != "" {
+		if name != "" {
+			return fmt.Sprintf("«%s» (%s:%d)", name, addr, p.Port)
+		}
+		return fmt.Sprintf("%s:%d", addr, p.Port)
 	}
 
-	rowByKey := make(map[string]autoMemberProbe, len(phase1))
-	order := make([]string, 0, len(phase1))
-	for _, r := range phase1 {
-		order = append(order, r.Key)
-		m := byKey[r.Key]
-		rowByKey[r.Key] = autoMemberProbe{
-			Name:   strings.TrimSpace(m.Name),
-			Addr:   fmt.Sprintf("%s:%d", m.IP, m.Port),
-			Type:   strings.ToUpper(m.Type),
-			RTTms:  r.RTTms,
-			OK:     r.OK,
-			Stage:  r.Stage,
-			Reason: r.Reason,
-		}
+	switch {
+	case name != "" && country != "":
+		return fmt.Sprintf("«%s» (%s)", name, country)
+	case name != "":
+		return fmt.Sprintf("«%s»", name)
+	case country != "":
+		return fmt.Sprintf("узел (%s)", country)
+	default:
+		// Nothing safe left to say. Naming the node at all beats falling back
+		// to the address, which is the one thing that must not appear.
+		return "узел подписки"
 	}
-	for _, r := range phase2 {
-		row, seen := rowByKey[r.Key]
-		if !seen {
-			// Unreachable in practice: phase 2 only ever probes phase-1
-			// survivors plus previousKey, both drawn from phase1's own
-			// members. Skip rather than invent a nameless row if it ever
-			// happens (e.g. future caller passes mismatched slices).
-			continue
-		}
-		row.RTTms = r.RTTms
-		row.OK = r.OK
-		row.Stage = r.Stage
-		row.Reason = r.Reason
-		rowByKey[r.Key] = row
-	}
-
-	rows := make([]autoMemberProbe, 0, len(order))
-	for _, k := range order {
-		rows = append(rows, rowByKey[k])
-	}
-	return rows
 }
 
-// formatAutoMemberTable renders the per-member probe results for an AUTO group.
-// It exists because the AUTO row shows a single aggregate number while its
-// members are hidden from the UI (filteredProxies) — without this table there is
-// no way to tell which member produced an implausible reading.
-func formatAutoMemberTable(autoLabel string, rows []autoMemberProbe) []string {
-	out := make([]string, 0, len(rows)+1)
-	out = append(out, fmt.Sprintf("[PROXY] AUTO «%s»: опрошено узлов: %d", autoLabel, len(rows)))
-	for i, r := range rows {
-		status := r.Reason
-		if r.OK {
-			status = fmt.Sprintf("%dms", r.RTTms)
-		} else {
-			if status == "" {
-				status = "недоступен"
-			}
-			if r.Stage == "tls" {
-				// Distinguishes an SNI/DPI-style drop (live TCP, dead TLS —
-				// see autoProbeTLSParams/probeOne) from a plain connect
-				// failure, so the pending manual verification step this
-				// table exists for doesn't mistake one for the other.
-				status = fmt.Sprintf("TLS не прошёл: %s", status)
-			}
-		}
-		out = append(out, fmt.Sprintf("[PROXY]   %d. %s [%s] %s — %s",
-			i+1, r.Name, r.Type, r.Addr, status))
-	}
-	return out
+// formatAutoPickLine reports which member an AUTO group resolved to. It is the
+// single surviving AUTO diagnostic: the per-member probe table that used to
+// accompany it listed every node's host:port and RTT, which meant a routine
+// tray click dumped the provider's entire backend list into the log.
+func formatAutoPickLine(autoLabel string, count int, pick config.ProxyEntry) string {
+	return fmt.Sprintf("[PROXY] AUTO «%s»: кандидатов %d, первый — %s",
+		strings.TrimSpace(autoLabel), count, proxyLogLabel(pick))
 }
 
 // extractAutoMembers reads the member ID list out of an AUTO head's Extra.
@@ -2948,25 +2895,12 @@ func (a *App) ResolveAutoCandidates(proxyID string) []config.ProxyEntry {
 		}
 	}
 
-	ranked, diag := proxy.RankAutoCandidates(a.ctx, members, a.getLastAutoNodeKey())
-
-	// The AUTO row shows one aggregate number while its members are hidden
-	// from the UI (filteredProxies) — without this table there is no way to
-	// tell which member produced an implausible RTT or why one dropped out.
-	// Built from diag (not package state — RankAutoCandidates no longer
-	// stashes a shared snapshot, since two concurrent callers, e.g. two tray
-	// clicks, would otherwise race over it) because after ranking we only
-	// have the survivors, not the full sweep with failure reasons. Both
-	// phases feed the table, not just phase 1: a member that passes the
-	// phase-1 TCP connect and then dies on the phase-2 TLS handshake must
-	// show that TLS failure, not a stale "healthy" phase-1 reading — see
-	// buildAutoMemberRows.
-	if a.log != nil {
-		rows := buildAutoMemberRows(members, diag.Phase1, diag.Phase2)
-		for _, line := range formatAutoMemberTable(strings.TrimSpace(head.Name), rows) {
-			a.log.Info(line)
-		}
-	}
+	// The per-member probe table that used to be logged here is gone: it
+	// printed one "name [TYPE] host:port — NNms" row per node, so a single tray
+	// click published the provider's entire backend list to a log the user can
+	// export. The diag phases it was built from are dropped with it; what a
+	// user actually needs — which node was picked — is the one line below.
+	ranked, _ := proxy.RankAutoCandidates(a.ctx, members, a.getLastAutoNodeKey())
 
 	// Cache the member entries before the identity stamp below overwrites their
 	// ID and Name. ReportAutoConnectOutcome must rebuild the exact same
@@ -3002,8 +2936,11 @@ func (a *App) ResolveAutoCandidates(proxyID string) []config.ProxyEntry {
 		out = append(out, c)
 	}
 	if a.log != nil {
-		a.log.Info(fmt.Sprintf("[PROXY] AUTO «%s»: кандидатов %d, первый — %s:%d",
-			strings.TrimSpace(head.Name), len(out), ranked[0].IP, ranked[0].Port))
+		// ranked[0], not out[0]: the loop above stamps the AUTO head's name
+		// onto every candidate, which would report the group instead of the
+		// member that won. proxyLogLabel keeps the member's own name and
+		// country while leaving its address out.
+		a.log.Info(formatAutoPickLine(head.Name, len(out), ranked[0]))
 	}
 	return out
 }
@@ -3037,8 +2974,8 @@ func (a *App) connectFromTray(proxyID string) error {
 		return fmt.Errorf("proxy %s not found", proxyID)
 	}
 	if matchCount > 1 && a.log != nil {
-		a.log.Warning(fmt.Sprintf("[TRAY] коллизия ID: %d записей делят id=%s — будет использована первая (%s %s:%d). Удалите дубликаты в списке прокси.",
-			matchCount, proxyID, selected.Name, selected.IP, selected.Port))
+		a.log.Warning(fmt.Sprintf("[TRAY] коллизия ID: %d записей делят id=%s — будет использована первая (%s). Удалите дубликаты в списке прокси.",
+			matchCount, proxyID, proxyLogLabel(*selected)))
 	}
 
 	isAuto := strings.EqualFold(selected.Type, "AUTO")
@@ -3077,12 +3014,8 @@ func (a *App) connectFromTray(proxyID string) error {
 	var lastErr error
 	for i, candidate := range candidates {
 		if i > 0 {
-			label := strings.TrimSpace(candidate.Name)
-			if label == "" {
-				label = fmt.Sprintf("%s:%d", candidate.IP, candidate.Port)
-			}
 			if a.log != nil {
-				a.log.Info(fmt.Sprintf("[TRAY] AUTO: узел не поднялся, пробуем следующий (%s)", label))
+				a.log.Info(fmt.Sprintf("[TRAY] AUTO: узел не поднялся, пробуем следующий — %s", proxyLogLabel(candidate)))
 			}
 			// Tear down only the engine here, NOT a.Disconnect(): that also
 			// disables the kill switch (app.go's Disconnect, ~line 733-736),
@@ -3175,7 +3108,7 @@ func (a *App) resolveProxyID(proxyDTO proxy.ProxyConfig) string {
 	for _, p := range cfg.Proxies {
 		if p.IP == proxyDTO.IP && p.Port == proxyDTO.Port && strings.EqualFold(p.Type, proxyDTO.Type) {
 			if a.log != nil {
-				a.log.Warning(fmt.Sprintf("[PROXY] resolveProxyID: fallback по (IP,Port,Type) для %s:%d/%s → %s (ID не передан, возможен выбор не того сервера)", proxyDTO.IP, proxyDTO.Port, proxyDTO.Type, p.ID))
+				a.log.Warning(fmt.Sprintf("[PROXY] resolveProxyID: fallback по (IP,Port,Type) для %s %s → id=%s (ID не передан, возможен выбор не того сервера)", strings.ToUpper(proxyDTO.Type), proxyLogLabel(p), p.ID))
 			}
 			return p.ID
 		}

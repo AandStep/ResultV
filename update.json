@@ -7,28 +7,8 @@
   "releaseNotes": [
     {
       "type": "fix",
-      "ru": "DNS в Smart режиме шел через туннель, из-за этого в играх могли случаться вылеты и высокий пинг. Теперь в Smart режиме все незаблокированные ресурсы обращаются к вашим DNS",
+      "ru": "Sing-box ядро очищено от лишних мусорных ошибок",
       "en": "In Smart mode DNS went through the tunnel, which could cause disconnects and high ping in games. Now everything that is not blocked queries your own DNS"
-    },
-    {
-      "type": "fix",
-      "ru": "Добавление серверов awg и wg теперь доступно по ссылкам, а не только через файлы",
-      "en": "AWG and WG servers can now be added from a link, not only from a file"
-    },
-    {
-      "type": "improve",
-      "ru": "Для комфортной игры теперь достаточно включить Smart режим. Быстрый выбор Battle.net в исключениях остается на случай, если у вас он не работает без ВПН",
-      "en": "Smart mode on its own is now enough for comfortable gaming. The Battle.net shortcut in the exclusions stays for the case where it does not work for you without a VPN"
-    },
-    {
-      "type": "improve",
-      "ru": "Auto режим теперь перебирает сервера, проверяет их доступность и выбирает лучший по пингу, подключение идет дольше, зато сервер наверняка работает",
-      "en": "Auto mode now goes through the servers, checks that each one is actually reachable and picks the best by ping. Connecting takes a little longer, but the server is sure to work"
-    },
-    {
-      "type": "improve",
-      "ru": "Обновление ядер приложения, поддержка AWG расширена до версии 3.0",
-      "en": "Updated the app cores; AWG support extended to version 3.0"
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",
