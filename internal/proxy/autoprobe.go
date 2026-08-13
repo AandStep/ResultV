@@ -218,9 +218,9 @@ func probeTransport(e config.ProxyEntry) (rtt int64, ok bool, stage, reason stri
 	switch strings.ToUpper(strings.TrimSpace(e.Type)) {
 	case "HYSTERIA2":
 		if lan {
-			rtt, ok, reason, stage = pingHysteria2LANProbe(e.IP, e.Port)
+			rtt, ok, reason, stage = pingHysteria2StrictLANProbe(e.IP, e.Port)
 		} else {
-			rtt, ok, reason, stage = pingHysteria2Probe(e.IP, e.Port)
+			rtt, ok, reason, stage = pingHysteria2StrictProbe(e.IP, e.Port)
 		}
 		return rtt, ok, stage, reason
 	case "WIREGUARD", "AMNEZIAWG":

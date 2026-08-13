@@ -111,3 +111,25 @@ func quicHandshakePingLANBind(ip string, port int) (latencyMs int64, reachable b
 	_ = conn.CloseWithError(0, "")
 	return elapsed.Milliseconds(), true, ""
 }
+
+// PingHysteria2QUICStrict is PingHysteria2QUIC without the TCP fallback, for
+// callers that are choosing a node rather than reporting host liveness to the
+// UI.
+//
+// Hysteria2 speaks UDP only, so a successful TCP connect to its port proves
+// nothing about the node — and while a TUN is up it proves less than nothing:
+// sing-tun's system stack answers the SYN locally, so the fallback succeeds in
+// a couple of milliseconds for every node in the group, reachable or not. Since
+// a real QUIC handshake costs hundreds of milliseconds, the fallback's fake
+// reading always wins an RTT-ordered ranking. Failing outright is the only
+// answer that keeps the two measurements on one scale.
+func PingHysteria2QUICStrict(ip string, port int) (latencyMs int64, reachable bool, reason, checkType string) {
+	latency, ok, r := quicHandshakeProbe(ip, port)
+	if ok {
+		return latency, true, "", "quic_handshake"
+	}
+	if r == "" {
+		r = "quic_handshake_failed"
+	}
+	return 0, false, r, "quic_handshake"
+}

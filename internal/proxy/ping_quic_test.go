@@ -217,6 +217,75 @@ func TestQUICHandshakePing_RealServer(t *testing.T) {
 	}
 }
 
+// Отбор кандидата не имеет права засчитывать TCP-коннект к UDP-порту Hysteria2:
+// он ничего не говорит о пригодности узла, а по времени всегда выигрывает у
+// честного QUIC-рукопожатия.
+func TestPingHysteria2QUICStrict_ReportsDeadWhenQUICFails(t *testing.T) {
+	oldQUIC, oldTCP := quicHandshakeProbe, pingTCPProbe
+	defer func() { quicHandshakeProbe, pingTCPProbe = oldQUIC, oldTCP }()
+
+	quicHandshakeProbe = func(_ string, _ int) (int64, bool, string) { return 0, false, "timeout" }
+	pingTCPProbe = func(_ string, _ int) (int64, bool, string) {
+		t.Error("строгая проба не должна откатываться на TCP")
+		return 4, true, ""
+	}
+
+	latency, reachable, reason, checkType := PingHysteria2QUICStrict("1.2.3.4", 443)
+	if reachable || latency != 0 {
+		t.Fatalf("ожидали недоступность, получили latency=%d reachable=%v", latency, reachable)
+	}
+	if reason != "timeout" {
+		t.Fatalf("ожидали причину timeout, получили %q", reason)
+	}
+	if checkType != "quic_handshake" {
+		t.Fatalf("ожидали checkType=quic_handshake, получили %q", checkType)
+	}
+}
+
+func TestPingHysteria2QUICStrict_ReportsHandshakeLatencyOnSuccess(t *testing.T) {
+	oldQUIC := quicHandshakeProbe
+	defer func() { quicHandshakeProbe = oldQUIC }()
+
+	quicHandshakeProbe = func(_ string, _ int) (int64, bool, string) { return 130, true, "" }
+
+	latency, reachable, reason, checkType := PingHysteria2QUICStrict("1.2.3.4", 443)
+	if !reachable || latency != 130 || reason != "" || checkType != "quic_handshake" {
+		t.Fatalf("получили latency=%d reachable=%v reason=%q checkType=%q", latency, reachable, reason, checkType)
+	}
+}
+
+func TestPingHysteria2QUICStrictLANBind_ReportsDeadWhenQUICFails(t *testing.T) {
+	oldQUIC, oldTCP := quicHandshakeLANProbe, pingLANProbe
+	defer func() { quicHandshakeLANProbe, pingLANProbe = oldQUIC, oldTCP }()
+
+	quicHandshakeLANProbe = func(_ string, _ int) (int64, bool, string) { return 0, false, "timeout" }
+	pingLANProbe = func(_ string, _ int) (int64, bool, string) {
+		t.Error("строгая LAN-bind проба не должна откатываться на TCP")
+		return 4, true, ""
+	}
+
+	_, reachable, reason, checkType := PingHysteria2QUICStrictLANBind("1.2.3.4", 443)
+	if reachable {
+		t.Fatal("ожидали недоступность")
+	}
+	if reason != "timeout" || checkType != "quic_handshake_lan_bind" {
+		t.Fatalf("получили reason=%q checkType=%q", reason, checkType)
+	}
+}
+
+// Пустая причина от QUIC-слоя не должна превращаться в пустой Reason: он
+// уходит в node_stats.json и в диагностику, где «» неотличимо от «не пробовали».
+func TestPingHysteria2QUICStrict_SubstitutesDefaultReason(t *testing.T) {
+	oldQUIC := quicHandshakeProbe
+	defer func() { quicHandshakeProbe = oldQUIC }()
+
+	quicHandshakeProbe = func(_ string, _ int) (int64, bool, string) { return 0, false, "" }
+
+	if _, _, reason, _ := PingHysteria2QUICStrict("1.2.3.4", 443); reason != "quic_handshake_failed" {
+		t.Fatalf("ожидали quic_handshake_failed, получили %q", reason)
+	}
+}
+
 func generateSelfSignedCert(t *testing.T) tls.Certificate {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

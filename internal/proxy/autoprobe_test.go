@@ -119,18 +119,19 @@ func TestProbeAutoNodes_CancelledContextLeavesZeroValueSlotsWithEmptyKey(t *test
 }
 
 func TestProbeAutoNodes_UsesHysteria2ProbeForHysteria2(t *testing.T) {
+	oldTCP, oldHY := pingTCPProbe, pingHysteria2StrictProbe
 	oldBind := autoProbeBindsToLAN
-	defer func() { autoProbeBindsToLAN = oldBind }()
+	defer func() {
+		pingTCPProbe, pingHysteria2StrictProbe = oldTCP, oldHY
+		autoProbeBindsToLAN = oldBind
+	}()
+
 	autoProbeBindsToLAN = func() bool { return false }
-
-	oldTCP, oldHY := pingTCPProbe, pingHysteria2Probe
-	defer func() { pingTCPProbe, pingHysteria2Probe = oldTCP, oldHY }()
-
 	pingTCPProbe = func(_ string, _ int) (int64, bool, string) {
 		t.Error("для HYSTERIA2 должна использоваться QUIC-проба, а не TCP")
 		return 0, false, ""
 	}
-	pingHysteria2Probe = func(_ string, _ int) (int64, bool, string, string) {
+	pingHysteria2StrictProbe = func(_ string, _ int) (int64, bool, string, string) {
 		return 25, true, "", "quic_handshake"
 	}
 

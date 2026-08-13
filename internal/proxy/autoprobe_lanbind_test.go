@@ -59,16 +59,16 @@ func TestProbeTransport_FallsBackToPlainProbesWithoutBindAddress(t *testing.T) {
 
 func TestProbeTransport_UsesLANBindForHysteria2AndWireGuard(t *testing.T) {
 	oldPick := pickLANBindIPv4
-	oldHY, oldHYLAN := pingHysteria2Probe, pingHysteria2LANProbe
+	oldHY, oldHYLAN := pingHysteria2StrictProbe, pingHysteria2StrictLANProbe
 	oldWG, oldWGLAN := pingWireGuardProbe, pingWireGuardLANProbe
 	defer func() {
 		pickLANBindIPv4 = oldPick
-		pingHysteria2Probe, pingHysteria2LANProbe = oldHY, oldHYLAN
+		pingHysteria2StrictProbe, pingHysteria2StrictLANProbe = oldHY, oldHYLAN
 		pingWireGuardProbe, pingWireGuardLANProbe = oldWG, oldWGLAN
 	}()
 
 	pickLANBindIPv4 = func() (net.IP, error) { return net.IPv4(192, 168, 1, 5), nil }
-	pingHysteria2Probe = func(_ string, _ int) (int64, bool, string, string) {
+	pingHysteria2StrictProbe = func(_ string, _ int) (int64, bool, string, string) {
 		t.Error("HYSTERIA2: ожидали LAN-bind пробу")
 		return 0, false, "", ""
 	}
@@ -76,7 +76,7 @@ func TestProbeTransport_UsesLANBindForHysteria2AndWireGuard(t *testing.T) {
 		t.Error("WIREGUARD: ожидали LAN-bind пробу")
 		return 0, false, ""
 	}
-	pingHysteria2LANProbe = func(_ string, _ int) (int64, bool, string, string) {
+	pingHysteria2StrictLANProbe = func(_ string, _ int) (int64, bool, string, string) {
 		return 11, true, "", "quic_handshake_lan_bind"
 	}
 	pingWireGuardLANProbe = func(_ string, _ int) (int64, bool, string) { return 22, true, "" }
@@ -113,5 +113,45 @@ func TestAutoProbeDialer_LeavesLocalAddrNilWithoutBindAddress(t *testing.T) {
 	pickLANBindIPv4 = func() (net.IP, error) { return nil, errors.New("no suitable LAN IPv4 for bind") }
 	if d := autoProbeDialer(4 * time.Second); d.LocalAddr != nil {
 		t.Fatalf("без bind-адреса LocalAddr должен остаться nil, получили %#v", d.LocalAddr)
+	}
+}
+
+// probeTransport обязан звать именно строгие варианты — иначе фикс живёт в
+// функции, до которой отбор не доходит.
+func TestProbeTransport_UsesStrictHysteria2Probes(t *testing.T) {
+	oldBind := autoProbeBindsToLAN
+	oldStrict, oldStrictLAN := pingHysteria2StrictProbe, pingHysteria2StrictLANProbe
+	oldLoose, oldLooseLAN := pingHysteria2Probe, pingHysteria2LANProbe
+	defer func() {
+		autoProbeBindsToLAN = oldBind
+		pingHysteria2StrictProbe, pingHysteria2StrictLANProbe = oldStrict, oldStrictLAN
+		pingHysteria2Probe, pingHysteria2LANProbe = oldLoose, oldLooseLAN
+	}()
+
+	pingHysteria2Probe = func(_ string, _ int) (int64, bool, string, string) {
+		t.Error("в отборе не должна использоваться проба с TCP-fallback")
+		return 0, false, "", ""
+	}
+	pingHysteria2LANProbe = func(_ string, _ int) (int64, bool, string, string) {
+		t.Error("в отборе не должна использоваться LAN-проба с TCP-fallback")
+		return 0, false, "", ""
+	}
+	pingHysteria2StrictProbe = func(_ string, _ int) (int64, bool, string, string) {
+		return 100, true, "", "quic_handshake"
+	}
+	pingHysteria2StrictLANProbe = func(_ string, _ int) (int64, bool, string, string) {
+		return 200, true, "", "quic_handshake_lan_bind"
+	}
+
+	node := config.ProxyEntry{IP: "1.1.1.1", Port: 443, Type: "HYSTERIA2"}
+
+	autoProbeBindsToLAN = func() bool { return true }
+	if rtt, _, stage, _ := probeTransport(node); rtt != 200 || stage != "quic_handshake_lan_bind" {
+		t.Fatalf("с bind-адресом: rtt=%d stage=%q", rtt, stage)
+	}
+
+	autoProbeBindsToLAN = func() bool { return false }
+	if rtt, _, stage, _ := probeTransport(node); rtt != 100 || stage != "quic_handshake" {
+		t.Fatalf("без bind-адреса: rtt=%d stage=%q", rtt, stage)
 	}
 }
