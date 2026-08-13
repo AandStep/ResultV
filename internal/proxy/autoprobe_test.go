@@ -13,6 +13,7 @@ import (
 )
 
 func TestProbeAutoNodes_FastReturnsResultPerNodeInInputOrder(t *testing.T) {
+	stubProbeResolver(t)
 	oldBind := autoProbeBindsToLAN
 	defer func() { autoProbeBindsToLAN = oldBind }()
 	autoProbeBindsToLAN = func() bool { return false }
@@ -56,6 +57,7 @@ func TestProbeAutoNodes_FastReturnsResultPerNodeInInputOrder(t *testing.T) {
 }
 
 func TestProbeAutoNodes_SkipsSectionAndAddresslessEntries(t *testing.T) {
+	stubProbeResolver(t)
 	oldBind := autoProbeBindsToLAN
 	defer func() { autoProbeBindsToLAN = oldBind }()
 	autoProbeBindsToLAN = func() bool { return false }
@@ -94,6 +96,7 @@ func TestProbeAutoNodes_SkipsSectionAndAddresslessEntries(t *testing.T) {
 // TestRankAutoCandidates_CancelledProbesAreNotRecordedUnderEmptyKey), so
 // something downstream must filter it rather than record or display it.
 func TestProbeAutoNodes_CancelledContextLeavesZeroValueSlotsWithEmptyKey(t *testing.T) {
+	stubProbeResolver(t)
 	oldBind := autoProbeBindsToLAN
 	defer func() { autoProbeBindsToLAN = oldBind }()
 	autoProbeBindsToLAN = func() bool { return false }
@@ -120,6 +123,7 @@ func TestProbeAutoNodes_CancelledContextLeavesZeroValueSlotsWithEmptyKey(t *test
 }
 
 func TestProbeAutoNodes_UsesHysteria2ProbeForHysteria2(t *testing.T) {
+	stubProbeResolver(t)
 	oldTCP, oldHY := pingTCPProbe, pingHysteria2StrictProbe
 	oldBind := autoProbeBindsToLAN
 	defer func() {
@@ -387,6 +391,7 @@ func TestAutoProbeTLSParams_MirrorsEngineTLSCondition(t *testing.T) {
 }
 
 func TestProbeAutoNodes_FullFailsNodeWhenTLSHandshakeFails(t *testing.T) {
+	stubProbeResolver(t)
 	oldBind := autoProbeBindsToLAN
 	defer func() { autoProbeBindsToLAN = oldBind }()
 	autoProbeBindsToLAN = func() bool { return false }
@@ -419,6 +424,7 @@ func TestProbeAutoNodes_FullFailsNodeWhenTLSHandshakeFails(t *testing.T) {
 }
 
 func TestProbeAutoNodes_FullTakesMedianAndJitterOfThreeSamples(t *testing.T) {
+	stubProbeResolver(t)
 	oldBind := autoProbeBindsToLAN
 	defer func() { autoProbeBindsToLAN = oldBind }()
 	autoProbeBindsToLAN = func() bool { return false }
@@ -461,6 +467,7 @@ func TestProbeAutoNodes_FullTakesMedianAndJitterOfThreeSamples(t *testing.T) {
 // broken index handoff (double-probe or skipped node) or a pool that isn't
 // actually bounded.
 func TestProbeAutoNodes_BoundedPoolProbesEveryNodeOnceWithinConcurrencyLimit(t *testing.T) {
+	stubProbeResolver(t)
 	oldBind := autoProbeBindsToLAN
 	defer func() { autoProbeBindsToLAN = oldBind }()
 	autoProbeBindsToLAN = func() bool { return false }
@@ -541,6 +548,7 @@ func TestProbeAutoNodes_BoundedPoolProbesEveryNodeOnceWithinConcurrencyLimit(t *
 // одной волной, пока список меньше потолка. При пуле 16 подписка на 48 узлов
 // раскладывалась на три волны, и каждая оплачивала полный таймаут заново.
 func TestProbeAutoNodes_PoolCoversAllNodesInOneWave(t *testing.T) {
+	stubProbeResolver(t)
 	oldTCP, oldBind := pingTCPProbe, autoProbeBindsToLAN
 	defer func() { pingTCPProbe, autoProbeBindsToLAN = oldTCP, oldBind }()
 	autoProbeBindsToLAN = func() bool { return false }
@@ -597,5 +605,151 @@ func TestProbeAutoNodes_PoolCoversAllNodesInOneWave(t *testing.T) {
 func TestProbeAutoNodes_PoolIsCappedAtMaxConcurrency(t *testing.T) {
 	if autoProbeMaxConcurrency != 64 {
 		t.Fatalf("ожидали потолок 64, получили %d", autoProbeMaxConcurrency)
+	}
+}
+
+// stubProbeResolver makes the sweep dial each entry's address exactly as
+// written. Fixture nodes are named "a" / "node-0", not real hostnames, so
+// without this every sweep in the suite would wait out a real DNS timeout for
+// each of them.
+func stubProbeResolver(t *testing.T) {
+	t.Helper()
+	old := autoProbeResolveHost
+	t.Cleanup(func() { autoProbeResolveHost = old })
+	autoProbeResolveHost = func(_ context.Context, host string) (string, bool) { return host, true }
+}
+
+// Провайдер выдаёт по 4-5 портов на один хост. Резолв на каждую пробу — это
+// десятки лишних лукапов и, что важнее, случайное время резолва внутри
+// измеряемого RTT: порты одного хоста получали несравнимые между собой числа.
+func TestProbeAutoNodes_ResolvesEachHostOnce(t *testing.T) {
+	oldTCP, oldBind, oldResolve := pingTCPProbe, autoProbeBindsToLAN, autoProbeResolveHost
+	defer func() {
+		pingTCPProbe, autoProbeBindsToLAN, autoProbeResolveHost = oldTCP, oldBind, oldResolve
+	}()
+	autoProbeBindsToLAN = func() bool { return false }
+
+	var mu sync.Mutex
+	lookups := map[string]int{}
+	autoProbeResolveHost = func(_ context.Context, host string) (string, bool) {
+		mu.Lock()
+		lookups[host]++
+		mu.Unlock()
+		return "10.0.0.1", true
+	}
+
+	var dialed []string
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) {
+		mu.Lock()
+		dialed = append(dialed, ip)
+		mu.Unlock()
+		return 10, true, ""
+	}
+
+	nodes := []config.ProxyEntry{
+		{ID: "1", IP: "cdn1.example.test", Port: 443, Type: "VLESS"},
+		{ID: "2", IP: "cdn1.example.test", Port: 1443, Type: "VLESS"},
+		{ID: "3", IP: "cdn1.example.test", Port: 7443, Type: "TROJAN"},
+	}
+	ProbeAutoNodes(context.Background(), nodes, DepthFast)
+
+	if lookups["cdn1.example.test"] != 1 {
+		t.Fatalf("ожидали ровно один резолв хоста, получили %d", lookups["cdn1.example.test"])
+	}
+	if len(dialed) != 3 {
+		t.Fatalf("ожидали 3 пробы, получили %d", len(dialed))
+	}
+	for _, ip := range dialed {
+		if ip != "10.0.0.1" {
+			t.Fatalf("проба должна дозваниваться по резолвнутому IP, получили %q", ip)
+		}
+	}
+}
+
+// Литеральный IP резолвить нечего.
+func TestProbeAutoNodes_DoesNotResolveLiteralIPs(t *testing.T) {
+	oldTCP, oldBind, oldResolve := pingTCPProbe, autoProbeBindsToLAN, autoProbeResolveHost
+	defer func() {
+		pingTCPProbe, autoProbeBindsToLAN, autoProbeResolveHost = oldTCP, oldBind, oldResolve
+	}()
+	autoProbeBindsToLAN = func() bool { return false }
+
+	autoProbeResolveHost = func(_ context.Context, host string) (string, bool) {
+		t.Errorf("литеральный IP %q резолвить не нужно", host)
+		return "", false
+	}
+	got := ""
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) { got = ip; return 10, true, "" }
+
+	ProbeAutoNodes(context.Background(),
+		[]config.ProxyEntry{{ID: "1", IP: "203.0.113.7", Port: 443, Type: "VLESS"}}, DepthFast)
+
+	if got != "203.0.113.7" {
+		t.Fatalf("ожидали дозвон по 203.0.113.7, получили %q", got)
+	}
+}
+
+// Не резолвится — пробуем по исходному имени, пусть с ним разбирается диалер.
+// Терять узел из-за одного неудачного лукапа нельзя.
+func TestProbeAutoNodes_FallsBackToHostnameWhenResolveFails(t *testing.T) {
+	oldTCP, oldBind, oldResolve := pingTCPProbe, autoProbeBindsToLAN, autoProbeResolveHost
+	defer func() {
+		pingTCPProbe, autoProbeBindsToLAN, autoProbeResolveHost = oldTCP, oldBind, oldResolve
+	}()
+	autoProbeBindsToLAN = func() bool { return false }
+
+	autoProbeResolveHost = func(_ context.Context, _ string) (string, bool) { return "", false }
+	got := ""
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) { got = ip; return 10, true, "" }
+
+	ProbeAutoNodes(context.Background(),
+		[]config.ProxyEntry{{ID: "1", IP: "cdn9.example.test", Port: 443, Type: "VLESS"}}, DepthFast)
+
+	if got != "cdn9.example.test" {
+		t.Fatalf("ожидали дозвон по исходному имени, получили %q", got)
+	}
+}
+
+// Резолв не имеет права влиять на ключ узла: он хеширует e.IP, и подмена
+// исходного имени на IP расколола бы историю узла в node_stats.json надвое.
+func TestProbeAutoNodes_ResolveDoesNotChangeNodeKey(t *testing.T) {
+	oldTCP, oldBind, oldResolve := pingTCPProbe, autoProbeBindsToLAN, autoProbeResolveHost
+	defer func() {
+		pingTCPProbe, autoProbeBindsToLAN, autoProbeResolveHost = oldTCP, oldBind, oldResolve
+	}()
+	autoProbeBindsToLAN = func() bool { return false }
+	autoProbeResolveHost = func(_ context.Context, _ string) (string, bool) { return "10.0.0.1", true }
+	pingTCPProbe = func(_ string, _ int) (int64, bool, string) { return 10, true, "" }
+
+	node := config.ProxyEntry{ID: "1", IP: "cdn1.example.test", Port: 443, Type: "VLESS"}
+	got := ProbeAutoNodes(context.Background(), []config.ProxyEntry{node}, DepthFast)
+
+	if len(got) != 1 || got[0].Key != AutoNodeKey(node) {
+		t.Fatalf("ключ должен считаться по исходной записи, получили %+v", got)
+	}
+}
+
+// SNI берётся из исходного имени, а не из резолвнутого IP — иначе TLS-фаза
+// перестанет видеть блокировку по SNI, ради которой она и существует.
+func TestProbeOne_TLSPhaseKeepsOriginalSNIAfterResolve(t *testing.T) {
+	oldTCP, oldTLS, oldBind := pingTCPProbe, autoTLSProbe, autoProbeBindsToLAN
+	defer func() { pingTCPProbe, autoTLSProbe, autoProbeBindsToLAN = oldTCP, oldTLS, oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+	pingTCPProbe = func(_ string, _ int) (int64, bool, string) { return 10, true, "" }
+
+	var gotHost, gotSNI string
+	autoTLSProbe = func(host string, _ int, sni string, _ []string) (int64, bool, string) {
+		gotHost, gotSNI = host, sni
+		return 30, true, ""
+	}
+
+	node := config.ProxyEntry{ID: "1", IP: "cdn1.example.test", Port: 443, Type: "TROJAN"}
+	probeOne(node, DepthFull, "10.0.0.1")
+
+	if gotHost != "10.0.0.1" {
+		t.Fatalf("TLS-проба должна дозваниваться по резолвнутому IP, получили %q", gotHost)
+	}
+	if gotSNI != "cdn1.example.test" {
+		t.Fatalf("SNI должен остаться исходным именем, получили %q", gotSNI)
 	}
 }

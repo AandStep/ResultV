@@ -40,6 +40,66 @@ import (
 // once.
 const autoProbeMaxConcurrency = 64
 
+// autoProbeResolveTimeout bounds one hostname lookup during a sweep. Past this
+// the node is probed by name and the dialer's own resolver gets a turn — losing
+// a node to a single slow lookup would be worse than an unmeasured one.
+const autoProbeResolveTimeout = 3 * time.Second
+
+// autoProbeResolveHost resolves one hostname to a single IPv4/IPv6 literal.
+// Declared as a var so tests can substitute it, matching the pingTCPProbe
+// pattern.
+var autoProbeResolveHost = func(ctx context.Context, host string) (string, bool) {
+	ctx, cancel := context.WithTimeout(ctx, autoProbeResolveTimeout)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil || len(addrs) == 0 {
+		return "", false
+	}
+	return addrs[0].IP.String(), true
+}
+
+// resolveProbeHosts resolves each distinct hostname in targets exactly once and
+// returns hostname -> literal. Hostnames that fail to resolve are absent from
+// the map; callers fall back to the name.
+//
+// Providers routinely publish four or five ports on one host, so a sweep of 48
+// nodes covers about a dozen names. Resolving per probe did that lookup work
+// dozens of times over, and — worse — folded a random slice of resolver latency
+// into each node's measured RTT, so four ports of one host came back as
+// 292/289/293/311ms instead of one comparable figure.
+func resolveProbeHosts(ctx context.Context, targets []config.ProxyEntry) map[string]string {
+	hosts := make(map[string]struct{}, len(targets))
+	for _, t := range targets {
+		h := strings.TrimSpace(t.IP)
+		if h == "" || net.ParseIP(h) != nil {
+			continue
+		}
+		hosts[h] = struct{}{}
+	}
+	if len(hosts) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(hosts))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for h := range hosts {
+		wg.Add(1)
+		go func(host string) {
+			defer wg.Done()
+			ip, ok := autoProbeResolveHost(ctx, host)
+			if !ok {
+				return
+			}
+			mu.Lock()
+			out[host] = ip
+			mu.Unlock()
+		}(h)
+	}
+	wg.Wait()
+	return out
+}
+
 type AutoProbeDepth int
 
 const (
@@ -149,6 +209,8 @@ func ProbeAutoNodes(ctx context.Context, nodes []config.ProxyEntry, depth AutoPr
 		return nil
 	}
 
+	resolved := resolveProbeHosts(ctx, targets)
+
 	out := make([]AutoProbeResult, len(targets))
 	var next int
 	var mu sync.Mutex
@@ -169,7 +231,11 @@ func ProbeAutoNodes(ctx context.Context, nodes []config.ProxyEntry, depth AutoPr
 			if ctx.Err() != nil {
 				return
 			}
-			out[i] = probeOne(targets[i], depth)
+			dialHost := strings.TrimSpace(targets[i].IP)
+			if ip, ok := resolved[dialHost]; ok {
+				dialHost = ip
+			}
+			out[i] = probeOne(targets[i], depth, dialHost)
 		}
 	}
 
@@ -215,28 +281,28 @@ func autoProbeDialer(timeout time.Duration) *net.Dialer {
 // protocol dispatch in Manager.Ping — including its choice of LAN-bound probe
 // variants, which the auto path previously skipped. See autoProbeDialer for
 // why the binding is what makes this measurement mean anything.
-func probeTransport(e config.ProxyEntry) (rtt int64, ok bool, stage, reason string) {
+func probeTransport(e config.ProxyEntry, dialHost string) (rtt int64, ok bool, stage, reason string) {
 	lan := autoProbeBindsToLAN()
 	switch strings.ToUpper(strings.TrimSpace(e.Type)) {
 	case "HYSTERIA2":
 		if lan {
-			rtt, ok, reason, stage = pingHysteria2StrictLANProbe(e.IP, e.Port)
+			rtt, ok, reason, stage = pingHysteria2StrictLANProbe(dialHost, e.Port)
 		} else {
-			rtt, ok, reason, stage = pingHysteria2StrictProbe(e.IP, e.Port)
+			rtt, ok, reason, stage = pingHysteria2StrictProbe(dialHost, e.Port)
 		}
 		return rtt, ok, stage, reason
 	case "WIREGUARD", "AMNEZIAWG":
 		if lan {
-			rtt, ok, reason = pingWireGuardLANProbe(e.IP, e.Port)
+			rtt, ok, reason = pingWireGuardLANProbe(dialHost, e.Port)
 		} else {
-			rtt, ok, reason = pingWireGuardProbe(e.IP, e.Port)
+			rtt, ok, reason = pingWireGuardProbe(dialHost, e.Port)
 		}
 		return rtt, ok, "udp", reason
 	default:
 		if lan {
-			rtt, ok, reason = pingLANProbe(e.IP, e.Port)
+			rtt, ok, reason = pingLANProbe(dialHost, e.Port)
 		} else {
-			rtt, ok, reason = pingTCPProbe(e.IP, e.Port)
+			rtt, ok, reason = pingTCPProbe(dialHost, e.Port)
 		}
 		return rtt, ok, "tcp", reason
 	}
@@ -373,10 +439,15 @@ func medianAndJitter(v []int64) (median, jitter int64) {
 	return s[len(s)/2], s[len(s)-1] - s[0]
 }
 
-func probeOne(e config.ProxyEntry, depth AutoProbeDepth) AutoProbeResult {
+// probeOne probes a single node. dialHost is what the probe actually connects
+// to — the sweep's pre-resolved literal when the entry's address is a hostname,
+// the address itself otherwise. e stays the source of truth for identity (the
+// key hashes e.IP) and for TLS parameters (the SNI must remain the hostname, or
+// the TLS stage stops seeing the SNI-based blocking it exists to detect).
+func probeOne(e config.ProxyEntry, depth AutoProbeDepth, dialHost string) AutoProbeResult {
 	res := AutoProbeResult{Key: AutoNodeKey(e)}
 
-	rtt, ok, stage, reason := probeTransport(e)
+	rtt, ok, stage, reason := probeTransport(e, dialHost)
 	res.RTTms, res.OK, res.Stage, res.Reason = rtt, ok, stage, reason
 	if !ok || depth == DepthFast {
 		return res
@@ -389,7 +460,7 @@ func probeOne(e config.ProxyEntry, depth AutoProbeDepth) AutoProbeResult {
 
 	samples := make([]int64, 0, autoProbeSamples)
 	for i := 0; i < autoProbeSamples; i++ {
-		lat, tlsOK, tlsReason := autoTLSProbe(e.IP, e.Port, sni, alpn)
+		lat, tlsOK, tlsReason := autoTLSProbe(dialHost, e.Port, sni, alpn)
 		if !tlsOK {
 			// A live TCP handshake with a dead TLS handshake is the DPI
 			// signature a bare SYN probe cannot see. Treat it as a failure.

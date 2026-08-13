@@ -28,7 +28,8 @@ func TestProbeTransport_UsesLANBindProbesWhenBindAddressAvailable(t *testing.T) 
 	}
 	pingLANProbe = func(_ string, _ int) (int64, bool, string) { return 42, true, "" }
 
-	rtt, ok, stage, _ := probeTransport(config.ProxyEntry{IP: "1.1.1.1", Port: 443, Type: "VLESS"})
+	node := config.ProxyEntry{IP: "1.1.1.1", Port: 443, Type: "VLESS"}
+	rtt, ok, stage, _ := probeTransport(node, node.IP)
 	if !ok || rtt != 42 || stage != "tcp" {
 		t.Fatalf("ожидали 42ms/OK/tcp через LAN-bind, получили rtt=%d ok=%v stage=%q", rtt, ok, stage)
 	}
@@ -51,7 +52,8 @@ func TestProbeTransport_FallsBackToPlainProbesWithoutBindAddress(t *testing.T) {
 	}
 	pingTCPProbe = func(_ string, _ int) (int64, bool, string) { return 77, true, "" }
 
-	rtt, ok, _, _ := probeTransport(config.ProxyEntry{IP: "1.1.1.1", Port: 443, Type: "VLESS"})
+	node := config.ProxyEntry{IP: "1.1.1.1", Port: 443, Type: "VLESS"}
+	rtt, ok, _, _ := probeTransport(node, node.IP)
 	if !ok || rtt != 77 {
 		t.Fatalf("ожидали 77ms/OK через обычную пробу, получили rtt=%d ok=%v", rtt, ok)
 	}
@@ -81,10 +83,12 @@ func TestProbeTransport_UsesLANBindForHysteria2AndWireGuard(t *testing.T) {
 	}
 	pingWireGuardLANProbe = func(_ string, _ int) (int64, bool, string) { return 22, true, "" }
 
-	if rtt, ok, stage, _ := probeTransport(config.ProxyEntry{IP: "1.1.1.1", Port: 443, Type: "HYSTERIA2"}); !ok || rtt != 11 || stage != "quic_handshake_lan_bind" {
+	hyNode := config.ProxyEntry{IP: "1.1.1.1", Port: 443, Type: "HYSTERIA2"}
+	if rtt, ok, stage, _ := probeTransport(hyNode, hyNode.IP); !ok || rtt != 11 || stage != "quic_handshake_lan_bind" {
 		t.Fatalf("HYSTERIA2: получили rtt=%d ok=%v stage=%q", rtt, ok, stage)
 	}
-	if rtt, ok, stage, _ := probeTransport(config.ProxyEntry{IP: "1.1.1.1", Port: 443, Type: "AMNEZIAWG"}); !ok || rtt != 22 || stage != "udp" {
+	wgNode := config.ProxyEntry{IP: "1.1.1.1", Port: 443, Type: "AMNEZIAWG"}
+	if rtt, ok, stage, _ := probeTransport(wgNode, wgNode.IP); !ok || rtt != 22 || stage != "udp" {
 		t.Fatalf("AMNEZIAWG: получили rtt=%d ok=%v stage=%q", rtt, ok, stage)
 	}
 }
@@ -146,12 +150,12 @@ func TestProbeTransport_UsesStrictHysteria2Probes(t *testing.T) {
 	node := config.ProxyEntry{IP: "1.1.1.1", Port: 443, Type: "HYSTERIA2"}
 
 	autoProbeBindsToLAN = func() bool { return true }
-	if rtt, _, stage, _ := probeTransport(node); rtt != 200 || stage != "quic_handshake_lan_bind" {
+	if rtt, _, stage, _ := probeTransport(node, node.IP); rtt != 200 || stage != "quic_handshake_lan_bind" {
 		t.Fatalf("с bind-адресом: rtt=%d stage=%q", rtt, stage)
 	}
 
 	autoProbeBindsToLAN = func() bool { return false }
-	if rtt, _, stage, _ := probeTransport(node); rtt != 100 || stage != "quic_handshake" {
+	if rtt, _, stage, _ := probeTransport(node, node.IP); rtt != 100 || stage != "quic_handshake" {
 		t.Fatalf("без bind-адреса: rtt=%d stage=%q", rtt, stage)
 	}
 }
