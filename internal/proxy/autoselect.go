@@ -17,9 +17,13 @@ package proxy
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"resultproxy-wails/internal/config"
@@ -61,6 +65,98 @@ const (
 	// an implausibly long clean streak to ever climb back.
 	autoConsecFailCap = 3
 )
+
+// autoSweepCacheTTL is how long a completed ranking stays reusable. Long enough
+// that toggling AUTO off and on does not re-pay for a full sweep, short enough
+// that a node dying mid-session is noticed on the next attempt.
+const autoSweepCacheTTL = 90 * time.Second
+
+type autoSweepCacheEntry struct {
+	key        string
+	at         time.Time
+	candidates []config.ProxyEntry
+	diag       AutoProbeDiagnostics
+}
+
+var (
+	autoSweepMu    sync.Mutex
+	autoSweepCache autoSweepCacheEntry
+)
+
+// autoSweepCacheKey folds everything that could change the answer into one
+// string: the group's membership, the node currently in use (it gets the
+// tolerance head start, so it changes the order), and the physical bind address.
+//
+// The bind address is what makes this cache safe across a network change: roam
+// to another Wi-Fi or drop to tethering and pickLANBindIPv4 returns a different
+// address, so the key differs and the stale measurements from the old link are
+// never served. That removes the need for a separate invalidation hook.
+func autoSweepCacheKey(members []config.ProxyEntry, previousKey string) string {
+	keys := make([]string, 0, len(members))
+	for _, m := range members {
+		if isProbeableNode(m) {
+			keys = append(keys, AutoNodeKey(m))
+		}
+	}
+	sort.Strings(keys)
+
+	bind := "none"
+	if ip, err := pickLANBindIPv4(); err == nil && ip != nil {
+		bind = ip.String()
+	}
+
+	h := sha1.New()
+	write := func(s string) { fmt.Fprintf(h, "%d:%s", len(s), s) }
+	write(bind)
+	write(previousKey)
+	for _, k := range keys {
+		write(k)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// ResetAutoSweepCache drops the cached ranking. Tests use it for isolation;
+// production has no caller because the bind address in the key already covers
+// network changes.
+func ResetAutoSweepCache() {
+	autoSweepMu.Lock()
+	autoSweepCache = autoSweepCacheEntry{}
+	autoSweepMu.Unlock()
+}
+
+func lookupAutoSweepCache(key string) ([]config.ProxyEntry, AutoProbeDiagnostics, bool) {
+	autoSweepMu.Lock()
+	defer autoSweepMu.Unlock()
+	if autoSweepCache.key != key || autoSweepCache.at.IsZero() {
+		return nil, AutoProbeDiagnostics{}, false
+	}
+	if time.Since(autoSweepCache.at) >= autoSweepCacheTTL {
+		return nil, AutoProbeDiagnostics{}, false
+	}
+	// Copy: callers stamp the AUTO head's ID/Name onto the entries they get
+	// back (app.go's ResolveAutoCandidates), and handing out the cache's own
+	// backing array would let that stamping rewrite the cached rows.
+	out := append([]config.ProxyEntry(nil), autoSweepCache.candidates...)
+	diag := autoSweepCache.diag
+	diag.FromCache = true
+	return out, diag, true
+}
+
+func storeAutoSweepCache(key string, candidates []config.ProxyEntry, diag AutoProbeDiagnostics) {
+	// A sweep that found nothing is not a fact worth keeping: "nobody answered"
+	// is exactly the state the next click must re-check rather than inherit.
+	if len(candidates) == 0 {
+		return
+	}
+	autoSweepMu.Lock()
+	autoSweepCache = autoSweepCacheEntry{
+		key:        key,
+		at:         time.Now(),
+		candidates: append([]config.ProxyEntry(nil), candidates...),
+		diag:       diag,
+	}
+	autoSweepMu.Unlock()
+}
 
 // scoreNode ranks a node; lower is better.
 //
@@ -185,6 +281,11 @@ func detectClassWeights(members []config.ProxyEntry, fast []AutoProbeResult) map
 type AutoProbeDiagnostics struct {
 	Phase1 []AutoProbeResult
 	Phase2 []AutoProbeResult
+
+	// FromCache marks a result served from the sweep cache rather than measured
+	// on this call. Callers that log timings need to say so, or a 0ms sweep
+	// reads as a broken measurement.
+	FromCache bool
 }
 
 // dropEmptyKeyResults removes probe slots ProbeAutoNodes left at their zero
@@ -226,6 +327,11 @@ func dropEmptyKeyResults(in []AutoProbeResult) []AutoProbeResult {
 // ordinary value ties it to the call that produced it, so there is nothing
 // left to race.
 func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previousKey string) (candidates []config.ProxyEntry, diag AutoProbeDiagnostics) {
+	cacheKey := autoSweepCacheKey(members, previousKey)
+	if cached, cachedDiag, ok := lookupAutoSweepCache(cacheKey); ok {
+		return cached, cachedDiag
+	}
+
 	// Deferred rather than a single call before the last return: this function
 	// has early returns (no reachable node in phase 1 or phase 2) and those
 	// probe results are exactly the diagnostic data worth keeping across a
@@ -332,5 +438,6 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 		}
 		out = append(out, byKey[r.result.Key])
 	}
+	storeAutoSweepCache(cacheKey, out, diag)
 	return out, diag
 }

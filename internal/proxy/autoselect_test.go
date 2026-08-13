@@ -45,6 +45,8 @@ func mkNodes(ips ...string) []config.ProxyEntry {
 }
 
 func TestRankAutoCandidates_OrdersByRTTAndCapsAtFive(t *testing.T) {
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
 	stubProbeResolver(t)
 	oldBind := autoProbeBindsToLAN
 	defer func() { autoProbeBindsToLAN = oldBind }()
@@ -81,6 +83,8 @@ func TestRankAutoCandidates_DropsUnreachableNodes(t *testing.T) {
 	// default) needs one. Without mocking autoTLSProbe too, "live" would hit
 	// the real network via an unresolvable host and be dropped as a false
 	// negative, which is not what this test is checking.
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
 	stubProbeResolver(t)
 	oldBind := autoProbeBindsToLAN
 	defer func() { autoProbeBindsToLAN = oldBind }()
@@ -107,6 +111,8 @@ func TestRankAutoCandidates_DropsUnreachableNodes(t *testing.T) {
 }
 
 func TestRankAutoCandidates_NoReachableNodesReturnsNil(t *testing.T) {
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
 	stubProbeResolver(t)
 	oldBind := autoProbeBindsToLAN
 	defer func() { autoProbeBindsToLAN = oldBind }()
@@ -125,6 +131,8 @@ func TestRankAutoCandidates_ReturnsPhase1EvenWhenNoneReachable(t *testing.T) {
 	// This is the diagnostic case that matters most: a dead AUTO group is
 	// exactly when the caller's per-member RTT/reason table needs data, so
 	// phase1 must not come back empty just because candidates did.
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
 	stubProbeResolver(t)
 	oldBind := autoProbeBindsToLAN
 	defer func() { autoProbeBindsToLAN = oldBind }()
@@ -152,6 +160,8 @@ func TestRankAutoCandidates_ReturnsPhase1EvenWhenNoneReachable(t *testing.T) {
 }
 
 func TestRankAutoCandidates_IncludesPreviousPickInShortlistEvenIfSlow(t *testing.T) {
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
 	stubProbeResolver(t)
 	oldBind := autoProbeBindsToLAN
 	defer func() { autoProbeBindsToLAN = oldBind }()
@@ -188,6 +198,8 @@ func TestRankAutoCandidates_IncludesPreviousPickInShortlistEvenIfSlow(t *testing
 }
 
 func TestRankAutoCandidates_RecordsProbeResultsInStore(t *testing.T) {
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
 	stubProbeResolver(t)
 	oldBind := autoProbeBindsToLAN
 	defer func() { autoProbeBindsToLAN = oldBind }()
@@ -258,6 +270,8 @@ func TestDropEmptyKeyResults_RemovesOnlyZeroValueSlots(t *testing.T) {
 // is exactly the scenario dropEmptyKeyResults exists to filter before either
 // recording or returning.
 func TestRankAutoCandidates_CancelledProbesAreNotRecordedUnderEmptyKey(t *testing.T) {
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
 	stubProbeResolver(t)
 	oldBind := autoProbeBindsToLAN
 	defer func() { autoProbeBindsToLAN = oldBind }()
@@ -361,6 +375,8 @@ func TestScoreNode_ToleranceCreditIsExactlyFifty(t *testing.T) {
 }
 
 func TestRankAutoCandidates_StaysOnCurrentPickWithinTolerance(t *testing.T) {
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
 	stubProbeResolver(t)
 	oldBind := autoProbeBindsToLAN
 	defer func() { autoProbeBindsToLAN = oldBind }()
@@ -492,6 +508,8 @@ func TestDetectClassWeights_TooFewPlainNodesIsNotEvidence(t *testing.T) {
 }
 
 func TestRankAutoCandidates_SwitchesToClearlyFasterRival(t *testing.T) {
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
 	stubProbeResolver(t)
 	oldBind := autoProbeBindsToLAN
 	defer func() { autoProbeBindsToLAN = oldBind }()
@@ -532,6 +550,8 @@ func TestRankAutoCandidates_SwitchesToClearlyFasterRival(t *testing.T) {
 // catch that regression: it puts the plain node in front on raw RTT alone and
 // checks the penalty flips the order.
 func TestRankAutoCandidates_ClassPenaltyChangesFinalOrder(t *testing.T) {
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
 	stubProbeResolver(t)
 	oldBind := autoProbeBindsToLAN
 	defer func() { autoProbeBindsToLAN = oldBind }()
