@@ -184,18 +184,58 @@ func ProbeAutoNodes(ctx context.Context, nodes []config.ProxyEntry, depth AutoPr
 	return out
 }
 
+// autoProbeBindsToLAN reports whether probes can be pinned to a physical
+// adapter. Declared as a var purely so the two branches stay reachable from
+// tests; production always goes through pickLANBindIPv4.
+var autoProbeBindsToLAN = func() bool {
+	ip, err := pickLANBindIPv4()
+	return err == nil && ip != nil
+}
+
+// autoProbeDialer returns a dialer pinned to the physical adapter when one is
+// available. Every probe in this file must go out that way: the sweep routinely
+// runs while a TUN is up (switching to AUTO without pausing first), and the
+// sing-tun system stack completes the local TCP handshake before it even
+// attempts the upstream dial. An unpinned probe therefore measures the local
+// stack — a few milliseconds — and reports a server we cannot reach as the
+// fastest node in the group. pickLANBindIPv4 already excludes tunnel
+// interfaces and the engine's own 172.19.0.0/30, so the address it hands back
+// is physical by construction.
+func autoProbeDialer(timeout time.Duration) *net.Dialer {
+	d := &net.Dialer{Timeout: timeout}
+	if local, err := pickLANBindIPv4(); err == nil && local != nil {
+		d.LocalAddr = &net.TCPAddr{IP: local, Port: 0}
+	}
+	return d
+}
+
 // probeTransport runs the transport-level probe for one node, mirroring the
-// protocol dispatch in Manager.Ping.
+// protocol dispatch in Manager.Ping — including its choice of LAN-bound probe
+// variants, which the auto path previously skipped. See autoProbeDialer for
+// why the binding is what makes this measurement mean anything.
 func probeTransport(e config.ProxyEntry) (rtt int64, ok bool, stage, reason string) {
+	lan := autoProbeBindsToLAN()
 	switch strings.ToUpper(strings.TrimSpace(e.Type)) {
 	case "HYSTERIA2":
-		rtt, ok, reason, stage = pingHysteria2Probe(e.IP, e.Port)
+		if lan {
+			rtt, ok, reason, stage = pingHysteria2LANProbe(e.IP, e.Port)
+		} else {
+			rtt, ok, reason, stage = pingHysteria2Probe(e.IP, e.Port)
+		}
 		return rtt, ok, stage, reason
 	case "WIREGUARD", "AMNEZIAWG":
-		rtt, ok, reason = pingWireGuardProbe(e.IP, e.Port)
+		if lan {
+			rtt, ok, reason = pingWireGuardLANProbe(e.IP, e.Port)
+		} else {
+			rtt, ok, reason = pingWireGuardProbe(e.IP, e.Port)
+		}
 		return rtt, ok, "udp", reason
 	default:
-		rtt, ok, reason = pingTCPProbe(e.IP, e.Port)
+		if lan {
+			rtt, ok, reason = pingLANProbe(e.IP, e.Port)
+		} else {
+			rtt, ok, reason = pingTCPProbe(e.IP, e.Port)
+		}
 		return rtt, ok, "tcp", reason
 	}
 }
@@ -219,7 +259,7 @@ const autoProbeSamples = 3
 // present a certificate that does not match the dialed IP.
 var autoTLSProbe = func(host string, port int, sni string, alpn []string) (int64, bool, string) {
 	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
-	dialer := &net.Dialer{Timeout: 4 * time.Second}
+	dialer := autoProbeDialer(4 * time.Second)
 	start := time.Now()
 	conn, err := tls.DialWithDialer(dialer, "tcp", addr, &tls.Config{
 		ServerName:         sni,

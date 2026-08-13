@@ -12,6 +12,10 @@ import (
 )
 
 func TestProbeAutoNodes_FastReturnsResultPerNodeInInputOrder(t *testing.T) {
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
 	old := pingTCPProbe
 	defer func() { pingTCPProbe = old }()
 
@@ -51,6 +55,10 @@ func TestProbeAutoNodes_FastReturnsResultPerNodeInInputOrder(t *testing.T) {
 }
 
 func TestProbeAutoNodes_SkipsSectionAndAddresslessEntries(t *testing.T) {
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
 	old := pingTCPProbe
 	defer func() { pingTCPProbe = old }()
 
@@ -85,6 +93,10 @@ func TestProbeAutoNodes_SkipsSectionAndAddresslessEntries(t *testing.T) {
 // TestRankAutoCandidates_CancelledProbesAreNotRecordedUnderEmptyKey), so
 // something downstream must filter it rather than record or display it.
 func TestProbeAutoNodes_CancelledContextLeavesZeroValueSlotsWithEmptyKey(t *testing.T) {
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
 	old := pingTCPProbe
 	defer func() { pingTCPProbe = old }()
 	pingTCPProbe = func(_ string, _ int) (int64, bool, string) {
@@ -107,6 +119,10 @@ func TestProbeAutoNodes_CancelledContextLeavesZeroValueSlotsWithEmptyKey(t *test
 }
 
 func TestProbeAutoNodes_UsesHysteria2ProbeForHysteria2(t *testing.T) {
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
 	oldTCP, oldHY := pingTCPProbe, pingHysteria2Probe
 	defer func() { pingTCPProbe, pingHysteria2Probe = oldTCP, oldHY }()
 
@@ -369,6 +385,10 @@ func TestAutoProbeTLSParams_MirrorsEngineTLSCondition(t *testing.T) {
 }
 
 func TestProbeAutoNodes_FullFailsNodeWhenTLSHandshakeFails(t *testing.T) {
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
 	oldTCP, oldTLS := pingTCPProbe, autoTLSProbe
 	defer func() { pingTCPProbe, autoTLSProbe = oldTCP, oldTLS }()
 
@@ -397,6 +417,10 @@ func TestProbeAutoNodes_FullFailsNodeWhenTLSHandshakeFails(t *testing.T) {
 }
 
 func TestProbeAutoNodes_FullTakesMedianAndJitterOfThreeSamples(t *testing.T) {
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
 	oldTCP, oldTLS := pingTCPProbe, autoTLSProbe
 	defer func() { pingTCPProbe, autoTLSProbe = oldTCP, oldTLS }()
 
@@ -432,6 +456,10 @@ func TestProbeAutoNodes_FullTakesMedianAndJitterOfThreeSamples(t *testing.T) {
 // can catch a broken index handoff (double-probe or skipped node) or a pool
 // that isn't actually bounded.
 func TestProbeAutoNodes_BoundedPoolProbesEveryNodeOnceWithinConcurrencyLimit(t *testing.T) {
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
 	oldTCP := pingTCPProbe
 	defer func() { pingTCPProbe = oldTCP }()
 
