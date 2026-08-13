@@ -17,6 +17,9 @@ package proxy
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -138,5 +141,62 @@ func TestRunPostStartProbe_Hysteria2ProxyModeUsesPlainLivenessProbe(t *testing.T
 	}
 	if !plainCalled {
 		t.Fatal("обычная проба не вызвана")
+	}
+}
+
+// Один медленный адрес не имеет права задерживать вердикт: при
+// последовательном обходе одна попытка стоила до 9 с и вылетала за
+// восьмисекундный бюджет, из-за чего pollProbe не делал ни одного
+// повтора.
+func TestProbeHTTPThroughProxy_RacesTargetsAndReturnsOnFirstSuccess(t *testing.T) {
+	var slowHits, fastHits int32
+
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&slowHits, 1)
+		time.Sleep(2 * time.Second)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer slow.Close()
+	fast := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&fastHits, 1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer fast.Close()
+
+	oldURLs := probeTargetURLs
+	defer func() { probeTargetURLs = oldURLs }()
+	probeTargetURLs = func() []string { return []string{slow.URL, slow.URL, fast.URL} }
+
+	start := time.Now()
+	ok, reason := probeHTTPThroughProxy("")
+	elapsed := time.Since(start)
+
+	if !ok {
+		t.Fatalf("ожидали успех, получили reason=%q", reason)
+	}
+	if elapsed > 1500*time.Millisecond {
+		t.Fatalf("вердикт занял %v — адреса опрашиваются последовательно", elapsed)
+	}
+	if atomic.LoadInt32(&fastHits) == 0 {
+		t.Fatal("быстрый адрес не опрошен")
+	}
+}
+
+// Когда не отвечает никто, должна вернуться причина, а не пустая строка.
+func TestProbeHTTPThroughProxy_ReturnsReasonWhenAllTargetsFail(t *testing.T) {
+	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close() // порт закрыт — соединение будет отвергнуто
+
+	oldURLs := probeTargetURLs
+	defer func() { probeTargetURLs = oldURLs }()
+	probeTargetURLs = func() []string { return []string{deadURL, deadURL} }
+
+	ok, reason := probeHTTPThroughProxy("")
+	if ok {
+		t.Fatal("ожидали неудачу")
+	}
+	if reason == "" {
+		t.Fatal("ожидали непустую причину")
 	}
 }

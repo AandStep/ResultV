@@ -208,6 +208,10 @@ func tunnelProbeURLs() []string {
 	return out
 }
 
+// probeTargetURLs is tunnelProbeURLs behind a var so tests can point the probe
+// at local servers instead of the real connectivity-check endpoints.
+var probeTargetURLs = tunnelProbeURLs
+
 func NewManager(log *logger.Logger) *Manager {
 	router := NewRouter()
 	engine := NewSingBoxEngine(log)
@@ -1736,38 +1740,78 @@ func runPostStartProbe(ctx context.Context, proxyTypeLower, ip string, port, loc
 }
 
 func probeHTTPThroughProxy(proxyAddr string) (bool, string) {
-	proxyURL, _ := url.Parse("http://" + proxyAddr)
 	// Short per-attempt timeouts: this runs only on the connect warm-up path,
-	// driven by pollProbe which re-tries every 250ms up to an 8s deadline. A
-	// working link answers generate_204 in well under a second; a stalled
-	// attempt should yield to the next poll quickly rather than block for 10s.
-	client := &http.Client{
-		Timeout: 3 * time.Second,
-		Transport: &http.Transport{
-			Proxy: http.ProxyURL(proxyURL),
-			DialContext: (&net.Dialer{
-				Timeout: 2 * time.Second,
-			}).DialContext,
-			TLSHandshakeTimeout: 2 * time.Second,
-		},
+	// driven by pollProbe which re-tries every 250ms up to an 8s deadline.
+	//
+	// The targets are raced rather than walked in order. Sequentially, one
+	// attempt cost up to 3s x len(targets) — more than the whole 8s budget —
+	// so the first attempt blew the deadline and pollProbe never got to retry
+	// at all: the polling machinery degenerated into a single slow pass. Raced,
+	// an attempt costs one timeout, a healthy link is confirmed by whichever
+	// endpoint answers first, and the retry loop works as designed.
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout: 2 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout: 2 * time.Second,
+		DisableKeepAlives:   true,
+	}
+	if proxyAddr != "" {
+		if proxyURL, err := url.Parse("http://" + proxyAddr); err == nil {
+			transport.Proxy = http.ProxyURL(proxyURL)
+		}
+	}
+	client := &http.Client{Timeout: 3 * time.Second, Transport: transport}
+
+	targets := probeTargetURLs()
+	if len(targets) == 0 {
+		return false, "no probe targets"
 	}
 
-	targets := tunnelProbeURLs()
-	lastReason := ""
+	type probeOutcome struct {
+		ok     bool
+		reason string
+	}
+	results := make(chan probeOutcome, len(targets))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	for _, target := range targets {
-		resp, err := client.Get(target)
-		if err != nil {
-			lastReason = pingReasonFromError(err)
-			continue
-		}
-		_ = resp.Body.Close()
-		// Любой HTTP-ответ (включая 5xx) через прокси означает что туннель работает.
-		// 502/503/504 от connectivity-check endpoint'ов — норма при работе через прокси.
-		// Только 407 (Proxy Auth Required) означает что прокси сам не принял запрос.
-		if isProxyProbeResponseAcceptable(resp.StatusCode) {
+		go func(target string) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+			if err != nil {
+				results <- probeOutcome{false, "bad probe url"}
+				return
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				results <- probeOutcome{false, pingReasonFromError(err)}
+				return
+			}
+			_ = resp.Body.Close()
+			// Любой HTTP-ответ (включая 5xx) через прокси означает что туннель работает.
+			// 502/503/504 от connectivity-check endpoint'ов — норма при работе через прокси.
+			// Только 407 (Proxy Auth Required) означает что прокси сам не принял запрос.
+			if isProxyProbeResponseAcceptable(resp.StatusCode) {
+				results <- probeOutcome{true, ""}
+				return
+			}
+			results <- probeOutcome{false, fmt.Sprintf("unexpected status %d", resp.StatusCode)}
+		}(target)
+	}
+
+	lastReason := ""
+	for i := 0; i < len(targets); i++ {
+		r := <-results
+		if r.ok {
+			// cancel (deferred) tears down the losers; their goroutines exit on
+			// the cancelled request context and their sends land in the buffered
+			// channel, so nothing leaks.
 			return true, ""
 		}
-		lastReason = fmt.Sprintf("unexpected status %d from %s", resp.StatusCode, target)
+		if r.reason != "" {
+			lastReason = r.reason
+		}
 	}
 	if lastReason == "" {
 		lastReason = "http probe failed"
