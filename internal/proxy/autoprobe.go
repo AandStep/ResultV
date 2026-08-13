@@ -32,11 +32,13 @@ import (
 	"resultproxy-wails/internal/config"
 )
 
-// autoProbeConcurrency bounds in-flight probes. Probes are network-bound and
-// spend nearly all their time on timeouts, so a bounded pool turns
-// nodes×timeout into ~nodes/16×timeout. Matches PING_CONCURRENCY in
-// frontend/src/hooks/useDaemonPing.js so both sweeps behave the same.
-const autoProbeConcurrency = 16
+// autoProbeMaxConcurrency caps in-flight probes. Probes are network-bound and
+// spend nearly all their time waiting on timeouts, so the pool should cover the
+// whole group in one wave: at the previous value of 16 a 48-node subscription
+// took three waves and paid the full timeout in each. The cap only exists so a
+// several-hundred-node subscription does not open several hundred sockets at
+// once.
+const autoProbeMaxConcurrency = 64
 
 type AutoProbeDepth int
 
@@ -171,7 +173,7 @@ func ProbeAutoNodes(ctx context.Context, nodes []config.ProxyEntry, depth AutoPr
 		}
 	}
 
-	pool := autoProbeConcurrency
+	pool := autoProbeMaxConcurrency
 	if pool > len(targets) {
 		pool = len(targets)
 	}

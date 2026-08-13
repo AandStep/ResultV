@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -449,7 +450,7 @@ func TestProbeAutoNodes_FullTakesMedianAndJitterOfThreeSamples(t *testing.T) {
 }
 
 // TestProbeAutoNodes_BoundedPoolProbesEveryNodeOnceWithinConcurrencyLimit
-// exercises the >16-node path that autoProbeConcurrency exists for. All other
+// exercises the >16-node path that autoProbeMaxConcurrency exists for. All other
 // tests in this file use <=3 nodes, where pool == len(targets) and each worker
 // claims exactly one item — the claim loop that hands out work to a pool
 // smaller than the target count never runs a second lap. With 40 nodes and a
@@ -518,8 +519,8 @@ func TestProbeAutoNodes_BoundedPoolProbesEveryNodeOnceWithinConcurrencyLimit(t *
 	}
 
 	finalPeak := atomic.LoadInt32(&peak)
-	if finalPeak > autoProbeConcurrency {
-		t.Errorf("peak concurrent in-flight probes = %d, want <= autoProbeConcurrency (%d)", finalPeak, autoProbeConcurrency)
+	if finalPeak > autoProbeMaxConcurrency {
+		t.Errorf("peak concurrent in-flight probes = %d, want <= autoProbeMaxConcurrency (%d)", finalPeak, autoProbeMaxConcurrency)
 	}
 	if finalPeak <= 1 {
 		t.Errorf("peak concurrent in-flight probes = %d, want > 1 — a serial implementation would also pass at 1, proving nothing about the pool", finalPeak)
@@ -530,5 +531,68 @@ func TestProbeAutoNodes_BoundedPoolProbesEveryNodeOnceWithinConcurrencyLimit(t *
 		if got[i].Key != want {
 			t.Errorf("result[%d].Key = %q, want %q (results not in input order)", i, got[i].Key, want)
 		}
+	}
+}
+
+// Пробы стоят на таймаутах, а не на CPU: пул обязан покрывать весь список
+// одной волной, пока список меньше потолка. При пуле 16 подписка на 48 узлов
+// раскладывалась на три волны, и каждая оплачивала полный таймаут заново.
+func TestProbeAutoNodes_PoolCoversAllNodesInOneWave(t *testing.T) {
+	oldTCP, oldBind := pingTCPProbe, autoProbeBindsToLAN
+	defer func() { pingTCPProbe, autoProbeBindsToLAN = oldTCP, oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
+	const n = 48
+	var inFlight, maxInFlight int32
+	var mu sync.Mutex
+	release := make(chan struct{})
+
+	pingTCPProbe = func(_ string, _ int) (int64, bool, string) {
+		cur := atomic.AddInt32(&inFlight, 1)
+		mu.Lock()
+		if cur > maxInFlight {
+			maxInFlight = cur
+		}
+		mu.Unlock()
+		<-release
+		atomic.AddInt32(&inFlight, -1)
+		return 10, true, ""
+	}
+
+	names := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		names = append(names, fmt.Sprintf("node-%d", i))
+	}
+
+	done := make(chan []AutoProbeResult, 1)
+	go func() { done <- ProbeAutoNodes(context.Background(), mkNodes(names...), DepthFast) }()
+
+	deadline := time.After(5 * time.Second)
+	for {
+		if atomic.LoadInt32(&inFlight) >= n {
+			break
+		}
+		select {
+		case <-deadline:
+			close(release)
+			<-done
+			t.Fatalf("одновременно в полёте было максимум %d проб из %d — пул не покрывает список одной волной",
+				atomic.LoadInt32(&maxInFlight), n)
+		default:
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(release)
+
+	if got := <-done; len(got) != n {
+		t.Fatalf("ожидали %d результатов, получили %d", n, len(got))
+	}
+}
+
+// Потолок существует, чтобы подписка на сотни узлов не открыла сотни сокетов
+// разом.
+func TestProbeAutoNodes_PoolIsCappedAtMaxConcurrency(t *testing.T) {
+	if autoProbeMaxConcurrency != 64 {
+		t.Fatalf("ожидали потолок 64, получили %d", autoProbeMaxConcurrency)
 	}
 }
