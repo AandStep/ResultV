@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -136,7 +137,7 @@ func TestProbeAutoNodes_UsesHysteria2ProbeForHysteria2(t *testing.T) {
 		t.Error("для HYSTERIA2 должна использоваться QUIC-проба, а не TCP")
 		return 0, false, ""
 	}
-	pingHysteria2StrictProbe = func(_ string, _ int) (int64, bool, string, string) {
+	pingHysteria2StrictProbe = func(_ string, _ int, _ string) (int64, bool, string, string) {
 		return 25, true, "", "quic_handshake"
 	}
 
@@ -751,5 +752,94 @@ func TestProbeOne_TLSPhaseKeepsOriginalSNIAfterResolve(t *testing.T) {
 	}
 	if gotSNI != "cdn1.example.test" {
 		t.Fatalf("SNI должен остаться исходным именем, получили %q", gotSNI)
+	}
+}
+
+// Резолвер ОС может вернуть AAAA раньше A (на Windows getaddrinfo сортирует
+// по RFC 6724, и на машине с рабочим IPv6 v6-запись часто оказывается
+// первой). Вся проб-обвязка ниже — TCP-адрес, LAN-bind, форс ip4 у WireGuard
+// — рассчитана только на v4, так что резолв обязан явно выбрать v4-литерал,
+// а не слепо брать первый ответ.
+func TestAutoProbeResolveHost_PrefersIPv4WhenAAAAReturnedFirst(t *testing.T) {
+	oldLookup := autoProbeLookupIPAddr
+	defer func() { autoProbeLookupIPAddr = oldLookup }()
+	autoProbeLookupIPAddr = func(_ context.Context, _ string) ([]net.IPAddr, error) {
+		return []net.IPAddr{
+			{IP: net.ParseIP("2a01:4f8::1")},
+			{IP: net.ParseIP("203.0.113.9")},
+		}, nil
+	}
+
+	ip, ok := autoProbeResolveHost(context.Background(), "cdn1.example.test")
+	if !ok || ip != "203.0.113.9" {
+		t.Fatalf("ожидали IPv4-литерал 203.0.113.9 несмотря на AAAA первым в ответе, получили ip=%q ok=%v", ip, ok)
+	}
+}
+
+// Если A-записи вообще нет, резолв обязан провалиться, а не откатиться на
+// v6-литерал: проб-обвязка ниже не умеет его дозвонить, и откат на v6 лишь
+// гарантировал бы отказ там, где дозвон по исходному имени мог бы сработать.
+func TestAutoProbeResolveHost_NoARecordReportsFailure(t *testing.T) {
+	oldLookup := autoProbeLookupIPAddr
+	defer func() { autoProbeLookupIPAddr = oldLookup }()
+	autoProbeLookupIPAddr = func(_ context.Context, _ string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("2a01:4f8::1")}}, nil
+	}
+
+	if ip, ok := autoProbeResolveHost(context.Background(), "v6only.example.test"); ok {
+		t.Fatalf("ожидали отказ резолва при отсутствии A-записи, получили ip=%q ok=true", ip)
+	}
+}
+
+// Сквозной сценарий: домен отвечает только AAAA (или временно без A), резолв
+// внутри свипа честно проваливается — и свип обязан пробовать дозвон по
+// исходному имени вместо того, чтобы молча терять узел.
+func TestProbeAutoNodes_NoIPv4AnswerFallsBackToHostnameDial(t *testing.T) {
+	oldTCP, oldBind, oldLookup := pingTCPProbe, autoProbeBindsToLAN, autoProbeLookupIPAddr
+	defer func() {
+		pingTCPProbe, autoProbeBindsToLAN, autoProbeLookupIPAddr = oldTCP, oldBind, oldLookup
+	}()
+	autoProbeBindsToLAN = func() bool { return false }
+	autoProbeLookupIPAddr = func(_ context.Context, _ string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("2a01:4f8::1")}}, nil
+	}
+
+	got := ""
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) { got = ip; return 10, true, "" }
+
+	ProbeAutoNodes(context.Background(),
+		[]config.ProxyEntry{{ID: "1", IP: "v6only.example.test", Port: 443, Type: "VLESS"}}, DepthFast)
+
+	if got != "v6only.example.test" {
+		t.Fatalf("ожидали дозвон по исходному имени при отсутствии A-записи, получили %q", got)
+	}
+}
+
+// autoProbeHysteria2SNI обязан подставлять SNI из Extra, если он там задан —
+// иначе проба всегда бьёт по голому адресу узла вместо настоящего фронта,
+// которым домен на самом деле прикрыт.
+func TestAutoProbeHysteria2SNI_PrefersExplicitSNIFromExtra(t *testing.T) {
+	e := config.ProxyEntry{
+		IP:    "1.2.3.4",
+		Type:  "HYSTERIA2",
+		Extra: json.RawMessage(`{"sni":"front.example.com"}`),
+	}
+	if got := autoProbeHysteria2SNI(e); got != "front.example.com" {
+		t.Fatalf("ожидали SNI из extra, получили %q", got)
+	}
+}
+
+// Падение по цепочке: sni -> server_name (snake_case — так называет это поле
+// именно HYSTERIA2-ветка buildProxyOutboundRaw) -> адрес узла как крайний
+// случай.
+func TestAutoProbeHysteria2SNI_FallsBackToServerNameThenAddress(t *testing.T) {
+	withServerName := config.ProxyEntry{IP: "1.2.3.4", Extra: json.RawMessage(`{"server_name":"alt.example.com"}`)}
+	if got := autoProbeHysteria2SNI(withServerName); got != "alt.example.com" {
+		t.Fatalf("ожидали server_name как SNI, получили %q", got)
+	}
+
+	bare := config.ProxyEntry{IP: "hy2.example.test"}
+	if got := autoProbeHysteria2SNI(bare); got != "hy2.example.test" {
+		t.Fatalf("ожидали адрес узла как SNI по умолчанию, получили %q", got)
 	}
 }

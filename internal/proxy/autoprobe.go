@@ -45,17 +45,46 @@ const autoProbeMaxConcurrency = 64
 // a node to a single slow lookup would be worse than an unmeasured one.
 const autoProbeResolveTimeout = 3 * time.Second
 
-// autoProbeResolveHost resolves one hostname to a single IPv4/IPv6 literal.
+// autoProbeLookupIPAddr is the raw DNS lookup autoProbeResolveHost wraps.
+// Declared as a var (separately from autoProbeResolveHost itself) so tests
+// can hand it synthetic, deterministic answers — an AAAA-first list, a
+// v6-only list, etc. — and exercise autoProbeResolveHost's real IPv4-picking
+// and no-A-record-fails-closed logic below, instead of only ever replacing
+// that logic wholesale the way the sweep-level tests replace
+// autoProbeResolveHost.
+var autoProbeLookupIPAddr = net.DefaultResolver.LookupIPAddr
+
+// autoProbeResolveHost resolves one hostname to a single IPv4 literal.
 // Declared as a var so tests can substitute it, matching the pingTCPProbe
 // pattern.
+//
+// IPv4 only, deliberately: every probe below this (pingTCPProbe/PingProxy's
+// address building, pingLANProbe/autoProbeDialer's IPv4 bind hint, and
+// WireGuard's pingICMPHost forcing "ip4") is IPv4-only by construction, so an
+// AAAA-first answer from the OS resolver (RFC 6724 sorts IPv6 first on many
+// Windows machines) would hand every probe below a literal it cannot dial.
+// This mirrors resolvePinnedServerIP (manager.go) and resolveAllServerIPs'
+// "IPv4 only — the tunnel DNS strategy is ipv4_only" rule.
+//
+// Unlike resolvePinnedServerIP, this does NOT fall back to addrs[0] when
+// there is no A record at all: returning ("", false) here makes the caller
+// probe by hostname instead, where the dialer's own resolver can pick a
+// family that actually matches the bind. Falling back to a v6 literal would
+// instead guarantee failure on a stack that cannot dial it. That is the one
+// intentional divergence from the neighbouring helper, not an oversight.
 var autoProbeResolveHost = func(ctx context.Context, host string) (string, bool) {
 	ctx, cancel := context.WithTimeout(ctx, autoProbeResolveTimeout)
 	defer cancel()
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	addrs, err := autoProbeLookupIPAddr(ctx, host)
 	if err != nil || len(addrs) == 0 {
 		return "", false
 	}
-	return addrs[0].IP.String(), true
+	for _, a := range addrs {
+		if v4 := a.IP.To4(); v4 != nil {
+			return v4.String(), true
+		}
+	}
+	return "", false
 }
 
 // resolveProbeHosts resolves each distinct hostname in targets exactly once and
@@ -285,10 +314,11 @@ func probeTransport(e config.ProxyEntry, dialHost string) (rtt int64, ok bool, s
 	lan := autoProbeBindsToLAN()
 	switch strings.ToUpper(strings.TrimSpace(e.Type)) {
 	case "HYSTERIA2":
+		sni := autoProbeHysteria2SNI(e)
 		if lan {
-			rtt, ok, reason, stage = pingHysteria2StrictLANProbe(dialHost, e.Port)
+			rtt, ok, reason, stage = pingHysteria2StrictLANProbe(dialHost, e.Port, sni)
 		} else {
-			rtt, ok, reason, stage = pingHysteria2StrictProbe(dialHost, e.Port)
+			rtt, ok, reason, stage = pingHysteria2StrictProbe(dialHost, e.Port, sni)
 		}
 		return rtt, ok, stage, reason
 	case "WIREGUARD", "AMNEZIAWG":
@@ -424,6 +454,32 @@ func autoProbeTLSParams(e config.ProxyEntry) (sni string, alpn []string, wantTLS
 	// an SNI to test for domain-based blocking on nodes that have no
 	// CDN/domain front.
 	return sni, alpn, true
+}
+
+// autoProbeHysteria2SNI derives the ClientHello ServerName the QUIC probe
+// should present for a HYSTERIA2 node. HYSTERIA2 is excluded from
+// autoProbeTLSParams (it never runs the DepthFull TLS stage — QUIC's own
+// handshake in probeTransport is its only TLS-bearing check), so it needs its
+// own small mirror of the field-lookup rule instead of sharing that helper.
+//
+// This mirrors buildProxyOutboundRaw's HYSTERIA2 case (outbound.go): "sni",
+// then "server_name" (snake_case — this protocol's Extra convention differs
+// from autoProbeTLSParams' "serverName" for the other protocols), falling
+// back to the entry's own address. The fallback deliberately ends at e.IP,
+// not at the sweep's resolved dial literal: an IP-shaped ServerName makes
+// crypto/tls omit the SNI extension entirely (tls.Config.ServerName's own
+// doc), and probing with no SNI over a hostname's presence there is a lie
+// about what the real outbound sends.
+func autoProbeHysteria2SNI(e config.ProxyEntry) string {
+	extra := map[string]interface{}{}
+	if len(e.Extra) > 0 {
+		_ = json.Unmarshal(e.Extra, &extra)
+	}
+	sni := getStringField(extra, "sni", getStringField(extra, "server_name", ""))
+	if sni == "" {
+		sni = strings.TrimSpace(e.IP)
+	}
+	return sni
 }
 
 // medianAndJitter reduces repeated-sample latencies to one figure each. The

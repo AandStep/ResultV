@@ -238,7 +238,7 @@ func PingWireGuardLANBind(host string, port int) (latencyMs int64, reachable boo
 }
 
 func PingHysteria2QUICLANBind(host string, port int) (latencyMs int64, reachable bool, reason, checkType string) {
-	latency, ok, r := quicHandshakeLANProbe(host, port)
+	latency, ok, r := quicHandshakeLANProbe(host, port, "")
 	if ok {
 		return latency, true, "", "quic_handshake_lan_bind"
 	}
@@ -255,9 +255,9 @@ func PingHysteria2QUICLANBind(host string, port int) (latencyMs int64, reachable
 
 // PingHysteria2QUICStrictLANBind is PingHysteria2QUICStrict sent from the
 // physical adapter. See PingHysteria2QUICStrict for why there is no TCP
-// fallback.
-func PingHysteria2QUICStrictLANBind(host string, port int) (latencyMs int64, reachable bool, reason, checkType string) {
-	latency, ok, r := quicHandshakeLANProbe(host, port)
+// fallback and how sni is used.
+func PingHysteria2QUICStrictLANBind(host string, port int, sni string) (latencyMs int64, reachable bool, reason, checkType string) {
+	latency, ok, r := quicHandshakeLANProbe(host, port, sni)
 	if ok {
 		return latency, true, "", "quic_handshake_lan_bind"
 	}

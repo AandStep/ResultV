@@ -70,7 +70,7 @@ func TestProbeTransport_UsesLANBindForHysteria2AndWireGuard(t *testing.T) {
 	}()
 
 	pickLANBindIPv4 = func() (net.IP, error) { return net.IPv4(192, 168, 1, 5), nil }
-	pingHysteria2StrictProbe = func(_ string, _ int) (int64, bool, string, string) {
+	pingHysteria2StrictProbe = func(_ string, _ int, _ string) (int64, bool, string, string) {
 		t.Error("HYSTERIA2: ожидали LAN-bind пробу")
 		return 0, false, "", ""
 	}
@@ -78,7 +78,7 @@ func TestProbeTransport_UsesLANBindForHysteria2AndWireGuard(t *testing.T) {
 		t.Error("WIREGUARD: ожидали LAN-bind пробу")
 		return 0, false, ""
 	}
-	pingHysteria2StrictLANProbe = func(_ string, _ int) (int64, bool, string, string) {
+	pingHysteria2StrictLANProbe = func(_ string, _ int, _ string) (int64, bool, string, string) {
 		return 11, true, "", "quic_handshake_lan_bind"
 	}
 	pingWireGuardLANProbe = func(_ string, _ int) (int64, bool, string) { return 22, true, "" }
@@ -140,10 +140,10 @@ func TestProbeTransport_UsesStrictHysteria2Probes(t *testing.T) {
 		t.Error("в отборе не должна использоваться LAN-проба с TCP-fallback")
 		return 0, false, "", ""
 	}
-	pingHysteria2StrictProbe = func(_ string, _ int) (int64, bool, string, string) {
+	pingHysteria2StrictProbe = func(_ string, _ int, _ string) (int64, bool, string, string) {
 		return 100, true, "", "quic_handshake"
 	}
-	pingHysteria2StrictLANProbe = func(_ string, _ int) (int64, bool, string, string) {
+	pingHysteria2StrictLANProbe = func(_ string, _ int, _ string) (int64, bool, string, string) {
 		return 200, true, "", "quic_handshake_lan_bind"
 	}
 
@@ -157,5 +157,34 @@ func TestProbeTransport_UsesStrictHysteria2Probes(t *testing.T) {
 	autoProbeBindsToLAN = func() bool { return false }
 	if rtt, _, stage, _ := probeTransport(node, node.IP); rtt != 100 || stage != "quic_handshake" {
 		t.Fatalf("без bind-адреса: rtt=%d stage=%q", rtt, stage)
+	}
+}
+
+// HYSTERIA2-ветка обязана дозваниваться по резолвнутому литералу (dialHost),
+// но нести в SNI исходное имя узла — перепутанные местами аргументы
+// проверяются раздельно, чтобы транспозиция host<->sni не прошла тесты молча.
+func TestProbeTransport_HYSTERIA2DialsResolvedLiteralWithOriginalHostnameSNI(t *testing.T) {
+	oldBind := autoProbeBindsToLAN
+	oldStrict := pingHysteria2StrictProbe
+	defer func() {
+		autoProbeBindsToLAN = oldBind
+		pingHysteria2StrictProbe = oldStrict
+	}()
+	autoProbeBindsToLAN = func() bool { return false }
+
+	var gotHost, gotSNI string
+	pingHysteria2StrictProbe = func(host string, _ int, sni string) (int64, bool, string, string) {
+		gotHost, gotSNI = host, sni
+		return 10, true, "", "quic_handshake"
+	}
+
+	node := config.ProxyEntry{IP: "hy2.example.test", Port: 443, Type: "HYSTERIA2"}
+	probeTransport(node, "203.0.113.9")
+
+	if gotHost != "203.0.113.9" {
+		t.Fatalf("ожидали дозвон по резолвнутому литералу, получили %q", gotHost)
+	}
+	if gotSNI != "hy2.example.test" {
+		t.Fatalf("SNI должен остаться исходным именем узла, получили %q", gotSNI)
 	}
 }

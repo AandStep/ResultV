@@ -1315,7 +1315,7 @@ func PingProxy(ip string, port int) (latencyMs int64, reachable bool, reason str
 
 func PingHysteria2QUIC(ip string, port int) (latencyMs int64, reachable bool, reason, checkType string) {
 
-	latency, ok, r := quicHandshakeProbe(ip, port)
+	latency, ok, r := quicHandshakeProbe(ip, port, "")
 	if ok {
 		return latency, true, "", "quic_handshake"
 	}

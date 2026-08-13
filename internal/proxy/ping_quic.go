@@ -39,17 +39,29 @@ var hysteria2ALPN = []string{"h3", "hysteria"}
 var quicHandshakeProbe = quicHandshakePing
 var quicHandshakeLANProbe = quicHandshakePingLANBind
 
-// quicHandshakePing measures the time required for a full QUIC handshake to ip:port.
-// The TLS layer is configured with InsecureSkipVerify because we only want a latency
-// reading — auth and certificate validity belong to the actual proxy flow, not to ping.
-// Returned latency is wall-clock from dial() to handshake-complete.
-func quicHandshakePing(ip string, port int) (latencyMs int64, reachable bool, reason string) {
-	addr := net.JoinHostPort(ip, strconv.Itoa(port))
+// quicHandshakePing measures the time required for a full QUIC handshake to
+// host:port. The TLS layer is configured with InsecureSkipVerify because we
+// only want a latency reading — auth and certificate validity belong to the
+// actual proxy flow, not to ping. Returned latency is wall-clock from dial()
+// to handshake-complete.
+//
+// sni is the ClientHello ServerName to present. When empty it defaults to
+// host, preserving the original behaviour for every caller that dials a
+// hostname directly. A caller that dials a pre-resolved literal on behalf of
+// a hostname must pass that hostname as sni explicitly — crypto/tls silently
+// omits the SNI extension entirely when ServerName is IP-shaped (see
+// tls.Config.ServerName's doc), which would mean no SNI at all instead of the
+// hostname the real Hysteria2 outbound authenticates against.
+func quicHandshakePing(host string, port int, sni string) (latencyMs int64, reachable bool, reason string) {
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	if sni == "" {
+		sni = host
+	}
 
 	tlsConf := &tls.Config{
 		InsecureSkipVerify: true,
 		NextProtos:         hysteria2ALPN,
-		ServerName:         ip,
+		ServerName:         sni,
 	}
 	quicConf := &quic.Config{
 		HandshakeIdleTimeout: quicHandshakeTimeout,
@@ -71,8 +83,8 @@ func quicHandshakePing(ip string, port int) (latencyMs int64, reachable bool, re
 
 // quicHandshakePingLANBind is quicHandshakePing pinned to a LAN interface — used
 // when a system tunnel is up so the probe doesn't get pulled back through the
-// proxy that's being pinged.
-func quicHandshakePingLANBind(ip string, port int) (latencyMs int64, reachable bool, reason string) {
+// proxy that's being pinged. sni behaves exactly as in quicHandshakePing.
+func quicHandshakePingLANBind(host string, port int, sni string) (latencyMs int64, reachable bool, reason string) {
 	local, err := pickLANBindIPv4()
 	if err != nil {
 		return 0, false, "lan_bind_unavailable"
@@ -84,15 +96,18 @@ func quicHandshakePingLANBind(ip string, port int) (latencyMs int64, reachable b
 	}
 	defer udpConn.Close()
 
-	remote, err := net.ResolveUDPAddr("udp", net.JoinHostPort(ip, strconv.Itoa(port)))
+	remote, err := net.ResolveUDPAddr("udp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
 		return 0, false, pingReasonFromError(err)
 	}
 
+	if sni == "" {
+		sni = host
+	}
 	tlsConf := &tls.Config{
 		InsecureSkipVerify: true,
 		NextProtos:         hysteria2ALPN,
-		ServerName:         ip,
+		ServerName:         sni,
 	}
 	quicConf := &quic.Config{
 		HandshakeIdleTimeout: quicHandshakeTimeout,
@@ -123,8 +138,12 @@ func quicHandshakePingLANBind(ip string, port int) (latencyMs int64, reachable b
 // a real QUIC handshake costs hundreds of milliseconds, the fallback's fake
 // reading always wins an RTT-ordered ranking. Failing outright is the only
 // answer that keeps the two measurements on one scale.
-func PingHysteria2QUICStrict(ip string, port int) (latencyMs int64, reachable bool, reason, checkType string) {
-	latency, ok, r := quicHandshakeProbe(ip, port)
+//
+// sni is the ClientHello ServerName; pass "" to default to host (see
+// quicHandshakePing). The auto-sweep caller (probeTransport) passes the
+// node's real hostname here even when host is a pre-resolved literal.
+func PingHysteria2QUICStrict(host string, port int, sni string) (latencyMs int64, reachable bool, reason, checkType string) {
+	latency, ok, r := quicHandshakeProbe(host, port, sni)
 	if ok {
 		return latency, true, "", "quic_handshake"
 	}
