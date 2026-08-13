@@ -1493,6 +1493,20 @@ func pollProbe(ctx context.Context, deadline, interval time.Duration, attempt fu
 	}
 }
 
+// hysteria2LivenessProbe answers "is the server itself reachable" for the
+// post-start probe's diagnosis step. In tunnel mode it must be the LAN-bound
+// variant: the tunnel is already up by then, and an unbound probe measures
+// sing-tun's local stack instead of the server, turning a genuinely failed
+// connect into a misleading "proxy outbound misconfigured" verdict.
+func hysteria2LivenessProbe(mode ProxyMode, ip string, port int) (bool, string) {
+	if mode == ProxyModeTunnel {
+		_, ok, reason, _ := pingHysteria2LANProbe(ip, port)
+		return ok, reason
+	}
+	_, ok, reason, _ := pingHysteria2Probe(ip, port)
+	return ok, reason
+}
+
 func runPostStartProbe(ctx context.Context, proxyTypeLower, ip string, port, localPort int, mode ProxyMode, extra ...map[string]interface{}) (errorCode, reason string) {
 	var ex map[string]interface{}
 	if len(extra) > 0 {
@@ -1530,7 +1544,7 @@ func runPostStartProbe(ctx context.Context, proxyTypeLower, ip string, port, loc
 				return "cancelled", "connect cancelled"
 			}
 			if !ok {
-				_, quicOK, quicR, _ := pingHysteria2Probe(ip, port)
+				quicOK, quicR := hysteria2LivenessProbe(mode, ip, port)
 				if quicOK {
 					return "post_start_probe_failed", "proxy outbound misconfigured: " + r
 				}
@@ -1551,7 +1565,7 @@ func runPostStartProbe(ctx context.Context, proxyTypeLower, ip string, port, loc
 				return "cancelled", "connect cancelled"
 			}
 			if !ok {
-				_, quicOK, quicR, _ := pingHysteria2Probe(ip, port)
+				quicOK, quicR := hysteria2LivenessProbe(mode, ip, port)
 				if quicOK {
 					if r == "" {
 						r = "tunnel e2e probe failed"
