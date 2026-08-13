@@ -450,13 +450,16 @@ func TestProbeAutoNodes_FullTakesMedianAndJitterOfThreeSamples(t *testing.T) {
 }
 
 // TestProbeAutoNodes_BoundedPoolProbesEveryNodeOnceWithinConcurrencyLimit
-// exercises the >16-node path that autoProbeMaxConcurrency exists for. All other
-// tests in this file use <=3 nodes, where pool == len(targets) and each worker
-// claims exactly one item — the claim loop that hands out work to a pool
-// smaller than the target count never runs a second lap. With 40 nodes and a
-// pool of 16, the loop must run multiple laps, so this is the only test that
-// can catch a broken index handoff (double-probe or skipped node) or a pool
-// that isn't actually bounded.
+// exercises the path above autoProbeMaxConcurrency that the cap exists for.
+// All other tests in this file use node counts at or below the cap, where
+// pool == len(targets) and each worker claims exactly one item — the claim
+// loop that hands out work to a pool smaller than the target count never
+// runs a second lap, and finalPeak <= autoProbeMaxConcurrency holds no matter
+// whether the cap is actually wired in. With 80 nodes and a pool capped at
+// 64, the loop must run multiple laps and finalPeak can only stay <= 64 if
+// the cap is genuinely enforced, so this is the only test that can catch a
+// broken index handoff (double-probe or skipped node) or a pool that isn't
+// actually bounded.
 func TestProbeAutoNodes_BoundedPoolProbesEveryNodeOnceWithinConcurrencyLimit(t *testing.T) {
 	oldBind := autoProbeBindsToLAN
 	defer func() { autoProbeBindsToLAN = oldBind }()
@@ -465,7 +468,7 @@ func TestProbeAutoNodes_BoundedPoolProbesEveryNodeOnceWithinConcurrencyLimit(t *
 	oldTCP := pingTCPProbe
 	defer func() { pingTCPProbe = oldTCP }()
 
-	const n = 40
+	const n = 80
 	nodes := make([]config.ProxyEntry, n)
 	ipToIndex := make(map[string]int, n)
 	for i := 0; i < n; i++ {
