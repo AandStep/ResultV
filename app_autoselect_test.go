@@ -426,28 +426,87 @@ func TestGetAutoGroupStatus_ReportsConnectedMemberScopedToItsGroup(t *testing.T)
 	}
 }
 
+// sweepTimingSentinelResults builds Phase1/Phase2 rows carrying host-shaped
+// and IP-shaped sentinel strings in Key and Reason — AutoProbeResult.Reason is
+// free-form dial-error text and can legitimately contain raw host:port (the
+// per-member probe table this project deleted leaked exactly that shape of
+// data). A fixture that leaves these slices nil, as an earlier version of
+// this test did, would stay green through a future edit that ranges over
+// diag.Phase1/Phase2 and folds Reason into the line, because it would range
+// zero times. Populating them makes that regression actually reachable by
+// this test.
+func sweepTimingSentinelResults() []proxy.AutoProbeResult {
+	return []proxy.AutoProbeResult{
+		{
+			Key:    "probe-host-sentinel.example.invalid:65001",
+			RTTms:  30,
+			OK:     false,
+			Stage:  "tcp",
+			Reason: "dial tcp probe-host-sentinel.example.invalid:65001: i/o timeout",
+		},
+		{
+			Key:    "198.51.100.77:65002",
+			RTTms:  20,
+			OK:     false,
+			Stage:  "tls",
+			Reason: "dial tcp 198.51.100.77:65002: connection refused",
+		},
+	}
+}
+
 // Строка тайминга свипа не имеет права раскрыть адреса подписки: она уходит в
-// экспортируемый пользователем лог.
+// экспортируемый пользователем лог. Denylist ниже — это подстраховка второго
+// уровня; главную гарантию даёт то, что diag ниже несёт непустые Phase1/Phase2
+// с адресными сентинелами (см. sweepTimingSentinelResults) — иначе тест
+// остался бы зелёным сквозь регрессию, где formatAutoSweepTimingLine начинает
+// перебирать эти срезы и подмешивать Reason/Key в строку.
 func TestFormatAutoSweepTimingLine_ContainsNoAddresses(t *testing.T) {
 	diag := proxy.AutoProbeDiagnostics{
 		Phase1Dur: 1200 * time.Millisecond,
 		Phase2Dur: 300 * time.Millisecond,
+		Phase1:    sweepTimingSentinelResults(),
+		Phase2:    sweepTimingSentinelResults(),
 	}
 	line := formatAutoSweepTimingLine("🚀 impVPN Auto", 48, diag)
 
-	for _, forbidden := range []string{"cdn", ".top", ".digital", ".today", ":8802", "45.145"} {
-		if strings.Contains(line, forbidden) {
-			t.Fatalf("строка тайминга содержит %q: %s", forbidden, line)
+	forbidden := []string{
+		"cdn", ".top", ".digital", ".today", ":8802", "45.145",
+		"probe-host-sentinel.example.invalid", "198.51.100.77", "65001", "65002",
+		"i/o timeout", "connection refused",
+	}
+	for _, f := range forbidden {
+		if strings.Contains(line, f) {
+			t.Fatalf("строка тайминга содержит %q: %s", f, line)
 		}
 	}
-	if !strings.Contains(line, "48") || !strings.Contains(line, "1200") || !strings.Contains(line, "300") {
-		t.Fatalf("строка тайминга не содержит счётчик или длительности: %s", line)
+	if !strings.Contains(line, "🚀 impVPN Auto") || !strings.Contains(line, "48") ||
+		!strings.Contains(line, "1200") || !strings.Contains(line, "300") {
+		t.Fatalf("строка тайминга не содержит имя группы, счётчик или длительности: %s", line)
 	}
 }
 
 func TestFormatAutoSweepTimingLine_MarksCachedResult(t *testing.T) {
-	line := formatAutoSweepTimingLine("🚀 impVPN Auto", 48, proxy.AutoProbeDiagnostics{FromCache: true})
+	diag := proxy.AutoProbeDiagnostics{
+		FromCache: true,
+		Phase1:    sweepTimingSentinelResults(),
+		Phase2:    sweepTimingSentinelResults(),
+	}
+	line := formatAutoSweepTimingLine("🚀 impVPN Auto", 48, diag)
+
+	forbidden := []string{
+		"cdn", ".top", ".digital", ".today", ":8802", "45.145",
+		"probe-host-sentinel.example.invalid", "198.51.100.77", "65001", "65002",
+		"i/o timeout", "connection refused",
+	}
+	for _, f := range forbidden {
+		if strings.Contains(line, f) {
+			t.Fatalf("строка кэша содержит %q: %s", f, line)
+		}
+	}
 	if !strings.Contains(line, "кэш") {
 		t.Fatalf("результат из кэша должен быть помечен: %s", line)
+	}
+	if !strings.Contains(line, "🚀 impVPN Auto") || !strings.Contains(line, "48") {
+		t.Fatalf("строка кэша не содержит имя группы или счётчик: %s", line)
 	}
 }

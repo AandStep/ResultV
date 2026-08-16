@@ -165,6 +165,17 @@ func lookupAutoSweepCache(key string) ([]config.ProxyEntry, AutoProbeDiagnostics
 	diag.Phase1 = append([]AutoProbeResult(nil), diag.Phase1...)
 	diag.Phase2 = append([]AutoProbeResult(nil), diag.Phase2...)
 	diag.FromCache = true
+	// A cache hit measured nothing on THIS call — entry.diag's Phase1Dur/
+	// Phase2Dur are wall-clock from whenever this key was originally swept, up
+	// to autoSweepCacheTTL (90s) stale. Carrying those numbers forward would
+	// let any reader that does not check FromCache first (a future log line, a
+	// diagnostics panel, a refactor that drops the branch) print a
+	// long-stale duration as if it were this call's timing. Zeroing them here
+	// means "unmeasured this call" is the only value a duration field can ever
+	// hold on a cache hit, with no dependence on callers checking FromCache
+	// first.
+	diag.Phase1Dur = 0
+	diag.Phase2Dur = 0
 	return out, diag, true
 }
 

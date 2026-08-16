@@ -324,3 +324,48 @@ func TestRankAutoCandidates_ReportsPhaseDurations(t *testing.T) {
 		t.Fatal("свежий свип не должен помечаться как кэш")
 	}
 }
+
+// Попадание в кэш ничего не измеряет на ЭТОМ вызове: entry.diag хранит
+// длительности исходного свипа, которому может быть до autoSweepCacheTTL
+// (90с). Без явного зануления в lookupAutoSweepCache любой будущий читатель,
+// не проверивший FromCache первым (новая строка лога, панель диагностики,
+// рефакторинг, потерявший ветку), напечатал бы устаревшую длительность как
+// будто она измерена только что.
+func TestRankAutoCandidates_CacheHitReportsZeroDurations(t *testing.T) {
+	oldTCP, oldTLS, oldBind, oldPick := pingTCPProbe, autoTLSProbe, autoProbeBindsToLAN, pickLANBindIPv4
+	defer func() {
+		pingTCPProbe, autoTLSProbe, autoProbeBindsToLAN, pickLANBindIPv4 = oldTCP, oldTLS, oldBind, oldPick
+		ResetAutoSweepCache()
+	}()
+	ResetAutoSweepCache()
+	stubProbeResolver(t)
+	autoProbeBindsToLAN = func() bool { return false }
+	pickLANBindIPv4 = func() (net.IP, error) { return net.IPv4(192, 168, 1, 5), nil }
+
+	pingTCPProbe = func(_ string, _ int) (int64, bool, string) {
+		time.Sleep(5 * time.Millisecond)
+		return 30, true, ""
+	}
+	autoTLSProbe = func(string, int, string, []string) (int64, bool, string) {
+		time.Sleep(5 * time.Millisecond)
+		return 20, true, ""
+	}
+
+	nodes := mkNodes("zd1", "zd2")
+	_, first := RankAutoCandidates(context.Background(), nodes, "")
+	if first.Phase1Dur <= 0 || first.Phase2Dur <= 0 {
+		t.Fatalf("контрольный первый вызов обязан реально измерить обе фазы, получили %v/%v",
+			first.Phase1Dur, first.Phase2Dur)
+	}
+
+	_, second := RankAutoCandidates(context.Background(), nodes, "")
+	if !second.FromCache {
+		t.Fatal("второй вызов внутри TTL обязан попасть в кэш")
+	}
+	if second.Phase1Dur != 0 {
+		t.Fatalf("попадание в кэш не должно нести длительность фазы 1 предыдущего свипа, получили %v", second.Phase1Dur)
+	}
+	if second.Phase2Dur != 0 {
+		t.Fatalf("попадание в кэш не должно нести длительность фазы 2 предыдущего свипа, получили %v", second.Phase2Dur)
+	}
+}
