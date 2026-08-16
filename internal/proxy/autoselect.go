@@ -322,6 +322,13 @@ type AutoProbeDiagnostics struct {
 	// on this call. Callers that log timings need to say so, or a 0ms sweep
 	// reads as a broken measurement.
 	FromCache bool
+
+	// Phase1Dur and Phase2Dur are wall-clock for each sweep phase. Without them
+	// there is no way to tell a tuned sweep from an untuned one in the field —
+	// the connect timing line covers everything after the sweep, not the sweep
+	// itself.
+	Phase1Dur time.Duration
+	Phase2Dur time.Duration
 }
 
 // dropEmptyKeyResults removes probe slots ProbeAutoNodes left at their zero
@@ -379,7 +386,9 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 		byKey[AutoNodeKey(m)] = m
 	}
 
+	tPhase1 := time.Now()
 	fast := ProbeAutoNodes(ctx, members, DepthFast)
+	diag.Phase1Dur = time.Since(tPhase1)
 	fast = dropEmptyKeyResults(fast)
 	diag.Phase1 = fast
 	for _, r := range fast {
@@ -415,7 +424,9 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 		}
 	}
 
+	tPhase2 := time.Now()
 	full := ProbeAutoNodes(ctx, shortlist, DepthFull)
+	diag.Phase2Dur = time.Since(tPhase2)
 	full = dropEmptyKeyResults(full)
 	diag.Phase2 = full
 	for _, r := range full {

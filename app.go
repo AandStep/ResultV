@@ -2668,6 +2668,19 @@ func formatAutoPickLine(autoLabel string, count int, pick config.ProxyEntry) str
 		strings.TrimSpace(autoLabel), count, proxyLogLabel(pick))
 }
 
+// formatAutoSweepTimingLine reports how long the ranking took. Counts and
+// milliseconds only: this line lands in a log the user can export, so it must
+// never name a node. See proxyLogLabel for the same rule on the pick line.
+func formatAutoSweepTimingLine(groupName string, probed int, diag proxy.AutoProbeDiagnostics) string {
+	if diag.FromCache {
+		return fmt.Sprintf("[PROXY] AUTO «%s»: результат из кэша (%d узлов), опрос не потребовался",
+			strings.TrimSpace(groupName), probed)
+	}
+	return fmt.Sprintf("[PROXY] AUTO «%s»: опрошено %d узлов — фаза 1 %dms, фаза 2 %dms",
+		strings.TrimSpace(groupName), probed,
+		diag.Phase1Dur.Milliseconds(), diag.Phase2Dur.Milliseconds())
+}
+
 // extractAutoMembers reads the member ID list out of an AUTO head's Extra.
 // Providers' Extra reaches us in two shapes — raw JSON object, or that object
 // encoded as a JSON string — so both are handled.
@@ -2900,7 +2913,10 @@ func (a *App) ResolveAutoCandidates(proxyID string) []config.ProxyEntry {
 	// click published the provider's entire backend list to a log the user can
 	// export. The diag phases it was built from are dropped with it; what a
 	// user actually needs — which node was picked — is the one line below.
-	ranked, _ := proxy.RankAutoCandidates(a.ctx, members, a.getLastAutoNodeKey())
+	ranked, diag := proxy.RankAutoCandidates(a.ctx, members, a.getLastAutoNodeKey())
+	if a.log != nil {
+		a.log.Info(formatAutoSweepTimingLine(head.Name, len(members), diag))
+	}
 
 	// Cache the member entries before the identity stamp below overwrites their
 	// ID and Name. ReportAutoConnectOutcome must rebuild the exact same

@@ -20,6 +20,7 @@ import (
 	"net"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestRankAutoCandidates_SecondCallWithinTTLReusesSweep(t *testing.T) {
@@ -289,5 +290,37 @@ func TestRankAutoCandidates_ConnectFailureBustsCache(t *testing.T) {
 	RankAutoCandidates(context.Background(), nodes, "")
 	if atomic.LoadInt32(&probes) == after {
 		t.Fatal("неудачный коннект обязан сбросить кэш свипа, чтобы штраф из scoreNode реально сработал на следующем вызове")
+	}
+}
+
+func TestRankAutoCandidates_ReportsPhaseDurations(t *testing.T) {
+	oldTCP, oldTLS, oldBind, oldPick := pingTCPProbe, autoTLSProbe, autoProbeBindsToLAN, pickLANBindIPv4
+	defer func() {
+		pingTCPProbe, autoTLSProbe, autoProbeBindsToLAN, pickLANBindIPv4 = oldTCP, oldTLS, oldBind, oldPick
+		ResetAutoSweepCache()
+	}()
+	ResetAutoSweepCache()
+	stubProbeResolver(t) // фикстуры mkNodes содержат имена, а не адреса
+	autoProbeBindsToLAN = func() bool { return false }
+	pickLANBindIPv4 = func() (net.IP, error) { return net.IPv4(192, 168, 1, 5), nil }
+
+	pingTCPProbe = func(_ string, _ int) (int64, bool, string) {
+		time.Sleep(20 * time.Millisecond)
+		return 30, true, ""
+	}
+	autoTLSProbe = func(string, int, string, []string) (int64, bool, string) {
+		time.Sleep(10 * time.Millisecond)
+		return 20, true, ""
+	}
+
+	_, diag := RankAutoCandidates(context.Background(), mkNodes("a", "b"), "")
+	if diag.Phase1Dur <= 0 {
+		t.Fatalf("ожидали ненулевую длительность фазы 1, получили %v", diag.Phase1Dur)
+	}
+	if diag.Phase2Dur <= 0 {
+		t.Fatalf("ожидали ненулевую длительность фазы 2, получили %v", diag.Phase2Dur)
+	}
+	if diag.FromCache {
+		t.Fatal("свежий свип не должен помечаться как кэш")
 	}
 }

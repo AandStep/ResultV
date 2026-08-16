@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"resultproxy-wails/internal/config"
 	"resultproxy-wails/internal/proxy"
@@ -422,5 +423,31 @@ func TestGetAutoGroupStatus_ReportsConnectedMemberScopedToItsGroup(t *testing.T)
 	got = a.GetAutoGroupStatus("head-1")
 	if !got.Known || got.RTTms != 15 {
 		t.Fatalf("RTT из пробы без коннекта должен быть виден, получили %+v", got)
+	}
+}
+
+// Строка тайминга свипа не имеет права раскрыть адреса подписки: она уходит в
+// экспортируемый пользователем лог.
+func TestFormatAutoSweepTimingLine_ContainsNoAddresses(t *testing.T) {
+	diag := proxy.AutoProbeDiagnostics{
+		Phase1Dur: 1200 * time.Millisecond,
+		Phase2Dur: 300 * time.Millisecond,
+	}
+	line := formatAutoSweepTimingLine("🚀 impVPN Auto", 48, diag)
+
+	for _, forbidden := range []string{"cdn", ".top", ".digital", ".today", ":8802", "45.145"} {
+		if strings.Contains(line, forbidden) {
+			t.Fatalf("строка тайминга содержит %q: %s", forbidden, line)
+		}
+	}
+	if !strings.Contains(line, "48") || !strings.Contains(line, "1200") || !strings.Contains(line, "300") {
+		t.Fatalf("строка тайминга не содержит счётчик или длительности: %s", line)
+	}
+}
+
+func TestFormatAutoSweepTimingLine_MarksCachedResult(t *testing.T) {
+	line := formatAutoSweepTimingLine("🚀 impVPN Auto", 48, proxy.AutoProbeDiagnostics{FromCache: true})
+	if !strings.Contains(line, "кэш") {
+		t.Fatalf("результат из кэша должен быть помечен: %s", line)
 	}
 }
