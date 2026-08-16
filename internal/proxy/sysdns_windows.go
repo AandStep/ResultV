@@ -245,13 +245,39 @@ func listAdapterDNS() ([]adapterDNS, bool, error) {
 	return adapters, true, err
 }
 
+// adapterDNSVerify* bound the read-back retry. A freshly created TUN adapter
+// does not always report its new nameservers on the first GetAdaptersAddresses
+// call, and treating that as failure sent every tunnel connect through
+// PowerShell — a process spawn worth ~3.5s against ~26ms for the native path on
+// a settled adapter. Three quick looks cost at most 100ms and remove the
+// fallback in the normal case without weakening the "applied and confirmed"
+// guarantee: if it never confirms, PowerShell still runs.
+const (
+	adapterDNSVerifyAttempts = 3
+	adapterDNSVerifyDelay    = 50 * time.Millisecond
+)
+
+// Indirections so the retry policy is testable without touching real adapters.
+var (
+	setAdapterDNSNativeFn     = setAdapterDNSNative
+	verifyAdapterDNSFn        = verifyAdapterDNS
+	setAdapterDNSPowerShellFn = setAdapterDNSPowerShell
+)
+
 // setAdapterDNS applies servers to one adapter. The bool reports whether the
 // PowerShell fallback was used.
 func setAdapterDNS(ifIdx int, servers []string) (bool, error) {
-	if err := setAdapterDNSNative(ifIdx, servers); err == nil && verifyAdapterDNS(ifIdx, servers) {
-		return false, nil
+	if err := setAdapterDNSNativeFn(ifIdx, servers); err == nil {
+		for attempt := 0; attempt < adapterDNSVerifyAttempts; attempt++ {
+			if attempt > 0 {
+				time.Sleep(adapterDNSVerifyDelay)
+			}
+			if verifyAdapterDNSFn(ifIdx, servers) {
+				return false, nil
+			}
+		}
 	}
-	return true, setAdapterDNSPowerShell(ifIdx, servers)
+	return true, setAdapterDNSPowerShellFn(ifIdx, servers)
 }
 
 // resetAdapterDNS reverts one adapter to DHCP. The bool reports whether the
