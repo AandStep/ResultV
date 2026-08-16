@@ -72,25 +72,38 @@ const (
 const autoSweepCacheTTL = 90 * time.Second
 
 type autoSweepCacheEntry struct {
-	key        string
 	at         time.Time
 	candidates []config.ProxyEntry
 	diag       AutoProbeDiagnostics
 }
 
+// autoSweepCache is a map, not a single slot: a user with more than one AUTO
+// group alternately selected would otherwise produce two different keys that
+// evict each other on every call, giving that user a 0% hit rate and defeating
+// the point of this cache entirely.
 var (
 	autoSweepMu    sync.Mutex
-	autoSweepCache autoSweepCacheEntry
+	autoSweepCache = map[string]autoSweepCacheEntry{}
 )
 
 // autoSweepCacheKey folds everything that could change the answer into one
 // string: the group's membership, the node currently in use (it gets the
 // tolerance head start, so it changes the order), and the physical bind address.
 //
-// The bind address is what makes this cache safe across a network change: roam
-// to another Wi-Fi or drop to tethering and pickLANBindIPv4 returns a different
-// address, so the key differs and the stale measurements from the old link are
-// never served. That removes the need for a separate invalidation hook.
+// The bind address folds most network changes into the key: roam to another
+// Wi-Fi or drop to tethering and pickLANBindIPv4 eventually returns a
+// different address, so the key changes and the next call re-sweeps instead
+// of serving measurements from a link that no longer exists. This is NOT
+// instantaneous, though — pickLANBindIPv4 is cachedPreferLANBindIPv4
+// (ping_lan_bind.go), which memoizes the bind IP for up to lanBindCacheTTL
+// (30s) with no invalidation hook wired to network-change events
+// (invalidateLANBindCache exists but nothing calls it repo-wide). So for up
+// to ~30s after roaming this key can still compute the OLD bind address, on
+// top of the up-to-90s autoSweepCacheTTL itself holds a ranking once cached.
+// A real connect failure on the current pick busts the whole cache
+// separately (see RecordConnectOutcome in nodestats.go), which is the other
+// half of "stale measurements do not linger" — this key alone does not cover
+// every staleness path, only the network-identity one.
 func autoSweepCacheKey(members []config.ProxyEntry, previousKey string) string {
 	keys := make([]string, 0, len(members))
 	for _, m := range members {
@@ -115,29 +128,42 @@ func autoSweepCacheKey(members []config.ProxyEntry, previousKey string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// ResetAutoSweepCache drops the cached ranking. Tests use it for isolation;
-// production has no caller because the bind address in the key already covers
-// network changes.
+// ResetAutoSweepCache drops every cached ranking, for every group. Tests use
+// it for isolation between fixtures. Production calls it too now:
+// RecordConnectOutcome (nodestats.go) calls it whenever a real connect fails,
+// because a failed connect changes ConsecFails/LastFailAt — fields scoreNode
+// weighs heavily — without changing anything in the cache key, so without
+// this call a node that just failed to connect would keep its cached top
+// rank for up to autoSweepCacheTTL.
 func ResetAutoSweepCache() {
 	autoSweepMu.Lock()
-	autoSweepCache = autoSweepCacheEntry{}
+	autoSweepCache = map[string]autoSweepCacheEntry{}
 	autoSweepMu.Unlock()
 }
 
 func lookupAutoSweepCache(key string) ([]config.ProxyEntry, AutoProbeDiagnostics, bool) {
 	autoSweepMu.Lock()
 	defer autoSweepMu.Unlock()
-	if autoSweepCache.key != key || autoSweepCache.at.IsZero() {
+	entry, ok := autoSweepCache[key]
+	if !ok || entry.at.IsZero() {
 		return nil, AutoProbeDiagnostics{}, false
 	}
-	if time.Since(autoSweepCache.at) >= autoSweepCacheTTL {
+	if time.Since(entry.at) >= autoSweepCacheTTL {
 		return nil, AutoProbeDiagnostics{}, false
 	}
-	// Copy: callers stamp the AUTO head's ID/Name onto the entries they get
-	// back (app.go's ResolveAutoCandidates), and handing out the cache's own
-	// backing array would let that stamping rewrite the cached rows.
-	out := append([]config.ProxyEntry(nil), autoSweepCache.candidates...)
-	diag := autoSweepCache.diag
+	// Copy candidates AND both diagnostic slices before handing them out.
+	// app.go's ResolveAutoCandidates keeps the returned slice for the AUTO
+	// group's lifetime (a.autoCandidates[head.ID] = ranked), and a second
+	// call — a different group hitting a different map entry, or the same
+	// group hit again — must get its own independent backing array, or two
+	// unrelated owners (two cache hits, possibly for two different groups)
+	// would share one array underneath both of them: a future in-place edit
+	// through one owner's slice (or Task 9 sorting diag for a table) would
+	// silently corrupt the other's data and the cache's own stored rows.
+	out := append([]config.ProxyEntry(nil), entry.candidates...)
+	diag := entry.diag
+	diag.Phase1 = append([]AutoProbeResult(nil), diag.Phase1...)
+	diag.Phase2 = append([]AutoProbeResult(nil), diag.Phase2...)
 	diag.FromCache = true
 	return out, diag, true
 }
@@ -148,14 +174,24 @@ func storeAutoSweepCache(key string, candidates []config.ProxyEntry, diag AutoPr
 	if len(candidates) == 0 {
 		return
 	}
+	now := time.Now()
 	autoSweepMu.Lock()
-	autoSweepCache = autoSweepCacheEntry{
-		key:        key,
-		at:         time.Now(),
+	defer autoSweepMu.Unlock()
+	// Prune expired entries on every store, not just this key's own slot: a
+	// user who keeps toggling between AUTO groups (or refreshes a
+	// subscription that changes group membership) would otherwise grow this
+	// map without bound over a long session, since nothing else ever removes
+	// a stale entry for a key that is no longer being asked for.
+	for k, e := range autoSweepCache {
+		if now.Sub(e.at) >= autoSweepCacheTTL {
+			delete(autoSweepCache, k)
+		}
+	}
+	autoSweepCache[key] = autoSweepCacheEntry{
+		at:         now,
 		candidates: append([]config.ProxyEntry(nil), candidates...),
 		diag:       diag,
 	}
-	autoSweepMu.Unlock()
 }
 
 // scoreNode ranks a node; lower is better.

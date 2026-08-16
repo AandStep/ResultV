@@ -254,9 +254,23 @@ func sanitizeStatReason(reason string) string {
 
 // RecordConnectOutcome folds a real connection attempt into the active store.
 // reason sanitization happens inside RecordConnect itself — see its comment.
+//
+// A failure also busts the sweep cache (autoselect.go): NodeStatStore.
+// RecordConnect's mutex is fully released by the time RecordConnect returns
+// above (it locks/defers-unlocks internally, not across this function), and
+// ResetAutoSweepCache takes an entirely separate mutex (autoSweepMu), so
+// calling it here — after both nodeStats() calls have already returned —
+// never nests the two locks. Without this, ConsecFails/LastFailAt just
+// changed for key, but the cache key does not include either field, so a
+// node that just failed to connect would keep dialing first out of the
+// cache for up to autoSweepCacheTTL instead of the failure penalty in
+// scoreNode ever getting a chance to move it down.
 func RecordConnectOutcome(key string, ok bool, reason string) {
 	nodeStats().RecordConnect(key, ok, reason)
 	_ = nodeStats().Flush()
+	if !ok {
+		ResetAutoSweepCache()
+	}
 }
 
 // LookupNodeStat reads the active store's record for key, or the zero value
