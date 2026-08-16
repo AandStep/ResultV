@@ -7,7 +7,17 @@
   "releaseNotes": [
     {
       "type": "fix",
-      "ru": "Sing-box ядро очищено от лишних мусорных ошибок",
+      "ru": "Sing-box ядро очищено от лишних мусорных логов-ошибок",
+      "en": "In Smart mode DNS went through the tunnel, which could cause disconnects and high ping in games. Now everything that is not blocked queries your own DNS"
+    },
+    {
+      "type": "fix",
+      "ru": "При переключении активного сервера на авто, авто сервер некорректно определял рабочие сервера",
+      "en": "In Smart mode DNS went through the tunnel, which could cause disconnects and high ping in games. Now everything that is not blocked queries your own DNS"
+    },
+    {
+      "type": "improve",
+      "ru": "Ускорен подбор серверов в авто режиме",
       "en": "In Smart mode DNS went through the tunnel, which could cause disconnects and high ping in games. Now everything that is not blocked queries your own DNS"
     }
   ],
