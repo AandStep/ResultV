@@ -100,7 +100,7 @@ func TestAutoProbeDialer_BindsToLANAddressWhenAvailable(t *testing.T) {
 	defer func() { pickLANBindIPv4 = oldPick }()
 
 	pickLANBindIPv4 = func() (net.IP, error) { return net.IPv4(192, 168, 1, 5), nil }
-	d := autoProbeDialer(4 * time.Second)
+	d := autoProbeDialer(4*time.Second, "203.0.113.10")
 	local, ok := d.LocalAddr.(*net.TCPAddr)
 	if !ok || !local.IP.Equal(net.IPv4(192, 168, 1, 5)) {
 		t.Fatalf("ожидали привязку к 192.168.1.5, получили %#v", d.LocalAddr)
@@ -115,8 +115,47 @@ func TestAutoProbeDialer_LeavesLocalAddrNilWithoutBindAddress(t *testing.T) {
 	defer func() { pickLANBindIPv4 = oldPick }()
 
 	pickLANBindIPv4 = func() (net.IP, error) { return nil, errors.New("no suitable LAN IPv4 for bind") }
-	if d := autoProbeDialer(4 * time.Second); d.LocalAddr != nil {
+	if d := autoProbeDialer(4*time.Second, "203.0.113.10"); d.LocalAddr != nil {
 		t.Fatalf("без bind-адреса LocalAddr должен остаться nil, получили %#v", d.LocalAddr)
+	}
+}
+
+// Windows отклоняет соединение к 127.0.0.1 с не-loopback источника
+// («connectex: The requested address is not valid in its context»), поэтому
+// привязка превратила бы достижимый локальный узел в недостижимый. Сама
+// привязка нужна, чтобы уйти от маршрута через TUN, а loopback через TUN не
+// ходит — пропуск ничего не стоит.
+func TestAutoProbeDialer_SkipsLANBindForLoopbackTargets(t *testing.T) {
+	oldPick := pickLANBindIPv4
+	defer func() { pickLANBindIPv4 = oldPick }()
+
+	pickLANBindIPv4 = func() (net.IP, error) { return net.IPv4(192, 168, 1, 5), nil }
+
+	for _, host := range []string{"127.0.0.1", "127.0.0.53", "::1", "localhost", "LocalHost"} {
+		if d := autoProbeDialer(4*time.Second, host); d.LocalAddr != nil {
+			t.Errorf("для %q привязка должна быть пропущена, получили %#v", host, d.LocalAddr)
+		}
+	}
+}
+
+func TestProbeTransport_SkipsLANBindForLoopbackTargets(t *testing.T) {
+	oldBind := autoProbeBindsToLAN
+	oldTCP, oldLAN := pingTCPProbe, pingLANProbe
+	defer func() {
+		autoProbeBindsToLAN = oldBind
+		pingTCPProbe, pingLANProbe = oldTCP, oldLAN
+	}()
+
+	autoProbeBindsToLAN = func() bool { return true }
+	pingLANProbe = func(_ string, _ int) (int64, bool, string) {
+		t.Error("для loopback-цели LAN-bind проба использоваться не должна")
+		return 0, false, ""
+	}
+	pingTCPProbe = func(_ string, _ int) (int64, bool, string) { return 1, true, "" }
+
+	node := config.ProxyEntry{IP: "127.0.0.1", Port: 1080, Type: "SS"}
+	if rtt, ok, _, _ := probeTransport(node, "127.0.0.1"); !ok || rtt != 1 {
+		t.Fatalf("ожидали успех через обычную пробу, получили rtt=%d ok=%v", rtt, ok)
 	}
 }
 

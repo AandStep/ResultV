@@ -289,17 +289,39 @@ var autoProbeBindsToLAN = func() bool {
 	return err == nil && ip != nil
 }
 
+// isLoopbackProbeHost reports whether a probe target lives on this machine's
+// loopback, in which case the LAN binding below must be skipped: Windows
+// rejects a connect to 127.0.0.1 from a non-loopback source address outright
+// ("connectex: The requested address is not valid in its context"), so binding
+// would turn a reachable local node into an unreachable one. Skipping costs
+// nothing — the binding exists to escape the TUN's default route, and loopback
+// never travels through the TUN.
+//
+// Both spellings are handled because a host reaches this function either as
+// the entry's literal address or as whatever resolveProbeHosts resolved it to.
+func isLoopbackProbeHost(host string) bool {
+	host = strings.TrimSpace(host)
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // autoProbeDialer returns a dialer pinned to the physical adapter when one is
-// available. Every probe in this file must go out that way: the sweep routinely
-// runs while a TUN is up (switching to AUTO without pausing first), and the
-// sing-tun system stack completes the local TCP handshake before it even
-// attempts the upstream dial. An unpinned probe therefore measures the local
-// stack — a few milliseconds — and reports a server we cannot reach as the
-// fastest node in the group. pickLANBindIPv4 already excludes tunnel
-// interfaces and the engine's own 172.19.0.0/30, so the address it hands back
-// is physical by construction.
-func autoProbeDialer(timeout time.Duration) *net.Dialer {
+// available and the target is not on loopback. Every probe in this file must go
+// out that way: the sweep routinely runs while a TUN is up (switching to AUTO
+// without pausing first), and the sing-tun system stack completes the local TCP
+// handshake before it even attempts the upstream dial. An unpinned probe
+// therefore measures the local stack — a few milliseconds — and reports a
+// server we cannot reach as the fastest node in the group. pickLANBindIPv4
+// already excludes tunnel interfaces and the engine's own 172.19.0.0/30, so the
+// address it hands back is physical by construction.
+func autoProbeDialer(timeout time.Duration, host string) *net.Dialer {
 	d := &net.Dialer{Timeout: timeout}
+	if isLoopbackProbeHost(host) {
+		return d
+	}
 	if local, err := pickLANBindIPv4(); err == nil && local != nil {
 		d.LocalAddr = &net.TCPAddr{IP: local, Port: 0}
 	}
@@ -311,7 +333,10 @@ func autoProbeDialer(timeout time.Duration) *net.Dialer {
 // variants, which the auto path previously skipped. See autoProbeDialer for
 // why the binding is what makes this measurement mean anything.
 func probeTransport(e config.ProxyEntry, dialHost string) (rtt int64, ok bool, stage, reason string) {
-	lan := autoProbeBindsToLAN()
+	// See isLoopbackProbeHost: binding a loopback target to the physical
+	// adapter makes the connect fail outright, so a local node would rank as
+	// dead purely because of how we measured it.
+	lan := autoProbeBindsToLAN() && !isLoopbackProbeHost(dialHost)
 	switch strings.ToUpper(strings.TrimSpace(e.Type)) {
 	case "HYSTERIA2":
 		sni := autoProbeHysteria2SNI(e)
@@ -357,7 +382,7 @@ const autoProbeSamples = 3
 // present a certificate that does not match the dialed IP.
 var autoTLSProbe = func(host string, port int, sni string, alpn []string) (int64, bool, string) {
 	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
-	dialer := autoProbeDialer(4 * time.Second)
+	dialer := autoProbeDialer(4*time.Second, host)
 	start := time.Now()
 	conn, err := tls.DialWithDialer(dialer, "tcp", addr, &tls.Config{
 		ServerName:         sni,
