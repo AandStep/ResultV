@@ -448,6 +448,19 @@ func (a *App) startup(ctx context.Context) {
 			a.log.Warning("[СЕТЬ] Интернет-соединение потеряно")
 		}
 	})
+	// A roam (Wi-Fi -> phone hotspot, cable pulled) changes which physical
+	// address probes must leave through, but not necessarily whether the
+	// machine is online — so the status handler above would never fire. Without
+	// this hook the LAN-bind cache keeps the dead address for up to its 30s TTL
+	// and the AUTO sweep cache, keyed on that address, keeps serving rankings
+	// measured over a link that no longer exists.
+	a.netmon.SetInterfaceChangeHandler(func() {
+		proxy.InvalidateLANBindCache()
+		proxy.ResetAutoSweepCache()
+		if a.log != nil {
+			a.log.Info("[СЕТЬ] Изменился состав сетевых адресов — кэш bind-адреса и подбора AUTO сброшен")
+		}
+	})
 	a.netmon.Start(a.ctx)
 
 	a.tray = system.NewTray(a.trayIcon, system.TrayCallbacks{
@@ -2676,9 +2689,17 @@ func formatAutoSweepTimingLine(groupName string, probed int, diag proxy.AutoProb
 		return fmt.Sprintf("[PROXY] AUTO «%s»: результат из кэша (%d узлов), опрос не потребовался",
 			strings.TrimSpace(groupName), probed)
 	}
-	return fmt.Sprintf("[PROXY] AUTO «%s»: опрошено %d узлов — фаза 1 %dms, фаза 2 %dms",
+	// "фаза 2 0ms" would read two ways — instantaneous, or never started (phase
+	// 1 found nobody to shortlist). An empty Phase2 tells the two apart, so say
+	// which one it is instead of leaving the reader to guess from a plausible
+	// but impossible zero.
+	phase2 := fmt.Sprintf("%dms", diag.Phase2Dur.Milliseconds())
+	if len(diag.Phase2) == 0 {
+		phase2 = "не запускалась"
+	}
+	return fmt.Sprintf("[PROXY] AUTO «%s»: опрошено %d узлов — фаза 1 %dms, фаза 2 %s",
 		strings.TrimSpace(groupName), probed,
-		diag.Phase1Dur.Milliseconds(), diag.Phase2Dur.Milliseconds())
+		diag.Phase1Dur.Milliseconds(), phase2)
 }
 
 // extractAutoMembers reads the member ID list out of an AUTO head's Extra.
@@ -2913,9 +2934,14 @@ func (a *App) ResolveAutoCandidates(proxyID string) []config.ProxyEntry {
 	// click published the provider's entire backend list to a log the user can
 	// export. The diag phases it was built from are dropped with it; what a
 	// user actually needs — which node was picked — is the one line below.
+	// CountProbeableNodes, not len(members): the sweep drops SECTION labels and
+	// address-less rows before dialing anything (see isProbeableNode), and this
+	// line exists precisely to state an honest measured figure — reporting the
+	// raw member count would be the one number in it that is not true.
+	probeable := proxy.CountProbeableNodes(members)
 	ranked, diag := proxy.RankAutoCandidates(a.ctx, members, a.getLastAutoNodeKey())
 	if a.log != nil {
-		a.log.Info(formatAutoSweepTimingLine(head.Name, len(members), diag))
+		a.log.Info(formatAutoSweepTimingLine(head.Name, probeable, diag))
 	}
 
 	// Cache the member entries before the identity stamp below overwrites their
@@ -2930,8 +2956,12 @@ func (a *App) ResolveAutoCandidates(proxyID string) []config.ProxyEntry {
 
 	if len(ranked) == 0 {
 		if a.log != nil {
+			// probeable, not len(memberIDs), for the same reason as the timing
+			// line above: an unresolvable member ID or a SECTION label was
+			// never dialed, so counting it here would overstate how many nodes
+			// actually failed.
 			a.log.Warning(fmt.Sprintf("[PROXY] AUTO «%s»: ни один из %d узлов не доступен — попытка по AUTO-записи",
-				strings.TrimSpace(head.Name), len(memberIDs)))
+				strings.TrimSpace(head.Name), probeable))
 		}
 		return []config.ProxyEntry{*head}
 	}

@@ -116,8 +116,9 @@ func (s *NodeStatStore) Get(key string) NodeStat {
 // node's first reading would come out halved.
 //
 // reason is sanitized exactly like RecordConnect's, even though the current
-// caller (RankAutoCandidates, fed by pingTCPProbe/pingHysteria2Probe/
-// pingWireGuardProbe/autoTLSProbe) only ever passes fixed vocabulary strings
+// caller (RankAutoCandidates, fed by pingTCPProbe/pingHysteria2StrictProbe/
+// pingWireGuardProbe/autoTLSProbe and their LAN-bound twins) only ever passes
+// fixed vocabulary strings
 // today. This is defence in depth, not a fix for a known leak: node_stats.json
 // is unencrypted on the promise that it holds no addresses, and that promise
 // should not depend on every present and future probe function remembering
@@ -245,9 +246,13 @@ func sanitizeStatReason(reason string) string {
 	switch strings.ToLower(strings.TrimSpace(reason)) {
 	case "":
 		return ""
+	// quic_handshake_failed is the Hysteria2 sweep's own verdict (ping_quic.go,
+	// ping_lan_bind.go) rather than one of pingReasonFromError's tokens, so it
+	// has to be listed explicitly or a QUIC node's real failure mode would
+	// collapse into the anonymous "error" bucket in node_stats.json.
 	case "timeout", "connection_refused", "network_unreachable", "no_route_to_host",
 		"connection_closed", "connection_reset", "probe_error", "lan_bind_unavailable",
-		"dns_unresolved":
+		"dns_unresolved", "quic_handshake_failed":
 		return reason
 	}
 	return "error"

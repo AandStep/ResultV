@@ -1,24 +1,24 @@
 {
   "version": "",
   "releaseTitle": {
-    "ru": "Улучшенный Auto режим, фиксы DNS Smart режима",
-    "en": "Improved Auto mode, Smart mode DNS fixes"
+    "ru": "Небольшие улучшения",
+    "en": "Some fixes"
   },
   "releaseNotes": [
     {
       "type": "fix",
       "ru": "Sing-box ядро очищено от лишних мусорных логов-ошибок",
-      "en": "In Smart mode DNS went through the tunnel, which could cause disconnects and high ping in games. Now everything that is not blocked queries your own DNS"
+      "en": "The sing-box core no longer floods the log with junk error messages"
     },
     {
       "type": "fix",
       "ru": "При переключении активного сервера на авто, авто сервер некорректно определял рабочие сервера",
-      "en": "In Smart mode DNS went through the tunnel, which could cause disconnects and high ping in games. Now everything that is not blocked queries your own DNS"
+      "en": "When switching an active server to Auto, Auto mode misjudged which servers were actually working"
     },
     {
       "type": "improve",
       "ru": "Ускорен подбор серверов в авто режиме",
-      "en": "In Smart mode DNS went through the tunnel, which could cause disconnects and high ping in games. Now everything that is not blocked queries your own DNS"
+      "en": "Server selection in Auto mode is noticeably faster"
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",

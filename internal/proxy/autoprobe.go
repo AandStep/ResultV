@@ -76,9 +76,17 @@ var autoProbeResolveHost = func(ctx context.Context, host string) (string, bool)
 	ctx, cancel := context.WithTimeout(ctx, autoProbeResolveTimeout)
 	defer cancel()
 	addrs, err := autoProbeLookupIPAddr(ctx, host)
-	if err != nil || len(addrs) == 0 {
+	if err != nil {
 		return "", false
 	}
+	return pickIPv4(addrs)
+}
+
+// pickIPv4 returns the first IPv4 literal in a resolver answer, or ("", false)
+// when the answer carries none. Split out of autoProbeResolveHost as a pure
+// function so the selection rule itself — the part with the actual policy in
+// it, documented above — can be tested without substituting a global.
+func pickIPv4(addrs []net.IPAddr) (string, bool) {
 	for _, a := range addrs {
 		if v4 := a.IP.To4(); v4 != nil {
 			return v4.String(), true
@@ -87,9 +95,19 @@ var autoProbeResolveHost = func(ctx context.Context, host string) (string, bool)
 	return "", false
 }
 
+// probeHostKey normalizes an entry's address into the key resolveProbeHosts
+// stores under and probeAutoNodesResolved looks up by. Hostnames are
+// case-insensitive (RFC 4343), so "CDN1.example.test" and "cdn1.example.test"
+// in one subscription must collapse to a single lookup instead of defeating
+// resolveProbeHosts' own "each host exactly once" guarantee. AutoNodeKey
+// lowercases the host for the same reason.
+func probeHostKey(host string) string {
+	return strings.ToLower(strings.TrimSpace(host))
+}
+
 // resolveProbeHosts resolves each distinct hostname in targets exactly once and
-// returns hostname -> literal. Hostnames that fail to resolve are absent from
-// the map; callers fall back to the name.
+// returns lowercased hostname -> literal. Hostnames that fail to resolve are
+// absent from the map; callers fall back to the name.
 //
 // Providers routinely publish four or five ports on one host, so a sweep of 48
 // nodes covers about a dozen names. Resolving per probe did that lookup work
@@ -97,13 +115,18 @@ var autoProbeResolveHost = func(ctx context.Context, host string) (string, bool)
 // into each node's measured RTT, so four ports of one host came back as
 // 292/289/293/311ms instead of one comparable figure.
 func resolveProbeHosts(ctx context.Context, targets []config.ProxyEntry) map[string]string {
-	hosts := make(map[string]struct{}, len(targets))
+	hosts := make([]string, 0, len(targets))
+	seen := make(map[string]struct{}, len(targets))
 	for _, t := range targets {
-		h := strings.TrimSpace(t.IP)
+		h := probeHostKey(t.IP)
 		if h == "" || net.ParseIP(h) != nil {
 			continue
 		}
-		hosts[h] = struct{}{}
+		if _, dup := seen[h]; dup {
+			continue
+		}
+		seen[h] = struct{}{}
+		hosts = append(hosts, h)
 	}
 	if len(hosts) == 0 {
 		return nil
@@ -112,18 +135,42 @@ func resolveProbeHosts(ctx context.Context, targets []config.ProxyEntry) map[str
 	out := make(map[string]string, len(hosts))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	for h := range hosts {
-		wg.Add(1)
-		go func(host string) {
-			defer wg.Done()
+
+	// Bounded by the same constant as the probe pool, and for the same reason:
+	// a subscription with several hundred distinct hosts would otherwise start
+	// several hundred lookups at once, and on Windows every getaddrinfo blocks
+	// an OS thread for the duration. In practice nodes outnumber hosts several
+	// times over, so this rarely binds — but "rarely" is not "never".
+	var next int
+	worker := func() {
+		defer wg.Done()
+		for {
+			mu.Lock()
+			if next >= len(hosts) {
+				mu.Unlock()
+				return
+			}
+			host := hosts[next]
+			next++
+			mu.Unlock()
+
 			ip, ok := autoProbeResolveHost(ctx, host)
 			if !ok {
-				return
+				continue
 			}
 			mu.Lock()
 			out[host] = ip
 			mu.Unlock()
-		}(h)
+		}
+	}
+
+	pool := autoProbeMaxConcurrency
+	if pool > len(hosts) {
+		pool = len(hosts)
+	}
+	wg.Add(pool)
+	for i := 0; i < pool; i++ {
+		go worker()
 	}
 	wg.Wait()
 	return out
@@ -225,9 +272,38 @@ func isProbeableNode(e config.ProxyEntry) bool {
 	return strings.TrimSpace(e.IP) != "" && e.Port > 0
 }
 
+// CountProbeableNodes reports how many of these entries a sweep would actually
+// dial. Exported because the caller's log line ("опрошено N узлов") is the one
+// place where the difference matters: a group carrying SECTION labels or
+// address-less rows would otherwise report the raw member count as the number
+// of nodes probed, which is exactly the kind of inflated figure that line was
+// added to rule out.
+func CountProbeableNodes(nodes []config.ProxyEntry) int {
+	n := 0
+	for _, e := range nodes {
+		if isProbeableNode(e) {
+			n++
+		}
+	}
+	return n
+}
+
 // ProbeAutoNodes probes every dialable node in parallel and returns one result
 // per probed node, in input order. Non-dialable entries are dropped.
 func ProbeAutoNodes(ctx context.Context, nodes []config.ProxyEntry, depth AutoProbeDepth) []AutoProbeResult {
+	return probeAutoNodesResolved(ctx, nodes, depth, nil)
+}
+
+// probeAutoNodesResolved is ProbeAutoNodes with the hostname->literal map
+// supplied by the caller. resolved may be nil, in which case this resolves the
+// targets itself.
+//
+// The seam exists for RankAutoCandidates, which probes twice (the wide phase 1
+// and the shortlist phase 2). Resolving inside each call did the lookups twice
+// and — worse — let a round-robin DNS answer hand phase 2 a different backend
+// than phase 1 measured, so the median TLS figure could belong to a machine
+// other than the one DepthFast ranked.
+func probeAutoNodesResolved(ctx context.Context, nodes []config.ProxyEntry, depth AutoProbeDepth, resolved map[string]string) []AutoProbeResult {
 	targets := make([]config.ProxyEntry, 0, len(nodes))
 	for _, n := range nodes {
 		if isProbeableNode(n) {
@@ -238,7 +314,9 @@ func ProbeAutoNodes(ctx context.Context, nodes []config.ProxyEntry, depth AutoPr
 		return nil
 	}
 
-	resolved := resolveProbeHosts(ctx, targets)
+	if resolved == nil {
+		resolved = resolveProbeHosts(ctx, targets)
+	}
 
 	out := make([]AutoProbeResult, len(targets))
 	var next int
@@ -261,7 +339,7 @@ func ProbeAutoNodes(ctx context.Context, nodes []config.ProxyEntry, depth AutoPr
 				return
 			}
 			dialHost := strings.TrimSpace(targets[i].IP)
-			if ip, ok := resolved[dialHost]; ok {
+			if ip, ok := resolved[probeHostKey(dialHost)]; ok {
 				dialHost = ip
 			}
 			out[i] = probeOne(targets[i], depth, dialHost)
@@ -329,9 +407,17 @@ func autoProbeDialer(timeout time.Duration, host string) *net.Dialer {
 }
 
 // probeTransport runs the transport-level probe for one node, mirroring the
-// protocol dispatch in Manager.Ping — including its choice of LAN-bound probe
-// variants, which the auto path previously skipped. See autoProbeDialer for
-// why the binding is what makes this measurement mean anything.
+// protocol dispatch in Manager.Ping — and, like it, picking the LAN-bound
+// variant of each probe, which the auto path previously skipped. See
+// autoProbeDialer for why the binding is what makes this measurement mean
+// anything.
+//
+// Only the dispatch is mirrored, not the condition that selects the bound
+// variant: Manager.Ping binds when the tunnel is actually up
+// (connected && mode == ProxyModeTunnel), while a sweep has no session to ask
+// about and binds whenever a physical adapter is available at all. Binding
+// with no tunnel up costs nothing — the packet leaves the same adapter either
+// way — so the sweep uses the weaker, always-available condition on purpose.
 func probeTransport(e config.ProxyEntry, dialHost string) (rtt int64, ok bool, stage, reason string) {
 	// See isLoopbackProbeHost: binding a loopback target to the physical
 	// adapter makes the connect fail outright, so a local node would rank as

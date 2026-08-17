@@ -66,6 +66,16 @@ func cachedPreferLANBindIPv4() (net.IP, error) {
 	return ip, err
 }
 
+// InvalidateLANBindCache drops the cached LAN-bind IP so the next probe
+// re-enumerates the adapters. app.go wires this to the network monitor's
+// interface-change event: without it the 30s TTL below is the only thing that
+// ever refreshes the bind address, so for up to half a minute after roaming
+// from Wi-Fi to a phone hotspot every LAN-bound probe would still try to leave
+// through an address the machine no longer has — and the AUTO sweep cache,
+// whose key folds in that address (autoSweepCacheKey), would keep serving
+// measurements taken over the old link.
+func InvalidateLANBindCache() { invalidateLANBindCache() }
+
 // invalidateLANBindCache drops the cached LAN-bind IP. Call when the network
 // topology might have changed (e.g., post-disconnect, before reconnect).
 func invalidateLANBindCache() {

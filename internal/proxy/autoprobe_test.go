@@ -609,10 +609,10 @@ func TestProbeAutoNodes_PoolIsCappedAtMaxConcurrency(t *testing.T) {
 	}
 }
 
-// stubProbeResolver makes the sweep dial each entry's address exactly as
-// written. Fixture nodes are named "a" / "node-0", not real hostnames, so
-// without this every sweep in the suite would wait out a real DNS timeout for
-// each of them.
+// stubProbeResolver заставляет свип дозваниваться ровно по тому адресу, что
+// записан в узле. Фикстуры называются «a» / «node-0», а не реальными хостами,
+// так что без этой подмены каждый свип в сюите выжидал бы настоящий
+// DNS-таймаут на каждом из них.
 func stubProbeResolver(t *testing.T) {
 	t.Helper()
 	old := autoProbeResolveHost
@@ -664,6 +664,206 @@ func TestProbeAutoNodes_ResolvesEachHostOnce(t *testing.T) {
 		if ip != "10.0.0.1" {
 			t.Fatalf("проба должна дозваниваться по резолвнутому IP, получили %q", ip)
 		}
+	}
+}
+
+// Имена хостов регистронезависимы (RFC 4343): одна и та же машина, записанная
+// в подписке в разном регистре, обязана резолвиться один раз — иначе
+// собственная гарантия «каждый хост ровно однажды» не выполняется.
+func TestProbeAutoNodes_ResolvesHostCaseInsensitively(t *testing.T) {
+	oldTCP, oldBind, oldResolve := pingTCPProbe, autoProbeBindsToLAN, autoProbeResolveHost
+	defer func() {
+		pingTCPProbe, autoProbeBindsToLAN, autoProbeResolveHost = oldTCP, oldBind, oldResolve
+	}()
+	autoProbeBindsToLAN = func() bool { return false }
+
+	var mu sync.Mutex
+	var lookups int
+	autoProbeResolveHost = func(_ context.Context, host string) (string, bool) {
+		mu.Lock()
+		lookups++
+		mu.Unlock()
+		if host != "cdn1.example.test" {
+			t.Errorf("резолвить нужно приведённое к нижнему регистру имя, получили %q", host)
+		}
+		return "10.0.0.1", true
+	}
+
+	var dialed []string
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) {
+		mu.Lock()
+		dialed = append(dialed, ip)
+		mu.Unlock()
+		return 10, true, ""
+	}
+
+	ProbeAutoNodes(context.Background(), []config.ProxyEntry{
+		{ID: "1", IP: "CDN1.example.test", Port: 443, Type: "VLESS"},
+		{ID: "2", IP: "cdn1.example.test", Port: 1443, Type: "VLESS"},
+		{ID: "3", IP: " Cdn1.Example.Test ", Port: 7443, Type: "VLESS"},
+	}, DepthFast)
+
+	if lookups != 1 {
+		t.Fatalf("ожидали ровно один резолв на три написания одного хоста, получили %d", lookups)
+	}
+	if len(dialed) != 3 {
+		t.Fatalf("ожидали 3 пробы, получили %d", len(dialed))
+	}
+	for _, ip := range dialed {
+		if ip != "10.0.0.1" {
+			t.Fatalf("все три узла должны дозваниваться по резолвнутому IP, получили %q", ip)
+		}
+	}
+}
+
+// Фан-аут резолвера ограничен тем же потолком, что и пул проб, и по той же
+// причине: на Windows каждый getaddrinfo блокирует поток ОС, так что подписка
+// на сотни разных хостов иначе запустила бы сотни лукапов разом.
+func TestResolveProbeHosts_FanOutIsCappedAtMaxConcurrency(t *testing.T) {
+	oldResolve := autoProbeResolveHost
+	defer func() { autoProbeResolveHost = oldResolve }()
+
+	const n = autoProbeMaxConcurrency * 2
+	var inFlight, maxInFlight int32
+	release := make(chan struct{})
+
+	autoProbeResolveHost = func(_ context.Context, _ string) (string, bool) {
+		cur := atomic.AddInt32(&inFlight, 1)
+		for {
+			prev := atomic.LoadInt32(&maxInFlight)
+			if cur <= prev || atomic.CompareAndSwapInt32(&maxInFlight, prev, cur) {
+				break
+			}
+		}
+		<-release
+		atomic.AddInt32(&inFlight, -1)
+		return "10.0.0.1", true
+	}
+
+	targets := make([]config.ProxyEntry, 0, n)
+	for i := 0; i < n; i++ {
+		targets = append(targets, config.ProxyEntry{
+			ID: fmt.Sprint(i), IP: fmt.Sprintf("cdn%d.example.test", i), Port: 443, Type: "VLESS",
+		})
+	}
+
+	done := make(chan map[string]string, 1)
+	go func() { done <- resolveProbeHosts(context.Background(), targets) }()
+
+	// Пул не может быть больше потолка, значит больше потолка лукапов
+	// одновременно висеть не должно — ждём, пока он заполнится, и отпускаем.
+	deadline := time.After(5 * time.Second)
+	for atomic.LoadInt32(&inFlight) < autoProbeMaxConcurrency {
+		select {
+		case <-deadline:
+			t.Fatalf("пул не заполнился: в полёте %d", atomic.LoadInt32(&inFlight))
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if got := atomic.LoadInt32(&maxInFlight); got > autoProbeMaxConcurrency {
+		t.Fatalf("одновременных лукапов %d, потолок %d", got, autoProbeMaxConcurrency)
+	}
+	close(release)
+
+	out := <-done
+	if got := atomic.LoadInt32(&maxInFlight); got > autoProbeMaxConcurrency {
+		t.Fatalf("одновременных лукапов %d, потолок %d", got, autoProbeMaxConcurrency)
+	}
+	if len(out) != n {
+		t.Fatalf("ожидали %d резолвнутых хостов, получили %d", n, len(out))
+	}
+}
+
+// pickIPv4 — чистая часть правила отбора: обвязка проб ниже умеет только v4,
+// поэтому AAAA-первый ответ обязан быть пропущен, а ответ без A-записи —
+// честно провалиться, а не откатиться на v6-литерал.
+func TestPickIPv4_SkipsAAAAAndFailsWithoutARecord(t *testing.T) {
+	if ip, ok := pickIPv4([]net.IPAddr{
+		{IP: net.ParseIP("2a01:4f8::1")},
+		{IP: net.ParseIP("203.0.113.9")},
+	}); !ok || ip != "203.0.113.9" {
+		t.Fatalf("ожидали 203.0.113.9, получили ip=%q ok=%v", ip, ok)
+	}
+	if ip, ok := pickIPv4([]net.IPAddr{{IP: net.ParseIP("2a01:4f8::1")}}); ok {
+		t.Fatalf("ожидали отказ без A-записи, получили ip=%q", ip)
+	}
+	if ip, ok := pickIPv4(nil); ok {
+		t.Fatalf("ожидали отказ на пустом ответе, получили ip=%q", ip)
+	}
+}
+
+// Строка лога «опрошено N узлов» считает именно то, что свип дозвонит:
+// SECTION-заголовки и записи без адреса он отбрасывает.
+func TestCountProbeableNodes_CountsOnlyDialableEntries(t *testing.T) {
+	got := CountProbeableNodes([]config.ProxyEntry{
+		{ID: "1", IP: "1.1.1.1", Port: 443, Type: "VLESS"},
+		{ID: "2", IP: "", Port: 0, Type: "SECTION", Name: "🚀 когда душат"},
+		{ID: "3", IP: "", Port: 443, Type: "VLESS"},
+		{ID: "4", IP: "2.2.2.2", Port: 0, Type: "VLESS"},
+		{ID: "5", IP: "3.3.3.3", Port: 8443, Type: "TROJAN"},
+	})
+	if got != 2 {
+		t.Fatalf("ожидали 2 пробуемых узла, получили %d", got)
+	}
+}
+
+// LAN-bind ветка сквозь весь свип: до сих пор все тесты фиксировали
+// autoProbeBindsToLAN = false, так что связка «есть физический адаптер →
+// берём LAN-bound вариант пробы» не проверялась целиком ни разу.
+func TestProbeAutoNodes_UsesLANBoundProbesWhenAdapterAvailable(t *testing.T) {
+	stubProbeResolver(t)
+	oldTCP, oldLAN, oldBind := pingTCPProbe, pingLANProbe, autoProbeBindsToLAN
+	defer func() {
+		pingTCPProbe, pingLANProbe, autoProbeBindsToLAN = oldTCP, oldLAN, oldBind
+	}()
+	autoProbeBindsToLAN = func() bool { return true }
+
+	pingTCPProbe = func(_ string, _ int) (int64, bool, string) {
+		t.Error("при доступном адаптере проба обязана идти LAN-bound вариантом")
+		return 0, false, ""
+	}
+	var mu sync.Mutex
+	var lanCalls []string
+	pingLANProbe = func(ip string, _ int) (int64, bool, string) {
+		mu.Lock()
+		lanCalls = append(lanCalls, ip)
+		mu.Unlock()
+		return 25, true, ""
+	}
+
+	got := ProbeAutoNodes(context.Background(), mkNodes("1.1.1.1", "2.2.2.2"), DepthFast)
+	if len(got) != 2 || !got[0].OK || !got[1].OK {
+		t.Fatalf("ожидали два успешных результата, получили %+v", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(lanCalls) != 2 {
+		t.Fatalf("ожидали 2 LAN-bound пробы, получили %d", len(lanCalls))
+	}
+}
+
+// Loopback — единственное исключение: Windows отклоняет дозвон к 127.0.0.1 с
+// не-loopback источника, так что бинд обязан отключаться, даже когда адаптер
+// доступен.
+func TestProbeAutoNodes_SkipsLANBindForLoopbackTarget(t *testing.T) {
+	stubProbeResolver(t)
+	oldTCP, oldLAN, oldBind := pingTCPProbe, pingLANProbe, autoProbeBindsToLAN
+	defer func() {
+		pingTCPProbe, pingLANProbe, autoProbeBindsToLAN = oldTCP, oldLAN, oldBind
+	}()
+	autoProbeBindsToLAN = func() bool { return true }
+
+	pingLANProbe = func(_ string, _ int) (int64, bool, string) {
+		t.Error("для loopback-цели LAN-bind обязан быть пропущен")
+		return 0, false, ""
+	}
+	called := ""
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) { called = ip; return 5, true, "" }
+
+	ProbeAutoNodes(context.Background(), mkNodes("127.0.0.1"), DepthFast)
+	if called != "127.0.0.1" {
+		t.Fatalf("ожидали небинденную пробу к 127.0.0.1, получили %q", called)
 	}
 }
 

@@ -510,3 +510,30 @@ func TestFormatAutoSweepTimingLine_MarksCachedResult(t *testing.T) {
 		t.Fatalf("строка кэша не содержит имя группы или счётчик: %s", line)
 	}
 }
+
+// «фаза 2 0ms» читается двояко: и «отработала мгновенно», и «не запускалась»
+// (фаза 1 никого не нашла). Пустой Phase2 различает эти случаи — строка обязана
+// сказать, какой именно, а не оставлять читателя гадать по правдоподобному, но
+// невозможному нулю.
+func TestFormatAutoSweepTimingLine_SaysWhenPhase2NeverRan(t *testing.T) {
+	diag := proxy.AutoProbeDiagnostics{
+		Phase1Dur: 1200 * time.Millisecond,
+		Phase1:    sweepTimingSentinelResults(),
+	}
+	line := formatAutoSweepTimingLine("🚀 impVPN Auto", 48, diag)
+
+	if strings.Contains(line, "фаза 2 0ms") {
+		t.Fatalf("незапущенная фаза 2 не должна показываться как 0ms: %s", line)
+	}
+	if !strings.Contains(line, "не запускалась") {
+		t.Fatalf("ожидали явную пометку о незапущенной фазе 2: %s", line)
+	}
+
+	// Обратная сторона: измеренная фаза 2 обязана показывать миллисекунды.
+	diag.Phase2 = sweepTimingSentinelResults()
+	diag.Phase2Dur = 300 * time.Millisecond
+	line = formatAutoSweepTimingLine("🚀 impVPN Auto", 48, diag)
+	if !strings.Contains(line, "фаза 2 300ms") {
+		t.Fatalf("измеренная фаза 2 должна показывать длительность: %s", line)
+	}
+}
