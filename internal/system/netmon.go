@@ -46,10 +46,21 @@ type NetMonitor struct {
 }
 
 
+// checkHosts are the reachability targets for the "is there internet at all"
+// check. Literal IPs only, deliberately: a hostname here would be resolved by
+// the OS resolver, and an active tunnel session breaks exactly that — the
+// system-DNS override pins the physical adapters to resolvers reachable only
+// inside the tunnel, while the app's own traffic is self-direct. The monitor
+// then flapped "Интернет-соединение потеряно" while every browser tab worked.
+// See netmon_test.go.
+//
+// All four must fail before the machine is called offline, so one target being
+// throttled or blocked by a national filter can't produce a false negative.
 var checkHosts = []string{
-	"dns.google:443",          
-	"one.one.one.one:443",     
-	"208.67.222.222:443",      
+	"1.1.1.1:443",        // Cloudflare
+	"8.8.8.8:443",        // Google
+	"208.67.222.222:443", // OpenDNS
+	"9.9.9.9:443",        // Quad9
 }
 
 
