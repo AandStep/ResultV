@@ -442,6 +442,31 @@ type SBRouteRule struct {
 	RuleSet          []string `json:"rule_set,omitempty"`
 	Outbound         string   `json:"outbound,omitempty"`
 	Action           string   `json:"action,omitempty"`
+	// Method qualifies Action="reject": "default" answers with ICMP
+	// port-unreachable, "drop" black-holes silently. Only "default" produces the
+	// fast client-side fallback quicRejectRule relies on.
+	Method string `json:"method,omitempty"`
+}
+
+// quicRejectRule builds the UDP/443 reject that forces a QUIC client back onto
+// TCP. Callers pass the same selector as the route-to-proxy rule it shadows, so
+// the reject covers exactly the traffic we tunnel and nothing else.
+//
+// Why this exists: UDP does not survive every proxy outbound. Measured on a
+// live tunnel (2026-08-17), Smart-list hosts answered over TCP/TLS in ~200 ms
+// while their h3 handshakes timed out at 10 s — reproduced through the local
+// SOCKS inbound with the target named by domain, so sniffing is not the
+// culprit. Whether UDP works depends on the node, which is why users see it as
+// "Discord attachments sometimes open, sometimes don't". A silent black hole
+// leaves Chromium (Discord is Electron) retrying QUIC for seconds; an ICMP
+// unreachable makes it mark h3 broken and switch to HTTP/2 immediately.
+func quicRejectRule(sel SBRouteRule) SBRouteRule {
+	sel.Action = "reject"
+	sel.Method = "default"
+	sel.Network = []string{"udp"}
+	sel.Port = []int{443}
+	sel.Outbound = ""
+	return sel
 }
 
 func effectiveDataDir(cfg EngineConfig) string {
@@ -1105,6 +1130,16 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	// proxy never reach us, so the rule would be dead weight.
 	if cfg.Mode == ProxyModeTunnel {
 		if rx := appWhitelistPathRegexes(cfg.AppForceVPN); len(rx) > 0 {
+			// Sending an app through the tunnel wholesale is the workaround
+			// users reach for when a service half-works; it must not hand them
+			// back the QUIC hang the Smart rule below cures. Smart-only on
+			// purpose: in Global mode every app already rides the proxy, so
+			// singling out the force-VPN list would fix QUIC for those apps and
+			// leave it broken for the rest — an inconsistency worth deciding on
+			// its own rather than inheriting from here.
+			if cfg.RoutingMode == ModeSmart {
+				rules = append(rules, quicRejectRule(SBRouteRule{ProcessPathRegex: rx}))
+			}
 			rules = append(rules, SBRouteRule{
 				Action:           "route",
 				ProcessPathRegex: rx,
@@ -1146,12 +1181,16 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 				Format:       "binary",
 				LocalOptions: SBLocalRuleSet{Path: cfg.SmartRuleSetPath},
 			})
+			rules = append(rules, quicRejectRule(SBRouteRule{RuleSet: []string{smartRuleSetTag}}))
 			rules = append(rules, SBRouteRule{
 				Action:   "route",
 				RuleSet:  []string{smartRuleSetTag},
 				Outbound: "proxy",
 			})
 		} else {
+			rules = append(rules, quicRejectRule(SBRouteRule{
+				DomainSuffix: append([]string(nil), cfg.BlockedDomains...),
+			}))
 			rules = append(rules, SBRouteRule{
 				Action:       "route",
 				DomainSuffix: append([]string(nil), cfg.BlockedDomains...),

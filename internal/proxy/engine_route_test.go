@@ -1594,3 +1594,120 @@ func TestBuildDNS_SmartFinalSerializes(t *testing.T) {
 		t.Fatalf("dns final missing from json:\n%s", string(raw))
 	}
 }
+
+// indexOfRule returns the position of the first rule matching pred, or -1.
+func indexOfRule(rules []SBRouteRule, pred func(SBRouteRule) bool) int {
+	for i, r := range rules {
+		if pred(r) {
+			return i
+		}
+	}
+	return -1
+}
+
+func isQUICReject(r SBRouteRule) bool {
+	return r.Action == "reject" &&
+		len(r.Network) == 1 && r.Network[0] == "udp" &&
+		len(r.Port) == 1 && r.Port[0] == 443
+}
+
+// TestBuildRoute_SmartMode_RejectsQUICForBlockedDomains is the regression for
+// the Discord-attachments report (2026-08-17). Measured on a live tunnel: every
+// Smart-list host reachable over TCP/TLS (h2) black-holed over QUIC — 10 s
+// timeouts for cdn.discordapp.com, media.discordapp.net and www.youtube.com —
+// while direct hosts (cloudflare.com, www.google.com) completed the h3
+// handshake in ~70 ms. Repeating the test through the local SOCKS inbound with
+// the target named BY DOMAIN reproduced it, which rules out sniffing: UDP
+// simply does not survive some proxy outbounds. It is node-dependent, so the
+// symptom looks intermittent — attachments load on a hysteria2 node and hang on
+// the next one.
+//
+// Rejecting QUIC for exactly the domains we tunnel makes the behaviour
+// node-independent: Chromium (Discord is Electron) sees the port unreachable
+// immediately, marks h3 broken and falls back to HTTP/2 over TCP, which always
+// works. Without it the request just hangs.
+func TestBuildRoute_SmartMode_RejectsQUICForBlockedDomains(t *testing.T) {
+	cfg := smartDNSConfig()
+	route := buildRoute(cfg)
+
+	reject := indexOfRule(route.Rules, func(r SBRouteRule) bool {
+		return isQUICReject(r) && len(r.RuleSet) == 1 && r.RuleSet[0] == smartRuleSetTag
+	})
+	if reject < 0 {
+		t.Fatalf("expected a udp:443 reject rule keyed on %q, rules=%+v", smartRuleSetTag, route.Rules)
+	}
+
+	proxyRoute := indexOfRule(route.Rules, func(r SBRouteRule) bool {
+		return r.Action == "route" && r.Outbound == "proxy" &&
+			len(r.RuleSet) == 1 && r.RuleSet[0] == smartRuleSetTag
+	})
+	if proxyRoute < 0 {
+		t.Fatal("smart rule-set proxy route rule disappeared")
+	}
+	if reject > proxyRoute {
+		t.Fatalf("reject must precede the route-to-proxy rule, got reject=%d route=%d", reject, proxyRoute)
+	}
+}
+
+// TestBuildRoute_SmartMode_RejectsQUICInlineFallback covers the branch taken
+// when no compiled rule-set is available: the reject must carry the same domain
+// suffixes the inline proxy rule does, or QUIC keeps hanging exactly where the
+// rule-set path would have fixed it.
+func TestBuildRoute_SmartMode_RejectsQUICInlineFallback(t *testing.T) {
+	cfg := smartDNSConfig()
+	cfg.SmartRuleSetPath = ""
+	route := buildRoute(cfg)
+
+	reject := indexOfRule(route.Rules, func(r SBRouteRule) bool {
+		return isQUICReject(r) && len(r.DomainSuffix) > 0
+	})
+	if reject < 0 {
+		t.Fatalf("expected an inline udp:443 reject rule, rules=%+v", route.Rules)
+	}
+	if !reflect.DeepEqual(route.Rules[reject].DomainSuffix, cfg.BlockedDomains) {
+		t.Fatalf("reject suffixes must mirror the proxy rule, got %v want %v",
+			route.Rules[reject].DomainSuffix, cfg.BlockedDomains)
+	}
+}
+
+// TestBuildRoute_ForceVPNApps_RejectQUIC extends the same fallback to force-VPN
+// apps. Sending Discord through the tunnel wholesale is the workaround users
+// reach for, and it must not reintroduce the hang the rule-set path just fixed.
+func TestBuildRoute_ForceVPNApps_RejectQUIC(t *testing.T) {
+	cfg := smartDNSConfig()
+	cfg.AppForceVPN = []string{"Discord.exe"}
+	route := buildRoute(cfg)
+
+	reject := indexOfRule(route.Rules, func(r SBRouteRule) bool {
+		return isQUICReject(r) && len(r.ProcessPathRegex) == 1 &&
+			strings.Contains(r.ProcessPathRegex[0], "Discord")
+	})
+	if reject < 0 {
+		t.Fatalf("expected a udp:443 reject for force-VPN apps, rules=%+v", route.Rules)
+	}
+	proxyRoute := indexOfRule(route.Rules, func(r SBRouteRule) bool {
+		return r.Action == "route" && r.Outbound == "proxy" &&
+			len(r.ProcessPathRegex) == 1 && strings.Contains(r.ProcessPathRegex[0], "Discord")
+	})
+	if proxyRoute < 0 {
+		t.Fatal("force-VPN proxy route rule disappeared")
+	}
+	if reject > proxyRoute {
+		t.Fatalf("reject must precede the force-VPN route rule, got reject=%d route=%d", reject, proxyRoute)
+	}
+}
+
+// TestBuildRoute_GlobalMode_KeepsQUIC pins the blast radius: the reject is a
+// Smart-mode repair, not a blanket QUIC ban. In Global/Whitelist mode Final is
+// "proxy" and there is no rule-set to scope the reject to, so killing UDP/443
+// there would break h3 for everything the user tunnels deliberately.
+func TestBuildRoute_GlobalMode_KeepsQUIC(t *testing.T) {
+	cfg := smartDNSConfig()
+	cfg.RoutingMode = ModeGlobal
+	cfg.AppForceVPN = []string{"Discord.exe"}
+	route := buildRoute(cfg)
+
+	if i := indexOfRule(route.Rules, isQUICReject); i >= 0 {
+		t.Fatalf("global mode must not reject udp:443, rule=%+v", route.Rules[i])
+	}
+}
