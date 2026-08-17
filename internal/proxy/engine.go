@@ -557,13 +557,20 @@ func smartRuleSetActive(cfg EngineConfig) bool {
 func buildDNS(cfg EngineConfig) *SBDNS {
 	if cfg.Mode == ProxyModeTunnel {
 
-		pt := strings.ToUpper(strings.TrimSpace(cfg.Proxy.Type))
-		isEndpoint := pt == "WIREGUARD" || pt == "AMNEZIAWG"
-
+		// Every transport resolves through the tunnel, endpoints included.
+		// WireGuard/AmneziaWG are emitted as an `endpoint` rather than an
+		// outbound, but they carry the same "proxy" tag and
+		// OutboundManager.Outbound() falls back to the endpoint registry
+		// (adapter/outbound/manager.go), so the detour resolves normally.
+		//
+		// An empty detour is NOT "follow the route rules" — sing-box builds
+		// such a server with the default dialer (common/dialer/dialer.go:
+		// `if Detour != "" { NewDetour } else { NewDefault }`), a plain
+		// protected socket on the underlying network. That sent every lookup
+		// on a WireGuard profile in the clear to 8.8.8.8 past the tunnel, so
+		// on a censored network DNS was answered by the very resolver the
+		// tunnel exists to avoid.
 		detour := "proxy"
-		if isEndpoint {
-			detour = ""
-		}
 
 		servers := []SBDNSServer{}
 		if len(cfg.DNSServers) > 0 {

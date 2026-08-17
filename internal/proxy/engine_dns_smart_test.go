@@ -134,12 +134,14 @@ func TestGlobalDNSStaysOnTheTunnel(t *testing.T) {
 	}
 }
 
-// WireGuard/AmneziaWG endpoints run with detour="" — their lookups are already
-// routed like ordinary traffic, so the split must not be applied twice.
-func TestSmartDNSLeavesWireGuardEndpointsAlone(t *testing.T) {
+// WireGuard/AmneziaWG endpoints resolve through the tunnel like every other
+// transport (see TestEndpointDNSGoesThroughTheTunnel), so the Smart split
+// applies to them too: a blocked domain must not be answered by the local
+// resolver just because the profile happens to be an endpoint one.
+func TestSmartDNSSplitAppliesToWireGuardEndpoints(t *testing.T) {
 	dns := dnsForSmart(t, "AMNEZIAWG")
-	if hasSmartRule(dns) {
-		t.Fatal("endpoint transports must not get the Smart DNS split rule; their lookups already follow the route rules")
+	if !hasSmartRule(dns) {
+		t.Fatal("endpoint transports must get the Smart DNS split rule; a censored domain resolved locally is a poisoned answer")
 	}
 }
 
