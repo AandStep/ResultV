@@ -24,7 +24,8 @@ import (
 // DisableKeepAlives. When a probe overruns that timeout the Go client hangs up
 // mid-response and sing-box fails the write back — WSAECONNABORTED, reported as
 // "aborted by the software in your host machine". The probe's own verdict is
-// already logged by the watchdog as "[KILL SWITCH] Проба не прошла", so the
+// already logged by the watchdog as "Проба не прошла" (tagged [KILL SWITCH] or
+// [СЕТЬ] depending on the setting, see watchdogLogTag), so the
 // engine-side wreckage carries no information the user can act on.
 //
 // The download/upload-closed RSTs are the peer's doing: Google and friends

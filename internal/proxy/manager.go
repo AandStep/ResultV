@@ -2321,6 +2321,34 @@ const watchdogTrafficAliveBytes int64 = 16 * 1024
 // that a dead session doesn't stay silently masked.
 const maxConsecutiveVetoes = 6
 
+// watchdogLogTag returns the log prefix for health-watchdog lines. The watchdog
+// runs on every session regardless of the kill-switch setting — it is what
+// feeds the "node stopped responding" status — but tagging its every tick
+// "[KILL SWITCH]" while the setting is off reads as the kill switch firing when
+// it cannot fire at all: the log then shows a wall of [KILL SWITCH] lines next
+// to "Kill Switch: false". Disarmed, these lines are plain connection news.
+func watchdogLogTag(killSwitch bool) string {
+	if killSwitch {
+		return "[KILL SWITCH]"
+	}
+	return "[СЕТЬ]"
+}
+
+// logWatchdogTick emits one per-tick watchdog line at a severity that matches
+// the stakes. Armed, the next failed tick may black out all traffic, so the
+// warning level is earned; disarmed, nothing will be blocked and the same line
+// is informational noise at warning level.
+//
+// Callers hold m.mu, matching the m.log.Warning calls this replaces.
+func (m *Manager) logWatchdogTick(ks bool, format string, args ...any) {
+	msg := watchdogLogTag(ks) + " " + fmt.Sprintf(format, args...)
+	if ks {
+		m.log.Warning(msg)
+		return
+	}
+	m.log.Info(msg)
+}
+
 func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy ProxyConfig, mode ProxyMode) {
 	// Both modes now probe the data path (see probeHealthy): proxy mode through
 	// the local listener, tunnel mode through the TUN default route. Direct
@@ -2415,7 +2443,7 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy Proxy
 			var disengageFn func()
 			if wasDead {
 				m.proxyDead = false
-				m.log.Success("[KILL SWITCH] VPN-сервер снова доступен")
+				m.logWatchdogTick(ks, "VPN-сервер снова доступен")
 				m.emitStatusLocked()
 				disengageFn = m.KillSwitchFirewallDisengage
 			}
@@ -2434,7 +2462,7 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy Proxy
 			// fallback probes can produce this; the loopback-listener probe
 			// resolves hostnames remotely via sing-box.
 			if !wasDead {
-				m.log.Warning(fmt.Sprintf("[KILL SWITCH] Проба не выполнена: локальный DNS не ответил (%s) — не считается отказом сервера", failReason))
+				m.logWatchdogTick(ks, "Проба не выполнена: локальный DNS не ответил (%s) — не считается отказом сервера", failReason)
 			}
 			m.mu.Unlock()
 			continue
@@ -2444,7 +2472,7 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy Proxy
 			if failReason == "" {
 				failReason = "нет ответа"
 			}
-			m.log.Warning(fmt.Sprintf("[KILL SWITCH] Проба не прошла (%d/%d): %s", consecutiveFails, failuresBeforeDead, failReason))
+			m.logWatchdogTick(ks, "Проба не прошла (%d/%d): %s", consecutiveFails, failuresBeforeDead, failReason)
 		}
 		var shouldEngage bool
 		var engageFn func(ProxyConfig, []string)
@@ -2459,7 +2487,7 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy Proxy
 			// churning retry bytes while every probe fails can't mask a dead
 			// session indefinitely.
 			consecutiveVetoes++
-			m.log.Warning(fmt.Sprintf("[KILL SWITCH] Проба не прошла, но прокси несёт трафик (Δ=%d КБ за интервал) — блокировка отложена (%d/%d)", proxyDelta/1024, consecutiveVetoes, maxConsecutiveVetoes))
+			m.logWatchdogTick(ks, "Проба не прошла, но прокси несёт трафик (Δ=%d КБ за интервал) — блокировка отложена (%d/%d)", proxyDelta/1024, consecutiveVetoes, maxConsecutiveVetoes)
 			m.mu.Unlock()
 			continue
 		}
