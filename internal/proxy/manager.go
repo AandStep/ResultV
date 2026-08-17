@@ -2239,6 +2239,15 @@ func (m *Manager) Ping(ip string, port int, proxyType string) PingResultDTO {
 	connected := m.connected
 	m.mu.Unlock()
 
+	// Resolve once, here, instead of letting each probe dial by name: the
+	// probes use net.Dial, and during an active session the OS resolver is
+	// unusable for the app itself (see resolvePingHost). A domain server then
+	// reported "Error" for every ping until the app was restarted.
+	dialHost := resolvePingHost(ip)
+	if dialHost == "" {
+		return PingResultDTO{Reachable: false, Reason: "dns_unresolved", CheckType: "dns"}
+	}
+
 	var latency int64
 	var reachable bool
 	var reason string
@@ -2251,21 +2260,21 @@ func (m *Manager) Ping(ip string, port int, proxyType string) PingResultDTO {
 
 	if connected && mode == ProxyModeTunnel {
 		if isHysteria2 {
-			latency, reachable, reason, checkType = pingHysteria2LANProbe(ip, port)
+			latency, reachable, reason, checkType = pingHysteria2LANProbe(dialHost, port)
 		} else if isWireGuard {
-			latency, reachable, reason = pingWireGuardLANProbe(ip, port)
+			latency, reachable, reason = pingWireGuardLANProbe(dialHost, port)
 			checkType = "udp_lan_bind"
 		} else {
-			latency, reachable, reason = pingLANProbe(ip, port)
+			latency, reachable, reason = pingLANProbe(dialHost, port)
 			checkType = "tcp_lan_bind"
 		}
 	} else if isHysteria2 {
-		latency, reachable, reason, checkType = pingHysteria2Probe(ip, port)
+		latency, reachable, reason, checkType = pingHysteria2Probe(dialHost, port)
 	} else if isWireGuard {
-		latency, reachable, reason = pingWireGuardProbe(ip, port)
+		latency, reachable, reason = pingWireGuardProbe(dialHost, port)
 		checkType = "udp"
 	} else {
-		latency, reachable, reason = pingTCPProbe(ip, port)
+		latency, reachable, reason = pingTCPProbe(dialHost, port)
 		checkType = "tcp"
 	}
 

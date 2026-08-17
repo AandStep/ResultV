@@ -49,6 +49,7 @@ function pingResultToLabel(data) {
         return "Unreachable";
     }
     if (reason === "connection_closed") return "Closed";
+    if (reason === "dns_unresolved") return "DNS";
     if (reason === "error" || reason === "probe_error") return "Error";
     return "Unavailable";
 }

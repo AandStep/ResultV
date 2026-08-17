@@ -246,7 +246,8 @@ func sanitizeStatReason(reason string) string {
 	case "":
 		return ""
 	case "timeout", "connection_refused", "network_unreachable", "no_route_to_host",
-		"connection_closed", "connection_reset", "probe_error", "lan_bind_unavailable":
+		"connection_closed", "connection_reset", "probe_error", "lan_bind_unavailable",
+		"dns_unresolved":
 		return reason
 	}
 	return "error"
