@@ -1914,12 +1914,29 @@ func probeTunnelHealth() (bool, string) {
 // resolver: the system DNS override pins physical adapters to resolvers that
 // are unreachable outside the tunnel), so the watchdog must not count it as a
 // server-dead strike. See isLocalDNSProbeFailure.
+//
+// Unrecognised errors keep their original text behind a "probe_error: " prefix:
+// the bare code told the user (and us) nothing when a working session kept
+// failing its probe. This value only ever reaches the watchdog log line — never
+// node_stats.json, whose vocabulary stays fixed by sanitizeStatReason.
 func probeFailureReason(err error) string {
+	if err == nil {
+		return ""
+	}
 	var dnsErr *net.DNSError
 	if errors.As(err, &dnsErr) {
 		return "local_dns: " + dnsErr.Err
 	}
-	return pingReasonFromError(err)
+	reason := pingReasonFromError(err)
+	if reason == "probe_error" {
+		// pingReasonFromError's catch-all discards the text, which is exactly
+		// the case worth reading: every recognised class already names itself.
+		// Safe to log verbatim — the probes this serves dial 127.0.0.1 and the
+		// public connectivity endpoints in tunnelProbeDomains, never the user's
+		// server, so no server address can appear in the text.
+		return "probe_error: " + err.Error()
+	}
+	return reason
 }
 
 func isLocalDNSProbeFailure(reason string) bool {
