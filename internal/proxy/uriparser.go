@@ -352,6 +352,28 @@ func parseJSONOutbound(outbound map[string]interface{}, name string) (config.Pro
 				normalizeVLESSExtraPadding(extra)
 			}
 		}
+		if kcp, ok := asMap(stream["kcpSettings"]); ok {
+			if seed := asString(kcp["seed"]); seed != "" {
+				extra["seed"] = seed
+			}
+			// Xray nests the obfuscation header type one level deeper.
+			if header, ok := asMap(kcp["header"]); ok {
+				if ht := asString(header["type"]); ht != "" {
+					extra["headerType"] = ht
+				}
+			}
+			for _, k := range []string{
+				"mtu", "tti", "uplinkCapacity", "downlinkCapacity",
+				"readBufferSize", "writeBufferSize",
+			} {
+				if n := asInt(kcp[k]); n > 0 {
+					extra[k] = n
+				}
+			}
+			if congestion, ok := kcp["congestion"].(bool); ok && congestion {
+				extra["congestion"] = true
+			}
+		}
 		if reality, ok := asMap(stream["realitySettings"]); ok {
 			if sni := asString(reality["serverName"]); sni != "" {
 				extra["sni"] = sni
@@ -883,6 +905,35 @@ func parseVLESSURI(uri string) (config.ProxyEntry, error) {
 	); grpcAuthority != "" {
 		extra["authority"] = grpcAuthority
 	}
+	// mKCP knobs ride as plain query params in vless:// links. Only non-empty ones
+	// are stored: every other transport shares this extra map.
+	for _, k := range []string{
+		"seed", "headerType",
+		"uplinkCapacity", "downlinkCapacity",
+		"readBufferSize", "writeBufferSize",
+	} {
+		if v := strings.TrimSpace(params.Get(k)); v != "" {
+			extra[k] = v
+		}
+	}
+	// mtu/tti/congestion must land as native int/bool: outbound.go reads them
+	// with getIntField/getBoolField, which — unlike intFromExtra — don't parse
+	// numeric strings, so a plain string here would silently become 0/false.
+	if mtu := strings.TrimSpace(params.Get("mtu")); mtu != "" {
+		if n, err := strconv.Atoi(mtu); err == nil {
+			extra["mtu"] = n
+		}
+	}
+	if tti := strings.TrimSpace(params.Get("tti")); tti != "" {
+		if n, err := strconv.Atoi(tti); err == nil {
+			extra["tti"] = n
+		}
+	}
+	if congestion := strings.TrimSpace(params.Get("congestion")); congestion != "" {
+		if b, err := strconv.ParseBool(congestion); err == nil {
+			extra["congestion"] = b
+		}
+	}
 
 	normalizeVLESSExtraPadding(extra)
 
@@ -930,6 +981,17 @@ func parseVMessURI(uri string) (config.ProxyEntry, error) {
 		extra["tls"] = true
 		if sni, ok := v["sni"].(string); ok {
 			extra["sni"] = sni
+		}
+	}
+	// In the vmess:// JSON, "type" is the mKCP header type and "path" carries the
+	// mKCP seed — but only when the network is kcp. For ws/tcp those two fields mean
+	// something else entirely, so the mapping must stay gated on the network.
+	if net := strings.ToLower(strings.TrimSpace(stringFromExtraValue(v["net"]))); net == "kcp" || net == "mkcp" {
+		if headerType := strings.TrimSpace(stringFromExtraValue(v["type"])); headerType != "" {
+			extra["headerType"] = headerType
+		}
+		if seed := strings.TrimSpace(stringFromExtraValue(v["path"])); seed != "" {
+			extra["seed"] = seed
 		}
 	}
 
