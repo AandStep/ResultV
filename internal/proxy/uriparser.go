@@ -1298,6 +1298,8 @@ func parseHysteria2URI(uri string) (config.ProxyEntry, error) {
 		"insecure":      insecure,
 		"obfs_type":     params.Get("obfs"),
 		"obfs_password": params.Get("obfs-password"),
+		"mport":         firstNonEmpty(params.Get("mport"), params.Get("ports")),
+		"hop_interval":  firstNonEmpty(params.Get("hop-interval"), params.Get("hopInterval")),
 	}
 
 	extraJSON, _ := json.Marshal(extra)

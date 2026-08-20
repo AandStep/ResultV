@@ -252,8 +252,13 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 				getStringField(extra, "userpass", ""),
 				proxy.Password,
 			),
-			UpMbps:     intFromExtra(extra, "up_mbps", "upMbps"),
-			DownMbps:   intFromExtra(extra, "down_mbps", "downMbps"),
+			UpMbps:      intFromExtra(extra, "up_mbps", "upMbps"),
+			DownMbps:    intFromExtra(extra, "down_mbps", "downMbps"),
+			ServerPorts: hysteriaServerPortsFromExtra(extra),
+			HopInterval: firstNonEmpty(
+				getStringField(extra, "hop_interval", ""),
+				getStringField(extra, "hopInterval", ""),
+			),
 		}
 		if sni := getStringField(extra, "sni", getStringField(extra, "server_name", "")); sni != "" || getBoolField(extra, "insecure") {
 			out.TLS = &SBOutboundTLS{
@@ -462,6 +467,48 @@ func intFromAny(v interface{}) int {
 		}
 	}
 	return 0
+}
+
+// hysteriaServerPortsFromExtra converts the URI spelling of Hysteria2 port
+// hopping ("mport=10000-20000,30000") into the "start:end" ranges sing-quic
+// parses. A range it cannot parse is dropped rather than forwarded: ParsePorts
+// returns an error there, and that error aborts the engine start.
+func hysteriaServerPortsFromExtra(extra map[string]interface{}) []string {
+	raw := firstNonEmpty(
+		getStringField(extra, "server_ports", ""),
+		getStringField(extra, "mport", ""),
+		getStringField(extra, "ports", ""),
+	)
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		lo, hi, ok := parsePortRangeSpec(part)
+		if !ok {
+			continue
+		}
+		out = append(out, strconv.Itoa(lo)+":"+strconv.Itoa(hi))
+	}
+	return out
+}
+
+func parsePortRangeSpec(s string) (int, int, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, 0, false
+	}
+	sep := strings.IndexAny(s, "-:")
+	if sep < 0 {
+		p, err := strconv.Atoi(s)
+		if err != nil || p < 1 || p > 65535 {
+			return 0, 0, false
+		}
+		return p, p, true
+	}
+	lo, err1 := strconv.Atoi(strings.TrimSpace(s[:sep]))
+	hi, err2 := strconv.Atoi(strings.TrimSpace(s[sep+1:]))
+	if err1 != nil || err2 != nil || lo < 1 || hi > 65535 || lo > hi {
+		return 0, 0, false
+	}
+	return lo, hi, true
 }
 
 func applyTLSAndTransport(out *SBOutbound, extra map[string]interface{}, defaultSNI string) {

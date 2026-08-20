@@ -300,6 +300,11 @@ type SBOutbound struct {
 	Security            string           `json:"security,omitempty"`
 	UpMbps              int              `json:"up_mbps,omitempty"`
 	DownMbps            int              `json:"down_mbps,omitempty"`
+	// ServerPorts/HopInterval drive Hysteria2 port hopping. sing-quic parses only
+	// "start:end" ranges, so the URI's "10000-20000" spelling is converted before
+	// it gets here — a range it cannot parse aborts outbound creation.
+	ServerPorts         []string         `json:"server_ports,omitempty"`
+	HopInterval         string           `json:"hop_interval,omitempty"`
 	Obfs                *SBHysteria2Obfs `json:"obfs,omitempty"`
 
 	TLS       *SBOutboundTLS       `json:"tls,omitempty"`
