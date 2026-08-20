@@ -282,6 +282,10 @@ type SBOutbound struct {
 	Username            string           `json:"username,omitempty"`
 	Password            string           `json:"password,omitempty"`
 	Method              string           `json:"method,omitempty"`
+	// Plugin/PluginOptions carry SIP003 (obfs-local, v2ray-plugin). A node whose
+	// server runs a plugin does not work without them.
+	Plugin              string           `json:"plugin,omitempty"`
+	PluginOptions       string           `json:"plugin_opts,omitempty"`
 	Version             string           `json:"version,omitempty"`
 	UUID                string           `json:"uuid,omitempty"`
 	AlterId             int              `json:"alter_id,omitempty"`

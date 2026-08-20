@@ -201,6 +201,28 @@ func extraSecurityExplicitlyNone(extra map[string]interface{}) bool {
 	return strings.EqualFold(strings.TrimSpace(s), "none")
 }
 
+// ssKnownPlugins is the set of SIP003 plugins the core actually registers
+// (transport/sip003), plus the aliases links use for them. An unregistered name
+// fails outbound creation, and that aborts the engine start for every node — so
+// an unknown plugin is dropped here and the node simply goes unobfuscated.
+var ssKnownPlugins = map[string]string{
+	"obfs-local":   "obfs-local",
+	"simple-obfs":  "obfs-local",
+	"obfs":         "obfs-local",
+	"v2ray-plugin": "v2ray-plugin",
+}
+
+func ssPluginFromExtra(extra map[string]interface{}) (string, string) {
+	name := ssKnownPlugins[strings.ToLower(strings.TrimSpace(getStringField(extra, "plugin", "")))]
+	if name == "" {
+		return "", ""
+	}
+	return name, firstNonEmpty(
+		getStringField(extra, "plugin_opts", ""),
+		getStringField(extra, "pluginOpts", ""),
+	)
+}
+
 func buildProxyOutbound(proxy ProxyConfig) SBOutbound {
 	// The outbound keeps the server's original host (domain or literal IP). When
 	// it is a domain, sing-box re-resolves it against the static `hosts` DNS
@@ -278,13 +300,16 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 
 	case "SS", "shadowsocks", "ss":
 		method := getStringField(extra, "method", "aes-256-gcm")
+		plugin, pluginOpts := ssPluginFromExtra(extra)
 		return SBOutbound{
-			Type:       "shadowsocks",
-			Tag:        "proxy",
-			Server:     proxy.IP,
-			ServerPort: proxy.Port,
-			Password:   proxy.Password,
-			Method:     method,
+			Type:          "shadowsocks",
+			Tag:           "proxy",
+			Server:        proxy.IP,
+			ServerPort:    proxy.Port,
+			Password:      proxy.Password,
+			Method:        method,
+			Plugin:        plugin,
+			PluginOptions: pluginOpts,
 		}
 
 	case "VMESS", "vmess":

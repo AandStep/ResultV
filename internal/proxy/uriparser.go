@@ -952,6 +952,16 @@ func parseShadowsocksURI(uri string) (config.ProxyEntry, error) {
 		remainder = remainder[:idx]
 	}
 
+	// SIP002 puts the SIP003 plugin in the query string; the legacy base64 form
+	// keeps it right after the blob. Split it off up front: the legacy branch fed
+	// "?plugin=..." straight into base64Decode and lost the whole link, and the
+	// SIP002 branch dropped the query without looking at it.
+	query := ""
+	if idx := strings.Index(remainder, "?"); idx >= 0 {
+		query = remainder[idx+1:]
+		remainder = remainder[:idx]
+	}
+
 	var method, password, host string
 	var port int
 
@@ -997,6 +1007,18 @@ func parseShadowsocksURI(uri string) (config.ProxyEntry, error) {
 	}
 
 	extra := map[string]interface{}{"method": method}
+	if values, err := url.ParseQuery(query); err == nil {
+		if raw := strings.TrimSpace(values.Get("plugin")); raw != "" {
+			name, opts := raw, ""
+			if i := strings.Index(raw, ";"); i >= 0 {
+				name, opts = strings.TrimSpace(raw[:i]), strings.TrimSpace(raw[i+1:])
+			}
+			extra["plugin"] = name
+			if opts != "" {
+				extra["plugin_opts"] = opts
+			}
+		}
+	}
 	extraJSON, _ := json.Marshal(extra)
 
 	return config.ProxyEntry{
