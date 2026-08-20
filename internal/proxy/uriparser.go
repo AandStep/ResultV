@@ -858,6 +858,7 @@ func parseVLESSURI(uri string) (config.ProxyEntry, error) {
 	extra["pbk"] = params.Get("pbk")
 	extra["sid"] = params.Get("sid")
 	extra["flow"] = params.Get("flow")
+	// keep the embedded-extra value when the query has none — mergeVLESSURLEmbeddedExtra ran before this block
 	if enc := params.Get("encryption"); enc != "" {
 		extra["encryption"] = enc
 	}

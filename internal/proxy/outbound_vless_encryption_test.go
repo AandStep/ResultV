@@ -52,6 +52,27 @@ func TestVLESSEncryption_FromURI(t *testing.T) {
 	}
 }
 
+// TestVLESSEncryption_FromEmbeddedExtra: parseVLESSURI keeps the query-param
+// assignment conditional so an embedded ?extra={"encryption":...} JSON blob
+// survives when the link has no query-level encryption= of its own — a naive
+// unconditional assignment would silently overwrite it with "".
+func TestVLESSEncryption_FromEmbeddedExtra(t *testing.T) {
+	q := url.Values{}
+	q.Set("type", "tcp")
+	q.Set("security", "none")
+	q.Set("extra", `{"encryption":"`+testVLESSEncryption+`"}`)
+
+	uri := "vless://af815621-b245-4149-89da-dd184cfc4b3d@203.0.113.7:443?" + q.Encode() + "#enc"
+	entry, err := ParseProxyURI(uri)
+	if err != nil {
+		t.Fatalf("ParseProxyURI: %v", err)
+	}
+	out := buildProxyOutbound(ProxyConfig{Type: entry.Type, IP: entry.IP, Port: entry.Port, Extra: entry.Extra})
+	if out.Encryption != testVLESSEncryption {
+		t.Fatalf("embedded-extra encryption lost: %q", out.Encryption)
+	}
+}
+
 // TestVLESSEncryption_JunkDropped: "none" is on nearly every link, and the core
 // validates the string when it builds the outbound — a bad one kills the start.
 func TestVLESSEncryption_JunkDropped(t *testing.T) {
