@@ -804,6 +804,19 @@ func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 			),
 			XPaddingPlacement: xhttpPaddingPlacementFromExtra(extra),
 			XPaddingMethod:    xhttpPaddingMethodFromExtra(extra),
+
+			SessionPlacement:     xhttpSessionPlacementFromExtra(extra, "session_placement", "sessionPlacement"),
+			SessionKey:           firstNonEmpty(getStringField(extra, "session_key", ""), getStringField(extra, "sessionKey", "")),
+			SeqPlacement:         xhttpSessionPlacementFromExtra(extra, "seq_placement", "seqPlacement"),
+			SeqKey:               firstNonEmpty(getStringField(extra, "seq_key", ""), getStringField(extra, "seqKey", "")),
+			UplinkDataPlacement:  xhttpUplinkDataPlacementFromExtra(extra, mode),
+			UplinkDataKey:        firstNonEmpty(getStringField(extra, "uplink_data_key", ""), getStringField(extra, "uplinkDataKey", "")),
+			SessionIDTable:       firstNonEmpty(getStringField(extra, "session_id_table", ""), getStringField(extra, "sessionIdTable", "")),
+			SessionIDLength:      rangeRawFromExtra(extra, "sessionIdLength", "session_id_length"),
+			UplinkChunkSize:      rangeRawFromExtra(extra, "uplinkChunkSize", "uplink_chunk_size"),
+			CongestionController: xhttpCongestionFromExtra(extra),
+			CWND:                 positiveIntFromExtra(extra, "cwnd", "cwnd"),
+			ScMaxBufferedPosts:   int64(positiveIntFromExtra(extra, "sc_max_buffered_posts", "scMaxBufferedPosts")),
 		}
 	}
 }
@@ -1002,6 +1015,69 @@ func xhttpPaddingMethodFromExtra(extra map[string]interface{}) string {
 		getStringField(extra, "xPaddingMethod", ""),
 	)
 	return xhttpPaddingMethods[strings.ToLower(strings.TrimSpace(raw))]
+}
+
+// xhttpSessionPlacements is the enum the core accepts for session_placement and
+// seq_placement. Anything else aborts config decoding — and with it the engine.
+var xhttpSessionPlacements = map[string]string{
+	"path":   "path",
+	"cookie": "cookie",
+	"header": "header",
+	"query":  "query",
+}
+
+func xhttpSessionPlacementFromExtra(extra map[string]interface{}, snake, camel string) string {
+	raw := firstNonEmpty(getStringField(extra, snake, ""), getStringField(extra, camel, ""))
+	return xhttpSessionPlacements[strings.ToLower(strings.TrimSpace(raw))]
+}
+
+// xhttpUplinkDataPlacementFromExtra is mode-aware on purpose: the core allows
+// cookie/header only in packet-up mode and returns an error otherwise, which
+// means the engine never starts.
+func xhttpUplinkDataPlacementFromExtra(extra map[string]interface{}, mode string) string {
+	raw := strings.ToLower(strings.TrimSpace(firstNonEmpty(
+		getStringField(extra, "uplink_data_placement", ""),
+		getStringField(extra, "uplinkDataPlacement", ""),
+	)))
+	switch raw {
+	case "auto", "body":
+		return raw
+	case "cookie", "header":
+		if mode == "packet-up" {
+			return raw
+		}
+		return ""
+	default:
+		return ""
+	}
+}
+
+// xhttpCongestionControllers mirrors common/congestion.NewCongestionControl: an
+// unknown name fails client creation, i.e. the engine start.
+var xhttpCongestionControllers = map[string]bool{
+	"bbr": true, "bbr_standard": true, "bbr2": true,
+	"bbr2_variant": true, "cubic": true, "reno": true,
+}
+
+func xhttpCongestionFromExtra(extra map[string]interface{}) string {
+	raw := strings.ToLower(strings.TrimSpace(firstNonEmpty(
+		getStringField(extra, "congestion_controller", ""),
+		getStringField(extra, "congestionController", ""),
+	)))
+	if !xhttpCongestionControllers[raw] {
+		return ""
+	}
+	return raw
+}
+
+// positiveIntFromExtra returns 0 for anything not strictly positive, so a bogus
+// value falls back to the core's own default instead of being forwarded.
+func positiveIntFromExtra(extra map[string]interface{}, snake, camel string) int {
+	n := intFromExtra(extra, snake, camel)
+	if n <= 0 {
+		return 0
+	}
+	return n
 }
 
 func sanitizeXPaddingBytes(s string) string {
