@@ -744,6 +744,19 @@ var xmuxConservativeDefaults = map[string]interface{}{
 	"h_max_reusable_secs": 300,
 }
 
+// xmuxKnownKeys is the exact field set of V2RayXHTTPXmuxOptions. A node's xmux
+// object is user input: anything outside this set would reach the core as an
+// unknown field, and the config decoder runs with DisallowUnknownFields — the
+// engine would refuse to start for every node, not just this one.
+var xmuxKnownKeys = map[string]bool{
+	"max_concurrency":     true,
+	"max_connections":     true,
+	"c_max_reuse_times":   true,
+	"h_max_request_times": true,
+	"h_max_reusable_secs": true,
+	"h_keep_alive_period": true,
+}
+
 func xmuxJSONFromExtra(extra map[string]interface{}) json.RawMessage {
 	rename := map[string]string{
 		"maxConcurrency":   "max_concurrency",
@@ -754,21 +767,35 @@ func xmuxJSONFromExtra(extra map[string]interface{}) json.RawMessage {
 		"hKeepAlivePeriod": "h_keep_alive_period",
 	}
 
-	out := make(map[string]interface{}, len(xmuxConservativeDefaults)+8)
-	for k, val := range xmuxConservativeDefaults {
-		out[k] = val
-	}
-
+	user := make(map[string]interface{}, 8)
 	if v, ok := extra["xmux"]; ok && v != nil {
 		if m, ok := v.(map[string]interface{}); ok {
 			for k, val := range m {
 				if nk, ok := rename[k]; ok {
-					out[nk] = val
-				} else {
-					out[k] = val
+					k = nk
 				}
+				if !xmuxKnownKeys[k] {
+					continue
+				}
+				user[k] = val
 			}
 		}
+	}
+
+	out := make(map[string]interface{}, len(xmuxConservativeDefaults)+len(user))
+	for k, val := range xmuxConservativeDefaults {
+		out[k] = val
+	}
+	for k, val := range user {
+		out[k] = val
+	}
+
+	// The core rejects a config that carries both knobs ("max_connections cannot
+	// be specified together with max_concurrency") and rejection means no engine
+	// at all. A node asking for max_connections wins — over our default, and over
+	// a max_concurrency the same node contradicts itself with.
+	if _, ok := out["max_connections"]; ok {
+		delete(out, "max_concurrency")
 	}
 
 	raw, err := json.Marshal(out)
