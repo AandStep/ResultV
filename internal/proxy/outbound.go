@@ -693,6 +693,17 @@ func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 			ScMinPostsIntervalMs: rangeRawFromExtra(extra, "scMinPostsIntervalMs", "sc_min_posts_interval_ms"),
 			ScStreamUpServerSecs: rangeRawFromExtra(extra, "scStreamUpServerSecs", "sc_stream_up_server_secs"),
 			Xmux:                 xmuxRaw,
+			XPaddingObfsMode:     boolPtrFromExtra(extra, "xPaddingObfsMode", "x_padding_obfs_mode"),
+			XPaddingKey: firstNonEmpty(
+				getStringField(extra, "x_padding_key", ""),
+				getStringField(extra, "xPaddingKey", ""),
+			),
+			XPaddingHeader: firstNonEmpty(
+				getStringField(extra, "x_padding_header", ""),
+				getStringField(extra, "xPaddingHeader", ""),
+			),
+			XPaddingPlacement: xhttpPaddingPlacementFromExtra(extra),
+			XPaddingMethod:    xhttpPaddingMethodFromExtra(extra),
 		}
 	}
 }
@@ -793,11 +804,26 @@ func boolPtrFromExtra(extra map[string]interface{}, camel, snake string) *bool {
 	} else {
 		return nil
 	}
-	b, ok := v.(bool)
-	if !ok {
-		return nil
+	// Providers quote everything when they embed the xhttp knobs as JSON inside
+	// a URI ("xPaddingObfsMode":"true"), so a bare assertion on bool would drop
+	// the flag silently — the very failure this helper exists to prevent.
+	switch t := v.(type) {
+	case bool:
+		return &t
+	case string:
+		switch strings.ToLower(strings.TrimSpace(t)) {
+		case "1", "true", "yes", "on":
+			b := true
+			return &b
+		case "0", "false", "no", "off":
+			b := false
+			return &b
+		}
+	case float64:
+		b := t != 0
+		return &b
 	}
-	return &b
+	return nil
 }
 
 func xhttpPaddingFromExtra(extra map[string]interface{}) string {
@@ -811,6 +837,44 @@ func xhttpPaddingFromExtra(extra map[string]interface{}) string {
 		return "100-1000"
 	}
 	return s
+}
+
+// xhttpPaddingPlacements / xhttpPaddingMethods canonicalize the two enum knobs
+// of the padding-obfuscation profile. The core validates both while PARSING the
+// config (checkV2RayXHTTPBaseOptions), and an unsupported value aborts the whole
+// instance — every other node included — not just this outbound. So anything we
+// do not recognize is dropped, and the core applies its own default
+// (queryInHeader / repeat-x) instead of failing the start.
+var xhttpPaddingPlacements = map[string]string{
+	"cookie":          "cookie",
+	"header":          "header",
+	"query":           "query",
+	"queryinheader":   "queryInHeader",
+	"query_in_header": "queryInHeader",
+	"query-in-header": "queryInHeader",
+}
+
+var xhttpPaddingMethods = map[string]string{
+	"repeat-x": "repeat-x",
+	"repeat_x": "repeat-x",
+	"repeatx":  "repeat-x",
+	"tokenish": "tokenish",
+}
+
+func xhttpPaddingPlacementFromExtra(extra map[string]interface{}) string {
+	raw := firstNonEmpty(
+		getStringField(extra, "x_padding_placement", ""),
+		getStringField(extra, "xPaddingPlacement", ""),
+	)
+	return xhttpPaddingPlacements[strings.ToLower(strings.TrimSpace(raw))]
+}
+
+func xhttpPaddingMethodFromExtra(extra map[string]interface{}) string {
+	raw := firstNonEmpty(
+		getStringField(extra, "x_padding_method", ""),
+		getStringField(extra, "xPaddingMethod", ""),
+	)
+	return xhttpPaddingMethods[strings.ToLower(strings.TrimSpace(raw))]
 }
 
 func sanitizeXPaddingBytes(s string) string {

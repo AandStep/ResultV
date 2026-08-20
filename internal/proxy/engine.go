@@ -420,6 +420,19 @@ type SBOutboundTransport struct {
 	ScMinPostsIntervalMs json.RawMessage `json:"sc_min_posts_interval_ms,omitempty"`
 	ScStreamUpServerSecs json.RawMessage `json:"sc_stream_up_server_secs,omitempty"`
 	Xmux                 json.RawMessage `json:"xmux,omitempty"`
+
+	// xhttp padding obfuscation (sing-box-extended >= 1.13.x-extended-2.x).
+	// With x_padding_obfs_mode off the core hardcodes the classic
+	// Referer/x_padding pair; with it on, the padding carrier (cookie /
+	// header / query / queryInHeader), its key/header name and the filler
+	// alphabet come from the node config and must match the server side.
+	// Everything is omitempty: a node that says nothing about padding obfs
+	// produces exactly the same JSON as before.
+	XPaddingObfsMode  *bool  `json:"x_padding_obfs_mode,omitempty"`
+	XPaddingKey       string `json:"x_padding_key,omitempty"`
+	XPaddingHeader    string `json:"x_padding_header,omitempty"`
+	XPaddingPlacement string `json:"x_padding_placement,omitempty"`
+	XPaddingMethod    string `json:"x_padding_method,omitempty"`
 }
 
 type SBRoute struct {
