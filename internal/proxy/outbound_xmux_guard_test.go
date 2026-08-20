@@ -66,6 +66,46 @@ func TestXmux_DropsKeysTheCoreDoesNotKnow(t *testing.T) {
 	assertCoreAcceptsConfig(t, tunnelConfigFromExtra(t, "VLESS", extra))
 }
 
+// TestXmux_InvalidRangeValuesDropped: Task 2 only filtered xmux's keys — the
+// values still reached the core's badoption.Range[int] decoder untouched. A
+// bool or a non-numeric string there fails to decode ("cannot unmarshal bool
+// into Go value of type int" / a strconv error), aborting the whole engine.
+// An invalid value must be dropped along with its key so our conservative
+// default (32) stays in place instead.
+func TestXmux_InvalidRangeValuesDropped(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		val  interface{}
+	}{
+		{"bool", true},
+		{"non-numeric string", "abc"},
+	} {
+		extra := xhttpNodeExtra(map[string]interface{}{
+			"xmux": map[string]interface{}{"maxConcurrency": tc.val},
+		})
+		m := xmuxOf(t, outboundFromExtra(t, "VLESS", extra))
+		if got := m["max_concurrency"]; got != float64(32) {
+			t.Fatalf("%s: max_concurrency = %v, want default 32", tc.name, got)
+		}
+		assertCoreAcceptsConfig(t, tunnelConfigFromExtra(t, "VLESS", extra))
+	}
+}
+
+// TestXmux_HKeepAlivePeriodMustBePositiveNumber: h_keep_alive_period is a
+// plain int64 in the core, not a Range — a non-numeric value fails to decode
+// just the same, and has no default to fall back on, so it must be dropped
+// outright rather than forwarded.
+func TestXmux_HKeepAlivePeriodMustBePositiveNumber(t *testing.T) {
+	extra := xhttpNodeExtra(map[string]interface{}{
+		"xmux": map[string]interface{}{"hKeepAlivePeriod": "abc"},
+	})
+	m := xmuxOf(t, outboundFromExtra(t, "VLESS", extra))
+	if _, ok := m["h_keep_alive_period"]; ok {
+		t.Fatalf("invalid h_keep_alive_period forwarded: %v", m)
+	}
+	assertCoreAcceptsConfig(t, tunnelConfigFromExtra(t, "VLESS", extra))
+}
+
 // TestXmux_MaxConnectionsWinsOverDefaultConcurrency: the core refuses a config
 // carrying both knobs, and refusing means no engine at all.
 func TestXmux_MaxConnectionsWinsOverDefaultConcurrency(t *testing.T) {

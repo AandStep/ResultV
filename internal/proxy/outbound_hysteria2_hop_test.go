@@ -62,3 +62,38 @@ func TestHysteria2Hop_AbsentStaysAbsent(t *testing.T) {
 		t.Fatalf("hop fields emitted without being asked: %v / %q", out.ServerPorts, out.HopInterval)
 	}
 }
+
+// TestHysteria2Hop_BareSecondsCanonicalized: hy2 links historically spell the
+// interval as a bare number of seconds ("hop-interval=30"). The core's
+// badoption.Duration (option/hysteria2.go) requires a Go duration string with
+// a unit and fails to decode ("missing unit in duration") without one — this
+// is the regression that made a previously-working node stop connecting.
+func TestHysteria2Hop_BareSecondsCanonicalized(t *testing.T) {
+	extra := map[string]interface{}{"sni": "example.com", "hop_interval": "30"}
+	out := outboundFromExtra(t, "HYSTERIA2", extra)
+	if out.HopInterval != "30s" {
+		t.Fatalf("hop_interval = %q, want 30s", out.HopInterval)
+	}
+	assertCoreAcceptsConfig(t, tunnelConfigFromExtra(t, "HYSTERIA2", extra))
+}
+
+// TestHysteria2Hop_UnitStringPassesThrough keeps an already-valid duration
+// string untouched.
+func TestHysteria2Hop_UnitStringPassesThrough(t *testing.T) {
+	out := outboundFromExtra(t, "HYSTERIA2", map[string]interface{}{"sni": "example.com", "hop_interval": "30s"})
+	if out.HopInterval != "30s" {
+		t.Fatalf("hop_interval = %q, want 30s", out.HopInterval)
+	}
+}
+
+// TestHysteria2Hop_GarbageDropped: a value that is neither a valid duration
+// nor a bare positive number must not reach the core — badoption.Duration
+// would fail to decode it and abort the engine start.
+func TestHysteria2Hop_GarbageDropped(t *testing.T) {
+	extra := map[string]interface{}{"sni": "example.com", "hop_interval": "abc"}
+	out := outboundFromExtra(t, "HYSTERIA2", extra)
+	if out.HopInterval != "" {
+		t.Fatalf("hop_interval = %q, want empty", out.HopInterval)
+	}
+	assertCoreAcceptsConfig(t, tunnelConfigFromExtra(t, "HYSTERIA2", extra))
+}

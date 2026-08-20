@@ -69,3 +69,27 @@ func TestMKCP_AliasSpelling(t *testing.T) {
 		}
 	}
 }
+
+// TestMKCP_NegativeNumbersDropped: every numeric mKCP knob is uint32 in the
+// core (option/v2ray_transport.go V2RayKCPOptions); a negative value fails to
+// decode ("cannot unmarshal number -5 into ... uint32"), which aborts the
+// engine start for every node, not just this one.
+func TestMKCP_NegativeNumbersDropped(t *testing.T) {
+	extra := mkcpNodeExtra(map[string]interface{}{
+		"mtu":              -5,
+		"tti":              -1,
+		"uplinkCapacity":   -1,
+		"downlinkCapacity": -1,
+		"readBufferSize":   -1,
+		"writeBufferSize":  -1,
+	})
+	tr := outboundFromExtra(t, "VLESS", extra).Transport
+	if tr == nil {
+		t.Fatal("no transport built for kcp")
+	}
+	if tr.MTU != 0 || tr.TTI != 0 || tr.UplinkCapacity != 0 || tr.DownlinkCapacity != 0 ||
+		tr.ReadBufferSize != 0 || tr.WriteBufferSize != 0 {
+		t.Fatalf("negative mkcp knobs forwarded: %+v", tr)
+	}
+	assertCoreAcceptsConfig(t, tunnelConfigFromExtra(t, "VLESS", extra))
+}

@@ -82,6 +82,30 @@ func TestMKCP_VMessWebsocketUnaffected(t *testing.T) {
 	}
 }
 
+// TestMKCP_NegativeQueryParamsDropped: a vless:// link with mtu/tti spelled
+// negative must not carry them through to the outbound — they are core
+// uint32 fields and a negative value aborts config decoding.
+func TestMKCP_NegativeQueryParamsDropped(t *testing.T) {
+	entry, err := ParseProxyURI("vless://af815621-b245-4149-89da-dd184cfc4b3d@203.0.113.7:443?type=kcp&security=none&mtu=-5&tti=-1#kcp")
+	if err != nil {
+		t.Fatalf("ParseProxyURI: %v", err)
+	}
+	var extra map[string]interface{}
+	if err := json.Unmarshal(entry.Extra, &extra); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := extra["mtu"]; ok {
+		t.Fatalf("negative mtu stored in extra: %v", extra)
+	}
+	if _, ok := extra["tti"]; ok {
+		t.Fatalf("negative tti stored in extra: %v", extra)
+	}
+	out := buildProxyOutbound(ProxyConfig{Type: entry.Type, IP: entry.IP, Port: entry.Port, Extra: entry.Extra})
+	if out.Transport == nil || out.Transport.MTU != 0 || out.Transport.TTI != 0 {
+		t.Fatalf("negative mtu/tti reached the transport: %+v", out.Transport)
+	}
+}
+
 // TestMKCP_JSONSubscriptionKcpSettings: the Xray subscription format puts the settings
 // under streamSettings.kcpSettings, with the header type nested one level deeper in
 // header.type.

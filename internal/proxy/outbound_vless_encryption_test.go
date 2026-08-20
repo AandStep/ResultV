@@ -22,6 +22,10 @@ import (
 
 const testVLESSEncryption = "mlkem768x25519plus.native.0rtt.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
+// testVLESSEncryptionKey is base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+// — a 32-byte all-zero key, one of the two lengths parseClientEncryption accepts.
+const testVLESSEncryptionKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
 // TestVLESSEncryption_ReachesTheCore: a node with VLESS Encryption cannot connect
 // at all unless the handshake string reaches the engine.
 func TestVLESSEncryption_ReachesTheCore(t *testing.T) {
@@ -86,5 +90,50 @@ func TestVLESSEncryption_JunkDropped(t *testing.T) {
 		if out.Encryption != "" {
 			t.Fatalf("encryption=%q forwarded as %q", v, out.Encryption)
 		}
+	}
+}
+
+// TestVLESSEncryption_StructuralValidation: matching the "mlkem768x25519plus."
+// prefix is not enough — parseClientEncryption (protocol/vless/outbound.go)
+// also requires a known xor mode, a known RTT tag, and at least one segment
+// that decodes to a 32- or 1184-byte key. Any mismatch returns an error that
+// aborts NewOutbound, i.e. the engine never starts — a truncated copy-paste is
+// a realistic way to end up with a string like these.
+func TestVLESSEncryption_StructuralValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		enc  string
+	}{
+		{"too few segments", "mlkem768x25519plus.garbage"},
+		{"no key segment", "mlkem768x25519plus.native.0rtt"},
+		{"unknown mode", "mlkem768x25519plus.turbo.0rtt." + testVLESSEncryptionKey},
+		{"unknown rtt", "mlkem768x25519plus.native.2rtt." + testVLESSEncryptionKey},
+	}
+	for _, c := range cases {
+		out := outboundFromExtra(t, "VLESS", map[string]interface{}{
+			"uuid":       "af815621-b245-4149-89da-dd184cfc4b3d",
+			"network":    "tcp",
+			"security":   "none",
+			"encryption": c.enc,
+		})
+		if out.Encryption != "" {
+			t.Fatalf("%s: encryption=%q forwarded, want dropped", c.name, out.Encryption)
+		}
+	}
+}
+
+// TestVLESSEncryption_PaddingSegmentsAllowed: real handshake strings may carry
+// padding segments between the RTT tag and the key; those must not be treated
+// as a validation failure.
+func TestVLESSEncryption_PaddingSegmentsAllowed(t *testing.T) {
+	enc := "mlkem768x25519plus.native.0rtt.somepadding." + testVLESSEncryptionKey
+	out := outboundFromExtra(t, "VLESS", map[string]interface{}{
+		"uuid":       "af815621-b245-4149-89da-dd184cfc4b3d",
+		"network":    "tcp",
+		"security":   "none",
+		"encryption": enc,
+	})
+	if out.Encryption != enc {
+		t.Fatalf("encryption with padding segment dropped: got %q, want %q", out.Encryption, enc)
 	}
 }

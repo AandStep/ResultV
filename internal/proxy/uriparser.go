@@ -938,16 +938,20 @@ func parseVLESSURI(uri string) (config.ProxyEntry, error) {
 			extra[k] = v
 		}
 	}
-	// mtu/tti/congestion must land as native int/bool: outbound.go reads them
-	// with getIntField/getBoolField, which — unlike intFromExtra — don't parse
-	// numeric strings, so a plain string here would silently become 0/false.
+	// mtu/tti/congestion must land as native int/bool: outbound.go's mkcp branch
+	// reads mtu/tti through positiveIntFromExtra and congestion through
+	// getBoolField, neither of which parses a quoted "true"/"-5" the way
+	// intFromExtra does. mtu/tti are also core uint32 fields (option/v2ray_transport.go),
+	// so a negative value here is dropped rather than stored — outbound.go's own
+	// positivity filter would catch it too, but there is no reason to carry a
+	// value known bad this early.
 	if mtu := strings.TrimSpace(params.Get("mtu")); mtu != "" {
-		if n, err := strconv.Atoi(mtu); err == nil {
+		if n, err := strconv.Atoi(mtu); err == nil && n > 0 {
 			extra["mtu"] = n
 		}
 	}
 	if tti := strings.TrimSpace(params.Get("tti")); tti != "" {
-		if n, err := strconv.Atoi(tti); err == nil {
+		if n, err := strconv.Atoi(tti); err == nil && n > 0 {
 			extra["tti"] = n
 		}
 	}
@@ -1093,13 +1097,21 @@ func parseShadowsocksURI(uri string) (config.ProxyEntry, error) {
 	extra := map[string]interface{}{"method": method}
 	if values, err := url.ParseQuery(query); err == nil {
 		if raw := strings.TrimSpace(values.Get("plugin")); raw != "" {
-			name, opts := raw, ""
+			// pluginName (not "name" — that would shadow the display name
+			// parsed above from the URI fragment).
+			pluginName, opts := raw, ""
 			if i := strings.Index(raw, ";"); i >= 0 {
-				name, opts = strings.TrimSpace(raw[:i]), strings.TrimSpace(raw[i+1:])
+				pluginName, opts = strings.TrimSpace(raw[:i]), strings.TrimSpace(raw[i+1:])
 			}
-			extra["plugin"] = name
+			extra["plugin"] = pluginName
 			if opts != "" {
-				extra["plugin_opts"] = opts
+				// ParsePluginOptions (transport/sip003) errors "empty key in ..."
+				// on a stray "" segment from consecutive/leading/trailing
+				// semicolons, and that error aborts outbound creation. Drop
+				// empty segments before they ever reach the core.
+				if opts = sanitizePluginOptsSegments(opts); opts != "" {
+					extra["plugin_opts"] = opts
+				}
 			}
 		}
 	}
@@ -1114,6 +1126,21 @@ func parseShadowsocksURI(uri string) (config.ProxyEntry, error) {
 		Country:  countryFromNameAndHost(name, host),
 		Extra:    extraJSON,
 	}, nil
+}
+
+// sanitizePluginOptsSegments drops empty ";"-delimited segments from a SIP003
+// plugin_opts string (produced by e.g. "obfs-local;;obfs=http" or a trailing
+// ";"). ParsePluginOptions (transport/sip003/args.go) treats an empty segment
+// as a hard "empty key" error, which aborts outbound creation for the node.
+func sanitizePluginOptsSegments(opts string) string {
+	parts := strings.Split(opts, ";")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, ";")
 }
 
 func parseTrojanURI(uri string) (config.ProxyEntry, error) {
@@ -1571,6 +1598,19 @@ func mergeVLESSURLEmbeddedExtra(dst map[string]interface{}, raw string) {
 	normalizeVLESSExtraPadding(dst)
 }
 
+
+// vlessEncryptionSegmentIsKey reports whether seg is a valid key segment of a
+// VLESS Encryption handshake string: base64.RawURLEncoding data of exactly 32
+// or 1184 bytes, the two lengths parseClientEncryption (protocol/vless/outbound.go)
+// accepts. Lives here (rather than in outbound.go, where vlessEncryptionFromExtra
+// calls it) because this file already imports encoding/base64.
+func vlessEncryptionSegmentIsKey(seg string) bool {
+	data, err := base64.RawURLEncoding.DecodeString(seg)
+	if err != nil {
+		return false
+	}
+	return len(data) == 32 || len(data) == 1184
+}
 
 func normalizeVLESSExtraPadding(extra map[string]interface{}) {
 	if stringFromExtraValue(extra["x_padding_bytes"]) != "" {

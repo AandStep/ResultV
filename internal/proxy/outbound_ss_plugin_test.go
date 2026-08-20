@@ -66,6 +66,31 @@ func TestSSPlugin_UnknownPluginDropped(t *testing.T) {
 	}
 }
 
+// TestSSPlugin_EmptySegmentsDropped: a link whose plugin string has
+// consecutive semicolons ("obfs-local;;obfs=http") used to be forwarded as-is.
+// ParsePluginOptions (transport/sip003/args.go) treats the empty segment
+// between them as a hard "empty key in ..." error, which aborts outbound
+// creation for the node.
+func TestSSPlugin_EmptySegmentsDropped(t *testing.T) {
+	auth := base64.StdEncoding.EncodeToString([]byte("aes-256-gcm:secret"))
+	uri := "ss://" + auth + "@203.0.113.7:8388?plugin=obfs-local%3B%3Bobfs%3Dhttp%3B#ss-empty"
+	entry, err := ParseProxyURI(uri)
+	if err != nil {
+		t.Fatalf("ParseProxyURI: %v", err)
+	}
+	out := buildProxyOutbound(ProxyConfig{Type: entry.Type, IP: entry.IP, Port: entry.Port, Password: entry.Password, Extra: entry.Extra})
+	if out.Plugin != "obfs-local" {
+		t.Fatalf("plugin = %q, want obfs-local", out.Plugin)
+	}
+	if out.PluginOptions != "obfs=http" {
+		t.Fatalf("plugin_opts = %q, want empty segments stripped to \"obfs=http\"", out.PluginOptions)
+	}
+	assertCoreAcceptsConfig(t, mustBuildTunnelModeConfig(t, EngineConfig{
+		Proxy: ProxyConfig{Type: entry.Type, IP: entry.IP, Port: entry.Port, Password: entry.Password, Extra: entry.Extra},
+		Mode:  ProxyModeTunnel,
+	}))
+}
+
 // TestSSPlugin_LegacyLinkStillParses: the legacy base64 form used to fail the
 // whole link, because the "?plugin=..." tail was fed into base64Decode.
 func TestSSPlugin_LegacyLinkStillParses(t *testing.T) {

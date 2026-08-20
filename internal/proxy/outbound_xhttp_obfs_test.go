@@ -97,6 +97,44 @@ func TestXHTTPObfs_JunkDropped(t *testing.T) {
 	assertCoreAcceptsConfig(t, tunnelConfigFromExtra(t, "VLESS", extra))
 }
 
+// TestXHTTPObfs_RangeFieldsRejectGarbage: badoption.Range[int] fails to decode
+// on a non-numeric string ("strconv.ParseInt: parsing \"abc\"") or on an
+// inverted range ("invalid range"), and either error aborts the whole engine
+// start — Task 2 only kept the xmux object's keys clean, these session/uplink
+// fields still forwarded whatever the node sent.
+func TestXHTTPObfs_RangeFieldsRejectGarbage(t *testing.T) {
+	extra := xhttpNodeExtra(map[string]interface{}{
+		"sessionIdLength": "abc",
+		"uplinkChunkSize": "2000-1000",
+	})
+	tr := outboundFromExtra(t, "VLESS", extra).Transport
+	if tr.SessionIDLength != nil {
+		t.Fatalf("session_id_length = %s, want dropped", tr.SessionIDLength)
+	}
+	if tr.UplinkChunkSize != nil {
+		t.Fatalf("uplink_chunk_size = %s, want dropped", tr.UplinkChunkSize)
+	}
+	assertCoreAcceptsConfig(t, tunnelConfigFromExtra(t, "VLESS", extra))
+}
+
+// TestXHTTPObfs_RangeFieldsAcceptValidForms: the fix must not break the two
+// shapes the core actually parses — a bare positive number and a positive
+// "a-b" range.
+func TestXHTTPObfs_RangeFieldsAcceptValidForms(t *testing.T) {
+	extra := xhttpNodeExtra(map[string]interface{}{
+		"sessionIdLength": "8-16",
+		"uplinkChunkSize": 30,
+	})
+	tr := outboundFromExtra(t, "VLESS", extra).Transport
+	if string(tr.SessionIDLength) != `"8-16"` {
+		t.Fatalf("session_id_length = %s, want \"8-16\"", tr.SessionIDLength)
+	}
+	if string(tr.UplinkChunkSize) != `30` {
+		t.Fatalf("uplink_chunk_size = %s, want 30", tr.UplinkChunkSize)
+	}
+	assertCoreAcceptsConfig(t, tunnelConfigFromExtra(t, "VLESS", extra))
+}
+
 // TestXHTTPObfs_AbsentStaysAbsent keeps the old wire shape for plain nodes.
 func TestXHTTPObfs_AbsentStaysAbsent(t *testing.T) {
 	tr := outboundFromExtra(t, "VLESS", xhttpNodeExtra(nil)).Transport
