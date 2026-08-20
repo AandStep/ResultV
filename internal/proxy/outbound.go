@@ -564,10 +564,22 @@ func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 		if maxEarly > 0 && edHeader == "" {
 			edHeader = "Sec-WebSocket-Protocol"
 		}
+		// sing-box's websocket transport has no "host" field: V2RayWebsocketOptions
+		// is Path/Headers/MaxEarlyData/EarlyDataHeaderName only. Emitting one made
+		// the config unparsable ("unknown field host") and that kills the whole
+		// instance, not just this outbound. The core lifts headers["Host"] into the
+		// request URL (v2raywebsocket/client.go), which is where the host belongs.
+		headers := transportHeadersFromExtra(extra)
+		if host != "" {
+			if headers == nil {
+				headers = make(map[string]string, 1)
+			}
+			headers["Host"] = host
+		}
 		out.Transport = &SBOutboundTransport{
 			Type:                "ws",
 			Path:                path,
-			Host:                host,
+			Headers:             headers,
 			MaxEarlyData:        maxEarly,
 			EarlyDataHeaderName: edHeader,
 		}
@@ -677,7 +689,7 @@ func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 		if uplink == "" {
 			uplink = stringFromExtraValue(extra["method"])
 		}
-		headers := xhttpHeadersFromExtra(extra)
+		headers := transportHeadersFromExtra(extra)
 		xmuxRaw := xmuxJSONFromExtra(extra)
 		out.Transport = &SBOutboundTransport{
 			Type:                 "xhttp",
@@ -885,7 +897,11 @@ func sanitizeXPaddingBytes(s string) string {
 	return s
 }
 
-func xhttpHeadersFromExtra(extra map[string]interface{}) map[string]string {
+// transportHeadersFromExtra returns the node's custom request headers for the
+// HTTP-flavoured transports (ws, httpupgrade, http, xhttp). "host" is stripped:
+// sing-box rejects it inside headers for xhttp, and the transports that do have
+// a top-level host field take it from there instead.
+func transportHeadersFromExtra(extra map[string]interface{}) map[string]string {
 	v, ok := extra["headers"]
 	if !ok || v == nil {
 		return nil
