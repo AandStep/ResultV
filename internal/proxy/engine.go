@@ -306,6 +306,7 @@ type SBOutbound struct {
 	ServerPorts         []string         `json:"server_ports,omitempty"`
 	HopInterval         string           `json:"hop_interval,omitempty"`
 	Obfs                *SBHysteria2Obfs `json:"obfs,omitempty"`
+	Multiplex           *SBMultiplex     `json:"multiplex,omitempty"`
 
 	TLS       *SBOutboundTLS       `json:"tls,omitempty"`
 	Transport *SBOutboundTransport `json:"transport,omitempty"`
@@ -316,6 +317,15 @@ type SBOutbound struct {
 type SBHysteria2Obfs struct {
 	Type     string `json:"type,omitempty"`
 	Password string `json:"password,omitempty"`
+}
+
+type SBMultiplex struct {
+	Enabled        bool   `json:"enabled,omitempty"`
+	Protocol       string `json:"protocol,omitempty"`
+	MaxConnections int    `json:"max_connections,omitempty"`
+	MinStreams     int    `json:"min_streams,omitempty"`
+	MaxStreams     int    `json:"max_streams,omitempty"`
+	Padding        bool   `json:"padding,omitempty"`
 }
 
 type SBOutboundTLS struct {

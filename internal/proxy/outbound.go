@@ -223,6 +223,37 @@ func ssPluginFromExtra(extra map[string]interface{}) (string, string) {
 	)
 }
 
+// multiplexFromExtra honours an explicit sing-box multiplex profile and nothing
+// else. Xray's own "mux" ({enabled, concurrency}) is deliberately NOT mapped
+// here: it is a different protocol on the wire from smux/yamux/h2mux, so
+// translating it would make a working node speak something its server does not
+// understand — worse than leaving it off.
+var multiplexProtocols = map[string]bool{"smux": true, "yamux": true, "h2mux": true}
+
+func multiplexFromExtra(extra map[string]interface{}) *SBMultiplex {
+	raw, ok := extra["multiplex"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	enabled, _ := raw["enabled"].(bool)
+	if !enabled {
+		return nil
+	}
+	protocol := strings.ToLower(strings.TrimSpace(stringFromExtraValue(raw["protocol"])))
+	if !multiplexProtocols[protocol] {
+		return nil
+	}
+	padding, _ := raw["padding"].(bool)
+	return &SBMultiplex{
+		Enabled:        true,
+		Protocol:       protocol,
+		MaxConnections: intFromAny(raw["max_connections"]),
+		MinStreams:     intFromAny(raw["min_streams"]),
+		MaxStreams:     intFromAny(raw["max_streams"]),
+		Padding:        padding,
+	}
+}
+
 func buildProxyOutbound(proxy ProxyConfig) SBOutbound {
 	// The outbound keeps the server's original host (domain or literal IP). When
 	// it is a domain, sing-box re-resolves it against the static `hosts` DNS
@@ -315,6 +346,7 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 			Method:        method,
 			Plugin:        plugin,
 			PluginOptions: pluginOpts,
+			Multiplex:     multiplexFromExtra(extra),
 		}
 
 	case "VMESS", "vmess":
@@ -341,6 +373,7 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 			PacketEncoding:      resolvePacketEncoding(extra),
 			GlobalPadding:       getBoolField(extra, "global_padding") || getBoolField(extra, "globalPadding"),
 			AuthenticatedLength: getBoolField(extra, "authenticated_length") || getBoolField(extra, "authenticatedLength"),
+			Multiplex:           multiplexFromExtra(extra),
 		}
 		applyTLSAndTransport(&out, extra, proxy.IP)
 		return out
@@ -357,6 +390,7 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 			Flow:       flow,
 			Encryption:     vlessEncryptionFromExtra(extra),
 			PacketEncoding: resolvePacketEncoding(extra),
+			Multiplex:      multiplexFromExtra(extra),
 		}
 		applyTLSAndTransport(&out, extra, proxy.IP)
 		return out
@@ -368,6 +402,7 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 			Server:     proxy.IP,
 			ServerPort: proxy.Port,
 			Password:   proxy.Password,
+			Multiplex:  multiplexFromExtra(extra),
 		}
 		trojanSNI := firstNonEmpty(
 			getStringField(extra, "sni", ""),
