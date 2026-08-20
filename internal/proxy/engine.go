@@ -286,6 +286,10 @@ type SBOutbound struct {
 	UUID                string           `json:"uuid,omitempty"`
 	AlterId             int              `json:"alter_id,omitempty"`
 	Flow                string           `json:"flow,omitempty"`
+	// Encryption carries VLESS Encryption (the post-quantum handshake string
+	// "mlkem768x25519plus.<mode>.<rtt>[.<padding>].<key>"). Without it a node
+	// that runs the feature never completes the handshake the server expects.
+	Encryption          string           `json:"encryption,omitempty"`
 	PacketEncoding      string           `json:"packet_encoding,omitempty"`
 	GlobalPadding       bool             `json:"global_padding,omitempty"`
 	AuthenticatedLength bool             `json:"authenticated_length,omitempty"`

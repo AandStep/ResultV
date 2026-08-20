@@ -79,6 +79,19 @@ func resolvePacketEncoding(extra map[string]interface{}) string {
 	}
 }
 
+// vlessEncryptionFromExtra passes through a VLESS Encryption handshake string and
+// nothing else. The core parses it while building the outbound
+// (parseClientEncryption) and aborts the engine start on anything malformed, so
+// the "encryption=none" every second link carries — and any other junk — must not
+// reach it.
+func vlessEncryptionFromExtra(extra map[string]interface{}) string {
+	s := strings.TrimSpace(getStringField(extra, "encryption", ""))
+	if !strings.HasPrefix(s, "mlkem768x25519plus.") {
+		return ""
+	}
+	return s
+}
+
 // fingerprintFromExtra returns the uTLS fingerprint, accepting Xray's
 // "fp" as well as Clash-style "client-fingerprint" / "clientFingerprint".
 func fingerprintFromExtra(extra map[string]interface{}) string {
@@ -312,6 +325,7 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 			ServerPort: proxy.Port,
 			UUID:       uuid,
 			Flow:       flow,
+			Encryption:     vlessEncryptionFromExtra(extra),
 			PacketEncoding: resolvePacketEncoding(extra),
 		}
 		applyTLSAndTransport(&out, extra, proxy.IP)

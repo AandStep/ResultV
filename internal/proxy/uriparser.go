@@ -858,6 +858,9 @@ func parseVLESSURI(uri string) (config.ProxyEntry, error) {
 	extra["pbk"] = params.Get("pbk")
 	extra["sid"] = params.Get("sid")
 	extra["flow"] = params.Get("flow")
+	if enc := params.Get("encryption"); enc != "" {
+		extra["encryption"] = enc
+	}
 	extra["path"] = params.Get("path")
 	extra["host"] = params.Get("host")
 	extra["alpn"] = params.Get("alpn")
