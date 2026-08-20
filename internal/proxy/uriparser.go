@@ -463,6 +463,28 @@ func parseJSONOutbound(outbound map[string]interface{}, name string) (config.Pro
 				normalizeVLESSExtraPadding(extra)
 			}
 		}
+		if kcp, ok := asMap(stream["kcpSettings"]); ok {
+			if seed := asString(kcp["seed"]); seed != "" {
+				extra["seed"] = seed
+			}
+			// Xray nests the obfuscation header type one level deeper.
+			if header, ok := asMap(kcp["header"]); ok {
+				if ht := asString(header["type"]); ht != "" {
+					extra["headerType"] = ht
+				}
+			}
+			for _, k := range []string{
+				"mtu", "tti", "uplinkCapacity", "downlinkCapacity",
+				"readBufferSize", "writeBufferSize",
+			} {
+				if n := asInt(kcp[k]); n > 0 {
+					extra[k] = n
+				}
+			}
+			if congestion, ok := kcp["congestion"].(bool); ok && congestion {
+				extra["congestion"] = true
+			}
+		}
 		if reality, ok := asMap(stream["realitySettings"]); ok {
 			if sni := asString(reality["serverName"]); sni != "" {
 				extra["sni"] = sni

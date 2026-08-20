@@ -21,8 +21,9 @@ import (
 	"testing"
 )
 
-// TestMKCP_VLESSURICarriesSeedAndHeader: без seed и headerType узел строится, но не
-// соединяется — seed на клиенте и сервере не совпадут. Параметры обязаны доезжать.
+// TestMKCP_VLESSURICarriesSeedAndHeader: without seed and headerType the node still
+// builds but won't connect — client and server seeds would mismatch. These knobs
+// must reach the transport.
 func TestMKCP_VLESSURICarriesSeedAndHeader(t *testing.T) {
 	entry, err := ParseProxyURI("vless://af815621-b245-4149-89da-dd184cfc4b3d@203.0.113.7:443?type=kcp&security=none&seed=secret-seed&headerType=srtp&mtu=1350#kcp")
 	if err != nil {
@@ -37,8 +38,8 @@ func TestMKCP_VLESSURICarriesSeedAndHeader(t *testing.T) {
 	}
 }
 
-// TestMKCP_VMessURICarriesSeedAndHeader: в vmess:// header type лежит в "type", а seed —
-// в "path", и только когда net == kcp.
+// TestMKCP_VMessURICarriesSeedAndHeader: in vmess://, the header type lives in "type"
+// and the seed lives in "path" — but only when net == kcp.
 func TestMKCP_VMessURICarriesSeedAndHeader(t *testing.T) {
 	payload := `{"v":"2","ps":"kcp","add":"203.0.113.7","port":"443","id":"af815621-b245-4149-89da-dd184cfc4b3d","aid":"0","net":"kcp","type":"srtp","path":"secret-seed","tls":""}`
 	entry, err := ParseProxyURI("vmess://" + base64.StdEncoding.EncodeToString([]byte(payload)))
@@ -54,8 +55,8 @@ func TestMKCP_VMessURICarriesSeedAndHeader(t *testing.T) {
 	}
 }
 
-// TestMKCP_VMessWebsocketUnaffected — страховка от главного риска этой задачи: у ws-узла
-// "path" остаётся путём, а "type" не превращается в header type.
+// TestMKCP_VMessWebsocketUnaffected is the safety net for this task's main risk: for a
+// ws node, "path" stays a path and "type" never turns into a header type.
 func TestMKCP_VMessWebsocketUnaffected(t *testing.T) {
 	payload := `{"v":"2","ps":"ws","add":"203.0.113.7","port":"443","id":"af815621-b245-4149-89da-dd184cfc4b3d","aid":"0","net":"ws","type":"none","path":"/wspath","host":"cdn.example.com","tls":"tls"}`
 	entry, err := ParseProxyURI("vmess://" + base64.StdEncoding.EncodeToString([]byte(payload)))
@@ -81,8 +82,9 @@ func TestMKCP_VMessWebsocketUnaffected(t *testing.T) {
 	}
 }
 
-// TestMKCP_JSONSubscriptionKcpSettings: Xray-формат подписки кладёт настройки в
-// streamSettings.kcpSettings, header type — во вложенный объект header.type.
+// TestMKCP_JSONSubscriptionKcpSettings: the Xray subscription format puts the settings
+// under streamSettings.kcpSettings, with the header type nested one level deeper in
+// header.type.
 func TestMKCP_JSONSubscriptionKcpSettings(t *testing.T) {
 	body := `[{"outbounds":[{"tag":"kcp-node","protocol":"vless","settings":{"vnext":[{"address":"203.0.113.7","port":443,"users":[{"id":"af815621-b245-4149-89da-dd184cfc4b3d","encryption":"none"}]}]},"streamSettings":{"network":"kcp","security":"none","kcpSettings":{"mtu":1350,"tti":50,"uplinkCapacity":5,"downlinkCapacity":20,"congestion":true,"readBufferSize":2,"writeBufferSize":2,"seed":"secret-seed","header":{"type":"srtp"}}}}],"remarks":"KCP Node"}]`
 	entries, err := ParseSubscriptionBody(body)
@@ -103,5 +105,33 @@ func TestMKCP_JSONSubscriptionKcpSettings(t *testing.T) {
 	}
 	if tr.UplinkCapacity != 5 || tr.DownlinkCapacity != 20 || !tr.Congestion {
 		t.Fatalf("capacity/congestion lost: %+v", tr)
+	}
+}
+
+// TestMKCP_JSONSubscriptionKcpSettingsTrojan: the trojan branch of parseJSONOutbound
+// repeats the stream-settings parsing independently of vless/vmess (it does not share
+// that code), so kcpSettings needs its own parsing there too — a trojan node with
+// streamSettings.network "kcp" from a JSON subscription must also carry its seed and
+// header type through to the transport.
+func TestMKCP_JSONSubscriptionKcpSettingsTrojan(t *testing.T) {
+	body := `[{"outbounds":[{"tag":"kcp-trojan","protocol":"trojan","settings":{"servers":[{"address":"203.0.113.7","port":443,"password":"s3cr3t"}]},"streamSettings":{"network":"kcp","security":"none","kcpSettings":{"mtu":1350,"tti":50,"uplinkCapacity":5,"downlinkCapacity":20,"congestion":true,"readBufferSize":2,"writeBufferSize":2,"seed":"secret-seed","header":{"type":"srtp"}}}}],"remarks":"KCP Trojan Node"}]`
+	entries, err := ParseSubscriptionBody(body)
+	if err != nil {
+		t.Fatalf("ParseSubscriptionBody: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d", len(entries))
+	}
+	e := entries[0]
+	if e.Type != "TROJAN" {
+		t.Fatalf("type = %s", e.Type)
+	}
+	out := buildProxyOutbound(ProxyConfig{Type: e.Type, IP: e.IP, Port: e.Port, Extra: e.Extra})
+	if out.Transport == nil || out.Transport.Type != "mkcp" {
+		t.Fatalf("transport = %+v", out.Transport)
+	}
+	tr := out.Transport
+	if tr.Seed != "secret-seed" || tr.HeaderType != "srtp" || tr.MTU != 1350 {
+		t.Fatalf("kcpSettings lost for trojan: %+v", tr)
 	}
 }
