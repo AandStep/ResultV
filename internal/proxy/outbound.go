@@ -728,6 +728,19 @@ func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 			Method:  getStringField(extra, "http-method", ""),
 			Headers: transportHeadersFromExtra(extra),
 		}
+	case "kcp", "mkcp":
+		out.Transport = &SBOutboundTransport{
+			Type:             "mkcp",
+			Seed:             getStringField(extra, "seed", ""),
+			HeaderType:       mkcpHeaderTypeFromExtra(extra),
+			MTU:              getIntField(extra, "mtu", 0),
+			TTI:              getIntField(extra, "tti", 0),
+			UplinkCapacity:   intFromExtra(extra, "uplink_capacity", "uplinkCapacity"),
+			DownlinkCapacity: intFromExtra(extra, "downlink_capacity", "downlinkCapacity"),
+			Congestion:       getBoolField(extra, "congestion"),
+			ReadBufferSize:   intFromExtra(extra, "read_buffer_size", "readBufferSize"),
+			WriteBufferSize:  intFromExtra(extra, "write_buffer_size", "writeBufferSize"),
+		}
 	case "tcp":
 		// Xray's "tcp" + headerType=http obfuscation maps onto sing-box's
 		// "http" transport. Without HTTP headers we leave Transport nil so
@@ -1115,6 +1128,23 @@ func transportHeadersFromExtra(extra map[string]interface{}) map[string]string {
 		return nil
 	}
 	return out
+}
+
+// mkcpHeaderTypes mirrors v2raykcp.NewPacketHeader. An unknown obfuscation
+// header would fail transport creation, so it is dropped and the core falls back
+// to "none".
+var mkcpHeaderTypes = map[string]string{
+	"none": "none", "srtp": "srtp", "utp": "utp",
+	"wechat-video": "wechat-video", "wechatvideo": "wechat-video",
+	"dtls": "dtls", "wireguard": "wireguard",
+}
+
+func mkcpHeaderTypeFromExtra(extra map[string]interface{}) string {
+	raw := firstNonEmpty(
+		getStringField(extra, "header_type", ""),
+		getStringField(extra, "headerType", ""),
+	)
+	return mkcpHeaderTypes[strings.ToLower(strings.TrimSpace(raw))]
 }
 
 func xhttpPreferH2ALPN(alpn []string, skipHack bool) []string {

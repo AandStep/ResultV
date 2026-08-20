@@ -465,6 +465,19 @@ type SBOutboundTransport struct {
 	CongestionController string          `json:"congestion_controller,omitempty"`
 	CWND                 int             `json:"cwnd,omitempty"`
 	ScMaxBufferedPosts   int64           `json:"sc_max_buffered_posts,omitempty"`
+
+	// mKCP (type "mkcp" in sing-box, "kcp" in Xray links). UDP-based, no TLS
+	// framing involved — an unmapped network used to fall through to raw TCP,
+	// which cannot talk to a mKCP server at all.
+	MTU              int    `json:"mtu,omitempty"`
+	TTI              int    `json:"tti,omitempty"`
+	UplinkCapacity   int    `json:"uplink_capacity,omitempty"`
+	DownlinkCapacity int    `json:"downlink_capacity,omitempty"`
+	Congestion       bool   `json:"congestion,omitempty"`
+	ReadBufferSize   int    `json:"read_buffer_size,omitempty"`
+	WriteBufferSize  int    `json:"write_buffer_size,omitempty"`
+	HeaderType       string `json:"header_type,omitempty"`
+	Seed             string `json:"seed,omitempty"`
 }
 
 type SBRoute struct {
