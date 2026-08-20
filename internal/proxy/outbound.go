@@ -601,9 +601,10 @@ func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 		path := getStringField(extra, "path", "/")
 		host := getStringField(extra, "host", "")
 		out.Transport = &SBOutboundTransport{
-			Type: "httpupgrade",
-			Path: path,
-			Host: host,
+			Type:    "httpupgrade",
+			Path:    path,
+			Host:    host,
+			Headers: transportHeadersFromExtra(extra),
 		}
 	case "grpc":
 		serviceName := getStringField(extra, "grpc-service-name", "")
@@ -649,10 +650,11 @@ func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 		}
 	case "http", "h2":
 		out.Transport = &SBOutboundTransport{
-			Type:   "http",
-			Host:   getStringField(extra, "http-host", ""),
-			Path:   getStringField(extra, "http-path", "/"),
-			Method: getStringField(extra, "http-method", ""),
+			Type:    "http",
+			Host:    getStringField(extra, "http-host", ""),
+			Path:    getStringField(extra, "http-path", "/"),
+			Method:  getStringField(extra, "http-method", ""),
+			Headers: transportHeadersFromExtra(extra),
 		}
 	case "tcp":
 		// Xray's "tcp" + headerType=http obfuscation maps onto sing-box's
