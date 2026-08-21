@@ -275,38 +275,38 @@ type SBInbound struct {
 }
 
 type SBOutbound struct {
-	Type                string           `json:"type"`
-	Tag                 string           `json:"tag"`
-	Server              string           `json:"server,omitempty"`
-	ServerPort          int              `json:"server_port,omitempty"`
-	Username            string           `json:"username,omitempty"`
-	Password            string           `json:"password,omitempty"`
-	Method              string           `json:"method,omitempty"`
+	Type       string `json:"type"`
+	Tag        string `json:"tag"`
+	Server     string `json:"server,omitempty"`
+	ServerPort int    `json:"server_port,omitempty"`
+	Username   string `json:"username,omitempty"`
+	Password   string `json:"password,omitempty"`
+	Method     string `json:"method,omitempty"`
 	// Plugin/PluginOptions carry SIP003 (obfs-local, v2ray-plugin). A node whose
 	// server runs a plugin does not work without them.
-	Plugin              string           `json:"plugin,omitempty"`
-	PluginOptions       string           `json:"plugin_opts,omitempty"`
-	Version             string           `json:"version,omitempty"`
-	UUID                string           `json:"uuid,omitempty"`
-	AlterId             int              `json:"alter_id,omitempty"`
-	Flow                string           `json:"flow,omitempty"`
+	Plugin        string `json:"plugin,omitempty"`
+	PluginOptions string `json:"plugin_opts,omitempty"`
+	Version       string `json:"version,omitempty"`
+	UUID          string `json:"uuid,omitempty"`
+	AlterId       int    `json:"alter_id,omitempty"`
+	Flow          string `json:"flow,omitempty"`
 	// Encryption carries VLESS Encryption (the post-quantum handshake string
 	// "mlkem768x25519plus.<mode>.<rtt>[.<padding>].<key>"). Without it a node
 	// that runs the feature never completes the handshake the server expects.
-	Encryption          string           `json:"encryption,omitempty"`
-	PacketEncoding      string           `json:"packet_encoding,omitempty"`
-	GlobalPadding       bool             `json:"global_padding,omitempty"`
-	AuthenticatedLength bool             `json:"authenticated_length,omitempty"`
-	Security            string           `json:"security,omitempty"`
-	UpMbps              int              `json:"up_mbps,omitempty"`
-	DownMbps            int              `json:"down_mbps,omitempty"`
+	Encryption          string `json:"encryption,omitempty"`
+	PacketEncoding      string `json:"packet_encoding,omitempty"`
+	GlobalPadding       bool   `json:"global_padding,omitempty"`
+	AuthenticatedLength bool   `json:"authenticated_length,omitempty"`
+	Security            string `json:"security,omitempty"`
+	UpMbps              int    `json:"up_mbps,omitempty"`
+	DownMbps            int    `json:"down_mbps,omitempty"`
 	// ServerPorts/HopInterval drive Hysteria2 port hopping. sing-quic parses only
 	// "start:end" ranges, so the URI's "10000-20000" spelling is converted before
 	// it gets here — a range it cannot parse aborts outbound creation.
-	ServerPorts         []string         `json:"server_ports,omitempty"`
-	HopInterval         string           `json:"hop_interval,omitempty"`
-	Obfs                *SBHysteria2Obfs `json:"obfs,omitempty"`
-	Multiplex           *SBMultiplex     `json:"multiplex,omitempty"`
+	ServerPorts []string         `json:"server_ports,omitempty"`
+	HopInterval string           `json:"hop_interval,omitempty"`
+	Obfs        *SBHysteria2Obfs `json:"obfs,omitempty"`
+	Multiplex   *SBMultiplex     `json:"multiplex,omitempty"`
 
 	TLS       *SBOutboundTLS       `json:"tls,omitempty"`
 	Transport *SBOutboundTransport `json:"transport,omitempty"`

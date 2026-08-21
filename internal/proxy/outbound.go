@@ -497,6 +497,12 @@ func intFromExtra(extra map[string]interface{}, snake, camel string) int {
 	if v, ok := extra[snake]; ok {
 		return intFromAny(v)
 	}
+	// Some fields (e.g. "mtu", "tti") have no distinct camelCase spelling — the
+	// caller passes "" for camel rather than repeating the snake_case key, and
+	// an empty key must not be looked up as if it were a real one.
+	if camel == "" {
+		return 0
+	}
 	if v, ok := extra[camel]; ok {
 		return intFromAny(v)
 	}
@@ -532,13 +538,8 @@ func intFromAny(v interface{}) int {
 // parses. A range it cannot parse is dropped rather than forwarded: ParsePorts
 // returns an error there, and that error aborts the engine start.
 func hysteriaServerPortsFromExtra(extra map[string]interface{}) []string {
-	raw := firstNonEmpty(
-		getStringField(extra, "server_ports", ""),
-		getStringField(extra, "mport", ""),
-		getStringField(extra, "ports", ""),
-	)
 	var out []string
-	for _, part := range strings.Split(raw, ",") {
+	for _, part := range hysteriaPortSpecs(extra) {
 		lo, hi, ok := parsePortRangeSpec(part)
 		if !ok {
 			continue
@@ -546,6 +547,36 @@ func hysteriaServerPortsFromExtra(extra map[string]interface{}) []string {
 		out = append(out, strconv.Itoa(lo)+":"+strconv.Itoa(hi))
 	}
 	return out
+}
+
+// hysteriaPortSpecs returns the raw, comma-split port-range specs to feed
+// parsePortRangeSpec. server_ports is accepted both as a plain string
+// ("10000-20000,30000", the URI spelling) and as a []interface{} of
+// strings/numbers — the latter is server_ports' natural shape in a
+// sing-box-style JSON config, and a producer emitting it that way must not
+// have the value silently swallowed by a string-only reader (getStringField
+// returns "" for anything that isn't already a string).
+func hysteriaPortSpecs(extra map[string]interface{}) []string {
+	if raw, ok := extra["server_ports"]; ok {
+		switch v := raw.(type) {
+		case []interface{}:
+			specs := make([]string, 0, len(v))
+			for _, item := range v {
+				if s := stringFromExtraValue(item); s != "" {
+					specs = append(specs, s)
+				}
+			}
+			if len(specs) > 0 {
+				return specs
+			}
+		case string:
+			if v != "" {
+				return strings.Split(v, ",")
+			}
+		}
+	}
+	raw := firstNonEmpty(getStringField(extra, "mport", ""), getStringField(extra, "ports", ""))
+	return strings.Split(raw, ",")
 }
 
 // hysteria2HopIntervalFromExtra canonicalizes hop_interval into the string
@@ -692,7 +723,11 @@ func applyTLSAndTransport(out *SBOutbound, extra map[string]interface{}, default
 }
 
 func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
-	network := getStringField(extra, "network", "tcp")
+	// Case-insensitive: the mKCP gate in parseVMessURI is case-insensitive
+	// ("net":"KCP" already stores seed/headerType into extra), but this switch
+	// used to compare against lowercase literals only, so an upper/mixed-case
+	// network here built no transport at all even though the knobs were there.
+	network := strings.ToLower(strings.TrimSpace(getStringField(extra, "network", "tcp")))
 	switch network {
 	case "ws", "websocket":
 		path := getStringField(extra, "ws-path", "")
@@ -826,8 +861,8 @@ func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 			Type:             "mkcp",
 			Seed:             getStringField(extra, "seed", ""),
 			HeaderType:       mkcpHeaderTypeFromExtra(extra),
-			MTU:              positiveIntFromExtra(extra, "mtu", "mtu"),
-			TTI:              positiveIntFromExtra(extra, "tti", "tti"),
+			MTU:              positiveIntFromExtra(extra, "mtu", ""),
+			TTI:              positiveIntFromExtra(extra, "tti", ""),
 			UplinkCapacity:   positiveIntFromExtra(extra, "uplink_capacity", "uplinkCapacity"),
 			DownlinkCapacity: positiveIntFromExtra(extra, "downlink_capacity", "downlinkCapacity"),
 			Congestion:       getBoolField(extra, "congestion"),
