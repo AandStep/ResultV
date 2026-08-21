@@ -15,7 +15,10 @@
 
 package proxy
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 // TestMultiplex_ExplicitProfile: only a sing-box-shaped multiplex object is
 // honoured, and only with a protocol the core speaks.
@@ -67,5 +70,68 @@ func TestMultiplex_UnknownProtocolDropped(t *testing.T) {
 	})
 	if out.Multiplex != nil {
 		t.Fatalf("unknown multiplex protocol forwarded: %+v", out.Multiplex)
+	}
+}
+
+// TestMultiplex_DisabledProfileDropped: enabled:false must produce no
+// multiplex field at all, not one serialized with enabled=false.
+func TestMultiplex_DisabledProfileDropped(t *testing.T) {
+	out := outboundFromExtra(t, "VLESS", map[string]interface{}{
+		"uuid":     "af815621-b245-4149-89da-dd184cfc4b3d",
+		"network":  "tcp",
+		"security": "none",
+		"multiplex": map[string]interface{}{
+			"enabled":  false,
+			"protocol": "smux",
+		},
+	})
+	if out.Multiplex != nil {
+		t.Fatalf("multiplex kept for enabled:false: %+v", out.Multiplex)
+	}
+}
+
+// TestMultiplex_MaxConnectionsAndMinStreamsReachTheCore: the explicit-profile
+// test above only covers max_streams/padding — max_connections and min_streams
+// must round-trip too.
+func TestMultiplex_MaxConnectionsAndMinStreamsReachTheCore(t *testing.T) {
+	extra := map[string]interface{}{
+		"uuid":     "af815621-b245-4149-89da-dd184cfc4b3d",
+		"network":  "tcp",
+		"security": "none",
+		"multiplex": map[string]interface{}{
+			"enabled":         true,
+			"protocol":        "smux",
+			"max_connections": 4,
+			"min_streams":     2,
+		},
+	}
+	out := outboundFromExtra(t, "VLESS", extra)
+	if out.Multiplex == nil {
+		t.Fatal("multiplex dropped")
+	}
+	if out.Multiplex.MaxConnections != 4 || out.Multiplex.MinStreams != 2 {
+		t.Fatalf("max_connections/min_streams lost: %+v", out.Multiplex)
+	}
+	assertCoreAcceptsConfig(t, tunnelConfigFromExtra(t, "VLESS", extra))
+}
+
+// TestMultiplex_AbsentStaysAbsent keeps the old wire shape: a node that never
+// mentions multiplex must not serialize a "multiplex" key at all.
+func TestMultiplex_AbsentStaysAbsent(t *testing.T) {
+	out := outboundFromExtra(t, "VLESS", map[string]interface{}{
+		"uuid":     "af815621-b245-4149-89da-dd184cfc4b3d",
+		"network":  "tcp",
+		"security": "none",
+	})
+	raw, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m["multiplex"]; ok {
+		t.Fatalf("multiplex key emitted for a node that never asked: %s", raw)
 	}
 }

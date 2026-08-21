@@ -78,6 +78,35 @@ func TestXHTTPObfs_UplinkDataPlacementIsModeGated(t *testing.T) {
 	assertCoreAcceptsConfig(t, tunnelConfigFromExtra(t, "VLESS", extra))
 }
 
+// TestXHTTPObfs_UplinkDataPlacementBodyAlwaysAllowed: "body", like "auto", is
+// permitted in every xhttp mode — unlike cookie/header it is not gated on
+// packet-up (xhttpUplinkDataPlacementFromExtra).
+func TestXHTTPObfs_UplinkDataPlacementBodyAlwaysAllowed(t *testing.T) {
+	extra := xhttpNodeExtra(map[string]interface{}{
+		"mode":                "auto",
+		"uplinkDataPlacement": "body",
+	})
+	tr := outboundFromExtra(t, "VLESS", extra).Transport
+	if tr.UplinkDataPlacement != "body" {
+		t.Fatalf("uplink_data_placement = %q, want body", tr.UplinkDataPlacement)
+	}
+	assertCoreAcceptsConfig(t, tunnelConfigFromExtra(t, "VLESS", extra))
+}
+
+// TestXHTTPObfs_UplinkDataPlacementJunkDropped: an unrecognized value must not
+// reach the core's enum validation, in any mode.
+func TestXHTTPObfs_UplinkDataPlacementJunkDropped(t *testing.T) {
+	extra := xhttpNodeExtra(map[string]interface{}{
+		"mode":                "packet-up",
+		"uplinkDataPlacement": "teleport",
+	})
+	tr := outboundFromExtra(t, "VLESS", extra).Transport
+	if tr.UplinkDataPlacement != "" {
+		t.Fatalf("uplink_data_placement = %q, want dropped", tr.UplinkDataPlacement)
+	}
+	assertCoreAcceptsConfig(t, tunnelConfigFromExtra(t, "VLESS", extra))
+}
+
 // TestXHTTPObfs_JunkDropped: unsupported enum values abort the whole instance.
 func TestXHTTPObfs_JunkDropped(t *testing.T) {
 	extra := xhttpNodeExtra(map[string]interface{}{

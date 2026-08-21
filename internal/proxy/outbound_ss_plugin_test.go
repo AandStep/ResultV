@@ -53,6 +53,26 @@ func TestSSPlugin_CoreAccepts(t *testing.T) {
 	assertCoreAcceptsConfig(t, tunnelConfigFromExtra(t, "SS", extra))
 }
 
+// TestSSPlugin_CamelCasePluginOptsReachesPluginOptions: ssPluginFromExtra
+// accepts plugin_opts and pluginOpts as aliases, but nothing exercised the
+// camelCase spelling directly — a JSON subscription is more likely to hand it
+// over in that shape than the SIP002 query string is.
+func TestSSPlugin_CamelCasePluginOptsReachesPluginOptions(t *testing.T) {
+	extra := map[string]interface{}{
+		"method":     "aes-256-gcm",
+		"plugin":     "v2ray-plugin",
+		"pluginOpts": "tls;host=cdn.example.com",
+	}
+	out := outboundFromExtra(t, "SS", extra)
+	if out.Plugin != "v2ray-plugin" {
+		t.Fatalf("plugin = %q, want v2ray-plugin", out.Plugin)
+	}
+	if out.PluginOptions != "tls;host=cdn.example.com" {
+		t.Fatalf("plugin_opts = %q, want camelCase pluginOpts to reach PluginOptions", out.PluginOptions)
+	}
+	assertCoreAcceptsConfig(t, tunnelConfigFromExtra(t, "SS", extra))
+}
+
 // TestSSPlugin_UnknownPluginDropped: an unregistered plugin name fails outbound
 // creation, which takes the whole engine down — drop it instead.
 func TestSSPlugin_UnknownPluginDropped(t *testing.T) {

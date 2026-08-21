@@ -38,6 +38,25 @@ func TestMKCP_VLESSURICarriesSeedAndHeader(t *testing.T) {
 	}
 }
 
+// TestMKCP_VLESSURICarriesFullCapacityAndBufferKnobs: the seed/headerType/mtu
+// test above only exercises three of the nine query knobs applyMKCPQueryParams
+// carries; uplinkCapacity/downlinkCapacity/readBufferSize/writeBufferSize need
+// the same URI-to-transport round-trip.
+func TestMKCP_VLESSURICarriesFullCapacityAndBufferKnobs(t *testing.T) {
+	entry, err := ParseProxyURI("vless://af815621-b245-4149-89da-dd184cfc4b3d@203.0.113.7:443?type=kcp&security=none&uplinkCapacity=5&downlinkCapacity=20&readBufferSize=2&writeBufferSize=4#kcp")
+	if err != nil {
+		t.Fatalf("ParseProxyURI: %v", err)
+	}
+	out := buildProxyOutbound(ProxyConfig{Type: entry.Type, IP: entry.IP, Port: entry.Port, Extra: entry.Extra})
+	if out.Transport == nil || out.Transport.Type != "mkcp" {
+		t.Fatalf("transport = %+v", out.Transport)
+	}
+	tr := out.Transport
+	if tr.UplinkCapacity != 5 || tr.DownlinkCapacity != 20 || tr.ReadBufferSize != 2 || tr.WriteBufferSize != 4 {
+		t.Fatalf("mkcp capacity/buffer knobs lost between URI and outbound: %+v", tr)
+	}
+}
+
 // TestMKCP_VMessURICarriesSeedAndHeader: in vmess://, the header type lives in "type"
 // and the seed lives in "path" — but only when net == kcp.
 func TestMKCP_VMessURICarriesSeedAndHeader(t *testing.T) {
@@ -157,5 +176,30 @@ func TestMKCP_JSONSubscriptionKcpSettingsTrojan(t *testing.T) {
 	tr := out.Transport
 	if tr.Seed != "secret-seed" || tr.HeaderType != "srtp" || tr.MTU != 1350 {
 		t.Fatalf("kcpSettings lost for trojan: %+v", tr)
+	}
+}
+
+// TestMKCP_JSONSubscriptionWsSettingsUnaffected: a plain ws node's
+// streamSettings.wsSettings must not leak mKCP knobs into extra.
+// applyKCPSettings (2.1's shared helper) only fires on streamSettings.kcpSettings,
+// but this guards that refactor against a future regression that fires it
+// unconditionally for every network.
+func TestMKCP_JSONSubscriptionWsSettingsUnaffected(t *testing.T) {
+	body := `[{"outbounds":[{"tag":"ws-node","protocol":"vless","settings":{"vnext":[{"address":"203.0.113.7","port":443,"users":[{"id":"af815621-b245-4149-89da-dd184cfc4b3d","encryption":"none"}]}]},"streamSettings":{"network":"ws","security":"none","wsSettings":{"path":"/ws"}}}],"remarks":"WS Node"}]`
+	entries, err := ParseSubscriptionBody(body)
+	if err != nil {
+		t.Fatalf("ParseSubscriptionBody: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d", len(entries))
+	}
+	var extra map[string]interface{}
+	if err := json.Unmarshal(entries[0].Extra, &extra); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"seed", "headerType", "mtu"} {
+		if _, ok := extra[k]; ok {
+			t.Fatalf("mkcp key %q invented for a ws node: %v", k, extra)
+		}
 	}
 }

@@ -55,6 +55,47 @@ func TestHysteria2Hop_JunkDropped(t *testing.T) {
 	}
 }
 
+// TestHysteria2Hop_MportBoundaries: parsePortRangeSpec's 1..65535 bounds apply
+// to a bare mport the same way they do to a "lo-hi" range — a port of exactly
+// 1 or 65535 must survive, and 0/65536/an unterminated range must not reach
+// the core.
+func TestHysteria2Hop_MportBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		mport string
+		want  []string
+	}{
+		{"1", []string{"1:1"}},
+		{"65535", []string{"65535:65535"}},
+		{"0", nil},
+		{"65536", nil},
+		{"10000-", nil},
+	} {
+		extra := map[string]interface{}{"sni": "example.com", "mport": tc.mport}
+		out := outboundFromExtra(t, "HYSTERIA2", extra)
+		if !reflect.DeepEqual(out.ServerPorts, tc.want) {
+			t.Fatalf("mport=%q: server_ports = %v, want %v", tc.mport, out.ServerPorts, tc.want)
+		}
+		assertCoreAcceptsConfig(t, tunnelConfigFromExtra(t, "HYSTERIA2", extra))
+	}
+}
+
+// TestHysteria2Hop_ServerPortsAsArray: server_ports is a []interface{} of
+// strings/numbers in its natural sing-box-JSON shape, not the URI's
+// comma-joined string — a string-only reader (getStringField) would silently
+// read it as "" and drop the whole port-hopping config.
+func TestHysteria2Hop_ServerPortsAsArray(t *testing.T) {
+	extra := map[string]interface{}{
+		"sni":          "example.com",
+		"server_ports": []interface{}{"10000-20000", 30000},
+	}
+	out := outboundFromExtra(t, "HYSTERIA2", extra)
+	want := []string{"10000:20000", "30000:30000"}
+	if !reflect.DeepEqual(out.ServerPorts, want) {
+		t.Fatalf("server_ports = %v, want %v", out.ServerPorts, want)
+	}
+	assertCoreAcceptsConfig(t, tunnelConfigFromExtra(t, "HYSTERIA2", extra))
+}
+
 // TestHysteria2Hop_AbsentStaysAbsent keeps the old wire shape for plain nodes.
 func TestHysteria2Hop_AbsentStaysAbsent(t *testing.T) {
 	out := outboundFromExtra(t, "HYSTERIA2", map[string]interface{}{"sni": "example.com"})

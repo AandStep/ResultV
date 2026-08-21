@@ -65,6 +65,19 @@ func TestWSTransport_MergesUserHeaders(t *testing.T) {
 	}
 }
 
+// TestWSTransport_NetworkCaseInsensitive: applyTransportOnly's switch used to
+// compare the network value against lowercase literals only, while the mKCP
+// gate in parseVMessURI is already case-insensitive ("net":"KCP" stores
+// seed/headerType into extra regardless of case) — so an upper/mixed-case
+// network here built no transport at all even though the knobs for it were
+// already present.
+func TestWSTransport_NetworkCaseInsensitive(t *testing.T) {
+	out := outboundFromExtra(t, "VLESS", wsNodeExtra(map[string]interface{}{"network": "WS", "host": "cdn.example.com"}))
+	if out.Transport == nil || out.Transport.Type != "ws" {
+		t.Fatalf("network=WS produced %+v, want a ws transport", out.Transport)
+	}
+}
+
 // TestWSTransport_NoHostNoHeaders keeps the old wire shape for plain ws nodes.
 func TestWSTransport_NoHostNoHeaders(t *testing.T) {
 	out := outboundFromExtra(t, "VLESS", wsNodeExtra(nil))

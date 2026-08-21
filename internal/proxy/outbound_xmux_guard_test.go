@@ -121,3 +121,22 @@ func TestXmux_MaxConnectionsWinsOverDefaultConcurrency(t *testing.T) {
 	}
 	assertCoreAcceptsConfig(t, tunnelConfigFromExtra(t, "VLESS", extra))
 }
+
+// TestXmux_BothKnobsSetTogether_OnlyMaxConnectionsSurvives: same guard as
+// above, but for a node that sets maxConcurrency explicitly alongside
+// maxConnections rather than relying on the conservative default to supply
+// max_concurrency. The user value must lose exactly the same way the default
+// does — max_connections wins either way.
+func TestXmux_BothKnobsSetTogether_OnlyMaxConnectionsSurvives(t *testing.T) {
+	extra := xhttpNodeExtra(map[string]interface{}{
+		"xmux": map[string]interface{}{"maxConcurrency": 16, "maxConnections": 4},
+	})
+	m := xmuxOf(t, outboundFromExtra(t, "VLESS", extra))
+	if _, ok := m["max_concurrency"]; ok {
+		t.Fatalf("max_concurrency kept next to max_connections: %v", m)
+	}
+	if got := m["max_connections"]; got != float64(4) {
+		t.Fatalf("max_connections = %v, want 4", got)
+	}
+	assertCoreAcceptsConfig(t, tunnelConfigFromExtra(t, "VLESS", extra))
+}

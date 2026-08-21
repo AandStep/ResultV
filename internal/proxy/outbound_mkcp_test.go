@@ -70,6 +70,28 @@ func TestMKCP_AliasSpelling(t *testing.T) {
 	}
 }
 
+// TestMKCP_HeaderTypeAliasWechatVideo: mkcpHeaderTypes maps both spellings of
+// wechat-video (the hyphenated core name and the no-hyphen alias some links
+// use) onto the one form the core actually knows.
+func TestMKCP_HeaderTypeAliasWechatVideo(t *testing.T) {
+	for _, alias := range []string{"wechatvideo", "wechat-video"} {
+		tr := outboundFromExtra(t, "VLESS", mkcpNodeExtra(map[string]interface{}{"headerType": alias})).Transport
+		if tr == nil || tr.HeaderType != "wechat-video" {
+			t.Fatalf("headerType=%s produced %+v, want wechat-video", alias, tr)
+		}
+	}
+}
+
+// TestMKCP_NetworkCaseInsensitive: same guard as TestWSTransport_NetworkCaseInsensitive,
+// for the "kcp"/"mkcp" case specifically — an upper-case "KCP" must build the
+// same transport as the lowercase spelling TestMKCP_AliasSpelling already covers.
+func TestMKCP_NetworkCaseInsensitive(t *testing.T) {
+	tr := outboundFromExtra(t, "VLESS", mkcpNodeExtra(map[string]interface{}{"network": "KCP"})).Transport
+	if tr == nil || tr.Type != "mkcp" {
+		t.Fatalf("network=KCP produced %+v, want mkcp transport", tr)
+	}
+}
+
 // TestMKCP_NegativeNumbersDropped: every numeric mKCP knob is uint32 in the
 // core (option/v2ray_transport.go V2RayKCPOptions); a negative value fails to
 // decode ("cannot unmarshal number -5 into ... uint32"), which aborts the
