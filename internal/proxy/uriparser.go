@@ -922,7 +922,7 @@ func applyMKCPQueryParams(params url.Values, extra map[string]interface{}) {
 		}
 	}
 	if congestion := strings.TrimSpace(params.Get("congestion")); congestion != "" {
-		if b, err := strconv.ParseBool(congestion); err == nil {
+		if b, ok := parseBoolFlexibleOK(congestion); ok {
 			extra["congestion"] = b
 		}
 	}
@@ -1762,12 +1762,22 @@ func toInt(v interface{}) int {
 }
 
 func parseBoolFlexible(v string) bool {
+	b, _ := parseBoolFlexibleOK(v)
+	return b
+}
+
+// parseBoolFlexibleOK is parseBoolFlexible's truth table plus its explicit-false
+// counterpart, and it reports whether the spelling was recognized at all. A
+// query knob needs that third state: an unrecognized value must leave the key
+// unset rather than silently mean "false".
+func parseBoolFlexibleOK(v string) (bool, bool) {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
+		return true, true
+	case "0", "false", "no", "off":
+		return false, true
 	}
+	return false, false
 }
 
 func truncate(s string, n int) string {

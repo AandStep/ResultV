@@ -203,3 +203,39 @@ func TestMKCP_JSONSubscriptionWsSettingsUnaffected(t *testing.T) {
 		}
 	}
 }
+
+// TestMKCP_CongestionAcceptsWordSpellings: congestion used to go through
+// strconv.ParseBool, which only recognizes "1"/"t"/"true"/... — "yes"/"off" and
+// friends fell through as errors and the key was silently left unset, even
+// though the same word spellings are honored for the JS parser and for
+// parseBoolFlexible's other callers (e.g. insecure). parseBoolFlexibleOK closes
+// that gap; an unrecognized spelling must still leave the key unset.
+func TestMKCP_CongestionAcceptsWordSpellings(t *testing.T) {
+	cases := []struct {
+		query    string
+		wantSet  bool
+		wantBool bool
+	}{
+		{"yes", true, true},
+		{"off", true, false},
+		{"maybe", false, false},
+	}
+	for _, tc := range cases {
+		uri := "vless://af815621-b245-4149-89da-dd184cfc4b3d@203.0.113.7:443?type=kcp&security=none&congestion=" + tc.query + "#kcp"
+		entry, err := ParseProxyURI(uri)
+		if err != nil {
+			t.Fatalf("congestion=%s: ParseProxyURI: %v", tc.query, err)
+		}
+		var extra map[string]interface{}
+		if err := json.Unmarshal(entry.Extra, &extra); err != nil {
+			t.Fatalf("congestion=%s: %v", tc.query, err)
+		}
+		got, ok := extra["congestion"]
+		if ok != tc.wantSet {
+			t.Fatalf("congestion=%s: key present = %v, want %v (extra: %v)", tc.query, ok, tc.wantSet, extra)
+		}
+		if tc.wantSet && got != tc.wantBool {
+			t.Fatalf("congestion=%s: value = %v, want %v", tc.query, got, tc.wantBool)
+		}
+	}
+}
