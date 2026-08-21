@@ -711,7 +711,11 @@ func applyTLSAndTransport(out *SBOutbound, extra map[string]interface{}, default
 	} else if out.TLS != nil && len(out.TLS.ALPN) == 0 {
 		isReality := out.TLS.Reality != nil && out.TLS.Reality.Enabled
 		if !isReality {
-			network := getStringField(extra, "network", "tcp")
+			// Normalize casing the same way applyTransportOnly does: embedded
+			// extra (?extra={...}) can now carry "TCP"/"WS" as-is, and an
+			// un-normalized compare here would force ALPN=["http/1.1"] on a
+			// plain-TCP node instead of leaving it empty for the core default.
+			network := strings.ToLower(strings.TrimSpace(getStringField(extra, "network", "tcp")))
 			// Для plain TCP (VLESS/VMESS без транспорта) оставляем ALPN пустым —
 			// sing-box использует дефолт, что совместимо с любой серверной конфигурацией.
 			// Для HTTP-транспортов (grpc, xhttp, ws, h2) ALPN важен для фреймирования.

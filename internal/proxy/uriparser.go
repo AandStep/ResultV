@@ -1722,14 +1722,6 @@ func base64Decode(s string) (string, error) {
 	return "", fmt.Errorf("not valid base64")
 }
 
-func paramOr(params url.Values, key, fallback string) string {
-	v := params.Get(key)
-	if v == "" {
-		return fallback
-	}
-	return v
-}
-
 func firstNonEmpty(values ...string) string {
 	for _, v := range values {
 		if strings.TrimSpace(v) != "" {
