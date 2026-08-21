@@ -1600,7 +1600,7 @@ export const AddProxyView = () => {
                       {t("add.vpnNetworkChangedWarning")}
                     </div>
                   )}
-                  {vpnNetwork === "ws" && (
+                  {(vpnNetwork === "ws" || vpnNetwork === "httpupgrade") && (
                     <div className="space-y-3 pt-2">
                       <div>
                         <label className="block text-sm font-medium text-zinc-400 mb-2">

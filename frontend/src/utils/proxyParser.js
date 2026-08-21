@@ -495,6 +495,24 @@ const parseVLESS = (uri) => {
         });
         const encryption = params.get("encryption");
         if (encryption) extra.encryption = encryption;
+
+        const grpcServiceName = firstNonEmpty(
+            params.get("grpc-service-name"),
+            params.get("serviceName"),
+            params.get("service_name"),
+            params.get("grpc_service_name"),
+        );
+        if (grpcServiceName) {
+            extra["grpc-service-name"] = grpcServiceName;
+            extra.serviceName = grpcServiceName;
+        }
+        const authority = firstNonEmpty(
+            params.get("authority"),
+            params.get("grpc-authority"),
+            params.get("grpc_authority"),
+        );
+        if (authority) extra.authority = authority;
+
         applyMKCPQueryParams(params, extra);
 
         return {
