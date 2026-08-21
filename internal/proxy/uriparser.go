@@ -352,28 +352,7 @@ func parseJSONOutbound(outbound map[string]interface{}, name string) (config.Pro
 				normalizeVLESSExtraPadding(extra)
 			}
 		}
-		if kcp, ok := asMap(stream["kcpSettings"]); ok {
-			if seed := asString(kcp["seed"]); seed != "" {
-				extra["seed"] = seed
-			}
-			// Xray nests the obfuscation header type one level deeper.
-			if header, ok := asMap(kcp["header"]); ok {
-				if ht := asString(header["type"]); ht != "" {
-					extra["headerType"] = ht
-				}
-			}
-			for _, k := range []string{
-				"mtu", "tti", "uplinkCapacity", "downlinkCapacity",
-				"readBufferSize", "writeBufferSize",
-			} {
-				if n := asInt(kcp[k]); n > 0 {
-					extra[k] = n
-				}
-			}
-			if congestion, ok := kcp["congestion"].(bool); ok && congestion {
-				extra["congestion"] = true
-			}
-		}
+		applyKCPSettings(stream, extra)
 		if reality, ok := asMap(stream["realitySettings"]); ok {
 			if sni := asString(reality["serverName"]); sni != "" {
 				extra["sni"] = sni
@@ -463,28 +442,7 @@ func parseJSONOutbound(outbound map[string]interface{}, name string) (config.Pro
 				normalizeVLESSExtraPadding(extra)
 			}
 		}
-		if kcp, ok := asMap(stream["kcpSettings"]); ok {
-			if seed := asString(kcp["seed"]); seed != "" {
-				extra["seed"] = seed
-			}
-			// Xray nests the obfuscation header type one level deeper.
-			if header, ok := asMap(kcp["header"]); ok {
-				if ht := asString(header["type"]); ht != "" {
-					extra["headerType"] = ht
-				}
-			}
-			for _, k := range []string{
-				"mtu", "tti", "uplinkCapacity", "downlinkCapacity",
-				"readBufferSize", "writeBufferSize",
-			} {
-				if n := asInt(kcp[k]); n > 0 {
-					extra[k] = n
-				}
-			}
-			if congestion, ok := kcp["congestion"].(bool); ok && congestion {
-				extra["congestion"] = true
-			}
-		}
+		applyKCPSettings(stream, extra)
 		if reality, ok := asMap(stream["realitySettings"]); ok {
 			if sni := asString(reality["serverName"]); sni != "" {
 				extra["sni"] = sni
@@ -626,6 +584,38 @@ func parseJSONOutbound(outbound map[string]interface{}, name string) (config.Pro
 		}, username != "" && password != ""
 	default:
 		return config.ProxyEntry{}, false
+	}
+}
+
+// applyKCPSettings copies Xray's streamSettings.kcpSettings into extra. Shared
+// between the vless/vmess and trojan branches of parseJSONOutbound, which used
+// to carry this block twice — task 8b's review already caught trojan missing
+// it entirely once, and a hand-copied duplicate is exactly how that class of
+// omission happens again.
+func applyKCPSettings(stream map[string]interface{}, extra map[string]interface{}) {
+	kcp, ok := asMap(stream["kcpSettings"])
+	if !ok {
+		return
+	}
+	if seed := asString(kcp["seed"]); seed != "" {
+		extra["seed"] = seed
+	}
+	// Xray nests the obfuscation header type one level deeper.
+	if header, ok := asMap(kcp["header"]); ok {
+		if ht := asString(header["type"]); ht != "" {
+			extra["headerType"] = ht
+		}
+	}
+	for _, k := range []string{
+		"mtu", "tti", "uplinkCapacity", "downlinkCapacity",
+		"readBufferSize", "writeBufferSize",
+	} {
+		if n := asInt(kcp[k]); n > 0 {
+			extra[k] = n
+		}
+	}
+	if congestion, ok := kcp["congestion"].(bool); ok && congestion {
+		extra["congestion"] = true
 	}
 }
 
@@ -876,58 +866,34 @@ func asInt(v interface{}) int {
 	}
 }
 
-func parseVLESSURI(uri string) (config.ProxyEntry, error) {
-	u, err := url.Parse(strings.Replace(uri, "vless://", "http://", 1))
-	if err != nil {
-		return config.ProxyEntry{}, fmt.Errorf("parsing VLESS URI: %w", err)
+// applyDefaultIfAbsent sets extra[key] = fallback only when the key is not
+// already present. Used for fields like "network"/"security" that carry a
+// hard-coded default: the default must lose to a value already merged in from
+// ?extra={...}, not silently overwrite it.
+func applyDefaultIfAbsent(extra map[string]interface{}, key, fallback string) {
+	if _, ok := extra[key]; !ok {
+		extra[key] = fallback
 	}
+}
 
-	port, _ := strconv.Atoi(u.Port())
-	name := "VLESS"
-	if u.Fragment != "" {
-		name, _ = url.PathUnescape(u.Fragment)
+// applyQueryOverrides copies each entry of values into extra, but only when
+// the query actually supplied a non-empty value for it. An empty/absent query
+// param must not stomp a value ?extra={...} already provided — that silent
+// overwrite is the defect class this whole pass exists to close.
+func applyQueryOverrides(extra map[string]interface{}, values map[string]string) {
+	for key, value := range values {
+		if value != "" {
+			extra[key] = value
+		}
 	}
+}
 
-	params := u.Query()
-	
-	
-	extra := map[string]interface{}{}
-	mergeVLESSURLEmbeddedExtra(extra, params.Get("extra"))
-
-	extra["uuid"] = u.User.Username()
-	extra["network"] = paramOr(params, "type", "tcp")
-	extra["security"] = paramOr(params, "security", "none")
-	extra["sni"] = params.Get("sni")
-	extra["fp"] = params.Get("fp")
-	extra["pbk"] = params.Get("pbk")
-	extra["sid"] = params.Get("sid")
-	extra["flow"] = params.Get("flow")
-	// keep the embedded-extra value when the query has none — mergeVLESSURLEmbeddedExtra ran before this block
-	if enc := params.Get("encryption"); enc != "" {
-		extra["encryption"] = enc
-	}
-	extra["path"] = params.Get("path")
-	extra["host"] = params.Get("host")
-	extra["alpn"] = params.Get("alpn")
-	extra["mode"] = params.Get("mode")
-	extra["method"] = params.Get("method")
-	if grpcServiceName := firstNonEmpty(
-		params.Get("grpc-service-name"),
-		params.Get("serviceName"),
-		params.Get("service_name"),
-		params.Get("grpc_service_name"),
-	); grpcServiceName != "" {
-		extra["grpc-service-name"] = grpcServiceName
-		extra["serviceName"] = grpcServiceName
-	}
-	if grpcAuthority := firstNonEmpty(
-		params.Get("authority"),
-		params.Get("grpc-authority"),
-		params.Get("grpc_authority"),
-	); grpcAuthority != "" {
-		extra["authority"] = grpcAuthority
-	}
-	// mKCP knobs ride as plain query params in vless:// links. Only non-empty ones
+// applyMKCPQueryParams copies mKCP's query-string knobs into extra. Shared
+// between vless:// and trojan:// — outbound.go's "kcp"/"mkcp" transport branch
+// (applyTransportOnly, reached via applyTLSAndTransport) does not look at the
+// proxy type, so a trojan link needs these knobs exactly as much as a vless one.
+func applyMKCPQueryParams(params url.Values, extra map[string]interface{}) {
+	// mKCP knobs ride as plain query params in the URI. Only non-empty ones
 	// are stored: every other transport shares this extra map.
 	for _, k := range []string{
 		"seed", "headerType",
@@ -960,6 +926,77 @@ func parseVLESSURI(uri string) (config.ProxyEntry, error) {
 			extra["congestion"] = b
 		}
 	}
+}
+
+func parseVLESSURI(uri string) (config.ProxyEntry, error) {
+	u, err := url.Parse(strings.Replace(uri, "vless://", "http://", 1))
+	if err != nil {
+		return config.ProxyEntry{}, fmt.Errorf("parsing VLESS URI: %w", err)
+	}
+
+	port, _ := strconv.Atoi(u.Port())
+	name := "VLESS"
+	if u.Fragment != "" {
+		name, _ = url.PathUnescape(u.Fragment)
+	}
+
+	params := u.Query()
+
+	extra := map[string]interface{}{}
+	mergeURLEmbeddedExtra(extra, params.Get("extra"))
+
+	extra["uuid"] = u.User.Username()
+	// A default here must not overwrite what ?extra={...} already provided:
+	// fall back to it only when neither the query nor the embedded extra
+	// carries the key. This is the fix for the reality-collapses-to-none bug —
+	// the old unconditional assignment ran after the embedded-extra merge and
+	// beat it with the plain-TLS default every time security= was absent from
+	// the query.
+	if network := params.Get("type"); network != "" {
+		extra["network"] = network
+	} else {
+		applyDefaultIfAbsent(extra, "network", "tcp")
+	}
+	if security := params.Get("security"); security != "" {
+		extra["security"] = security
+	} else {
+		applyDefaultIfAbsent(extra, "security", "none")
+	}
+	// Every other query knob only overwrites the embedded-extra value when the
+	// query actually carries it non-empty — an absent query param must not
+	// stomp a value ?extra={...} already supplied.
+	applyQueryOverrides(extra, map[string]string{
+		"sni":    params.Get("sni"),
+		"fp":     params.Get("fp"),
+		"pbk":    params.Get("pbk"),
+		"sid":    params.Get("sid"),
+		"flow":   params.Get("flow"),
+		"path":   params.Get("path"),
+		"host":   params.Get("host"),
+		"alpn":   params.Get("alpn"),
+		"mode":   params.Get("mode"),
+		"method": params.Get("method"),
+	})
+	if enc := params.Get("encryption"); enc != "" {
+		extra["encryption"] = enc
+	}
+	if grpcServiceName := firstNonEmpty(
+		params.Get("grpc-service-name"),
+		params.Get("serviceName"),
+		params.Get("service_name"),
+		params.Get("grpc_service_name"),
+	); grpcServiceName != "" {
+		extra["grpc-service-name"] = grpcServiceName
+		extra["serviceName"] = grpcServiceName
+	}
+	if grpcAuthority := firstNonEmpty(
+		params.Get("authority"),
+		params.Get("grpc-authority"),
+		params.Get("grpc_authority"),
+	); grpcAuthority != "" {
+		extra["authority"] = grpcAuthority
+	}
+	applyMKCPQueryParams(params, extra)
 
 	normalizeVLESSExtraPadding(extra)
 
@@ -1064,7 +1101,9 @@ func parseShadowsocksURI(uri string) (config.ProxyEntry, error) {
 			method = authParts[0]
 			password = authParts[1]
 		}
-		serverPart := strings.SplitN(parts[1], "?", 2)[0]
+		// The query was already split off remainder above, so parts[1] cannot
+		// contain a "?" at this point.
+		serverPart := parts[1]
 		hp := strings.SplitN(serverPart, ":", 2)
 		host = hp[0]
 		if len(hp) > 1 {
@@ -1157,12 +1196,20 @@ func parseTrojanURI(uri string) (config.ProxyEntry, error) {
 	}
 
 	params := u.Query()
-	network := firstNonEmpty(
-		params.Get("network"),
-		params.Get("type"),
-		"tcp",
-	)
-	network = strings.ToLower(strings.TrimSpace(network))
+
+	extra := map[string]interface{}{}
+	mergeURLEmbeddedExtra(extra, params.Get("extra"))
+
+	// network decides which alias order the sni fallback below uses (grpc
+	// prefers sni over peer, everything else prefers peer), so it must be
+	// resolved before that decision — with the same "query wins over embedded,
+	// embedded wins over the tcp default" priority as everything else here.
+	if networkQuery := firstNonEmpty(params.Get("network"), params.Get("type")); networkQuery != "" {
+		extra["network"] = strings.ToLower(strings.TrimSpace(networkQuery))
+	} else {
+		applyDefaultIfAbsent(extra, "network", "tcp")
+	}
+	network := strings.ToLower(strings.TrimSpace(stringFromExtraValue(extra["network"])))
 	isGrpcNetwork := network == "grpc"
 
 	var sni string
@@ -1183,29 +1230,52 @@ func parseTrojanURI(uri string) (config.ProxyEntry, error) {
 			params.Get("peer"),
 		)
 	}
-	insecure := parseBoolFlexible(firstNonEmpty(
-		params.Get("insecure"),
-		params.Get("allowInsecure"),
-		params.Get("allow_insecure"),
-		params.Get("skip-cert-verify"),
-		params.Get("skip_cert_verify"),
-	))
-	extra := map[string]interface{}{
-		"sni":      sni,
-		"fp":       params.Get("fp"),
-		"network":  network,
-		"path":     params.Get("path"),
-		"host":     params.Get("host"),
-		"mode":     params.Get("mode"),
-		"method":   params.Get("method"),
-		"security": paramOr(params, "security", "tls"),
-		"alpn":     params.Get("alpn"),
-		"insecure": insecure,
-		"pbk":      params.Get("pbk"),
-		"sid":      params.Get("sid"),
-		"spx":      params.Get("spx"),
-		"flow":     params.Get("flow"),
+
+	if security := params.Get("security"); security != "" {
+		extra["security"] = security
+	} else {
+		applyDefaultIfAbsent(extra, "security", "tls")
 	}
+
+	// Every other query knob only overwrites the embedded-extra value when the
+	// query actually carries it non-empty — an absent query param must not
+	// stomp a value ?extra={...} already supplied.
+	applyQueryOverrides(extra, map[string]string{
+		"sni":    sni,
+		"fp":     params.Get("fp"),
+		"path":   params.Get("path"),
+		"host":   params.Get("host"),
+		"mode":   params.Get("mode"),
+		"method": params.Get("method"),
+		"alpn":   params.Get("alpn"),
+		"pbk":    params.Get("pbk"),
+		"sid":    params.Get("sid"),
+		"spx":    params.Get("spx"),
+		"flow":   params.Get("flow"),
+	})
+
+	// insecure is only stored when at least one of its aliases is actually
+	// present in the query, regardless of the value it carries — an absent
+	// alias must not stomp a value ?extra={...} already supplied, same as
+	// everything else above.
+	insecureAliases := []string{"insecure", "allowInsecure", "allow_insecure", "skip-cert-verify", "skip_cert_verify"}
+	insecurePresent := false
+	for _, key := range insecureAliases {
+		if _, ok := params[key]; ok {
+			insecurePresent = true
+			break
+		}
+	}
+	if insecurePresent {
+		extra["insecure"] = parseBoolFlexible(firstNonEmpty(
+			params.Get("insecure"),
+			params.Get("allowInsecure"),
+			params.Get("allow_insecure"),
+			params.Get("skip-cert-verify"),
+			params.Get("skip_cert_verify"),
+		))
+	}
+
 	if grpcServiceName := firstNonEmpty(
 		params.Get("grpc-service-name"),
 		params.Get("serviceName"),
@@ -1222,6 +1292,7 @@ func parseTrojanURI(uri string) (config.ProxyEntry, error) {
 	); grpcAuthority != "" {
 		extra["authority"] = grpcAuthority
 	}
+	applyMKCPQueryParams(params, extra)
 
 	extraJSON, _ := json.Marshal(extra)
 	thost := u.Hostname()
@@ -1574,7 +1645,11 @@ func parseAmneziaWGURI(uri string) (config.ProxyEntry, error) {
 	}, nil
 }
 
-func mergeVLESSURLEmbeddedExtra(dst map[string]interface{}, raw string) {
+// mergeURLEmbeddedExtra merges the ?extra={...} JSON blob a link may carry into
+// dst. Shared between vless:// and trojan:// — nothing about it is
+// VLESS-specific, both links use the same query convention for smuggling
+// extra node knobs past their own fixed parameter sets.
+func mergeURLEmbeddedExtra(dst map[string]interface{}, raw string) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return
