@@ -211,32 +211,51 @@ func parseJSONSubscriptionEntry(obj map[string]interface{}) []config.ProxyEntry 
 	if ok {
 		remarks := asString(obj["remarks"]) // Top-level remarks
 		groupName, selectors, isBalancer := parseBalancerGroup(obj)
-		for _, ob := range outbounds {
-			obMap, ok := asMap(ob)
-			if !ok {
-				continue
-			}
-			// In a balancer config only the selected outbounds are the pool;
-			// anything else in the file is plumbing, not a server the user
-			// may pick.
-			if isBalancer && !tagMatchesSelector(asString(obMap["tag"]), selectors) {
-				continue
-			}
-			name := remarks
-			if name == "" {
-				name = asString(obMap["tag"]) // Или используем tag как имя
-			}
-			entry, ok := parseJSONOutbound(obMap, name)
-			if !ok {
-				continue
-			}
-			if isBalancer {
-				entry.AutoGroup = groupName
-			}
-			entries = append(entries, entry)
+		balancerEntries := collectJSONOutbounds(outbounds, remarks, groupName, selectors, isBalancer)
+		if isBalancer && len(balancerEntries) == 0 {
+			// The declared balancer's selector/fallbackTag prefix-matched
+			// none of this config's own outbound tags — a vestigial
+			// routing.balancers block whose selector uses a different tag
+			// namespace than its outbounds. Dropping every outbound here
+			// would silently lose every real server in the config; fall
+			// back to treating it as an ordinary server list instead.
+			balancerEntries = collectJSONOutbounds(outbounds, remarks, "", nil, false)
 		}
+		entries = append(entries, balancerEntries...)
 	}
 
+	return entries
+}
+
+// collectJSONOutbounds parses a config's outbounds into entries. When
+// isBalancer is true, only outbounds whose tag prefix-matches selectors are
+// kept, and each is stamped with AutoGroup=groupName.
+func collectJSONOutbounds(outbounds []interface{}, remarks, groupName string, selectors []string, isBalancer bool) []config.ProxyEntry {
+	var entries []config.ProxyEntry
+	for _, ob := range outbounds {
+		obMap, ok := asMap(ob)
+		if !ok {
+			continue
+		}
+		// In a balancer config only the selected outbounds are the pool;
+		// anything else in the file is plumbing, not a server the user
+		// may pick.
+		if isBalancer && !tagMatchesSelector(asString(obMap["tag"]), selectors) {
+			continue
+		}
+		name := remarks
+		if name == "" {
+			name = asString(obMap["tag"]) // Или используем tag как имя
+		}
+		entry, ok := parseJSONOutbound(obMap, name)
+		if !ok {
+			continue
+		}
+		if isBalancer {
+			entry.AutoGroup = groupName
+		}
+		entries = append(entries, entry)
+	}
 	return entries
 }
 

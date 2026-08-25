@@ -97,6 +97,7 @@ export namespace config {
 	    extra?: number[];
 	    provider?: string;
 	    subscriptionUrl?: string;
+	    autoGroup?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProxyEntry(source);
@@ -116,6 +117,7 @@ export namespace config {
 	        this.extra = source["extra"];
 	        this.provider = source["provider"];
 	        this.subscriptionUrl = source["subscriptionUrl"];
+	        this.autoGroup = source["autoGroup"];
 	    }
 	}
 	export class RoutingList {

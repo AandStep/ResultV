@@ -16,6 +16,7 @@
 package proxy
 
 import (
+	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -86,13 +87,22 @@ func parseBalancerGroup(obj map[string]interface{}) (name string, prefixes []str
 	}
 
 	// The group needs a stable key even when the provider ships no remarks:
-	// an empty AutoGroup would be indistinguishable from "not a group".
+	// an empty AutoGroup would be indistinguishable from "not a group", and
+	// keying on firstTag alone is not enough — the real provider ships the
+	// same balancer tag ("bal-auto") in every section, so two nameless
+	// sections would collapse into one, doubling their pool and corrupting
+	// downstream IDs. Fold in the selector prefixes (sorted, so the key is
+	// stable regardless of JSON key order) — different pools then produce
+	// different keys, while two configs with a genuinely identical pool and
+	// no name collapse into one, which is correct.
+	//
+	// prefixes is non-empty by construction here (checked above), so this
+	// key can never come out empty.
 	name = strings.TrimSpace(asString(obj["remarks"]))
 	if name == "" {
-		name = firstTag
-	}
-	if name == "" {
-		name = "AUTO"
+		sortedPrefixes := append([]string(nil), prefixes...)
+		sort.Strings(sortedPrefixes)
+		name = firstTag + "|" + strings.Join(sortedPrefixes, ",")
 	}
 	return name, prefixes, true
 }

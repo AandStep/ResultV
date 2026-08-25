@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -14,7 +15,7 @@ import (
 func TestFetchSubscriptionBuildsOneAutoHeadPerBalancerSection(t *testing.T) {
 	node := func(tag, host string, port int) string {
 		return `{"tag":"` + tag + `","protocol":"vless","settings":{"vnext":[{"address":"` + host +
-			`","port":` + itoa(port) +
+			`","port":` + strconv.Itoa(port) +
 			`,"users":[{"id":"af815621-b245-4149-89da-dd184cfc4b3d","encryption":"none"}]}]},` +
 			`"streamSettings":{"network":"tcp","security":"none"}}`
 	}
@@ -96,16 +97,4 @@ func TestFetchSubscriptionBuildsOneAutoHeadPerBalancerSection(t *testing.T) {
 	if got := visibleSubscriptionCount(entries); got != 4 {
 		t.Errorf("visible = %d, want 4 (2 AUTO + 2 servers)", got)
 	}
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	return string(b)
 }

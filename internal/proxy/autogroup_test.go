@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -10,21 +11,9 @@ import (
 // vlessOutbound renders one xray vless outbound with the given tag/host/port.
 func vlessOutbound(tag, host string, port int) string {
 	return `{"tag":"` + tag + `","protocol":"vless","settings":{"vnext":[{"address":"` +
-		host + `","port":` + itoaTest(port) +
+		host + `","port":` + strconv.Itoa(port) +
 		`,"users":[{"id":"af815621-b245-4149-89da-dd184cfc4b3d","encryption":"none"}]}]},` +
 		`"streamSettings":{"network":"tcp","security":"none"}}`
-}
-
-func itoaTest(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	return string(b)
 }
 
 // balancerConfig renders one xray config that declares a balancer.
@@ -120,6 +109,65 @@ func TestParseSubscriptionBodyBalancerFallbackTagJoinsPool(t *testing.T) {
 	for _, e := range entries {
 		if e.AutoGroup != "Auto" {
 			t.Errorf("entry %s: AutoGroup=%q, want %q", e.IP, e.AutoGroup, "Auto")
+		}
+	}
+}
+
+// A balancer whose selector prefix-matches none of the config's own outbound
+// tags (a vestigial routing.balancers block referencing a different tag
+// namespace) must not drop every node in the config — it must fall back to
+// treating the config as an ordinary server list instead of vanishing.
+func TestParseSubscriptionBodyBalancerSelectorMatchesNothingFallsBackToPlain(t *testing.T) {
+	body := "[" + balancerConfig("🇺🇸 США | №1", []string{"proxy"}, "",
+		vlessOutbound("vless-1", "n1.example", 443),
+		vlessOutbound("vless-2", "n2.example", 443),
+		svcOutbounds) + "]"
+
+	entries, err := ParseSubscriptionBody(body)
+	if err != nil {
+		t.Fatalf("ParseSubscriptionBody: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("got %d entries, want 2: %+v", len(entries), entries)
+	}
+	for _, e := range entries {
+		if e.AutoGroup != "" {
+			t.Errorf("entry %s: AutoGroup=%q, want empty (selector matched nothing, not a real balancer)", e.IP, e.AutoGroup)
+		}
+	}
+}
+
+// A missing remarks must not collapse two sections that share the provider's
+// balancer tag (the real provider ships "bal-auto" in both) into one group —
+// the fallback key must also depend on the selector, so two different pools
+// stay two groups instead of merging into one doubled-up pool.
+func TestParseSubscriptionBodyBalancerFallbackKeyDiffersBySelector(t *testing.T) {
+	body := "[" + strings.Join([]string{
+		balancerConfig("", []string{"basic-proxy"}, "basic-proxy",
+			vlessOutbound("basic-proxy", "n1.example", 443),
+			vlessOutbound("basic-proxy-2", "n2.example", 443),
+			svcOutbounds),
+		balancerConfig("", []string{"premium-proxy"}, "premium-proxy",
+			vlessOutbound("premium-proxy", "p1.example", 443),
+			vlessOutbound("premium-proxy-2", "p2.example", 443),
+			svcOutbounds),
+	}, ",") + "]"
+
+	entries, err := ParseSubscriptionBody(body)
+	if err != nil {
+		t.Fatalf("ParseSubscriptionBody: %v", err)
+	}
+
+	groups := map[string][]string{}
+	for _, e := range entries {
+		groups[e.AutoGroup] = append(groups[e.AutoGroup], e.IP)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("got %d distinct AutoGroup keys, want 2: %+v", len(groups), groups)
+	}
+	for key, ips := range groups {
+		if len(ips) != 2 {
+			t.Errorf("group %q has %d members, want 2 (pools must not merge): %v", key, len(ips), ips)
 		}
 	}
 }
