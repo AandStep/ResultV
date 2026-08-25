@@ -18,6 +18,7 @@
 package proxy
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -37,6 +38,7 @@ var (
 	leftoverTunIfIndexesFn  = leftoverTunIfIndexesNative
 	resetAdapterDNSNativeFn = resetAdapterDNSNative
 	runCmdFn                = runCommandHidden
+	runCmdOutFn             = runCommandHiddenOut
 	tunPSRunElevated        = powerShellRunElevated
 	tunIsAdmin              = system.IsAdmin
 )
@@ -45,6 +47,19 @@ func runCommandHidden(name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	return cmd.Run()
+}
+
+// runCommandHiddenOut is runCommandHidden with stdout captured, for the one
+// caller that needs to know what the script actually did rather than just
+// whether it exited cleanly. Output is returned even on a non-zero exit, so a
+// partial run still reports the devices it managed to remove.
+func runCommandHiddenOut(name string, args ...string) ([]byte, error) {
+	cmd := exec.Command(name, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	err := cmd.Run()
+	return stdout.Bytes(), err
 }
 
 // leftoverTunIfIndexes returns the interface indexes of any sing-tun adapter
@@ -203,6 +218,15 @@ func tunPnpInstanceID(guid string) string {
 	return `SWD\WINTUN\` + guid
 }
 
+// removalReportPS returns the PowerShell that prints one tunRemovedMarker line
+// per device the pipeline just handed to pnputil, carrying the instance id, the
+// device's status and pnputil's exit code. Self-authored text, never a parse of
+// pnputil's own output — that output is localised and would break the moment the
+// user's Windows is not English.
+func removalReportPS() string {
+	return fmt.Sprintf(`Write-Output ("%s" + $_.InstanceId + " status=" + $_.Status + " rc=" + $LASTEXITCODE)`, tunRemovedMarker)
+}
+
 // ghostTunRemovalScript returns the PowerShell that deletes our wedged Wintun
 // *device* (not just its routes) by its exact PnP instance id.
 //
@@ -229,11 +253,11 @@ func ghostTunRemovalScript() string {
 	var b strings.Builder
 	b.WriteString("$dev = Get-PnpDevice -Class Net -ErrorAction SilentlyContinue\n")
 	fmt.Fprintf(&b, "$dev | Where-Object { $_.InstanceId -eq '%s' } | "+
-		"ForEach-Object { & pnputil /remove-device $_.InstanceId 2>$null }\n",
-		tunPnpInstanceID(tunAdapterGUID))
+		"ForEach-Object { & pnputil /remove-device $_.InstanceId 2>$null; %s }\n",
+		tunPnpInstanceID(tunAdapterGUID), removalReportPS())
 	fmt.Fprintf(&b, "$dev | Where-Object { $_.InstanceId -eq '%s' -and $_.Status -ne 'OK' } | "+
-		"ForEach-Object { & pnputil /remove-device $_.InstanceId 2>$null }\n",
-		tunPnpInstanceID(tunAdapterGUIDLegacy))
+		"ForEach-Object { & pnputil /remove-device $_.InstanceId 2>$null; %s }\n",
+		tunPnpInstanceID(tunAdapterGUIDLegacy), removalReportPS())
 	return b.String()
 }
 
@@ -256,10 +280,18 @@ func ghostTunRemovalScript() string {
 // without admin we go through the elevated (UAC) PowerShell, mirroring
 // clearLeftoverTun - though tunnel mode is admin-gated up front, so the direct
 // path is the one that runs in practice.
-func removeStaleTunAdapter() error {
+//
+// Returns the devices it actually tore down (one entry per device), so the retry
+// path can log "removed X" and "found nothing" as the different outcomes they
+// are instead of one indistinguishable line.
+func removeStaleTunAdapter() ([]string, error) {
 	script := ghostTunRemovalScript()
 	if tunIsAdmin() {
-		return runCmdFn("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+		out, err := runCmdOutFn("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+		return parseRemovedTunDevices(out), err
 	}
-	return tunPSRunElevated(script)
+	// The elevated path runs the script in a separate UAC-launched process whose
+	// stdout we cannot capture, so it reports no detail. Tunnel mode is admin-gated
+	// up front, so this is the exceptional path.
+	return nil, tunPSRunElevated(script)
 }

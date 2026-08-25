@@ -68,7 +68,7 @@ func stubRemoveStaleTunAdapter(t *testing.T) *int {
 	t.Helper()
 	calls := new(int)
 	prev := removeStaleTunAdapterFn
-	removeStaleTunAdapterFn = func() error { *calls++; return nil }
+	removeStaleTunAdapterFn = func() ([]string, error) { *calls++; return nil, nil }
 	t.Cleanup(func() { removeStaleTunAdapterFn = prev })
 	return calls
 }

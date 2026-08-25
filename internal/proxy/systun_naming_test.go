@@ -126,3 +126,36 @@ func TestTunnelModeConfigPinsInterfaceName(t *testing.T) {
 	// does not know is not an ignored knob — it is a dead engine for every node.
 	assertCoreAcceptsConfig(t, cfg)
 }
+
+// ghostTunRemovalScript prints its own marker line per removed device instead of
+// letting the caller parse pnputil's output - that output is localised (cp866
+// Cyrillic on a Russian Windows), so parsing it would be a locale trap.
+func TestParseRemovedTunDevices(t *testing.T) {
+	out := []byte("" +
+		"RVTUN-REMOVED SWD\\WINTUN\\{1F2204B3-7F00-E47C-7441-6763D2F86416} status=Unknown rc=0\r\n" +
+		"some unrelated powershell chatter\r\n" +
+		"RVTUN-REMOVED SWD\\WINTUN\\{0DCCC63E-5622-3880-1E09-7CC9C46AD7B4} status=Unknown rc=0\n" +
+		"\n")
+	got := parseRemovedTunDevices(out)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 removals, got %d: %q", len(got), got)
+	}
+	if got[0] != `SWD\WINTUN\{1F2204B3-7F00-E47C-7441-6763D2F86416} status=Unknown rc=0` {
+		t.Fatalf("first removal mangled: %q", got[0])
+	}
+	if got[1] != `SWD\WINTUN\{0DCCC63E-5622-3880-1E09-7CC9C46AD7B4} status=Unknown rc=0` {
+		t.Fatalf("second removal mangled: %q", got[1])
+	}
+}
+
+// The distinction that matters in the log: "cleanup found nothing" must not look
+// like "cleanup fixed something". A silent no-op reading as success is exactly
+// what hid the ghost bug.
+func TestParseRemovedTunDevices_NothingRemoved(t *testing.T) {
+	if got := parseRemovedTunDevices([]byte("\r\n")); len(got) != 0 {
+		t.Fatalf("expected no removals, got %q", got)
+	}
+	if got := parseRemovedTunDevices(nil); len(got) != 0 {
+		t.Fatalf("expected no removals from nil, got %q", got)
+	}
+}

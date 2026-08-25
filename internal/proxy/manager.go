@@ -482,8 +482,18 @@ func (m *Manager) startEngine(ctx context.Context, cfg EngineConfig) (err error,
 	err = m.engine.Start(ctx, cfg)
 	if err != nil && cfg.Mode == ProxyModeTunnel && isTransientTunError(err) {
 		m.log.Warning(fmt.Sprintf("[PROXY] TUN не сконфигурировался (%s) — удаление залипшего адаптера и повтор", extractErrorReason(err.Error())))
-		if rmErr := removeStaleTunAdapterFn(); rmErr != nil {
+		// Report WHICH device was torn down, or that none was found. These are
+		// different outcomes — "found nothing" means the TUN failure has another
+		// cause — and collapsing them into one line is what made the ghost bug
+		// look like a working cleanup for so long.
+		removed, rmErr := removeStaleTunAdapterFn()
+		switch {
+		case rmErr != nil:
 			m.log.Warning(fmt.Sprintf("[PROXY] Не удалось удалить залипший TUN-адаптер: %v", rmErr))
+		case len(removed) > 0:
+			m.log.Success(fmt.Sprintf("[PROXY] Снято залипших TUN-устройств: %d — %s", len(removed), strings.Join(removed, "; ")))
+		default:
+			m.log.Info("[PROXY] Залипших TUN-устройств не найдено — причина отказа TUN в другом")
 		}
 		time.Sleep(tunRetryDelay)
 		if err = m.engine.Start(ctx, cfg); err == nil {

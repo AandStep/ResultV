@@ -70,3 +70,31 @@ func isOurTunAdapterGUID(adapterGUID string) bool {
 	return strings.EqualFold(adapterGUID, tunAdapterGUID) ||
 		strings.EqualFold(adapterGUID, tunAdapterGUIDLegacy)
 }
+
+// tunRemovedMarker prefixes the line ghostTunRemovalScript prints for every PnP
+// device it actually tore down. We print our OWN marker rather than parsing
+// pnputil's output because that output is localised — on a Russian Windows it
+// comes back as cp866 Cyrillic — so any parse of it would be a locale trap.
+const tunRemovedMarker = "RVTUN-REMOVED "
+
+// parseRemovedTunDevices extracts what ghostTunRemovalScript reported removing,
+// one entry per device ("<instance id> status=<s> rc=<n>").
+//
+// This exists so the retry path can tell the two outcomes apart in the log.
+// Before it, removeStaleTunAdapter returned only an error, so "cleanup tore down
+// a wedged device" and "cleanup found nothing at all" produced the identical
+// line — and a silent no-op reading as success is precisely what let the ghost
+// bug survive in the field for so long.
+func parseRemovedTunDevices(out []byte) []string {
+	var removed []string
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, tunRemovedMarker) {
+			continue
+		}
+		if detail := strings.TrimSpace(strings.TrimPrefix(line, tunRemovedMarker)); detail != "" {
+			removed = append(removed, detail)
+		}
+	}
+	return removed
+}
