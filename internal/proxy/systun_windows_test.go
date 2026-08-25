@@ -112,11 +112,12 @@ func TestClearLeftoverTun_NonAdminReleasesIPv6Address(t *testing.T) {
 // given ifIndex output for the Get-NetAdapter probe.
 func withTunStubs(t *testing.T, admin bool, detectOut string) (ran *string, elevated *string) {
 	t.Helper()
-	prevDetect, prevReset, prevRunCmd, prevElev, prevAdmin := leftoverTunIfIndexesFn, resetAdapterDNSNativeFn, runCmdFn, tunPSRunElevated, tunIsAdmin
+	prevDetect, prevReset, prevRunCmd, prevRunOut, prevElev, prevAdmin := leftoverTunIfIndexesFn, resetAdapterDNSNativeFn, runCmdFn, runCmdOutFn, tunPSRunElevated, tunIsAdmin
 	t.Cleanup(func() {
 		leftoverTunIfIndexesFn = prevDetect
 		resetAdapterDNSNativeFn = prevReset
 		runCmdFn = prevRunCmd
+		runCmdOutFn = prevRunOut
 		tunPSRunElevated = prevElev
 		tunIsAdmin = prevAdmin
 	})
@@ -138,6 +139,12 @@ func withTunStubs(t *testing.T, admin bool, detectOut string) (ran *string, elev
 		cmds = append(cmds, name+" "+strings.Join(args, " "))
 		*ran = strings.Join(cmds, "\n")
 		return nil
+	}
+	// Must be stubbed too, or removeStaleTunAdapter spawns a real PowerShell.
+	runCmdOutFn = func(name string, args ...string) ([]byte, error) {
+		cmds = append(cmds, name+" "+strings.Join(args, " "))
+		*ran = strings.Join(cmds, "\n")
+		return nil, nil
 	}
 	tunPSRunElevated = func(script string) error {
 		*elevated = script
@@ -193,25 +200,77 @@ func TestClearLeftoverTun_NoAdapterIsNoOp(t *testing.T) {
 	}
 }
 
-func TestStaleTunRemovalScript_TargetsOnlyOurAdapter(t *testing.T) {
-	s := staleTunRemovalScript()
-	// Must select by the EXACT sing-tun description so a user's other tunnels
-	// (Tailscale, WireGuard, OpenVPN TAP, …) are never removed.
-	if !strings.Contains(s, "-InterfaceDescription '"+singTunAdapterDescription+"'") {
-		t.Fatalf("removal must match the exact sing-tun description: %s", s)
+func TestGhostTunRemovalScript_TargetsOurInstanceIDs(t *testing.T) {
+	s := ghostTunRemovalScript()
+	// Must enumerate PnP devices, not net adapters: Get-NetAdapter and
+	// GetAdaptersAddresses both omit non-present ("ghost") devices, and a ghost is
+	// exactly what wedges CreateAdapter.
+	if !strings.Contains(s, "Get-PnpDevice") {
+		t.Fatalf("removal must enumerate PnP devices to see ghosts, got: %s", s)
+	}
+	if strings.Contains(s, "Get-NetAdapter") {
+		t.Fatalf("Get-NetAdapter cannot see ghost devices, got: %s", s)
+	}
+	if !strings.Contains(s, tunPnpInstanceID(tunAdapterGUID)) {
+		t.Fatalf("removal must target our instance id, got: %s", s)
+	}
+	if !strings.Contains(s, tunPnpInstanceID(tunAdapterGUIDLegacy)) {
+		t.Fatalf("removal must target the legacy instance id, got: %s", s)
 	}
 	if !strings.Contains(s, "pnputil /remove-device") {
 		t.Fatalf("removal must delete the PnP device, got: %s", s)
 	}
-	// A broad "tun" substring match here would risk nuking unrelated adapters.
-	if strings.Contains(s, "-InterfaceDescription '*tun*'") || strings.Contains(s, "Where-Object") {
-		t.Fatalf("removal must not use a broad match: %s", s)
+}
+
+func TestTunPnpInstanceID(t *testing.T) {
+	if got, want := tunPnpInstanceID(tunAdapterGUID), `SWD\WINTUN\`+tunAdapterGUID; got != want {
+		t.Fatalf("tunPnpInstanceID = %q, want %q", got, want)
+	}
+}
+
+func TestGhostTunRemovalScript_UsesExactMatchOnly(t *testing.T) {
+	s := ghostTunRemovalScript()
+	// -eq is exact and has no wildcard semantics; -like would treat [ ] as
+	// wildcards, and a description match would sweep up other people's tunnels
+	// (Tailscale, WireGuard, another sing-box client).
+	if !strings.Contains(s, "-eq") {
+		t.Fatalf("removal must match InstanceId with -eq, got: %s", s)
+	}
+	for _, bad := range []string{"-like", "*tun*", "InterfaceDescription", "sing-tun Tunnel"} {
+		if strings.Contains(s, bad) {
+			t.Fatalf("removal must not use a broad match (%q), got: %s", bad, s)
+		}
+	}
+}
+
+// A live "tun0" can belong to ANOTHER running sing-box client: deleting its
+// devnode tears down someone else's session irreversibly. A ghost tun0 belongs
+// to nobody. Our own GUID has no such ambiguity - nobody else can hold it.
+func TestGhostTunRemovalScript_LegacyGUIDOnlyWhenNotPresent(t *testing.T) {
+	s := ghostTunRemovalScript()
+	var ourLine, legacyLine string
+	for _, ln := range strings.Split(s, "\n") {
+		if strings.Contains(ln, tunAdapterGUID) {
+			ourLine = ln
+		}
+		if strings.Contains(ln, tunAdapterGUIDLegacy) {
+			legacyLine = ln
+		}
+	}
+	if ourLine == "" || legacyLine == "" {
+		t.Fatalf("expected one line per GUID, got: %s", s)
+	}
+	if !strings.Contains(legacyLine, "Status -ne 'OK'") {
+		t.Fatalf("legacy GUID must be gated on the device not being present, got: %s", legacyLine)
+	}
+	if strings.Contains(ourLine, "Status -ne 'OK'") {
+		t.Fatalf("our own GUID must be removed regardless of presence, got: %s", ourLine)
 	}
 }
 
 func TestRemoveStaleTunAdapter_AdminRunsDirectly(t *testing.T) {
 	ran, elevated := withTunStubs(t, true, "3\n")
-	if err := removeStaleTunAdapter(); err != nil {
+	if _, err := removeStaleTunAdapter(); err != nil {
 		t.Fatalf("removeStaleTunAdapter: %v", err)
 	}
 	if *elevated != "" {
@@ -224,7 +283,7 @@ func TestRemoveStaleTunAdapter_AdminRunsDirectly(t *testing.T) {
 
 func TestRemoveStaleTunAdapter_NonAdminElevates(t *testing.T) {
 	ran, elevated := withTunStubs(t, false, "5\n")
-	if err := removeStaleTunAdapter(); err != nil {
+	if _, err := removeStaleTunAdapter(); err != nil {
 		t.Fatalf("removeStaleTunAdapter: %v", err)
 	}
 	if *ran != "" {
@@ -235,13 +294,37 @@ func TestRemoveStaleTunAdapter_NonAdminElevates(t *testing.T) {
 	}
 }
 
-func TestRemoveStaleTunAdapter_NoAdapterIsNoOp(t *testing.T) {
+// THE regression test for the reported failure. removeStaleTunAdapter used to
+// bail out when GetAdaptersAddresses reported no present adapter - which is
+// precisely the ghost case - so the retry path logged "removing the wedged
+// adapter and retrying", removed nothing, and the second attempt died on the
+// same ghost. Removal must run even with zero present adapters.
+func TestRemoveStaleTunAdapter_RunsWithNoPresentAdapter(t *testing.T) {
 	ran, elevated := withTunStubs(t, true, "\n")
-	if err := removeStaleTunAdapter(); err != nil {
+	if _, err := removeStaleTunAdapter(); err != nil {
 		t.Fatalf("removeStaleTunAdapter: %v", err)
 	}
-	if *ran != "" || *elevated != "" {
-		t.Fatalf("no adapter detected → no removal; ran=%q elevated=%q", *ran, *elevated)
+	if *elevated != "" {
+		t.Fatalf("admin path must not elevate, got: %q", *elevated)
+	}
+	if !strings.Contains(*ran, "pnputil /remove-device") {
+		t.Fatalf("ghost removal must run even when no adapter is present, ran=%q", *ran)
+	}
+	if !strings.Contains(*ran, "Get-PnpDevice") {
+		t.Fatalf("ghost removal must enumerate PnP devices, ran=%q", *ran)
+	}
+}
+
+func TestRemoveStaleTunAdapter_NonAdminElevatesWithNoPresentAdapter(t *testing.T) {
+	ran, elevated := withTunStubs(t, false, "\n")
+	if _, err := removeStaleTunAdapter(); err != nil {
+		t.Fatalf("removeStaleTunAdapter: %v", err)
+	}
+	if *ran != "" {
+		t.Fatalf("non-admin path must not run removal directly, got: %q", *ran)
+	}
+	if !strings.Contains(*elevated, "pnputil /remove-device") {
+		t.Fatalf("non-admin path must elevate the ghost removal, got: %q", *elevated)
 	}
 }
 
@@ -269,5 +352,49 @@ func TestBuildTunCleanupCommands(t *testing.T) {
 		if strings.Contains(cmd, "delete route 0.0.0.0/0") {
 			t.Fatalf("cleanup must remove all adapter routes, not just the default route: %q", cmd)
 		}
+	}
+}
+
+func TestGhostTunRemovalScript_PrintsRemovalMarker(t *testing.T) {
+	s := ghostTunRemovalScript()
+	if !strings.Contains(s, tunRemovedMarker) {
+		t.Fatalf("script must print the %q marker so the caller can report what it removed, got: %s", tunRemovedMarker, s)
+	}
+	// The marker must be OUR text, never a parse of pnputil's localised output.
+	if strings.Count(s, tunRemovedMarker) != 2 {
+		t.Fatalf("expected one marker per targeted GUID, got: %s", s)
+	}
+}
+
+// The whole point of the change: the retry path must be able to say WHICH device
+// it tore down, instead of logging "removing the wedged adapter" whether or not
+// anything was found.
+func TestRemoveStaleTunAdapter_ReportsRemovedDevices(t *testing.T) {
+	withTunStubs(t, true, "\n")
+	prev := runCmdOutFn
+	t.Cleanup(func() { runCmdOutFn = prev })
+	runCmdOutFn = func(name string, args ...string) ([]byte, error) {
+		return []byte(tunRemovedMarker + `SWD\WINTUN\{1F2204B3-7F00-E47C-7441-6763D2F86416} status=Unknown rc=0` + "\r\n"), nil
+	}
+	removed, err := removeStaleTunAdapter()
+	if err != nil {
+		t.Fatalf("removeStaleTunAdapter: %v", err)
+	}
+	if len(removed) != 1 || !strings.Contains(removed[0], tunAdapterGUID) {
+		t.Fatalf("expected our instance id reported as removed, got %q", removed)
+	}
+}
+
+func TestRemoveStaleTunAdapter_ReportsNothingWhenClean(t *testing.T) {
+	withTunStubs(t, true, "\n")
+	prev := runCmdOutFn
+	t.Cleanup(func() { runCmdOutFn = prev })
+	runCmdOutFn = func(name string, args ...string) ([]byte, error) { return []byte("\r\n"), nil }
+	removed, err := removeStaleTunAdapter()
+	if err != nil {
+		t.Fatalf("removeStaleTunAdapter: %v", err)
+	}
+	if len(removed) != 0 {
+		t.Fatalf("clean machine must report no removals, got %q", removed)
 	}
 }

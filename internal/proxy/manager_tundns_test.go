@@ -92,6 +92,7 @@ func TestConnect_TunnelAppliesTunAdapterDNS(t *testing.T) {
 		"",
 		"",
 		false,
+		false,
 	)
 	if !res.Success {
 		t.Fatalf("connect failed: %+v", res)
@@ -134,6 +135,7 @@ func TestConnect_ProxyModeDoesNotTouchTunnelAdapterDNS(t *testing.T) {
 		nil,
 		"",
 		"",
+		false,
 		false,
 	)
 	if !res.Success {

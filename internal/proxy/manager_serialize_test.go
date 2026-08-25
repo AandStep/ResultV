@@ -120,6 +120,7 @@ func TestConnect_SerializesConcurrentConnects(t *testing.T) {
 			"",
 			"",
 			false,
+			false,
 		)
 	}
 

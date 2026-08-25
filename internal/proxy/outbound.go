@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+	"time"
 
 	"resultproxy-wails/internal/system"
 )
@@ -77,6 +78,44 @@ func resolvePacketEncoding(extra map[string]interface{}) string {
 	default:
 		return v
 	}
+}
+
+// vlessEncryptionValidModes / vlessEncryptionValidRTT mirror the two enums
+// parseClientEncryption (protocol/vless/outbound.go) requires as segments 2
+// and 3 of the handshake string. Any other value there returns an error that
+// aborts NewOutbound — i.e. the engine never starts.
+var vlessEncryptionValidModes = map[string]bool{"native": true, "xorpub": true, "random": true}
+var vlessEncryptionValidRTT = map[string]bool{"0rtt": true, "1rtt": true}
+
+// vlessEncryptionFromExtra passes through a VLESS Encryption handshake string
+// only when it has the shape parseClientEncryption (protocol/vless/outbound.go)
+// requires: prefix "mlkem768x25519plus", a known xor mode, a known RTT tag,
+// and at least one further segment that base64.RawURLEncoding-decodes to a
+// 32- or 1184-byte key. The core parses this string while building the
+// outbound and aborts the whole engine start on anything malformed — a
+// prefix check alone (e.g. a truncated copy-paste) is not enough. Segments
+// between the RTT tag and the key are padding and are not otherwise
+// validated, matching the core's own tolerance for them.
+func vlessEncryptionFromExtra(extra map[string]interface{}) string {
+	s := strings.TrimSpace(getStringField(extra, "encryption", ""))
+	parts := strings.Split(s, ".")
+	if len(parts) < 4 || parts[0] != "mlkem768x25519plus" {
+		return ""
+	}
+	if !vlessEncryptionValidModes[parts[1]] || !vlessEncryptionValidRTT[parts[2]] {
+		return ""
+	}
+	hasKey := false
+	for _, seg := range parts[3:] {
+		if vlessEncryptionSegmentIsKey(seg) {
+			hasKey = true
+			break
+		}
+	}
+	if !hasKey {
+		return ""
+	}
+	return s
 }
 
 // fingerprintFromExtra returns the uTLS fingerprint, accepting Xray's
@@ -188,6 +227,59 @@ func extraSecurityExplicitlyNone(extra map[string]interface{}) bool {
 	return strings.EqualFold(strings.TrimSpace(s), "none")
 }
 
+// ssKnownPlugins is the set of SIP003 plugins the core actually registers
+// (transport/sip003), plus the aliases links use for them. An unregistered name
+// fails outbound creation, and that aborts the engine start for every node — so
+// an unknown plugin is dropped here and the node simply goes unobfuscated.
+var ssKnownPlugins = map[string]string{
+	"obfs-local":   "obfs-local",
+	"simple-obfs":  "obfs-local",
+	"obfs":         "obfs-local",
+	"v2ray-plugin": "v2ray-plugin",
+}
+
+func ssPluginFromExtra(extra map[string]interface{}) (string, string) {
+	name := ssKnownPlugins[strings.ToLower(strings.TrimSpace(getStringField(extra, "plugin", "")))]
+	if name == "" {
+		return "", ""
+	}
+	return name, firstNonEmpty(
+		getStringField(extra, "plugin_opts", ""),
+		getStringField(extra, "pluginOpts", ""),
+	)
+}
+
+// multiplexFromExtra honours an explicit sing-box multiplex profile and nothing
+// else. Xray's own "mux" ({enabled, concurrency}) is deliberately NOT mapped
+// here: it is a different protocol on the wire from smux/yamux/h2mux, so
+// translating it would make a working node speak something its server does not
+// understand — worse than leaving it off.
+var multiplexProtocols = map[string]bool{"smux": true, "yamux": true, "h2mux": true}
+
+func multiplexFromExtra(extra map[string]interface{}) *SBMultiplex {
+	raw, ok := extra["multiplex"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	enabled, _ := raw["enabled"].(bool)
+	if !enabled {
+		return nil
+	}
+	protocol := strings.ToLower(strings.TrimSpace(stringFromExtraValue(raw["protocol"])))
+	if !multiplexProtocols[protocol] {
+		return nil
+	}
+	padding, _ := raw["padding"].(bool)
+	return &SBMultiplex{
+		Enabled:        true,
+		Protocol:       protocol,
+		MaxConnections: intFromAny(raw["max_connections"]),
+		MinStreams:     intFromAny(raw["min_streams"]),
+		MaxStreams:     intFromAny(raw["max_streams"]),
+		Padding:        padding,
+	}
+}
+
 func buildProxyOutbound(proxy ProxyConfig) SBOutbound {
 	// The outbound keeps the server's original host (domain or literal IP). When
 	// it is a domain, sing-box re-resolves it against the static `hosts` DNS
@@ -217,8 +309,10 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 				getStringField(extra, "userpass", ""),
 				proxy.Password,
 			),
-			UpMbps:     intFromExtra(extra, "up_mbps", "upMbps"),
-			DownMbps:   intFromExtra(extra, "down_mbps", "downMbps"),
+			UpMbps:      intFromExtra(extra, "up_mbps", "upMbps"),
+			DownMbps:    intFromExtra(extra, "down_mbps", "downMbps"),
+			ServerPorts: hysteriaServerPortsFromExtra(extra),
+			HopInterval: hysteria2HopIntervalFromExtra(extra),
 		}
 		if sni := getStringField(extra, "sni", getStringField(extra, "server_name", "")); sni != "" || getBoolField(extra, "insecure") {
 			out.TLS = &SBOutboundTLS{
@@ -265,13 +359,17 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 
 	case "SS", "shadowsocks", "ss":
 		method := getStringField(extra, "method", "aes-256-gcm")
+		plugin, pluginOpts := ssPluginFromExtra(extra)
 		return SBOutbound{
-			Type:       "shadowsocks",
-			Tag:        "proxy",
-			Server:     proxy.IP,
-			ServerPort: proxy.Port,
-			Password:   proxy.Password,
-			Method:     method,
+			Type:          "shadowsocks",
+			Tag:           "proxy",
+			Server:        proxy.IP,
+			ServerPort:    proxy.Port,
+			Password:      proxy.Password,
+			Method:        method,
+			Plugin:        plugin,
+			PluginOptions: pluginOpts,
+			Multiplex:     multiplexFromExtra(extra),
 		}
 
 	case "VMESS", "vmess":
@@ -298,6 +396,7 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 			PacketEncoding:      resolvePacketEncoding(extra),
 			GlobalPadding:       getBoolField(extra, "global_padding") || getBoolField(extra, "globalPadding"),
 			AuthenticatedLength: getBoolField(extra, "authenticated_length") || getBoolField(extra, "authenticatedLength"),
+			Multiplex:           multiplexFromExtra(extra),
 		}
 		applyTLSAndTransport(&out, extra, proxy.IP)
 		return out
@@ -312,7 +411,9 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 			ServerPort: proxy.Port,
 			UUID:       uuid,
 			Flow:       flow,
+			Encryption:     vlessEncryptionFromExtra(extra),
 			PacketEncoding: resolvePacketEncoding(extra),
+			Multiplex:      multiplexFromExtra(extra),
 		}
 		applyTLSAndTransport(&out, extra, proxy.IP)
 		return out
@@ -324,6 +425,7 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 			Server:     proxy.IP,
 			ServerPort: proxy.Port,
 			Password:   proxy.Password,
+			Multiplex:  multiplexFromExtra(extra),
 		}
 		trojanSNI := firstNonEmpty(
 			getStringField(extra, "sni", ""),
@@ -395,6 +497,12 @@ func intFromExtra(extra map[string]interface{}, snake, camel string) int {
 	if v, ok := extra[snake]; ok {
 		return intFromAny(v)
 	}
+	// Some fields (e.g. "mtu", "tti") have no distinct camelCase spelling — the
+	// caller passes "" for camel rather than repeating the snake_case key, and
+	// an empty key must not be looked up as if it were a real one.
+	if camel == "" {
+		return 0
+	}
 	if v, ok := extra[camel]; ok {
 		return intFromAny(v)
 	}
@@ -423,6 +531,99 @@ func intFromAny(v interface{}) int {
 		}
 	}
 	return 0
+}
+
+// hysteriaServerPortsFromExtra converts the URI spelling of Hysteria2 port
+// hopping ("mport=10000-20000,30000") into the "start:end" ranges sing-quic
+// parses. A range it cannot parse is dropped rather than forwarded: ParsePorts
+// returns an error there, and that error aborts the engine start.
+func hysteriaServerPortsFromExtra(extra map[string]interface{}) []string {
+	var out []string
+	for _, part := range hysteriaPortSpecs(extra) {
+		lo, hi, ok := parsePortRangeSpec(part)
+		if !ok {
+			continue
+		}
+		out = append(out, strconv.Itoa(lo)+":"+strconv.Itoa(hi))
+	}
+	return out
+}
+
+// hysteriaPortSpecs returns the raw, comma-split port-range specs to feed
+// parsePortRangeSpec. server_ports is accepted both as a plain string
+// ("10000-20000,30000", the URI spelling) and as a []interface{} of
+// strings/numbers — the latter is server_ports' natural shape in a
+// sing-box-style JSON config, and a producer emitting it that way must not
+// have the value silently swallowed by a string-only reader (getStringField
+// returns "" for anything that isn't already a string).
+func hysteriaPortSpecs(extra map[string]interface{}) []string {
+	if raw, ok := extra["server_ports"]; ok {
+		switch v := raw.(type) {
+		case []interface{}:
+			specs := make([]string, 0, len(v))
+			for _, item := range v {
+				if s := stringFromExtraValue(item); s != "" {
+					specs = append(specs, s)
+				}
+			}
+			if len(specs) > 0 {
+				return specs
+			}
+		case string:
+			if v != "" {
+				return strings.Split(v, ",")
+			}
+		}
+	}
+	raw := firstNonEmpty(getStringField(extra, "mport", ""), getStringField(extra, "ports", ""))
+	return strings.Split(raw, ",")
+}
+
+// hysteria2HopIntervalFromExtra canonicalizes hop_interval into the string
+// shape the core's badoption.Duration (option/hysteria2.go) accepts. Hy2 links
+// historically spell the value as a bare number of seconds
+// ("hop-interval=30"); badoption.Duration's UnmarshalJSON requires a Go
+// duration string with a unit and errors "missing unit in duration" on a bare
+// number, which aborts the engine start for every node, not just this one.
+// A value that is neither a valid duration nor a positive bare number is
+// dropped so the core falls back to its own default instead of refusing to
+// start.
+func hysteria2HopIntervalFromExtra(extra map[string]interface{}) string {
+	raw := strings.TrimSpace(firstNonEmpty(
+		getStringField(extra, "hop_interval", ""),
+		getStringField(extra, "hopInterval", ""),
+	))
+	if raw == "" {
+		return ""
+	}
+	if _, err := time.ParseDuration(raw); err == nil {
+		return raw
+	}
+	if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+		return strconv.Itoa(n) + "s"
+	}
+	return ""
+}
+
+func parsePortRangeSpec(s string) (int, int, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, 0, false
+	}
+	sep := strings.IndexAny(s, "-:")
+	if sep < 0 {
+		p, err := strconv.Atoi(s)
+		if err != nil || p < 1 || p > 65535 {
+			return 0, 0, false
+		}
+		return p, p, true
+	}
+	lo, err1 := strconv.Atoi(strings.TrimSpace(s[:sep]))
+	hi, err2 := strconv.Atoi(strings.TrimSpace(s[sep+1:]))
+	if err1 != nil || err2 != nil || lo < 1 || hi > 65535 || lo > hi {
+		return 0, 0, false
+	}
+	return lo, hi, true
 }
 
 func applyTLSAndTransport(out *SBOutbound, extra map[string]interface{}, defaultSNI string) {
@@ -510,7 +711,11 @@ func applyTLSAndTransport(out *SBOutbound, extra map[string]interface{}, default
 	} else if out.TLS != nil && len(out.TLS.ALPN) == 0 {
 		isReality := out.TLS.Reality != nil && out.TLS.Reality.Enabled
 		if !isReality {
-			network := getStringField(extra, "network", "tcp")
+			// Normalize casing the same way applyTransportOnly does: embedded
+			// extra (?extra={...}) can now carry "TCP"/"WS" as-is, and an
+			// un-normalized compare here would force ALPN=["http/1.1"] on a
+			// plain-TCP node instead of leaving it empty for the core default.
+			network := strings.ToLower(strings.TrimSpace(getStringField(extra, "network", "tcp")))
 			// Для plain TCP (VLESS/VMESS без транспорта) оставляем ALPN пустым —
 			// sing-box использует дефолт, что совместимо с любой серверной конфигурацией.
 			// Для HTTP-транспортов (grpc, xhttp, ws, h2) ALPN важен для фреймирования.
@@ -522,7 +727,11 @@ func applyTLSAndTransport(out *SBOutbound, extra map[string]interface{}, default
 }
 
 func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
-	network := getStringField(extra, "network", "tcp")
+	// Case-insensitive: the mKCP gate in parseVMessURI is case-insensitive
+	// ("net":"KCP" already stores seed/headerType into extra), but this switch
+	// used to compare against lowercase literals only, so an upper/mixed-case
+	// network here built no transport at all even though the knobs were there.
+	network := strings.ToLower(strings.TrimSpace(getStringField(extra, "network", "tcp")))
 	switch network {
 	case "ws", "websocket":
 		path := getStringField(extra, "ws-path", "")
@@ -564,10 +773,22 @@ func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 		if maxEarly > 0 && edHeader == "" {
 			edHeader = "Sec-WebSocket-Protocol"
 		}
+		// sing-box's websocket transport has no "host" field: V2RayWebsocketOptions
+		// is Path/Headers/MaxEarlyData/EarlyDataHeaderName only. Emitting one made
+		// the config unparsable ("unknown field host") and that kills the whole
+		// instance, not just this outbound. The core lifts headers["Host"] into the
+		// request URL (v2raywebsocket/client.go), which is where the host belongs.
+		headers := transportHeadersFromExtra(extra)
+		if host != "" {
+			if headers == nil {
+				headers = make(map[string]string, 1)
+			}
+			headers["Host"] = host
+		}
 		out.Transport = &SBOutboundTransport{
 			Type:                "ws",
 			Path:                path,
-			Host:                host,
+			Headers:             headers,
 			MaxEarlyData:        maxEarly,
 			EarlyDataHeaderName: edHeader,
 		}
@@ -575,9 +796,10 @@ func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 		path := getStringField(extra, "path", "/")
 		host := getStringField(extra, "host", "")
 		out.Transport = &SBOutboundTransport{
-			Type: "httpupgrade",
-			Path: path,
-			Host: host,
+			Type:    "httpupgrade",
+			Path:    path,
+			Host:    host,
+			Headers: transportHeadersFromExtra(extra),
 		}
 	case "grpc":
 		serviceName := getStringField(extra, "grpc-service-name", "")
@@ -622,11 +844,34 @@ func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 			PermitWithoutStream: permit,
 		}
 	case "http", "h2":
+		// "http-host"/"http-path"/"http-method" are not keys any parser in this
+		// project ever writes into extra — the real fields links and JSON
+		// subscriptions carry are "host"/"path"/"method". Falling back to those
+		// keeps an h2 node's host (and path/method) from silently going missing.
 		out.Transport = &SBOutboundTransport{
-			Type:   "http",
-			Host:   getStringField(extra, "http-host", ""),
-			Path:   getStringField(extra, "http-path", "/"),
-			Method: getStringField(extra, "http-method", ""),
+			Type:    "http",
+			Host:    firstNonEmpty(getStringField(extra, "http-host", ""), getStringField(extra, "host", "")),
+			Path:    firstNonEmpty(getStringField(extra, "http-path", ""), getStringField(extra, "path", "/")),
+			Method:  firstNonEmpty(getStringField(extra, "http-method", ""), getStringField(extra, "method", "")),
+			Headers: transportHeadersFromExtra(extra),
+		}
+	case "kcp", "mkcp":
+		// All six numeric mKCP knobs are uint32 in the core (option/v2ray_transport.go
+		// V2RayKCPOptions): a negative value fails to decode ("cannot unmarshal number
+		// -5 into ... uint32"), which aborts the engine start for every node, not just
+		// this one. positiveIntFromExtra drops anything not strictly positive so the
+		// core's own default applies instead.
+		out.Transport = &SBOutboundTransport{
+			Type:             "mkcp",
+			Seed:             getStringField(extra, "seed", ""),
+			HeaderType:       mkcpHeaderTypeFromExtra(extra),
+			MTU:              positiveIntFromExtra(extra, "mtu", ""),
+			TTI:              positiveIntFromExtra(extra, "tti", ""),
+			UplinkCapacity:   positiveIntFromExtra(extra, "uplink_capacity", "uplinkCapacity"),
+			DownlinkCapacity: positiveIntFromExtra(extra, "downlink_capacity", "downlinkCapacity"),
+			Congestion:       getBoolField(extra, "congestion"),
+			ReadBufferSize:   positiveIntFromExtra(extra, "read_buffer_size", "readBufferSize"),
+			WriteBufferSize:  positiveIntFromExtra(extra, "write_buffer_size", "writeBufferSize"),
 		}
 	case "tcp":
 		// Xray's "tcp" + headerType=http obfuscation maps onto sing-box's
@@ -669,15 +914,9 @@ func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 	case "xhttp", "splithttp":
 		host := getStringField(extra, "host", "")
 		xPadding := xhttpPaddingFromExtra(extra)
-		mode := getStringField(extra, "mode", "auto")
-		if mode == "" {
-			mode = "auto"
-		}
-		uplink := stringFromExtraValue(extra["uplink_http_method"])
-		if uplink == "" {
-			uplink = stringFromExtraValue(extra["method"])
-		}
-		headers := xhttpHeadersFromExtra(extra)
+		mode := xhttpModeFromExtra(extra)
+		uplink := xhttpUplinkHTTPMethodFromExtra(extra, mode)
+		headers := transportHeadersFromExtra(extra)
 		xmuxRaw := xmuxJSONFromExtra(extra)
 		out.Transport = &SBOutboundTransport{
 			Type:                 "xhttp",
@@ -693,6 +932,30 @@ func applyTransportOnly(out *SBOutbound, extra map[string]interface{}) {
 			ScMinPostsIntervalMs: rangeRawFromExtra(extra, "scMinPostsIntervalMs", "sc_min_posts_interval_ms"),
 			ScStreamUpServerSecs: rangeRawFromExtra(extra, "scStreamUpServerSecs", "sc_stream_up_server_secs"),
 			Xmux:                 xmuxRaw,
+			XPaddingObfsMode:     boolPtrFromExtra(extra, "xPaddingObfsMode", "x_padding_obfs_mode"),
+			XPaddingKey: firstNonEmpty(
+				getStringField(extra, "x_padding_key", ""),
+				getStringField(extra, "xPaddingKey", ""),
+			),
+			XPaddingHeader: firstNonEmpty(
+				getStringField(extra, "x_padding_header", ""),
+				getStringField(extra, "xPaddingHeader", ""),
+			),
+			XPaddingPlacement: xhttpPaddingPlacementFromExtra(extra),
+			XPaddingMethod:    xhttpPaddingMethodFromExtra(extra),
+
+			SessionPlacement:     xhttpSessionPlacementFromExtra(extra, "session_placement", "sessionPlacement"),
+			SessionKey:           firstNonEmpty(getStringField(extra, "session_key", ""), getStringField(extra, "sessionKey", "")),
+			SeqPlacement:         xhttpSessionPlacementFromExtra(extra, "seq_placement", "seqPlacement"),
+			SeqKey:               firstNonEmpty(getStringField(extra, "seq_key", ""), getStringField(extra, "seqKey", "")),
+			UplinkDataPlacement:  xhttpUplinkDataPlacementFromExtra(extra, mode),
+			UplinkDataKey:        firstNonEmpty(getStringField(extra, "uplink_data_key", ""), getStringField(extra, "uplinkDataKey", "")),
+			SessionIDTable:       firstNonEmpty(getStringField(extra, "session_id_table", ""), getStringField(extra, "sessionIdTable", "")),
+			SessionIDLength:      rangeRawFromExtra(extra, "sessionIdLength", "session_id_length"),
+			UplinkChunkSize:      rangeRawFromExtra(extra, "uplinkChunkSize", "uplink_chunk_size"),
+			CongestionController: xhttpCongestionFromExtra(extra),
+			CWND:                 positiveIntFromExtra(extra, "cwnd", "cwnd"),
+			ScMaxBufferedPosts:   int64(positiveIntFromExtra(extra, "sc_max_buffered_posts", "scMaxBufferedPosts")),
 		}
 	}
 }
@@ -721,6 +984,19 @@ var xmuxConservativeDefaults = map[string]interface{}{
 	"h_max_reusable_secs": 300,
 }
 
+// xmuxKnownKeys is the exact field set of V2RayXHTTPXmuxOptions. A node's xmux
+// object is user input: anything outside this set would reach the core as an
+// unknown field, and the config decoder runs with DisallowUnknownFields — the
+// engine would refuse to start for every node, not just this one.
+var xmuxKnownKeys = map[string]bool{
+	"max_concurrency":     true,
+	"max_connections":     true,
+	"c_max_reuse_times":   true,
+	"h_max_request_times": true,
+	"h_max_reusable_secs": true,
+	"h_keep_alive_period": true,
+}
+
 func xmuxJSONFromExtra(extra map[string]interface{}) json.RawMessage {
 	rename := map[string]string{
 		"maxConcurrency":   "max_concurrency",
@@ -731,21 +1007,49 @@ func xmuxJSONFromExtra(extra map[string]interface{}) json.RawMessage {
 		"hKeepAlivePeriod": "h_keep_alive_period",
 	}
 
-	out := make(map[string]interface{}, len(xmuxConservativeDefaults)+8)
-	for k, val := range xmuxConservativeDefaults {
-		out[k] = val
-	}
-
+	user := make(map[string]interface{}, 8)
 	if v, ok := extra["xmux"]; ok && v != nil {
 		if m, ok := v.(map[string]interface{}); ok {
 			for k, val := range m {
 				if nk, ok := rename[k]; ok {
-					out[nk] = val
-				} else {
-					out[k] = val
+					k = nk
 				}
+				if !xmuxKnownKeys[k] {
+					continue
+				}
+				// The known-keys filter above only protects against unknown
+				// FIELDS; the VALUES still reach the core's decoder untouched.
+				// max_concurrency etc. are badoption.Range[int] and reject a
+				// bool or non-numeric string ("cannot unmarshal ..."), while
+				// h_keep_alive_period is a plain int64. Either failure aborts
+				// the whole engine, so an invalid value is dropped along with
+				// its key — our conservative default (if any) stays in place.
+				if k == "h_keep_alive_period" {
+					if !isPositiveNumberValue(val) {
+						continue
+					}
+				} else if !isPositiveRangeValue(val) {
+					continue
+				}
+				user[k] = val
 			}
 		}
+	}
+
+	out := make(map[string]interface{}, len(xmuxConservativeDefaults)+len(user))
+	for k, val := range xmuxConservativeDefaults {
+		out[k] = val
+	}
+	for k, val := range user {
+		out[k] = val
+	}
+
+	// The core rejects a config that carries both knobs ("max_connections cannot
+	// be specified together with max_concurrency") and rejection means no engine
+	// at all. A node asking for max_connections wins — over our default, and over
+	// a max_concurrency the same node contradicts itself with.
+	if _, ok := out["max_connections"]; ok {
+		delete(out, "max_concurrency")
 	}
 
 	raw, err := json.Marshal(out)
@@ -755,6 +1059,58 @@ func xmuxJSONFromExtra(extra map[string]interface{}) json.RawMessage {
 	return raw
 }
 
+// isPositiveRangeString reports whether s is either a bare positive integer or
+// an "a-b" range where both bounds are positive integers and a <= b — the two
+// shapes badoption.Range[T] (common/json/badoption/range.go) actually parses.
+// Anything else fails to decode ("invalid range" or a strconv error), and that
+// aborts the engine start for every node.
+func isPositiveRangeString(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return n > 0
+	}
+	idx := strings.Index(s, "-")
+	if idx <= 0 || idx == len(s)-1 {
+		return false
+	}
+	lo, errLo := strconv.ParseInt(s[:idx], 10, 64)
+	hi, errHi := strconv.ParseInt(s[idx+1:], 10, 64)
+	if errLo != nil || errHi != nil {
+		return false
+	}
+	return lo > 0 && hi > 0 && lo <= hi
+}
+
+// isPositiveRangeValue is isPositiveRangeString for a value straight out of an
+// extra map — a JSON number decodes to float64, so that shape is checked
+// separately instead of stringifying it first.
+func isPositiveRangeValue(v interface{}) bool {
+	switch t := v.(type) {
+	case float64:
+		return t > 0 && t == float64(int64(t))
+	case string:
+		return isPositiveRangeString(t)
+	default:
+		return false
+	}
+}
+
+// isPositiveNumberValue reports whether v is a JSON number (float64, as
+// decoded from an extra map) that is a strictly positive integer. Used for
+// xmux's h_keep_alive_period, which is a plain int64 in the core rather than
+// a badoption.Range.
+func isPositiveNumberValue(v interface{}) bool {
+	n, ok := v.(float64)
+	return ok && n > 0 && n == float64(int64(n))
+}
+
+// rangeRawFromExtra accepts only the two shapes isPositiveRangeValue validates
+// — a bare positive number or a positive "a-b" range — and drops anything
+// else so the core's own default applies instead of a decode error taking
+// down the whole engine.
 func rangeRawFromExtra(extra map[string]interface{}, camel, snake string) json.RawMessage {
 	var v interface{}
 	switch {
@@ -765,22 +1121,18 @@ func rangeRawFromExtra(extra map[string]interface{}, camel, snake string) json.R
 	default:
 		return nil
 	}
+	if !isPositiveRangeValue(v) {
+		return nil
+	}
 	switch t := v.(type) {
 	case string:
-		if strings.TrimSpace(t) == "" {
-			return nil
-		}
-		raw, _ := json.Marshal(t)
-		return raw
-	case map[string]interface{}:
-		raw, _ := json.Marshal(t)
+		raw, _ := json.Marshal(strings.TrimSpace(t))
 		return raw
 	case float64:
 		raw, _ := json.Marshal(int64(t))
 		return raw
 	default:
-		raw, _ := json.Marshal(v)
-		return raw
+		return nil
 	}
 }
 
@@ -793,11 +1145,26 @@ func boolPtrFromExtra(extra map[string]interface{}, camel, snake string) *bool {
 	} else {
 		return nil
 	}
-	b, ok := v.(bool)
-	if !ok {
-		return nil
+	// Providers quote everything when they embed the xhttp knobs as JSON inside
+	// a URI ("xPaddingObfsMode":"true"), so a bare assertion on bool would drop
+	// the flag silently — the very failure this helper exists to prevent.
+	switch t := v.(type) {
+	case bool:
+		return &t
+	case string:
+		switch strings.ToLower(strings.TrimSpace(t)) {
+		case "1", "true", "yes", "on":
+			b := true
+			return &b
+		case "0", "false", "no", "off":
+			b := false
+			return &b
+		}
+	case float64:
+		b := t != 0
+		return &b
 	}
-	return &b
+	return nil
 }
 
 func xhttpPaddingFromExtra(extra map[string]interface{}) string {
@@ -813,6 +1180,148 @@ func xhttpPaddingFromExtra(extra map[string]interface{}) string {
 	return s
 }
 
+// xhttpPaddingPlacements / xhttpPaddingMethods canonicalize the two enum knobs
+// of the padding-obfuscation profile. The core validates both while PARSING the
+// config (checkV2RayXHTTPBaseOptions), and an unsupported value aborts the whole
+// instance — every other node included — not just this outbound. So anything we
+// do not recognize is dropped, and the core applies its own default
+// (queryInHeader / repeat-x) instead of failing the start.
+var xhttpPaddingPlacements = map[string]string{
+	"cookie":          "cookie",
+	"header":          "header",
+	"query":           "query",
+	"queryinheader":   "queryInHeader",
+	"query_in_header": "queryInHeader",
+	"query-in-header": "queryInHeader",
+}
+
+var xhttpPaddingMethods = map[string]string{
+	"repeat-x": "repeat-x",
+	"repeat_x": "repeat-x",
+	"repeatx":  "repeat-x",
+	"tokenish": "tokenish",
+}
+
+func xhttpPaddingPlacementFromExtra(extra map[string]interface{}) string {
+	raw := firstNonEmpty(
+		getStringField(extra, "x_padding_placement", ""),
+		getStringField(extra, "xPaddingPlacement", ""),
+	)
+	return xhttpPaddingPlacements[strings.ToLower(strings.TrimSpace(raw))]
+}
+
+func xhttpPaddingMethodFromExtra(extra map[string]interface{}) string {
+	raw := firstNonEmpty(
+		getStringField(extra, "x_padding_method", ""),
+		getStringField(extra, "xPaddingMethod", ""),
+	)
+	return xhttpPaddingMethods[strings.ToLower(strings.TrimSpace(raw))]
+}
+
+// xhttpSessionPlacements is the enum the core accepts for session_placement and
+// seq_placement. Anything else aborts config decoding — and with it the engine.
+var xhttpSessionPlacements = map[string]string{
+	"path":   "path",
+	"cookie": "cookie",
+	"header": "header",
+	"query":  "query",
+}
+
+func xhttpSessionPlacementFromExtra(extra map[string]interface{}, snake, camel string) string {
+	raw := firstNonEmpty(getStringField(extra, snake, ""), getStringField(extra, camel, ""))
+	return xhttpSessionPlacements[strings.ToLower(strings.TrimSpace(raw))]
+}
+
+// xhttpModes is the enum V2RayXHTTPOptions.UnmarshalJSON accepts for "mode"
+// (transport/v2rayhttp in the core). Anything else fails decoding
+// ("unsupported mode: ..."), which aborts the engine start — so an unknown
+// value falls back to "auto", the branch's own long-standing default, instead
+// of reaching the core.
+var xhttpModes = map[string]bool{
+	"auto": true, "packet-up": true, "stream-up": true, "stream-one": true,
+}
+
+func xhttpModeFromExtra(extra map[string]interface{}) string {
+	raw := strings.ToLower(strings.TrimSpace(getStringField(extra, "mode", "")))
+	if xhttpModes[raw] {
+		return raw
+	}
+	return "auto"
+}
+
+// xhttpUplinkHTTPMethodFromExtra canonicalizes uplink_http_method. The core
+// upper-cases it and rejects "GET" outside packet-up mode
+// (checkV2RayXHTTPBaseOptions), which aborts the engine start; an empty value
+// makes the core default to POST. Only POST and (packet-up-only) GET are ones
+// this project has ever seen used, so anything else is dropped rather than
+// forwarded unverified.
+func xhttpUplinkHTTPMethodFromExtra(extra map[string]interface{}, mode string) string {
+	raw := strings.ToUpper(strings.TrimSpace(firstNonEmpty(
+		stringFromExtraValue(extra["uplink_http_method"]),
+		stringFromExtraValue(extra["method"]),
+	)))
+	switch raw {
+	case "POST":
+		return "POST"
+	case "GET":
+		if mode == "packet-up" {
+			return "GET"
+		}
+		return ""
+	default:
+		return ""
+	}
+}
+
+// xhttpUplinkDataPlacementFromExtra is mode-aware on purpose: the core allows
+// cookie/header only in packet-up mode and returns an error otherwise, which
+// means the engine never starts.
+func xhttpUplinkDataPlacementFromExtra(extra map[string]interface{}, mode string) string {
+	raw := strings.ToLower(strings.TrimSpace(firstNonEmpty(
+		getStringField(extra, "uplink_data_placement", ""),
+		getStringField(extra, "uplinkDataPlacement", ""),
+	)))
+	switch raw {
+	case "auto", "body":
+		return raw
+	case "cookie", "header":
+		if mode == "packet-up" {
+			return raw
+		}
+		return ""
+	default:
+		return ""
+	}
+}
+
+// xhttpCongestionControllers mirrors common/congestion.NewCongestionControl: an
+// unknown name fails client creation, i.e. the engine start.
+var xhttpCongestionControllers = map[string]bool{
+	"bbr": true, "bbr_standard": true, "bbr2": true,
+	"bbr2_variant": true, "cubic": true, "reno": true,
+}
+
+func xhttpCongestionFromExtra(extra map[string]interface{}) string {
+	raw := strings.ToLower(strings.TrimSpace(firstNonEmpty(
+		getStringField(extra, "congestion_controller", ""),
+		getStringField(extra, "congestionController", ""),
+	)))
+	if !xhttpCongestionControllers[raw] {
+		return ""
+	}
+	return raw
+}
+
+// positiveIntFromExtra returns 0 for anything not strictly positive, so a bogus
+// value falls back to the core's own default instead of being forwarded.
+func positiveIntFromExtra(extra map[string]interface{}, snake, camel string) int {
+	n := intFromExtra(extra, snake, camel)
+	if n <= 0 {
+		return 0
+	}
+	return n
+}
+
 func sanitizeXPaddingBytes(s string) string {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "", "0", "0-0", "disable", "disabled", "none", "false":
@@ -821,7 +1330,11 @@ func sanitizeXPaddingBytes(s string) string {
 	return s
 }
 
-func xhttpHeadersFromExtra(extra map[string]interface{}) map[string]string {
+// transportHeadersFromExtra returns the node's custom request headers for the
+// HTTP-flavoured transports (ws, httpupgrade, http, xhttp). "host" is stripped:
+// sing-box rejects it inside headers for xhttp, and the transports that do have
+// a top-level host field take it from there instead.
+func transportHeadersFromExtra(extra map[string]interface{}) map[string]string {
 	v, ok := extra["headers"]
 	if !ok || v == nil {
 		return nil
@@ -844,6 +1357,25 @@ func xhttpHeadersFromExtra(extra map[string]interface{}) map[string]string {
 		return nil
 	}
 	return out
+}
+
+// mkcpHeaderTypes mirrors v2raykcp.NewPacketHeader. An unknown obfuscation
+// header does not fail transport creation — NewPacketHeader silently returns
+// nil for it — but forwarding it anyway would still desync the wire framing
+// from a server that expects a real header, so it is dropped and the core
+// falls back to "none".
+var mkcpHeaderTypes = map[string]string{
+	"none": "none", "srtp": "srtp", "utp": "utp",
+	"wechat-video": "wechat-video", "wechatvideo": "wechat-video",
+	"dtls": "dtls", "wireguard": "wireguard",
+}
+
+func mkcpHeaderTypeFromExtra(extra map[string]interface{}) string {
+	raw := firstNonEmpty(
+		getStringField(extra, "header_type", ""),
+		getStringField(extra, "headerType", ""),
+	)
+	return mkcpHeaderTypes[strings.ToLower(strings.TrimSpace(raw))]
 }
 
 func xhttpPreferH2ALPN(alpn []string, skipHack bool) []string {

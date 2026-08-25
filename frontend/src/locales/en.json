@@ -202,6 +202,10 @@
       "title": "DNS leak protection",
       "desc": "Blocks Windows' parallel DNS queries from escaping via the LAN adapter. Protects against ISP DNS hijacking (Rostelecom, MSK-IX, etc.). On Windows, changing system DNS requires administrator privileges. Disable only if it interferes with local-network workflows."
     },
+    "enable_ipv6": {
+      "title": "IPv6 in the tunnel",
+      "desc": "By default the tunnel is IPv4-only and the resolver returns no AAAA records. Turn this on only if you actually have working IPv6: on networks where it is broken or unproxied it will make things worse. On machines without IPv6 the setting is ignored automatically."
+    },
     "subscription_auto_update": {
       "title": "Automatic refresh",
       "desc": "Periodically refresh all added subscriptions."
@@ -217,7 +221,7 @@
     "subscription_user_agent": {
       "title": "User agent",
       "desc": "Clear the field to use the default ResultV/<version>/Windows/<OS version> value.",
-      "placeholder": "ResultV/3.3.0/Windows/11_10.0.26200"
+      "placeholder": "ResultV/3.3.1/Windows/11_10.0.26200"
     },
     "dns": {
       "title": "DNS Servers",

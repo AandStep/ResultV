@@ -123,6 +123,10 @@ type Manager struct {
 	tunIPv6           string
 	tunStack          string
 	dnsLeakProtection bool
+	// enableIPv6 mirrors the user's setting for the LIVE session so the internal
+	// reconnect paths (mode switch, routing-rule change) rebuild the same config
+	// instead of silently reverting to the default.
+	enableIPv6        bool
 
 	// connect cancellation — guarded by connectCancelMu (separate from mu
 	// so Disconnect/GetStatus can call CancelConnect without deadlock)
@@ -177,6 +181,8 @@ var pingTCPProbe = PingProxy
 var pingLANProbe = PingProxyLANBind
 var pingHysteria2Probe = PingHysteria2QUIC
 var pingHysteria2LANProbe = PingHysteria2QUICLANBind
+var pingHysteria2StrictProbe = PingHysteria2QUICStrict
+var pingHysteria2StrictLANProbe = PingHysteria2QUICStrictLANBind
 var pingWireGuardProbe = PingWireGuard
 var pingWireGuardLANProbe = PingWireGuardLANBind
 var probeHTTPThroughProxyProbe = probeHTTPThroughProxy
@@ -205,6 +211,10 @@ func tunnelProbeURLs() []string {
 	}
 	return out
 }
+
+// probeTargetURLs is tunnelProbeURLs behind a var so tests can point the probe
+// at local servers instead of the real connectivity-check endpoints.
+var probeTargetURLs = tunnelProbeURLs
 
 func NewManager(log *logger.Logger) *Manager {
 	router := NewRouter()
@@ -473,18 +483,58 @@ func isTransientTunError(err error) bool {
 // engine_start whenever we are actually elevated — popping a "restart as admin"
 // prompt at an already-admin user is the bug being fixed, not the cure.
 func (m *Manager) startEngine(ctx context.Context, cfg EngineConfig) (err error, tunnelFailed bool, reason, errorCode string) {
-	err = m.engine.Start(ctx, cfg)
-	if err != nil && cfg.Mode == ProxyModeTunnel && isTransientTunError(err) {
-		m.log.Warning(fmt.Sprintf("[PROXY] TUN не сконфигурировался (%s) — удаление залипшего адаптера и повтор", extractErrorReason(err.Error())))
-		if rmErr := removeStaleTunAdapterFn(); rmErr != nil {
-			m.log.Warning(fmt.Sprintf("[PROXY] Не удалось удалить залипший TUN-адаптер: %v", rmErr))
+	// Two independent one-shot remedies, each applied at most once so the loop is
+	// bounded at three attempts. Order matters: the IPv6 failure text also
+	// contains "configure tun interface", so isTransientTunError would swallow it
+	// and send us down the device-removal path — which cannot fix it.
+	ghostRemoved, ipv6Dropped := false, false
+	for attempt := 1; ; attempt++ {
+		err = m.engine.Start(ctx, cfg)
+		if err == nil {
+			switch {
+			case attempt == 1:
+			case ipv6Dropped:
+				m.log.Success("[PROXY] TUN поднялся без IPv6 — защита от утечек включена принудительно, IPv6 заблокирован, а не пущен мимо туннеля")
+			default:
+				m.log.Success("[PROXY] TUN поднялся со второй попытки")
+			}
+			return nil, false, "", ""
 		}
-		time.Sleep(tunRetryDelay)
-		if err = m.engine.Start(ctx, cfg); err == nil {
-			m.log.Success("[PROXY] TUN поднялся со второй попытки")
-		} else {
+		if cfg.Mode != ProxyModeTunnel {
+			break
+		}
+		// The adapter refused an IPv6 address. Removing a device changes nothing
+		// here and re-Starting the same config reproduces the failure exactly —
+		// the config itself has to change.
+		if isTunIPv6Error(err) && !ipv6Dropped {
+			ipv6Dropped = true
+			cfg.TunDisableIPv6 = true
+			m.log.Warning(fmt.Sprintf("[PROXY] TUN не принял IPv6-адрес (%s) — повтор без IPv6", extractErrorReason(err.Error())))
+			continue
+		}
+		if isTransientTunError(err) && !ghostRemoved {
+			ghostRemoved = true
+			m.log.Warning(fmt.Sprintf("[PROXY] TUN не сконфигурировался (%s) — удаление залипшего адаптера и повтор", extractErrorReason(err.Error())))
+			// Report WHICH device was torn down, or that none was found. These are
+			// different outcomes — "found nothing" means the TUN failure has another
+			// cause — and collapsing them into one line is what made the ghost bug
+			// look like a working cleanup for so long.
+			removed, rmErr := removeStaleTunAdapterFn()
+			switch {
+			case rmErr != nil:
+				m.log.Warning(fmt.Sprintf("[PROXY] Не удалось удалить залипший TUN-адаптер: %v", rmErr))
+			case len(removed) > 0:
+				m.log.Success(fmt.Sprintf("[PROXY] Снято залипших TUN-устройств: %d — %s", len(removed), strings.Join(removed, "; ")))
+			default:
+				m.log.Info("[PROXY] Залипших TUN-устройств не найдено — причина отказа TUN в другом")
+			}
+			time.Sleep(tunRetryDelay)
+			continue
+		}
+		if attempt > 1 {
 			m.log.Warning(fmt.Sprintf("[PROXY] Повторный старт TUN тоже не удался: %s", extractErrorReason(err.Error())))
 		}
+		break
 	}
 	if err == nil {
 		return nil, false, "", ""
@@ -512,7 +562,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
 	killSwitch bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
-	dnsLeakProtection bool) ConnectResultDTO {
+	dnsLeakProtection, enableIPv6 bool) ConnectResultDTO {
 
 	dataDir := resultProxyDataDir()
 	usedCachedPin := false
@@ -525,7 +575,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 
 	res := m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist, appForceVPN,
 		killSwitch, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
-		dnsLeakProtection)
+		dnsLeakProtection, enableIPv6)
 
 	if shouldRetryWithoutPin(usedCachedPin, res.ErrorCode) {
 		clearServerPin(dataDir, m.secrets, proxy.IP)
@@ -533,7 +583,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 		proxy.ResolvedIP = ""
 		res = m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist, appForceVPN,
 			killSwitch, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
-			dnsLeakProtection)
+			dnsLeakProtection, enableIPv6)
 	}
 	return res
 }
@@ -542,7 +592,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
 	killSwitch bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
-	dnsLeakProtection bool) ConnectResultDTO {
+	dnsLeakProtection, enableIPv6 bool) ConnectResultDTO {
 
 	// Per-phase timing — emitted as one summary line on the success path so the
 	// connect budget is measured, not estimated.
@@ -704,6 +754,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		DNSServers:        dnsServers,
 		TunIPv4:           tunIPv4,
 		TunIPv6:           tunIPv6,
+		EnableIPv6:        enableIPv6,
 		TunStack:          m.tunStack,
 		DNSLeakProtection: dnsLeakProtection,
 		DataDir:           resultProxyDataDir(),
@@ -768,6 +819,12 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	// Engine запускается с долгоживущим ctx (контекст приложения), НЕ с connectCtx.
 	// connectCtx отменяется когда Connect() возвращается — если передать его движку,
 	// sing-box начнёт умирать сразу после установки соединения (DNS context canceled).
+	// Tell the user when their IPv6 opt-in was overruled by the machine, instead of
+	// silently handing them an IPv4-only tunnel and letting them wonder.
+	if mode == ProxyModeTunnel && enableIPv6 && !hostSupportsIPv6Fn() {
+		m.log.Warning("[PROXY] IPv6 включён в настройках, но система его не поддерживает — туннель поднят без IPv6")
+	}
+
 	tStart := time.Now()
 	if startErr, tunnelFailed, reason, errorCode := m.startEngine(ctx, engineCfg); startErr != nil {
 		m.mu.Lock()
@@ -799,6 +856,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 				m.dnsServers = dnsServers
 				m.tunIPv4 = tunIPv4
 				m.tunIPv6 = tunIPv6
+				m.enableIPv6 = enableIPv6
 				m.dnsLeakProtection = dnsLeakProtection
 				m.clearPendingLocked()
 				m.startHealthWatchdogLocked(proxy, mode)
@@ -952,6 +1010,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	m.dnsServers = dnsServers
 	m.tunIPv4 = tunIPv4
 	m.tunIPv6 = tunIPv6
+	m.enableIPv6 = enableIPv6
 	m.dnsLeakProtection = dnsLeakProtection
 	m.startProcessTrackerLocked()
 	m.startHealthWatchdogLocked(proxy, mode)
@@ -1239,7 +1298,7 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
 	killSwitch bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
-	dnsLeakProtection bool) ConnectResultDTO {
+	dnsLeakProtection, enableIPv6 bool) ConnectResultDTO {
 	if m.connected {
 		m.disconnectLocked()
 	}
@@ -1298,6 +1357,7 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 		DNSServers:        dnsServers,
 		TunIPv4:           tunIPv4,
 		TunIPv6:           tunIPv6,
+		EnableIPv6:        enableIPv6,
 		TunStack:          m.tunStack,
 		DNSLeakProtection: dnsLeakProtection,
 		DataDir:           resultProxyDataDir(),
@@ -1419,6 +1479,7 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 	m.dnsServers = dnsServers
 	m.tunIPv4 = tunIPv4
 	m.tunIPv6 = tunIPv6
+	m.enableIPv6 = enableIPv6
 	m.dnsLeakProtection = dnsLeakProtection
 	m.startProcessTrackerLocked()
 	m.startHealthWatchdogLocked(proxy, mode)
@@ -1491,6 +1552,20 @@ func pollProbe(ctx context.Context, deadline, interval time.Duration, attempt fu
 	}
 }
 
+// hysteria2LivenessProbe answers "is the server itself reachable" for the
+// post-start probe's diagnosis step. In tunnel mode it must be the LAN-bound
+// variant: the tunnel is already up by then, and an unbound probe measures
+// sing-tun's local stack instead of the server, turning a genuinely failed
+// connect into a misleading "proxy outbound misconfigured" verdict.
+func hysteria2LivenessProbe(mode ProxyMode, ip string, port int) (bool, string) {
+	if mode == ProxyModeTunnel {
+		_, ok, reason, _ := pingHysteria2LANProbe(ip, port)
+		return ok, reason
+	}
+	_, ok, reason, _ := pingHysteria2Probe(ip, port)
+	return ok, reason
+}
+
 func runPostStartProbe(ctx context.Context, proxyTypeLower, ip string, port, localPort int, mode ProxyMode, extra ...map[string]interface{}) (errorCode, reason string) {
 	var ex map[string]interface{}
 	if len(extra) > 0 {
@@ -1528,7 +1603,7 @@ func runPostStartProbe(ctx context.Context, proxyTypeLower, ip string, port, loc
 				return "cancelled", "connect cancelled"
 			}
 			if !ok {
-				_, quicOK, quicR, _ := pingHysteria2Probe(ip, port)
+				quicOK, quicR := hysteria2LivenessProbe(mode, ip, port)
 				if quicOK {
 					return "post_start_probe_failed", "proxy outbound misconfigured: " + r
 				}
@@ -1549,7 +1624,7 @@ func runPostStartProbe(ctx context.Context, proxyTypeLower, ip string, port, loc
 				return "cancelled", "connect cancelled"
 			}
 			if !ok {
-				_, quicOK, quicR, _ := pingHysteria2Probe(ip, port)
+				quicOK, quicR := hysteria2LivenessProbe(mode, ip, port)
 				if quicOK {
 					if r == "" {
 						r = "tunnel e2e probe failed"
@@ -1720,38 +1795,78 @@ func runPostStartProbe(ctx context.Context, proxyTypeLower, ip string, port, loc
 }
 
 func probeHTTPThroughProxy(proxyAddr string) (bool, string) {
-	proxyURL, _ := url.Parse("http://" + proxyAddr)
 	// Short per-attempt timeouts: this runs only on the connect warm-up path,
-	// driven by pollProbe which re-tries every 250ms up to an 8s deadline. A
-	// working link answers generate_204 in well under a second; a stalled
-	// attempt should yield to the next poll quickly rather than block for 10s.
-	client := &http.Client{
-		Timeout: 3 * time.Second,
-		Transport: &http.Transport{
-			Proxy: http.ProxyURL(proxyURL),
-			DialContext: (&net.Dialer{
-				Timeout: 2 * time.Second,
-			}).DialContext,
-			TLSHandshakeTimeout: 2 * time.Second,
-		},
+	// driven by pollProbe which re-tries every 250ms up to an 8s deadline.
+	//
+	// The targets are raced rather than walked in order. Sequentially, one
+	// attempt cost up to 3s x len(targets) — more than the whole 8s budget —
+	// so the first attempt blew the deadline and pollProbe never got to retry
+	// at all: the polling machinery degenerated into a single slow pass. Raced,
+	// an attempt costs one timeout, a healthy link is confirmed by whichever
+	// endpoint answers first, and the retry loop works as designed.
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout: 2 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout: 2 * time.Second,
+		DisableKeepAlives:   true,
+	}
+	if proxyAddr != "" {
+		if proxyURL, err := url.Parse("http://" + proxyAddr); err == nil {
+			transport.Proxy = http.ProxyURL(proxyURL)
+		}
+	}
+	client := &http.Client{Timeout: 3 * time.Second, Transport: transport}
+
+	targets := probeTargetURLs()
+	if len(targets) == 0 {
+		return false, "no probe targets"
 	}
 
-	targets := tunnelProbeURLs()
-	lastReason := ""
+	type probeOutcome struct {
+		ok     bool
+		reason string
+	}
+	results := make(chan probeOutcome, len(targets))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	for _, target := range targets {
-		resp, err := client.Get(target)
-		if err != nil {
-			lastReason = pingReasonFromError(err)
-			continue
-		}
-		_ = resp.Body.Close()
-		// Любой HTTP-ответ (включая 5xx) через прокси означает что туннель работает.
-		// 502/503/504 от connectivity-check endpoint'ов — норма при работе через прокси.
-		// Только 407 (Proxy Auth Required) означает что прокси сам не принял запрос.
-		if isProxyProbeResponseAcceptable(resp.StatusCode) {
+		go func(target string) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+			if err != nil {
+				results <- probeOutcome{false, "bad probe url"}
+				return
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				results <- probeOutcome{false, pingReasonFromError(err)}
+				return
+			}
+			_ = resp.Body.Close()
+			// Любой HTTP-ответ (включая 5xx) через прокси означает что туннель работает.
+			// 502/503/504 от connectivity-check endpoint'ов — норма при работе через прокси.
+			// Только 407 (Proxy Auth Required) означает что прокси сам не принял запрос.
+			if isProxyProbeResponseAcceptable(resp.StatusCode) {
+				results <- probeOutcome{true, ""}
+				return
+			}
+			results <- probeOutcome{false, fmt.Sprintf("unexpected status %d", resp.StatusCode)}
+		}(target)
+	}
+
+	lastReason := ""
+	for i := 0; i < len(targets); i++ {
+		r := <-results
+		if r.ok {
+			// cancel (deferred) tears down the losers; their goroutines exit on
+			// the cancelled request context and their sends land in the buffered
+			// channel, so nothing leaks.
 			return true, ""
 		}
-		lastReason = fmt.Sprintf("unexpected status %d from %s", resp.StatusCode, target)
+		if r.reason != "" {
+			lastReason = r.reason
+		}
 	}
 	if lastReason == "" {
 		lastReason = "http probe failed"
@@ -1854,12 +1969,29 @@ func probeTunnelHealth() (bool, string) {
 // resolver: the system DNS override pins physical adapters to resolvers that
 // are unreachable outside the tunnel), so the watchdog must not count it as a
 // server-dead strike. See isLocalDNSProbeFailure.
+//
+// Unrecognised errors keep their original text behind a "probe_error: " prefix:
+// the bare code told the user (and us) nothing when a working session kept
+// failing its probe. This value only ever reaches the watchdog log line — never
+// node_stats.json, whose vocabulary stays fixed by sanitizeStatReason.
 func probeFailureReason(err error) string {
+	if err == nil {
+		return ""
+	}
 	var dnsErr *net.DNSError
 	if errors.As(err, &dnsErr) {
 		return "local_dns: " + dnsErr.Err
 	}
-	return pingReasonFromError(err)
+	reason := pingReasonFromError(err)
+	if reason == "probe_error" {
+		// pingReasonFromError's catch-all discards the text, which is exactly
+		// the case worth reading: every recognised class already names itself.
+		// Safe to log verbatim — the probes this serves dial 127.0.0.1 and the
+		// public connectivity endpoints in tunnelProbeDomains, never the user's
+		// server, so no server address can appear in the text.
+		return "probe_error: " + err.Error()
+	}
+	return reason
 }
 
 func isLocalDNSProbeFailure(reason string) bool {
@@ -2057,6 +2189,7 @@ func (m *Manager) SetMode(mode ProxyMode) error {
 			m.tunIPv4,
 			m.tunIPv6,
 			m.dnsLeakProtection,
+			m.enableIPv6,
 		)
 		if !res.Success {
 			return fmt.Errorf("reconnect after mode switch failed: %s", res.Message)
@@ -2114,8 +2247,9 @@ func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode Rou
 	tIPv4 := m.tunIPv4
 	tIPv6 := m.tunIPv6
 	dnsLeak := m.dnsLeakProtection
+	enIPv6 := m.enableIPv6
 
-	return m.connectLocked(ctx, p, mode, routingMode, whitelist, appWhitelist, appForceVPN, killSwitch, lPort, listenLAN, dServers, tIPv4, tIPv6, dnsLeak)
+	return m.connectLocked(ctx, p, mode, routingMode, whitelist, appWhitelist, appForceVPN, killSwitch, lPort, listenLAN, dServers, tIPv4, tIPv6, dnsLeak, enIPv6)
 }
 
 func (m *Manager) GetStatus() StatusDTO {
@@ -2162,6 +2296,15 @@ func (m *Manager) Ping(ip string, port int, proxyType string) PingResultDTO {
 	connected := m.connected
 	m.mu.Unlock()
 
+	// Resolve once, here, instead of letting each probe dial by name: the
+	// probes use net.Dial, and during an active session the OS resolver is
+	// unusable for the app itself (see resolvePingHost). A domain server then
+	// reported "Error" for every ping until the app was restarted.
+	dialHost := resolvePingHost(ip)
+	if dialHost == "" {
+		return PingResultDTO{Reachable: false, Reason: "dns_unresolved", CheckType: "dns"}
+	}
+
 	var latency int64
 	var reachable bool
 	var reason string
@@ -2174,21 +2317,21 @@ func (m *Manager) Ping(ip string, port int, proxyType string) PingResultDTO {
 
 	if connected && mode == ProxyModeTunnel {
 		if isHysteria2 {
-			latency, reachable, reason, checkType = pingHysteria2LANProbe(ip, port)
+			latency, reachable, reason, checkType = pingHysteria2LANProbe(dialHost, port)
 		} else if isWireGuard {
-			latency, reachable, reason = pingWireGuardLANProbe(ip, port)
+			latency, reachable, reason = pingWireGuardLANProbe(dialHost, port)
 			checkType = "udp_lan_bind"
 		} else {
-			latency, reachable, reason = pingLANProbe(ip, port)
+			latency, reachable, reason = pingLANProbe(dialHost, port)
 			checkType = "tcp_lan_bind"
 		}
 	} else if isHysteria2 {
-		latency, reachable, reason, checkType = pingHysteria2Probe(ip, port)
+		latency, reachable, reason, checkType = pingHysteria2Probe(dialHost, port)
 	} else if isWireGuard {
-		latency, reachable, reason = pingWireGuardProbe(ip, port)
+		latency, reachable, reason = pingWireGuardProbe(dialHost, port)
 		checkType = "udp"
 	} else {
-		latency, reachable, reason = pingTCPProbe(ip, port)
+		latency, reachable, reason = pingTCPProbe(dialHost, port)
 		checkType = "tcp"
 	}
 
@@ -2260,6 +2403,34 @@ const watchdogTrafficAliveBytes int64 = 16 * 1024
 // (10s) ~60s — long enough to ride out a transient exit hiccup, short enough
 // that a dead session doesn't stay silently masked.
 const maxConsecutiveVetoes = 6
+
+// watchdogLogTag returns the log prefix for health-watchdog lines. The watchdog
+// runs on every session regardless of the kill-switch setting — it is what
+// feeds the "node stopped responding" status — but tagging its every tick
+// "[KILL SWITCH]" while the setting is off reads as the kill switch firing when
+// it cannot fire at all: the log then shows a wall of [KILL SWITCH] lines next
+// to "Kill Switch: false". Disarmed, these lines are plain connection news.
+func watchdogLogTag(killSwitch bool) string {
+	if killSwitch {
+		return "[KILL SWITCH]"
+	}
+	return "[СЕТЬ]"
+}
+
+// logWatchdogTick emits one per-tick watchdog line at a severity that matches
+// the stakes. Armed, the next failed tick may black out all traffic, so the
+// warning level is earned; disarmed, nothing will be blocked and the same line
+// is informational noise at warning level.
+//
+// Callers hold m.mu, matching the m.log.Warning calls this replaces.
+func (m *Manager) logWatchdogTick(ks bool, format string, args ...any) {
+	msg := watchdogLogTag(ks) + " " + fmt.Sprintf(format, args...)
+	if ks {
+		m.log.Warning(msg)
+		return
+	}
+	m.log.Info(msg)
+}
 
 func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy ProxyConfig, mode ProxyMode) {
 	// Both modes now probe the data path (see probeHealthy): proxy mode through
@@ -2355,7 +2526,7 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy Proxy
 			var disengageFn func()
 			if wasDead {
 				m.proxyDead = false
-				m.log.Success("[KILL SWITCH] VPN-сервер снова доступен")
+				m.logWatchdogTick(ks, "VPN-сервер снова доступен")
 				m.emitStatusLocked()
 				disengageFn = m.KillSwitchFirewallDisengage
 			}
@@ -2374,7 +2545,7 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy Proxy
 			// fallback probes can produce this; the loopback-listener probe
 			// resolves hostnames remotely via sing-box.
 			if !wasDead {
-				m.log.Warning(fmt.Sprintf("[KILL SWITCH] Проба не выполнена: локальный DNS не ответил (%s) — не считается отказом сервера", failReason))
+				m.logWatchdogTick(ks, "Проба не выполнена: локальный DNS не ответил (%s) — не считается отказом сервера", failReason)
 			}
 			m.mu.Unlock()
 			continue
@@ -2384,7 +2555,7 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy Proxy
 			if failReason == "" {
 				failReason = "нет ответа"
 			}
-			m.log.Warning(fmt.Sprintf("[KILL SWITCH] Проба не прошла (%d/%d): %s", consecutiveFails, failuresBeforeDead, failReason))
+			m.logWatchdogTick(ks, "Проба не прошла (%d/%d): %s", consecutiveFails, failuresBeforeDead, failReason)
 		}
 		var shouldEngage bool
 		var engageFn func(ProxyConfig, []string)
@@ -2399,7 +2570,7 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy Proxy
 			// churning retry bytes while every probe fails can't mask a dead
 			// session indefinitely.
 			consecutiveVetoes++
-			m.log.Warning(fmt.Sprintf("[KILL SWITCH] Проба не прошла, но прокси несёт трафик (Δ=%d КБ за интервал) — блокировка отложена (%d/%d)", proxyDelta/1024, consecutiveVetoes, maxConsecutiveVetoes))
+			m.logWatchdogTick(ks, "Проба не прошла, но прокси несёт трафик (Δ=%d КБ за интервал) — блокировка отложена (%d/%d)", proxyDelta/1024, consecutiveVetoes, maxConsecutiveVetoes)
 			m.mu.Unlock()
 			continue
 		}

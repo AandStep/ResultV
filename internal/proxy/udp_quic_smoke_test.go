@@ -205,3 +205,54 @@ func TestVMessUDPShapeSmoke(t *testing.T) {
 		t.Fatalf("strict decode of VMess config failed: %v", err)
 	}
 }
+
+// TestSmartQUICRejectParsesStrictly guards the Discord-attachments fix at the
+// only place it can fail catastrophically: a malformed route rule does not
+// degrade QUIC, it stops the engine from starting at all. Build a full Smart
+// tunnel config and push it through sing-box's own strict decoder, then assert
+// the decoded rule really is a reject of udp/443 with the ICMP-unreachable
+// method — "drop" would black-hole the handshake instead of triggering the
+// client's fallback to TCP, which is the entire point of the rule.
+func TestSmartQUICRejectParsesStrictly(t *testing.T) {
+	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
+		Mode:             ProxyModeTunnel,
+		RoutingMode:      ModeSmart,
+		Proxy:            ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		BlockedDomains:   []string{"discordapp.com", "youtube.com"},
+		SmartRuleSetPath: "",
+	})
+	j, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(j), `"action":"reject"`) || !strings.Contains(string(j), `"method":"default"`) {
+		t.Fatalf("expected a reject/default rule in the smart config: %s", j)
+	}
+
+	ctx := include.Context(context.Background())
+	var opt option.Options
+	if err := singjson.UnmarshalContext(ctx, j, &opt); err != nil {
+		t.Fatalf("strict decode of the smart QUIC-reject config failed: %v", err)
+	}
+
+	var found bool
+	for _, r := range opt.Route.Rules {
+		d := r.DefaultOptions
+		if d.RuleAction.Action != "reject" {
+			continue
+		}
+		if len(d.Network) != 1 || d.Network[0] != "udp" {
+			continue
+		}
+		if len(d.Port) != 1 || d.Port[0] != 443 {
+			continue
+		}
+		if d.RuleAction.RejectOptions.Method != "default" {
+			t.Fatalf("reject method must be default (ICMP unreachable), got %q", d.RuleAction.RejectOptions.Method)
+		}
+		found = true
+	}
+	if !found {
+		t.Fatalf("decoded config has no udp:443 reject rule: %s", j)
+	}
+}

@@ -82,6 +82,118 @@ func TestVLESSURIEmbeddedExtraAndOutboundXHTTP(t *testing.T) {
 	}
 }
 
+// TestVLESSURIEmbeddedExtraOnlyCarriesPathAndHost: path/host/sni supplied only
+// via ?extra={...}, with no same-named query params, must still reach the
+// built outbound. The old code's unconditional `extra["path"] = params.Get("path")`
+// (and the same for host/sni/...) stomped these with "" whenever the query
+// itself did not repeat them.
+func TestVLESSURIEmbeddedExtraOnlyCarriesPathAndHost(t *testing.T) {
+	q := url.Values{}
+	q.Set("type", "xhttp")
+	q.Set("security", "tls")
+	q.Set("extra", `{"path":"/api","host":"cdn.example.com","sni":"a.example.com"}`)
+	line := "vless://af815621-b245-4149-89da-dd184cfc4b3d@example.com:443?" + q.Encode()
+
+	entry, err := ParseProxyURI(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var extra map[string]interface{}
+	if err := json.Unmarshal(entry.Extra, &extra); err != nil {
+		t.Fatal(err)
+	}
+	if extra["path"] != "/api" {
+		t.Fatalf("path: %v", extra["path"])
+	}
+	if extra["host"] != "cdn.example.com" {
+		t.Fatalf("host: %v", extra["host"])
+	}
+	if extra["sni"] != "a.example.com" {
+		t.Fatalf("sni: %v", extra["sni"])
+	}
+
+	out := buildProxyOutbound(ProxyConfig{IP: entry.IP, Port: entry.Port, Type: entry.Type, Extra: entry.Extra})
+	if out.Transport == nil || out.Transport.Path != "/api" || out.Transport.Host != "cdn.example.com" {
+		t.Fatalf("transport: %+v", out.Transport)
+	}
+}
+
+// TestVLESSURIQueryWinsOverEmbeddedExtra: when a key appears in both the query
+// and ?extra={...}, the query value must win.
+func TestVLESSURIQueryWinsOverEmbeddedExtra(t *testing.T) {
+	q := url.Values{}
+	q.Set("type", "xhttp")
+	q.Set("security", "tls")
+	q.Set("host", "query.example.com")
+	q.Set("extra", `{"host":"embedded.example.com"}`)
+	line := "vless://af815621-b245-4149-89da-dd184cfc4b3d@example.com:443?" + q.Encode()
+
+	entry, err := ParseProxyURI(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var extra map[string]interface{}
+	if err := json.Unmarshal(entry.Extra, &extra); err != nil {
+		t.Fatal(err)
+	}
+	if extra["host"] != "query.example.com" {
+		t.Fatalf("host: %v, want the query value to win", extra["host"])
+	}
+}
+
+// TestVLESSURIEmbeddedExtraSecurityNotOverwrittenByDefault is the P0 case: a
+// reality node whose security only lives in ?extra={...} (no security= in the
+// query) must keep reality, not silently collapse to the "none" default —
+// which is exactly what the old unconditional `extra["security"] = paramOr(...)`
+// did.
+func TestVLESSURIEmbeddedExtraSecurityNotOverwrittenByDefault(t *testing.T) {
+	q := url.Values{}
+	q.Set("type", "xhttp")
+	q.Set("extra", `{"security":"reality","pbk":"lCQjfUSO29QFSrFrbIyHPfaSQzjIWRg7lMhaPStUzAA"}`)
+	line := "vless://af815621-b245-4149-89da-dd184cfc4b3d@example.com:443?" + q.Encode()
+
+	entry, err := ParseProxyURI(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var extra map[string]interface{}
+	if err := json.Unmarshal(entry.Extra, &extra); err != nil {
+		t.Fatal(err)
+	}
+	if extra["security"] != "reality" {
+		t.Fatalf("security collapsed to %v, want reality", extra["security"])
+	}
+
+	out := buildProxyOutbound(ProxyConfig{IP: entry.IP, Port: entry.Port, Type: entry.Type, Extra: entry.Extra})
+	if out.TLS == nil || out.TLS.Reality == nil || !out.TLS.Reality.Enabled {
+		t.Fatalf("reality not built: %+v", out.TLS)
+	}
+}
+
+// TestVLESSURIWithoutExtraStillParses is the regression guard: a link with no
+// ?extra= at all must still build exactly as before.
+func TestVLESSURIWithoutExtraStillParses(t *testing.T) {
+	line := "vless://af815621-b245-4149-89da-dd184cfc4b3d@example.com:443?type=tcp&security=none#plain"
+	entry, err := ParseProxyURI(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var extra map[string]interface{}
+	if err := json.Unmarshal(entry.Extra, &extra); err != nil {
+		t.Fatal(err)
+	}
+	if extra["network"] != "tcp" || extra["security"] != "none" {
+		t.Fatalf("extra: %+v", extra)
+	}
+	out := buildProxyOutbound(ProxyConfig{IP: entry.IP, Port: entry.Port, Type: entry.Type, Extra: entry.Extra})
+	if out.Transport != nil {
+		t.Fatalf("expected nil transport for plain tcp, got %+v", out.Transport)
+	}
+	if out.TLS != nil {
+		t.Fatalf("expected nil tls for security=none, got %+v", out.TLS)
+	}
+}
+
 func TestXHTTPOmitPaddingWhenAbsent(t *testing.T) {
 	q := url.Values{}
 	q.Set("type", "xhttp")
@@ -498,6 +610,98 @@ func TestTrojanURIWithRealityBuildsOutbound(t *testing.T) {
 	}
 	if len(out.TLS.ALPN) > 0 {
 		t.Fatalf("expected empty ALPN for Reality, got: %v", out.TLS.ALPN)
+	}
+}
+
+// TestTrojanURIEmbeddedExtraCarriesXHTTPAndPadding: parseTrojanURI used to
+// build extra as a plain literal and never read ?extra={...} at all, so a
+// trojan link with xhttp/padding knobs in the embedded blob lost them
+// entirely — the same defect class 1.1 fixes for vless, just never wired up
+// for trojan in the first place.
+func TestTrojanURIEmbeddedExtraCarriesXHTTPAndPadding(t *testing.T) {
+	q := url.Values{}
+	q.Set("type", "xhttp")
+	q.Set("security", "tls")
+	q.Set("extra", `{"path":"/api","x_padding_bytes":"200-800"}`)
+	line := "trojan://secret@example.com:443?" + q.Encode() + "#Node"
+
+	entry, err := ParseProxyURI(line)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var extra map[string]interface{}
+	if err := json.Unmarshal(entry.Extra, &extra); err != nil {
+		t.Fatalf("extra json: %v", err)
+	}
+	if extra["path"] != "/api" {
+		t.Fatalf("path: %v", extra["path"])
+	}
+	if extra["x_padding_bytes"] != "200-800" {
+		t.Fatalf("x_padding_bytes: %v", extra["x_padding_bytes"])
+	}
+
+	out := buildProxyOutbound(ProxyConfig{
+		IP:       entry.IP,
+		Port:     entry.Port,
+		Type:     entry.Type,
+		Password: entry.Password,
+		Extra:    entry.Extra,
+	})
+	if out.Transport == nil || out.Transport.Type != "xhttp" {
+		t.Fatalf("transport: %+v", out.Transport)
+	}
+	if out.Transport.Path != "/api" {
+		t.Fatalf("transport path: %q", out.Transport.Path)
+	}
+	if out.Transport.XPaddingBytes != "200-800" {
+		t.Fatalf("transport x_padding_bytes: %q", out.Transport.XPaddingBytes)
+	}
+}
+
+// TestTrojanURIWithoutExtraStillParses is the regression guard for 1.2: a
+// trojan link with no ?extra= at all must still build exactly as before.
+func TestTrojanURIWithoutExtraStillParses(t *testing.T) {
+	raw := "trojan://secret@example.com:443?type=tcp&sni=edge.example.com&allowInsecure=0#Node"
+	entry, err := ParseProxyURI(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buildProxyOutbound(ProxyConfig{
+		IP:       entry.IP,
+		Port:     entry.Port,
+		Type:     entry.Type,
+		Password: entry.Password,
+		Extra:    entry.Extra,
+	})
+	if out.Transport != nil {
+		t.Fatalf("expected nil transport for tcp, got %+v", out.Transport)
+	}
+	if out.TLS == nil || out.TLS.ServerName != "edge.example.com" || out.TLS.Insecure {
+		t.Fatalf("tls: %+v", out.TLS)
+	}
+}
+
+// TestTrojanURIMKCPFromQuery is 1.3: trojan reaches applyTLSAndTransport the
+// same way vless does, so the mKCP query knobs vless already carries through
+// (task 8b) must round-trip for trojan too.
+func TestTrojanURIMKCPFromQuery(t *testing.T) {
+	raw := "trojan://secret@example.com:443?type=kcp&seed=secret-seed&headerType=srtp&mtu=1350#Node"
+	entry, err := ParseProxyURI(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buildProxyOutbound(ProxyConfig{
+		IP:       entry.IP,
+		Port:     entry.Port,
+		Type:     entry.Type,
+		Password: entry.Password,
+		Extra:    entry.Extra,
+	})
+	if out.Transport == nil || out.Transport.Type != "mkcp" {
+		t.Fatalf("transport: %+v", out.Transport)
+	}
+	if out.Transport.Seed != "secret-seed" || out.Transport.HeaderType != "srtp" || out.Transport.MTU != 1350 {
+		t.Fatalf("mkcp knobs lost: %+v", out.Transport)
 	}
 }
 

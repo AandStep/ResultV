@@ -41,6 +41,23 @@ import (
 )
 
 
+// isTunIPv6Error reports whether a tunnel start failed specifically because the
+// Wintun adapter would not take an IPv6 address ("configure tun interface: set
+// ipv6 address: ..."). This is NOT the same class as a wedged adapter: no amount
+// of device removal fixes it and a retry with the same config reproduces it
+// exactly, so the only remedy is to rebuild the config without IPv6
+// (EngineConfig.TunDisableIPv6).
+//
+// Deliberately narrow — "set ipv4 address" failures of the identical shape must
+// not match, because dropping IPv6 cannot fix them and would only hide the real
+// cause behind a silently degraded tunnel.
+func isTunIPv6Error(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "set ipv6 address")
+}
+
 func ClassifyEngineStartError(mode ProxyMode, err error) (tunnelFailed bool, reason string, errorCode string) {
 	if err == nil {
 		return false, "", ""
@@ -184,6 +201,30 @@ func (w *singBoxLogWriter) WriteMessage(level sblog.Level, message string) {
 			strings.Contains(lowerRaw, "actively refused")) {
 		return
 	}
+	// probe-in is our own loopback inbound (see BuildTunnelModeConfig): the only client
+	// is the kill-switch watchdog, whose http.Client hangs up at its 4s timeout
+	// and closes the body without draining it. sing-box then fails the write
+	// back and reports WSAECONNABORTED / "http2: response body closed" at ERROR.
+	// The probe's verdict is already logged by the watchdog itself
+	// ("[KILL SWITCH] Проба не прошла"), so this half is pure self-inflicted
+	// wreckage — it told the user an error had occurred every time a health
+	// check ran slow.
+	if strings.Contains(lowerRaw, "[probe-in]") {
+		return
+	}
+	// A peer that resets an idle session instead of closing it — Google does
+	// this constantly, and a phone hotspot's NAT adds more. Windows renders
+	// ECONNRESET as "forcibly closed by the remote host". The transfer already
+	// completed; the reset is bookkeeping, and at ERROR level it drowned the
+	// log. Scoped to the copy-loop's own wording so a reset reported by any
+	// other stage still surfaces.
+	if strings.Contains(lowerRaw, "connection download closed") ||
+		strings.Contains(lowerRaw, "connection upload closed") {
+		if strings.Contains(lowerRaw, "forcibly closed by the remote host") ||
+			strings.Contains(lowerRaw, "connection reset by peer") {
+			return
+		}
+	}
 
 	// Only strip ANSI escapes when actually present.
 	clean := message
@@ -240,18 +281,6 @@ type trackedConn struct {
 	isSub  bool
 }
 
-func isVideoDiagnosticsHost(s string) bool {
-	h := strings.ToLower(strings.TrimSpace(s))
-	if h == "" {
-		return false
-	}
-	return strings.Contains(h, "youtube") ||
-		strings.Contains(h, "googlevideo") ||
-		strings.Contains(h, "ytimg") ||
-		strings.Contains(h, "gvt1.com") ||
-		strings.Contains(h, "gvt2.com")
-}
-
 func (c *trackedConn) Read(p []byte) (int, error) {
 	n, err := c.Conn.Read(p)
 	if n > 0 {
@@ -281,10 +310,6 @@ func (c *trackedConn) Close() error {
 		viaStr = ""
 	}
 
-	if isVideoDiagnosticsHost(c.host) || isVideoDiagnosticsHost(c.dest) {
-		msg := fmt.Sprintf("[CONN-DIAG] %s -> %s%s | status: closed | up=%dB down=%dB age=%dms", c.host, c.dest, viaStr, up, down, ageMs)
-		c.log.LogWithSource(msg, logger.TypeInfo, c.host, "", c.host)
-	}
 	if down == 0 && up < 512 && ageMs < 1200 {
 		msg := fmt.Sprintf("[CONN] %s -> %s%s | protocol=%s mode=%s | status: closed_early age=%dms", c.host, c.dest, viaStr, c.protocol, c.mode, ageMs)
 		c.log.LogWithSource(msg, logger.TypeWarning, c.host, "", c.host)
@@ -657,11 +682,15 @@ func (t *trafficTracker) logConnection(metadata adapter.InboundContext, outbound
 		t.rotateLogged()
 	}
 
+	// Direct and blocked traffic is not a connection "through" anything, so it
+	// gets no [CONN] line. It used to get a [ROUTE-DIAG] warning for anything
+	// matching a YouTube-shaped host, left over from a routing investigation —
+	// but that filter keyed on the substring "gvt2.com", which is Chrome's
+	// telemetry and Google Update beacon domain, not video. Every beacon fired
+	// a warning about a routing decision that was correct: in Smart mode
+	// Final="direct" (buildRoute), so anything off the censored block-list is
+	// supposed to go direct.
 	if outTag == "direct" || outTag == "block" {
-		if isVideoDiagnosticsHost(host) {
-			msg := fmt.Sprintf("[ROUTE-DIAG] %s -> %s | outbound=%s", host, dest, outTag)
-			t.log.LogWithSource(msg, logger.TypeWarning, host, "", metadata.Domain)
-		}
 		return host, dest, false
 	}
 

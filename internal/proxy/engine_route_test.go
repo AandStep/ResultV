@@ -1045,11 +1045,27 @@ func TestBuildTunnelModeConfig_StrictRouteSerializesToJSON(t *testing.T) {
 	}
 }
 
-// TestBuildTunnelModeConfig_TunHasIPv6Address verifies that the TUN inbound
-// carries both an IPv4 and an IPv6 address by default. Without an IPv6
-// address, strict_route's WFP filter would silently blackhole all IPv6
-// traffic — leaving the user without IPv6 connectivity while connected.
-func TestBuildTunnelModeConfig_TunHasIPv6Address(t *testing.T) {
+// TestBuildTunnelModeConfig_TunIsIPv4OnlyByDefault pins the CURRENT intent, which
+// is the reverse of what this test asserted before 2026-08-25.
+//
+// It used to require an IPv6 address on the TUN by default, reasoning that
+// without one strict_route's WFP filters would blackhole IPv6 and leave the user
+// without IPv6 while connected. That reasoning was sound in isolation but ignored
+// buildDNS, which pins strategy=ipv4_only: no domain ever resolves to AAAA, so
+// the TUN's IPv6 only ever carried literal-IPv6 traffic. The address bought
+// almost nothing — and owned a whole class of hard failures, because when Windows
+// refuses it sing-tun fails the ENTIRE inbound with "set ipv6 address: ..." and
+// the tunnel does not come up at all.
+//
+// IPv6 is therefore opt-in via EngineConfig.TunIPv6 (see
+// TestBuildTunnelModeConfig_CustomTunIPv6Respected). The leak this opens on hosts
+// that do have routable IPv6 is closed by forcing strict_route there, not by
+// putting the address back — see
+// TestBuildTunnelModeConfig_ForcesStrictRouteWhenIPv6WouldLeak.
+func TestBuildTunnelModeConfig_TunIsIPv4OnlyByDefault(t *testing.T) {
+	// Stubbed true so this asserts the default even on an IPv6-capable host,
+	// rather than passing for the wrong reason on an IPv4-only CI box.
+	stubRoutableIPv6(t, true)
 	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
 		Mode:  ProxyModeTunnel,
 		Proxy: ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
@@ -1057,29 +1073,30 @@ func TestBuildTunnelModeConfig_TunHasIPv6Address(t *testing.T) {
 	if len(cfg.Inbounds) == 0 {
 		t.Fatal("missing tun inbound")
 	}
-	var v4, v6 bool
 	for _, a := range cfg.Inbounds[0].Address {
 		if strings.Contains(a, ":") {
-			v6 = true
-		} else if strings.Contains(a, ".") {
-			v4 = true
+			t.Fatalf("tun must be IPv4-only by default, got %+v", cfg.Inbounds[0].Address)
 		}
 	}
-	if !v4 {
-		t.Fatalf("expected default IPv4 address in tun, got %+v", cfg.Inbounds[0].Address)
+	if len(cfg.Inbounds[0].Address) != 1 {
+		t.Fatalf("expected exactly the IPv4 address, got %+v", cfg.Inbounds[0].Address)
 	}
-	if !v6 {
-		t.Fatalf("expected default IPv6 address in tun (otherwise strict_route blackholes v6), got %+v", cfg.Inbounds[0].Address)
-	}
+	assertCoreAcceptsConfig(t, cfg)
 }
 
 // TestBuildTunnelModeConfig_CustomTunIPv6Respected verifies that
 // EngineConfig.TunIPv6 overrides the default ULA prefix.
 func TestBuildTunnelModeConfig_CustomTunIPv6Respected(t *testing.T) {
+	// EnableIPv6 is required since 2026-08-25: TunIPv6 says WHICH address, never
+	// WHETHER. Whether is the user-facing toggle — see
+	// TestBuildTunnelModeConfig_CustomTunIPv6NeedsTheToggle.
+	stubHostSupportsIPv6(t, true)
+	stubRoutableIPv6(t, false)
 	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
-		Mode:    ProxyModeTunnel,
-		Proxy:   ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
-		TunIPv6: "fd00:dead:beef::1/64",
+		Mode:       ProxyModeTunnel,
+		Proxy:      ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		EnableIPv6: true,
+		TunIPv6:    "fd00:dead:beef::1/64",
 	})
 	if len(cfg.Inbounds) == 0 {
 		t.Fatal("missing tun inbound")
@@ -1592,5 +1609,122 @@ func TestBuildDNS_SmartFinalSerializes(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"final":"local"`) {
 		t.Fatalf("dns final missing from json:\n%s", string(raw))
+	}
+}
+
+// indexOfRule returns the position of the first rule matching pred, or -1.
+func indexOfRule(rules []SBRouteRule, pred func(SBRouteRule) bool) int {
+	for i, r := range rules {
+		if pred(r) {
+			return i
+		}
+	}
+	return -1
+}
+
+func isQUICReject(r SBRouteRule) bool {
+	return r.Action == "reject" &&
+		len(r.Network) == 1 && r.Network[0] == "udp" &&
+		len(r.Port) == 1 && r.Port[0] == 443
+}
+
+// TestBuildRoute_SmartMode_RejectsQUICForBlockedDomains is the regression for
+// the Discord-attachments report (2026-08-17). Measured on a live tunnel: every
+// Smart-list host reachable over TCP/TLS (h2) black-holed over QUIC — 10 s
+// timeouts for cdn.discordapp.com, media.discordapp.net and www.youtube.com —
+// while direct hosts (cloudflare.com, www.google.com) completed the h3
+// handshake in ~70 ms. Repeating the test through the local SOCKS inbound with
+// the target named BY DOMAIN reproduced it, which rules out sniffing: UDP
+// simply does not survive some proxy outbounds. It is node-dependent, so the
+// symptom looks intermittent — attachments load on a hysteria2 node and hang on
+// the next one.
+//
+// Rejecting QUIC for exactly the domains we tunnel makes the behaviour
+// node-independent: Chromium (Discord is Electron) sees the port unreachable
+// immediately, marks h3 broken and falls back to HTTP/2 over TCP, which always
+// works. Without it the request just hangs.
+func TestBuildRoute_SmartMode_RejectsQUICForBlockedDomains(t *testing.T) {
+	cfg := smartDNSConfig()
+	route := buildRoute(cfg)
+
+	reject := indexOfRule(route.Rules, func(r SBRouteRule) bool {
+		return isQUICReject(r) && len(r.RuleSet) == 1 && r.RuleSet[0] == smartRuleSetTag
+	})
+	if reject < 0 {
+		t.Fatalf("expected a udp:443 reject rule keyed on %q, rules=%+v", smartRuleSetTag, route.Rules)
+	}
+
+	proxyRoute := indexOfRule(route.Rules, func(r SBRouteRule) bool {
+		return r.Action == "route" && r.Outbound == "proxy" &&
+			len(r.RuleSet) == 1 && r.RuleSet[0] == smartRuleSetTag
+	})
+	if proxyRoute < 0 {
+		t.Fatal("smart rule-set proxy route rule disappeared")
+	}
+	if reject > proxyRoute {
+		t.Fatalf("reject must precede the route-to-proxy rule, got reject=%d route=%d", reject, proxyRoute)
+	}
+}
+
+// TestBuildRoute_SmartMode_RejectsQUICInlineFallback covers the branch taken
+// when no compiled rule-set is available: the reject must carry the same domain
+// suffixes the inline proxy rule does, or QUIC keeps hanging exactly where the
+// rule-set path would have fixed it.
+func TestBuildRoute_SmartMode_RejectsQUICInlineFallback(t *testing.T) {
+	cfg := smartDNSConfig()
+	cfg.SmartRuleSetPath = ""
+	route := buildRoute(cfg)
+
+	reject := indexOfRule(route.Rules, func(r SBRouteRule) bool {
+		return isQUICReject(r) && len(r.DomainSuffix) > 0
+	})
+	if reject < 0 {
+		t.Fatalf("expected an inline udp:443 reject rule, rules=%+v", route.Rules)
+	}
+	if !reflect.DeepEqual(route.Rules[reject].DomainSuffix, cfg.BlockedDomains) {
+		t.Fatalf("reject suffixes must mirror the proxy rule, got %v want %v",
+			route.Rules[reject].DomainSuffix, cfg.BlockedDomains)
+	}
+}
+
+// TestBuildRoute_ForceVPNApps_RejectQUIC extends the same fallback to force-VPN
+// apps. Sending Discord through the tunnel wholesale is the workaround users
+// reach for, and it must not reintroduce the hang the rule-set path just fixed.
+func TestBuildRoute_ForceVPNApps_RejectQUIC(t *testing.T) {
+	cfg := smartDNSConfig()
+	cfg.AppForceVPN = []string{"Discord.exe"}
+	route := buildRoute(cfg)
+
+	reject := indexOfRule(route.Rules, func(r SBRouteRule) bool {
+		return isQUICReject(r) && len(r.ProcessPathRegex) == 1 &&
+			strings.Contains(r.ProcessPathRegex[0], "Discord")
+	})
+	if reject < 0 {
+		t.Fatalf("expected a udp:443 reject for force-VPN apps, rules=%+v", route.Rules)
+	}
+	proxyRoute := indexOfRule(route.Rules, func(r SBRouteRule) bool {
+		return r.Action == "route" && r.Outbound == "proxy" &&
+			len(r.ProcessPathRegex) == 1 && strings.Contains(r.ProcessPathRegex[0], "Discord")
+	})
+	if proxyRoute < 0 {
+		t.Fatal("force-VPN proxy route rule disappeared")
+	}
+	if reject > proxyRoute {
+		t.Fatalf("reject must precede the force-VPN route rule, got reject=%d route=%d", reject, proxyRoute)
+	}
+}
+
+// TestBuildRoute_GlobalMode_KeepsQUIC pins the blast radius: the reject is a
+// Smart-mode repair, not a blanket QUIC ban. In Global/Whitelist mode Final is
+// "proxy" and there is no rule-set to scope the reject to, so killing UDP/443
+// there would break h3 for everything the user tunnels deliberately.
+func TestBuildRoute_GlobalMode_KeepsQUIC(t *testing.T) {
+	cfg := smartDNSConfig()
+	cfg.RoutingMode = ModeGlobal
+	cfg.AppForceVPN = []string{"Discord.exe"}
+	route := buildRoute(cfg)
+
+	if i := indexOfRule(route.Rules, isQUICReject); i >= 0 {
+		t.Fatalf("global mode must not reject udp:443, rule=%+v", route.Rules[i])
 	}
 }

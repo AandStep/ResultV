@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,6 +14,11 @@ import (
 )
 
 func TestProbeAutoNodes_FastReturnsResultPerNodeInInputOrder(t *testing.T) {
+	stubProbeResolver(t)
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
 	old := pingTCPProbe
 	defer func() { pingTCPProbe = old }()
 
@@ -51,6 +58,11 @@ func TestProbeAutoNodes_FastReturnsResultPerNodeInInputOrder(t *testing.T) {
 }
 
 func TestProbeAutoNodes_SkipsSectionAndAddresslessEntries(t *testing.T) {
+	stubProbeResolver(t)
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
 	old := pingTCPProbe
 	defer func() { pingTCPProbe = old }()
 
@@ -85,6 +97,11 @@ func TestProbeAutoNodes_SkipsSectionAndAddresslessEntries(t *testing.T) {
 // TestRankAutoCandidates_CancelledProbesAreNotRecordedUnderEmptyKey), so
 // something downstream must filter it rather than record or display it.
 func TestProbeAutoNodes_CancelledContextLeavesZeroValueSlotsWithEmptyKey(t *testing.T) {
+	stubProbeResolver(t)
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
 	old := pingTCPProbe
 	defer func() { pingTCPProbe = old }()
 	pingTCPProbe = func(_ string, _ int) (int64, bool, string) {
@@ -107,14 +124,20 @@ func TestProbeAutoNodes_CancelledContextLeavesZeroValueSlotsWithEmptyKey(t *test
 }
 
 func TestProbeAutoNodes_UsesHysteria2ProbeForHysteria2(t *testing.T) {
-	oldTCP, oldHY := pingTCPProbe, pingHysteria2Probe
-	defer func() { pingTCPProbe, pingHysteria2Probe = oldTCP, oldHY }()
+	stubProbeResolver(t)
+	oldTCP, oldHY := pingTCPProbe, pingHysteria2StrictProbe
+	oldBind := autoProbeBindsToLAN
+	defer func() {
+		pingTCPProbe, pingHysteria2StrictProbe = oldTCP, oldHY
+		autoProbeBindsToLAN = oldBind
+	}()
 
+	autoProbeBindsToLAN = func() bool { return false }
 	pingTCPProbe = func(_ string, _ int) (int64, bool, string) {
 		t.Error("для HYSTERIA2 должна использоваться QUIC-проба, а не TCP")
 		return 0, false, ""
 	}
-	pingHysteria2Probe = func(_ string, _ int) (int64, bool, string, string) {
+	pingHysteria2StrictProbe = func(_ string, _ int, _ string) (int64, bool, string, string) {
 		return 25, true, "", "quic_handshake"
 	}
 
@@ -369,6 +392,11 @@ func TestAutoProbeTLSParams_MirrorsEngineTLSCondition(t *testing.T) {
 }
 
 func TestProbeAutoNodes_FullFailsNodeWhenTLSHandshakeFails(t *testing.T) {
+	stubProbeResolver(t)
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
 	oldTCP, oldTLS := pingTCPProbe, autoTLSProbe
 	defer func() { pingTCPProbe, autoTLSProbe = oldTCP, oldTLS }()
 
@@ -397,6 +425,11 @@ func TestProbeAutoNodes_FullFailsNodeWhenTLSHandshakeFails(t *testing.T) {
 }
 
 func TestProbeAutoNodes_FullTakesMedianAndJitterOfThreeSamples(t *testing.T) {
+	stubProbeResolver(t)
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
 	oldTCP, oldTLS := pingTCPProbe, autoTLSProbe
 	defer func() { pingTCPProbe, autoTLSProbe = oldTCP, oldTLS }()
 
@@ -424,18 +457,26 @@ func TestProbeAutoNodes_FullTakesMedianAndJitterOfThreeSamples(t *testing.T) {
 }
 
 // TestProbeAutoNodes_BoundedPoolProbesEveryNodeOnceWithinConcurrencyLimit
-// exercises the >16-node path that autoProbeConcurrency exists for. All other
-// tests in this file use <=3 nodes, where pool == len(targets) and each worker
-// claims exactly one item — the claim loop that hands out work to a pool
-// smaller than the target count never runs a second lap. With 40 nodes and a
-// pool of 16, the loop must run multiple laps, so this is the only test that
-// can catch a broken index handoff (double-probe or skipped node) or a pool
-// that isn't actually bounded.
+// exercises the path above autoProbeMaxConcurrency that the cap exists for.
+// All other tests in this file use node counts at or below the cap, where
+// pool == len(targets) and each worker claims exactly one item — the claim
+// loop that hands out work to a pool smaller than the target count never
+// runs a second lap, and finalPeak <= autoProbeMaxConcurrency holds no matter
+// whether the cap is actually wired in. With 80 nodes and a pool capped at
+// 64, the loop must run multiple laps and finalPeak can only stay <= 64 if
+// the cap is genuinely enforced, so this is the only test that can catch a
+// broken index handoff (double-probe or skipped node) or a pool that isn't
+// actually bounded.
 func TestProbeAutoNodes_BoundedPoolProbesEveryNodeOnceWithinConcurrencyLimit(t *testing.T) {
+	stubProbeResolver(t)
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
 	oldTCP := pingTCPProbe
 	defer func() { pingTCPProbe = oldTCP }()
 
-	const n = 40
+	const n = 80
 	nodes := make([]config.ProxyEntry, n)
 	ipToIndex := make(map[string]int, n)
 	for i := 0; i < n; i++ {
@@ -489,8 +530,8 @@ func TestProbeAutoNodes_BoundedPoolProbesEveryNodeOnceWithinConcurrencyLimit(t *
 	}
 
 	finalPeak := atomic.LoadInt32(&peak)
-	if finalPeak > autoProbeConcurrency {
-		t.Errorf("peak concurrent in-flight probes = %d, want <= autoProbeConcurrency (%d)", finalPeak, autoProbeConcurrency)
+	if finalPeak > autoProbeMaxConcurrency {
+		t.Errorf("peak concurrent in-flight probes = %d, want <= autoProbeMaxConcurrency (%d)", finalPeak, autoProbeMaxConcurrency)
 	}
 	if finalPeak <= 1 {
 		t.Errorf("peak concurrent in-flight probes = %d, want > 1 — a serial implementation would also pass at 1, proving nothing about the pool", finalPeak)
@@ -501,5 +542,504 @@ func TestProbeAutoNodes_BoundedPoolProbesEveryNodeOnceWithinConcurrencyLimit(t *
 		if got[i].Key != want {
 			t.Errorf("result[%d].Key = %q, want %q (results not in input order)", i, got[i].Key, want)
 		}
+	}
+}
+
+// Пробы стоят на таймаутах, а не на CPU: пул обязан покрывать весь список
+// одной волной, пока список меньше потолка. При пуле 16 подписка на 48 узлов
+// раскладывалась на три волны, и каждая оплачивала полный таймаут заново.
+func TestProbeAutoNodes_PoolCoversAllNodesInOneWave(t *testing.T) {
+	stubProbeResolver(t)
+	oldTCP, oldBind := pingTCPProbe, autoProbeBindsToLAN
+	defer func() { pingTCPProbe, autoProbeBindsToLAN = oldTCP, oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
+	const n = 48
+	var inFlight, maxInFlight int32
+	var mu sync.Mutex
+	release := make(chan struct{})
+
+	pingTCPProbe = func(_ string, _ int) (int64, bool, string) {
+		cur := atomic.AddInt32(&inFlight, 1)
+		mu.Lock()
+		if cur > maxInFlight {
+			maxInFlight = cur
+		}
+		mu.Unlock()
+		<-release
+		atomic.AddInt32(&inFlight, -1)
+		return 10, true, ""
+	}
+
+	names := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		names = append(names, fmt.Sprintf("node-%d", i))
+	}
+
+	done := make(chan []AutoProbeResult, 1)
+	go func() { done <- ProbeAutoNodes(context.Background(), mkNodes(names...), DepthFast) }()
+
+	deadline := time.After(5 * time.Second)
+	for {
+		if atomic.LoadInt32(&inFlight) >= n {
+			break
+		}
+		select {
+		case <-deadline:
+			close(release)
+			<-done
+			t.Fatalf("одновременно в полёте было максимум %d проб из %d — пул не покрывает список одной волной",
+				atomic.LoadInt32(&maxInFlight), n)
+		default:
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(release)
+
+	if got := <-done; len(got) != n {
+		t.Fatalf("ожидали %d результатов, получили %d", n, len(got))
+	}
+}
+
+// Потолок существует, чтобы подписка на сотни узлов не открыла сотни сокетов
+// разом.
+func TestProbeAutoNodes_PoolIsCappedAtMaxConcurrency(t *testing.T) {
+	if autoProbeMaxConcurrency != 64 {
+		t.Fatalf("ожидали потолок 64, получили %d", autoProbeMaxConcurrency)
+	}
+}
+
+// stubProbeResolver заставляет свип дозваниваться ровно по тому адресу, что
+// записан в узле. Фикстуры называются «a» / «node-0», а не реальными хостами,
+// так что без этой подмены каждый свип в сюите выжидал бы настоящий
+// DNS-таймаут на каждом из них.
+func stubProbeResolver(t *testing.T) {
+	t.Helper()
+	old := autoProbeResolveHost
+	t.Cleanup(func() { autoProbeResolveHost = old })
+	autoProbeResolveHost = func(_ context.Context, host string) (string, bool) { return host, true }
+}
+
+// Провайдер выдаёт по 4-5 портов на один хост. Резолв на каждую пробу — это
+// десятки лишних лукапов и, что важнее, случайное время резолва внутри
+// измеряемого RTT: порты одного хоста получали несравнимые между собой числа.
+func TestProbeAutoNodes_ResolvesEachHostOnce(t *testing.T) {
+	oldTCP, oldBind, oldResolve := pingTCPProbe, autoProbeBindsToLAN, autoProbeResolveHost
+	defer func() {
+		pingTCPProbe, autoProbeBindsToLAN, autoProbeResolveHost = oldTCP, oldBind, oldResolve
+	}()
+	autoProbeBindsToLAN = func() bool { return false }
+
+	var mu sync.Mutex
+	lookups := map[string]int{}
+	autoProbeResolveHost = func(_ context.Context, host string) (string, bool) {
+		mu.Lock()
+		lookups[host]++
+		mu.Unlock()
+		return "10.0.0.1", true
+	}
+
+	var dialed []string
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) {
+		mu.Lock()
+		dialed = append(dialed, ip)
+		mu.Unlock()
+		return 10, true, ""
+	}
+
+	nodes := []config.ProxyEntry{
+		{ID: "1", IP: "cdn1.example.test", Port: 443, Type: "VLESS"},
+		{ID: "2", IP: "cdn1.example.test", Port: 1443, Type: "VLESS"},
+		{ID: "3", IP: "cdn1.example.test", Port: 7443, Type: "TROJAN"},
+	}
+	ProbeAutoNodes(context.Background(), nodes, DepthFast)
+
+	if lookups["cdn1.example.test"] != 1 {
+		t.Fatalf("ожидали ровно один резолв хоста, получили %d", lookups["cdn1.example.test"])
+	}
+	if len(dialed) != 3 {
+		t.Fatalf("ожидали 3 пробы, получили %d", len(dialed))
+	}
+	for _, ip := range dialed {
+		if ip != "10.0.0.1" {
+			t.Fatalf("проба должна дозваниваться по резолвнутому IP, получили %q", ip)
+		}
+	}
+}
+
+// Имена хостов регистронезависимы (RFC 4343): одна и та же машина, записанная
+// в подписке в разном регистре, обязана резолвиться один раз — иначе
+// собственная гарантия «каждый хост ровно однажды» не выполняется.
+func TestProbeAutoNodes_ResolvesHostCaseInsensitively(t *testing.T) {
+	oldTCP, oldBind, oldResolve := pingTCPProbe, autoProbeBindsToLAN, autoProbeResolveHost
+	defer func() {
+		pingTCPProbe, autoProbeBindsToLAN, autoProbeResolveHost = oldTCP, oldBind, oldResolve
+	}()
+	autoProbeBindsToLAN = func() bool { return false }
+
+	var mu sync.Mutex
+	var lookups int
+	autoProbeResolveHost = func(_ context.Context, host string) (string, bool) {
+		mu.Lock()
+		lookups++
+		mu.Unlock()
+		if host != "cdn1.example.test" {
+			t.Errorf("резолвить нужно приведённое к нижнему регистру имя, получили %q", host)
+		}
+		return "10.0.0.1", true
+	}
+
+	var dialed []string
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) {
+		mu.Lock()
+		dialed = append(dialed, ip)
+		mu.Unlock()
+		return 10, true, ""
+	}
+
+	ProbeAutoNodes(context.Background(), []config.ProxyEntry{
+		{ID: "1", IP: "CDN1.example.test", Port: 443, Type: "VLESS"},
+		{ID: "2", IP: "cdn1.example.test", Port: 1443, Type: "VLESS"},
+		{ID: "3", IP: " Cdn1.Example.Test ", Port: 7443, Type: "VLESS"},
+	}, DepthFast)
+
+	if lookups != 1 {
+		t.Fatalf("ожидали ровно один резолв на три написания одного хоста, получили %d", lookups)
+	}
+	if len(dialed) != 3 {
+		t.Fatalf("ожидали 3 пробы, получили %d", len(dialed))
+	}
+	for _, ip := range dialed {
+		if ip != "10.0.0.1" {
+			t.Fatalf("все три узла должны дозваниваться по резолвнутому IP, получили %q", ip)
+		}
+	}
+}
+
+// Фан-аут резолвера ограничен тем же потолком, что и пул проб, и по той же
+// причине: на Windows каждый getaddrinfo блокирует поток ОС, так что подписка
+// на сотни разных хостов иначе запустила бы сотни лукапов разом.
+func TestResolveProbeHosts_FanOutIsCappedAtMaxConcurrency(t *testing.T) {
+	oldResolve := autoProbeResolveHost
+	defer func() { autoProbeResolveHost = oldResolve }()
+
+	const n = autoProbeMaxConcurrency * 2
+	var inFlight, maxInFlight int32
+	release := make(chan struct{})
+
+	autoProbeResolveHost = func(_ context.Context, _ string) (string, bool) {
+		cur := atomic.AddInt32(&inFlight, 1)
+		for {
+			prev := atomic.LoadInt32(&maxInFlight)
+			if cur <= prev || atomic.CompareAndSwapInt32(&maxInFlight, prev, cur) {
+				break
+			}
+		}
+		<-release
+		atomic.AddInt32(&inFlight, -1)
+		return "10.0.0.1", true
+	}
+
+	targets := make([]config.ProxyEntry, 0, n)
+	for i := 0; i < n; i++ {
+		targets = append(targets, config.ProxyEntry{
+			ID: fmt.Sprint(i), IP: fmt.Sprintf("cdn%d.example.test", i), Port: 443, Type: "VLESS",
+		})
+	}
+
+	done := make(chan map[string]string, 1)
+	go func() { done <- resolveProbeHosts(context.Background(), targets) }()
+
+	// Пул не может быть больше потолка, значит больше потолка лукапов
+	// одновременно висеть не должно — ждём, пока он заполнится, и отпускаем.
+	deadline := time.After(5 * time.Second)
+	for atomic.LoadInt32(&inFlight) < autoProbeMaxConcurrency {
+		select {
+		case <-deadline:
+			t.Fatalf("пул не заполнился: в полёте %d", atomic.LoadInt32(&inFlight))
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if got := atomic.LoadInt32(&maxInFlight); got > autoProbeMaxConcurrency {
+		t.Fatalf("одновременных лукапов %d, потолок %d", got, autoProbeMaxConcurrency)
+	}
+	close(release)
+
+	out := <-done
+	if got := atomic.LoadInt32(&maxInFlight); got > autoProbeMaxConcurrency {
+		t.Fatalf("одновременных лукапов %d, потолок %d", got, autoProbeMaxConcurrency)
+	}
+	if len(out) != n {
+		t.Fatalf("ожидали %d резолвнутых хостов, получили %d", n, len(out))
+	}
+}
+
+// pickIPv4 — чистая часть правила отбора: обвязка проб ниже умеет только v4,
+// поэтому AAAA-первый ответ обязан быть пропущен, а ответ без A-записи —
+// честно провалиться, а не откатиться на v6-литерал.
+func TestPickIPv4_SkipsAAAAAndFailsWithoutARecord(t *testing.T) {
+	if ip, ok := pickIPv4([]net.IPAddr{
+		{IP: net.ParseIP("2a01:4f8::1")},
+		{IP: net.ParseIP("203.0.113.9")},
+	}); !ok || ip != "203.0.113.9" {
+		t.Fatalf("ожидали 203.0.113.9, получили ip=%q ok=%v", ip, ok)
+	}
+	if ip, ok := pickIPv4([]net.IPAddr{{IP: net.ParseIP("2a01:4f8::1")}}); ok {
+		t.Fatalf("ожидали отказ без A-записи, получили ip=%q", ip)
+	}
+	if ip, ok := pickIPv4(nil); ok {
+		t.Fatalf("ожидали отказ на пустом ответе, получили ip=%q", ip)
+	}
+}
+
+// Строка лога «опрошено N узлов» считает именно то, что свип дозвонит:
+// SECTION-заголовки и записи без адреса он отбрасывает.
+func TestCountProbeableNodes_CountsOnlyDialableEntries(t *testing.T) {
+	got := CountProbeableNodes([]config.ProxyEntry{
+		{ID: "1", IP: "1.1.1.1", Port: 443, Type: "VLESS"},
+		{ID: "2", IP: "", Port: 0, Type: "SECTION", Name: "🚀 когда душат"},
+		{ID: "3", IP: "", Port: 443, Type: "VLESS"},
+		{ID: "4", IP: "2.2.2.2", Port: 0, Type: "VLESS"},
+		{ID: "5", IP: "3.3.3.3", Port: 8443, Type: "TROJAN"},
+	})
+	if got != 2 {
+		t.Fatalf("ожидали 2 пробуемых узла, получили %d", got)
+	}
+}
+
+// LAN-bind ветка сквозь весь свип: до сих пор все тесты фиксировали
+// autoProbeBindsToLAN = false, так что связка «есть физический адаптер →
+// берём LAN-bound вариант пробы» не проверялась целиком ни разу.
+func TestProbeAutoNodes_UsesLANBoundProbesWhenAdapterAvailable(t *testing.T) {
+	stubProbeResolver(t)
+	oldTCP, oldLAN, oldBind := pingTCPProbe, pingLANProbe, autoProbeBindsToLAN
+	defer func() {
+		pingTCPProbe, pingLANProbe, autoProbeBindsToLAN = oldTCP, oldLAN, oldBind
+	}()
+	autoProbeBindsToLAN = func() bool { return true }
+
+	pingTCPProbe = func(_ string, _ int) (int64, bool, string) {
+		t.Error("при доступном адаптере проба обязана идти LAN-bound вариантом")
+		return 0, false, ""
+	}
+	var mu sync.Mutex
+	var lanCalls []string
+	pingLANProbe = func(ip string, _ int) (int64, bool, string) {
+		mu.Lock()
+		lanCalls = append(lanCalls, ip)
+		mu.Unlock()
+		return 25, true, ""
+	}
+
+	got := ProbeAutoNodes(context.Background(), mkNodes("1.1.1.1", "2.2.2.2"), DepthFast)
+	if len(got) != 2 || !got[0].OK || !got[1].OK {
+		t.Fatalf("ожидали два успешных результата, получили %+v", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(lanCalls) != 2 {
+		t.Fatalf("ожидали 2 LAN-bound пробы, получили %d", len(lanCalls))
+	}
+}
+
+// Loopback — единственное исключение: Windows отклоняет дозвон к 127.0.0.1 с
+// не-loopback источника, так что бинд обязан отключаться, даже когда адаптер
+// доступен.
+func TestProbeAutoNodes_SkipsLANBindForLoopbackTarget(t *testing.T) {
+	stubProbeResolver(t)
+	oldTCP, oldLAN, oldBind := pingTCPProbe, pingLANProbe, autoProbeBindsToLAN
+	defer func() {
+		pingTCPProbe, pingLANProbe, autoProbeBindsToLAN = oldTCP, oldLAN, oldBind
+	}()
+	autoProbeBindsToLAN = func() bool { return true }
+
+	pingLANProbe = func(_ string, _ int) (int64, bool, string) {
+		t.Error("для loopback-цели LAN-bind обязан быть пропущен")
+		return 0, false, ""
+	}
+	called := ""
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) { called = ip; return 5, true, "" }
+
+	ProbeAutoNodes(context.Background(), mkNodes("127.0.0.1"), DepthFast)
+	if called != "127.0.0.1" {
+		t.Fatalf("ожидали небинденную пробу к 127.0.0.1, получили %q", called)
+	}
+}
+
+// Литеральный IP резолвить нечего.
+func TestProbeAutoNodes_DoesNotResolveLiteralIPs(t *testing.T) {
+	oldTCP, oldBind, oldResolve := pingTCPProbe, autoProbeBindsToLAN, autoProbeResolveHost
+	defer func() {
+		pingTCPProbe, autoProbeBindsToLAN, autoProbeResolveHost = oldTCP, oldBind, oldResolve
+	}()
+	autoProbeBindsToLAN = func() bool { return false }
+
+	autoProbeResolveHost = func(_ context.Context, host string) (string, bool) {
+		t.Errorf("литеральный IP %q резолвить не нужно", host)
+		return "", false
+	}
+	got := ""
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) { got = ip; return 10, true, "" }
+
+	ProbeAutoNodes(context.Background(),
+		[]config.ProxyEntry{{ID: "1", IP: "203.0.113.7", Port: 443, Type: "VLESS"}}, DepthFast)
+
+	if got != "203.0.113.7" {
+		t.Fatalf("ожидали дозвон по 203.0.113.7, получили %q", got)
+	}
+}
+
+// Не резолвится — пробуем по исходному имени, пусть с ним разбирается диалер.
+// Терять узел из-за одного неудачного лукапа нельзя.
+func TestProbeAutoNodes_FallsBackToHostnameWhenResolveFails(t *testing.T) {
+	oldTCP, oldBind, oldResolve := pingTCPProbe, autoProbeBindsToLAN, autoProbeResolveHost
+	defer func() {
+		pingTCPProbe, autoProbeBindsToLAN, autoProbeResolveHost = oldTCP, oldBind, oldResolve
+	}()
+	autoProbeBindsToLAN = func() bool { return false }
+
+	autoProbeResolveHost = func(_ context.Context, _ string) (string, bool) { return "", false }
+	got := ""
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) { got = ip; return 10, true, "" }
+
+	ProbeAutoNodes(context.Background(),
+		[]config.ProxyEntry{{ID: "1", IP: "cdn9.example.test", Port: 443, Type: "VLESS"}}, DepthFast)
+
+	if got != "cdn9.example.test" {
+		t.Fatalf("ожидали дозвон по исходному имени, получили %q", got)
+	}
+}
+
+// Резолв не имеет права влиять на ключ узла: он хеширует e.IP, и подмена
+// исходного имени на IP расколола бы историю узла в node_stats.json надвое.
+func TestProbeAutoNodes_ResolveDoesNotChangeNodeKey(t *testing.T) {
+	oldTCP, oldBind, oldResolve := pingTCPProbe, autoProbeBindsToLAN, autoProbeResolveHost
+	defer func() {
+		pingTCPProbe, autoProbeBindsToLAN, autoProbeResolveHost = oldTCP, oldBind, oldResolve
+	}()
+	autoProbeBindsToLAN = func() bool { return false }
+	autoProbeResolveHost = func(_ context.Context, _ string) (string, bool) { return "10.0.0.1", true }
+	pingTCPProbe = func(_ string, _ int) (int64, bool, string) { return 10, true, "" }
+
+	node := config.ProxyEntry{ID: "1", IP: "cdn1.example.test", Port: 443, Type: "VLESS"}
+	got := ProbeAutoNodes(context.Background(), []config.ProxyEntry{node}, DepthFast)
+
+	if len(got) != 1 || got[0].Key != AutoNodeKey(node) {
+		t.Fatalf("ключ должен считаться по исходной записи, получили %+v", got)
+	}
+}
+
+// SNI берётся из исходного имени, а не из резолвнутого IP — иначе TLS-фаза
+// перестанет видеть блокировку по SNI, ради которой она и существует.
+func TestProbeOne_TLSPhaseKeepsOriginalSNIAfterResolve(t *testing.T) {
+	oldTCP, oldTLS, oldBind := pingTCPProbe, autoTLSProbe, autoProbeBindsToLAN
+	defer func() { pingTCPProbe, autoTLSProbe, autoProbeBindsToLAN = oldTCP, oldTLS, oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+	pingTCPProbe = func(_ string, _ int) (int64, bool, string) { return 10, true, "" }
+
+	var gotHost, gotSNI string
+	autoTLSProbe = func(host string, _ int, sni string, _ []string) (int64, bool, string) {
+		gotHost, gotSNI = host, sni
+		return 30, true, ""
+	}
+
+	node := config.ProxyEntry{ID: "1", IP: "cdn1.example.test", Port: 443, Type: "TROJAN"}
+	probeOne(node, DepthFull, "10.0.0.1")
+
+	if gotHost != "10.0.0.1" {
+		t.Fatalf("TLS-проба должна дозваниваться по резолвнутому IP, получили %q", gotHost)
+	}
+	if gotSNI != "cdn1.example.test" {
+		t.Fatalf("SNI должен остаться исходным именем, получили %q", gotSNI)
+	}
+}
+
+// Резолвер ОС может вернуть AAAA раньше A (на Windows getaddrinfo сортирует
+// по RFC 6724, и на машине с рабочим IPv6 v6-запись часто оказывается
+// первой). Вся проб-обвязка ниже — TCP-адрес, LAN-bind, форс ip4 у WireGuard
+// — рассчитана только на v4, так что резолв обязан явно выбрать v4-литерал,
+// а не слепо брать первый ответ.
+func TestAutoProbeResolveHost_PrefersIPv4WhenAAAAReturnedFirst(t *testing.T) {
+	oldLookup := autoProbeLookupIPAddr
+	defer func() { autoProbeLookupIPAddr = oldLookup }()
+	autoProbeLookupIPAddr = func(_ context.Context, _ string) ([]net.IPAddr, error) {
+		return []net.IPAddr{
+			{IP: net.ParseIP("2a01:4f8::1")},
+			{IP: net.ParseIP("203.0.113.9")},
+		}, nil
+	}
+
+	ip, ok := autoProbeResolveHost(context.Background(), "cdn1.example.test")
+	if !ok || ip != "203.0.113.9" {
+		t.Fatalf("ожидали IPv4-литерал 203.0.113.9 несмотря на AAAA первым в ответе, получили ip=%q ok=%v", ip, ok)
+	}
+}
+
+// Если A-записи вообще нет, резолв обязан провалиться, а не откатиться на
+// v6-литерал: проб-обвязка ниже не умеет его дозвонить, и откат на v6 лишь
+// гарантировал бы отказ там, где дозвон по исходному имени мог бы сработать.
+func TestAutoProbeResolveHost_NoARecordReportsFailure(t *testing.T) {
+	oldLookup := autoProbeLookupIPAddr
+	defer func() { autoProbeLookupIPAddr = oldLookup }()
+	autoProbeLookupIPAddr = func(_ context.Context, _ string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("2a01:4f8::1")}}, nil
+	}
+
+	if ip, ok := autoProbeResolveHost(context.Background(), "v6only.example.test"); ok {
+		t.Fatalf("ожидали отказ резолва при отсутствии A-записи, получили ip=%q ok=true", ip)
+	}
+}
+
+// Сквозной сценарий: домен отвечает только AAAA (или временно без A), резолв
+// внутри свипа честно проваливается — и свип обязан пробовать дозвон по
+// исходному имени вместо того, чтобы молча терять узел.
+func TestProbeAutoNodes_NoIPv4AnswerFallsBackToHostnameDial(t *testing.T) {
+	oldTCP, oldBind, oldLookup := pingTCPProbe, autoProbeBindsToLAN, autoProbeLookupIPAddr
+	defer func() {
+		pingTCPProbe, autoProbeBindsToLAN, autoProbeLookupIPAddr = oldTCP, oldBind, oldLookup
+	}()
+	autoProbeBindsToLAN = func() bool { return false }
+	autoProbeLookupIPAddr = func(_ context.Context, _ string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("2a01:4f8::1")}}, nil
+	}
+
+	got := ""
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) { got = ip; return 10, true, "" }
+
+	ProbeAutoNodes(context.Background(),
+		[]config.ProxyEntry{{ID: "1", IP: "v6only.example.test", Port: 443, Type: "VLESS"}}, DepthFast)
+
+	if got != "v6only.example.test" {
+		t.Fatalf("ожидали дозвон по исходному имени при отсутствии A-записи, получили %q", got)
+	}
+}
+
+// autoProbeHysteria2SNI обязан подставлять SNI из Extra, если он там задан —
+// иначе проба всегда бьёт по голому адресу узла вместо настоящего фронта,
+// которым домен на самом деле прикрыт.
+func TestAutoProbeHysteria2SNI_PrefersExplicitSNIFromExtra(t *testing.T) {
+	e := config.ProxyEntry{
+		IP:    "1.2.3.4",
+		Type:  "HYSTERIA2",
+		Extra: json.RawMessage(`{"sni":"front.example.com"}`),
+	}
+	if got := autoProbeHysteria2SNI(e); got != "front.example.com" {
+		t.Fatalf("ожидали SNI из extra, получили %q", got)
+	}
+}
+
+// Падение по цепочке: sni -> server_name (snake_case — так называет это поле
+// именно HYSTERIA2-ветка buildProxyOutboundRaw) -> адрес узла как крайний
+// случай.
+func TestAutoProbeHysteria2SNI_FallsBackToServerNameThenAddress(t *testing.T) {
+	withServerName := config.ProxyEntry{IP: "1.2.3.4", Extra: json.RawMessage(`{"server_name":"alt.example.com"}`)}
+	if got := autoProbeHysteria2SNI(withServerName); got != "alt.example.com" {
+		t.Fatalf("ожидали server_name как SNI, получили %q", got)
+	}
+
+	bare := config.ProxyEntry{IP: "hy2.example.test"}
+	if got := autoProbeHysteria2SNI(bare); got != "hy2.example.test" {
+		t.Fatalf("ожидали адрес узла как SNI по умолчанию, получили %q", got)
 	}
 }

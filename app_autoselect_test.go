@@ -10,104 +10,110 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"resultproxy-wails/internal/config"
 	"resultproxy-wails/internal/proxy"
 )
 
-func TestFormatAutoMemberTable_ListsEveryMemberWithRTTAndReason(t *testing.T) {
-	rows := []autoMemberProbe{
-		{Name: "DE #1", Addr: "1.2.3.4:443", Type: "VLESS", RTTms: 42, OK: true},
-		{Name: "RU #2", Addr: "5.6.7.8:443", Type: "TROJAN", RTTms: 1, OK: true},
-		{Name: "NL #3", Addr: "9.9.9.9:443", Type: "VLESS", OK: false, Reason: "timeout"},
+// TestProxyLogLabel_NeverLeaksSubscriptionAddress is the regression test for
+// the leak the AUTO logs shipped with: the per-member probe table and the
+// "первый — host:port" line printed provider backend addresses
+// (cdn34.example.digital:8443) straight into a log the user can export and
+// share. internal/proxy has guarded this all along — every address there sits
+// behind `SubscriptionURL == ""`, and newSingBoxLogWriter redacts the server
+// out of engine output — but app.go had no such guard.
+func TestProxyLogLabel_NeverLeaksSubscriptionAddress(t *testing.T) {
+	cases := []struct {
+		name  string
+		entry config.ProxyEntry
+		want  []string
+		deny  []string
+	}{
+		{
+			name: "подписка: имя и страна вместо адреса",
+			entry: config.ProxyEntry{
+				Name: "Netherlands #12", Country: "NL",
+				IP: "cdn34.example.digital", Port: 8443,
+				SubscriptionURL: "https://provider.example/sub",
+			},
+			want: []string{"Netherlands #12", "NL"},
+			deny: []string{"cdn34.example.digital", "8443"},
+		},
+		{
+			name: "подписка без страны: только имя",
+			entry: config.ProxyEntry{
+				Name: "Node 7", IP: "1.2.3.4", Port: 443,
+				SubscriptionURL: "https://provider.example/sub",
+			},
+			want: []string{"Node 7"},
+			deny: []string{"1.2.3.4", "443"},
+		},
+		{
+			name: "подписка без имени: страна, но не адрес",
+			entry: config.ProxyEntry{
+				Country: "DE", IP: "5.6.7.8", Port: 443,
+				SubscriptionURL: "https://provider.example/sub",
+			},
+			want: []string{"DE"},
+			deny: []string{"5.6.7.8"},
+		},
+		{
+			name: "подписка без имени и страны: адрес всё равно скрыт",
+			entry: config.ProxyEntry{
+				IP: "9.9.9.9", Port: 443,
+				SubscriptionURL: "https://provider.example/sub",
+			},
+			deny: []string{"9.9.9.9"},
+		},
+		{
+			// Manual servers keep full detail — same policy as manager.Connect
+			// and newSingBoxLogWriter: the user owns that address, already sees
+			// it in the UI, and here it is the diagnostic payload.
+			name:  "ручной сервер: адрес сохраняется",
+			entry: config.ProxyEntry{Name: "Personal", IP: "4.4.4.4", Port: 8443},
+			want:  []string{"Personal", "4.4.4.4", "8443"},
+		},
 	}
 
-	got := formatAutoMemberTable("impVPN Auto", rows)
-
-	if len(got) != 4 {
-		t.Fatalf("ожидали заголовок + 3 строки, получили %d: %v", len(got), got)
-	}
-	if !strings.Contains(got[0], "impVPN Auto") || !strings.Contains(got[0], "3") {
-		t.Errorf("заголовок должен называть группу и число членов, получили %q", got[0])
-	}
-	if !strings.Contains(got[2], "RU #2") || !strings.Contains(got[2], "1ms") {
-		t.Errorf("строка члена должна содержать имя и RTT, получили %q", got[2])
-	}
-	if !strings.Contains(got[3], "timeout") {
-		t.Errorf("недоступный член должен показывать reason, получили %q", got[3])
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := proxyLogLabel(tc.entry)
+			if strings.TrimSpace(got) == "" {
+				t.Fatal("метка не должна быть пустой — иначе строка лога теряет смысл")
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("ожидали %q в метке, получили %q", w, got)
+				}
+			}
+			for _, d := range tc.deny {
+				if strings.Contains(got, d) {
+					t.Errorf("адрес подписки утёк в лог: %q содержит %q", got, d)
+				}
+			}
+		})
 	}
 }
 
-func TestFormatAutoMemberTable_EmptyMembersStillReportsGroup(t *testing.T) {
-	got := formatAutoMemberTable("Auto", nil)
-	if len(got) != 1 {
-		t.Fatalf("ожидали только заголовок, получили %d: %v", len(got), got)
-	}
-	if !strings.Contains(got[0], "0") {
-		t.Errorf("заголовок должен сообщать 0 членов, получили %q", got[0])
-	}
-}
-
-// TestFormatAutoMemberTable_MarksTLSStageFailureDistinctly is the regression
-// test for finding #4: a member that dies specifically at the TLS handshake
-// (Stage=="tls", the SNI/DPI-blocking signature — see
-// autoProbeTLSParams/probeOne) must read differently from a plain connect
-// failure, so the pending manual verification step this table exists for can
-// tell "never even connected" apart from "connected fine, TLS killed it".
-func TestFormatAutoMemberTable_MarksTLSStageFailureDistinctly(t *testing.T) {
-	rows := []autoMemberProbe{
-		{Name: "A", Addr: "1.1.1.1:443", Type: "VLESS", OK: false, Stage: "tls", Reason: "timeout"},
-		{Name: "B", Addr: "2.2.2.2:443", Type: "VLESS", OK: false, Stage: "tcp", Reason: "timeout"},
+func TestFormatAutoPickLine_NamesGroupAndPickWithoutAddress(t *testing.T) {
+	pick := config.ProxyEntry{
+		Name: "Netherlands #12", Country: "NL",
+		IP: "cdn34.example.digital", Port: 8443,
+		SubscriptionURL: "https://provider.example/sub",
 	}
 
-	got := formatAutoMemberTable("Auto", rows)
-	if len(got) != 3 {
-		t.Fatalf("ожидали заголовок + 2 строки, получили %d: %v", len(got), got)
-	}
-	if !strings.Contains(got[1], "TLS") {
-		t.Errorf("отказ на TLS-этапе должен быть явно помечен, получили %q", got[1])
-	}
-	if strings.Contains(got[2], "TLS") {
-		t.Errorf("обычный отказ на TCP-этапе не должен упоминать TLS, получили %q", got[2])
-	}
-}
+	got := formatAutoPickLine("🚀 impVPN Auto", 5, pick)
 
-// TestBuildAutoMemberRows_Phase2VerdictOverridesPhase1 is the regression test
-// for finding #4: ResolveAutoCandidates used to feed the diagnostic table
-// from phase 1 (DepthFast, TCP-only) alone. A member that passes phase 1 and
-// then dies at phase 2's TLS handshake (DepthFull, shortlist only — the
-// exact fallout of finding #1's bug) showed up as a healthy "NNms" row while
-// being silently absent from RankAutoCandidates' output. buildAutoMemberRows
-// must show phase 2's verdict — the FINAL one — for any member phase 2
-// actually re-probed, and leave phase 1's verdict alone for members phase 2
-// never touched.
-func TestBuildAutoMemberRows_Phase2VerdictOverridesPhase1(t *testing.T) {
-	members := []config.ProxyEntry{
-		{ID: "a", Name: "A", IP: "1.1.1.1", Port: 443, Type: "VLESS"},
-		{ID: "b", Name: "B", IP: "2.2.2.2", Port: 443, Type: "VLESS"},
+	for _, want := range []string{"impVPN Auto", "5", "Netherlands #12", "NL"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("ожидали %q в строке, получили %q", want, got)
+		}
 	}
-	keyA, keyB := proxy.AutoNodeKey(members[0]), proxy.AutoNodeKey(members[1])
-
-	phase1 := []proxy.AutoProbeResult{
-		{Key: keyA, OK: true, RTTms: 30, Stage: "tcp"},
-		{Key: keyB, OK: true, RTTms: 40, Stage: "tcp"},
-	}
-	// A passes TCP in phase 1 but dies on TLS in phase 2. B is never
-	// re-probed (e.g. it fell outside the shortlist).
-	phase2 := []proxy.AutoProbeResult{
-		{Key: keyA, OK: false, Stage: "tls", Reason: "timeout"},
-	}
-
-	rows := buildAutoMemberRows(members, phase1, phase2)
-
-	if len(rows) != 2 {
-		t.Fatalf("ожидали 2 строки, получили %d: %+v", len(rows), rows)
-	}
-	if rows[0].OK || rows[0].Stage != "tls" || rows[0].Reason != "timeout" {
-		t.Errorf("строка A должна отражать отказ фазы 2 на TLS, а не успех фазы 1: %+v", rows[0])
-	}
-	if !rows[1].OK || rows[1].RTTms != 40 {
-		t.Errorf("строка B (фаза 2 её не трогала) должна сохранить вердикт фазы 1: %+v", rows[1])
+	for _, deny := range []string{"cdn34.example.digital", "8443"} {
+		if strings.Contains(got, deny) {
+			t.Errorf("адрес подписки утёк в лог: %q содержит %q", got, deny)
+		}
 	}
 }
 
@@ -417,5 +423,117 @@ func TestGetAutoGroupStatus_ReportsConnectedMemberScopedToItsGroup(t *testing.T)
 	got = a.GetAutoGroupStatus("head-1")
 	if !got.Known || got.RTTms != 15 {
 		t.Fatalf("RTT из пробы без коннекта должен быть виден, получили %+v", got)
+	}
+}
+
+// sweepTimingSentinelResults builds Phase1/Phase2 rows carrying host-shaped
+// and IP-shaped sentinel strings in Key and Reason — AutoProbeResult.Reason is
+// free-form dial-error text and can legitimately contain raw host:port (the
+// per-member probe table this project deleted leaked exactly that shape of
+// data). A fixture that leaves these slices nil, as an earlier version of
+// this test did, would stay green through a future edit that ranges over
+// diag.Phase1/Phase2 and folds Reason into the line, because it would range
+// zero times. Populating them makes that regression actually reachable by
+// this test.
+func sweepTimingSentinelResults() []proxy.AutoProbeResult {
+	return []proxy.AutoProbeResult{
+		{
+			Key:    "probe-host-sentinel.example.invalid:65001",
+			RTTms:  30,
+			OK:     false,
+			Stage:  "tcp",
+			Reason: "dial tcp probe-host-sentinel.example.invalid:65001: i/o timeout",
+		},
+		{
+			Key:    "198.51.100.77:65002",
+			RTTms:  20,
+			OK:     false,
+			Stage:  "tls",
+			Reason: "dial tcp 198.51.100.77:65002: connection refused",
+		},
+	}
+}
+
+// Строка тайминга свипа не имеет права раскрыть адреса подписки: она уходит в
+// экспортируемый пользователем лог. Denylist ниже — это подстраховка второго
+// уровня; главную гарантию даёт то, что diag ниже несёт непустые Phase1/Phase2
+// с адресными сентинелами (см. sweepTimingSentinelResults) — иначе тест
+// остался бы зелёным сквозь регрессию, где formatAutoSweepTimingLine начинает
+// перебирать эти срезы и подмешивать Reason/Key в строку.
+func TestFormatAutoSweepTimingLine_ContainsNoAddresses(t *testing.T) {
+	diag := proxy.AutoProbeDiagnostics{
+		Phase1Dur: 1200 * time.Millisecond,
+		Phase2Dur: 300 * time.Millisecond,
+		Phase1:    sweepTimingSentinelResults(),
+		Phase2:    sweepTimingSentinelResults(),
+	}
+	line := formatAutoSweepTimingLine("🚀 impVPN Auto", 48, diag)
+
+	forbidden := []string{
+		"cdn", ".top", ".digital", ".today", ":8802", "45.145",
+		"probe-host-sentinel.example.invalid", "198.51.100.77", "65001", "65002",
+		"i/o timeout", "connection refused",
+	}
+	for _, f := range forbidden {
+		if strings.Contains(line, f) {
+			t.Fatalf("строка тайминга содержит %q: %s", f, line)
+		}
+	}
+	if !strings.Contains(line, "🚀 impVPN Auto") || !strings.Contains(line, "48") ||
+		!strings.Contains(line, "1200") || !strings.Contains(line, "300") {
+		t.Fatalf("строка тайминга не содержит имя группы, счётчик или длительности: %s", line)
+	}
+}
+
+func TestFormatAutoSweepTimingLine_MarksCachedResult(t *testing.T) {
+	diag := proxy.AutoProbeDiagnostics{
+		FromCache: true,
+		Phase1:    sweepTimingSentinelResults(),
+		Phase2:    sweepTimingSentinelResults(),
+	}
+	line := formatAutoSweepTimingLine("🚀 impVPN Auto", 48, diag)
+
+	forbidden := []string{
+		"cdn", ".top", ".digital", ".today", ":8802", "45.145",
+		"probe-host-sentinel.example.invalid", "198.51.100.77", "65001", "65002",
+		"i/o timeout", "connection refused",
+	}
+	for _, f := range forbidden {
+		if strings.Contains(line, f) {
+			t.Fatalf("строка кэша содержит %q: %s", f, line)
+		}
+	}
+	if !strings.Contains(line, "кэш") {
+		t.Fatalf("результат из кэша должен быть помечен: %s", line)
+	}
+	if !strings.Contains(line, "🚀 impVPN Auto") || !strings.Contains(line, "48") {
+		t.Fatalf("строка кэша не содержит имя группы или счётчик: %s", line)
+	}
+}
+
+// «фаза 2 0ms» читается двояко: и «отработала мгновенно», и «не запускалась»
+// (фаза 1 никого не нашла). Пустой Phase2 различает эти случаи — строка обязана
+// сказать, какой именно, а не оставлять читателя гадать по правдоподобному, но
+// невозможному нулю.
+func TestFormatAutoSweepTimingLine_SaysWhenPhase2NeverRan(t *testing.T) {
+	diag := proxy.AutoProbeDiagnostics{
+		Phase1Dur: 1200 * time.Millisecond,
+		Phase1:    sweepTimingSentinelResults(),
+	}
+	line := formatAutoSweepTimingLine("🚀 impVPN Auto", 48, diag)
+
+	if strings.Contains(line, "фаза 2 0ms") {
+		t.Fatalf("незапущенная фаза 2 не должна показываться как 0ms: %s", line)
+	}
+	if !strings.Contains(line, "не запускалась") {
+		t.Fatalf("ожидали явную пометку о незапущенной фазе 2: %s", line)
+	}
+
+	// Обратная сторона: измеренная фаза 2 обязана показывать миллисекунды.
+	diag.Phase2 = sweepTimingSentinelResults()
+	diag.Phase2Dur = 300 * time.Millisecond
+	line = formatAutoSweepTimingLine("🚀 impVPN Auto", 48, diag)
+	if !strings.Contains(line, "фаза 2 300ms") {
+		t.Fatalf("измеренная фаза 2 должна показывать длительность: %s", line)
 	}
 }

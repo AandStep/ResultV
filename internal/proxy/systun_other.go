@@ -25,4 +25,4 @@ func hasLeftoverTun() bool { return false }
 
 func clearLeftoverTun() error { return nil }
 
-func removeStaleTunAdapter() error { return nil }
+func removeStaleTunAdapter() ([]string, error) { return nil, nil }

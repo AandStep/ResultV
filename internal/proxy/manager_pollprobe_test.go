@@ -17,6 +17,9 @@ package proxy
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -74,5 +77,126 @@ func TestPollProbe_Cancellation(t *testing.T) {
 	})
 	if ok || !cancelled {
 		t.Fatalf("expected cancelled, got ok=%v cancelled=%v", ok, cancelled)
+	}
+}
+
+// В режиме туннеля контрольная проба «жив ли сервер» обязана уходить с
+// физического адаптера: иначе она меряет локальный стек sing-tun и объявляет
+// живым сервер, до которого нет связи, — ровно та ошибка, из-за которой
+// неудачный коннект рапортовался как «proxy outbound misconfigured».
+func TestRunPostStartProbe_Hysteria2TunnelUsesLANBindLivenessProbe(t *testing.T) {
+	oldHTTP := probeHTTPThroughProxyProbe
+	oldHY, oldHYLAN := pingHysteria2Probe, pingHysteria2LANProbe
+	defer func() {
+		probeHTTPThroughProxyProbe = oldHTTP
+		pingHysteria2Probe, pingHysteria2LANProbe = oldHY, oldHYLAN
+	}()
+
+	probeHTTPThroughProxyProbe = func(string) (bool, string) { return false, "timeout" }
+	pingHysteria2Probe = func(_ string, _ int) (int64, bool, string, string) {
+		t.Error("в режиме туннеля должна использоваться LAN-bind проба")
+		return 0, true, "", ""
+	}
+	lanCalled := false
+	pingHysteria2LANProbe = func(_ string, _ int) (int64, bool, string, string) {
+		lanCalled = true
+		return 0, false, "timeout", "quic_handshake_lan_bind"
+	}
+
+	code, reason := runPostStartProbe(context.Background(), "hysteria2", "1.2.3.4", 443, 1080, ProxyModeTunnel)
+
+	if !lanCalled {
+		t.Fatal("LAN-bind проба не вызвана")
+	}
+	if code != "post_start_probe_failed" {
+		t.Fatalf("ожидали post_start_probe_failed, получили %q", code)
+	}
+	if reason != "timeout" {
+		t.Fatalf("ожидали причину от пробы (timeout), получили %q", reason)
+	}
+}
+
+// В режиме прокси туннеля нет, привязка не нужна — остаётся обычная проба.
+func TestRunPostStartProbe_Hysteria2ProxyModeUsesPlainLivenessProbe(t *testing.T) {
+	oldHTTP := probeHTTPThroughProxyProbe
+	oldHY, oldHYLAN := pingHysteria2Probe, pingHysteria2LANProbe
+	defer func() {
+		probeHTTPThroughProxyProbe = oldHTTP
+		pingHysteria2Probe, pingHysteria2LANProbe = oldHY, oldHYLAN
+	}()
+
+	probeHTTPThroughProxyProbe = func(string) (bool, string) { return false, "timeout" }
+	pingHysteria2LANProbe = func(_ string, _ int) (int64, bool, string, string) {
+		t.Error("в режиме прокси LAN-bind проба не нужна")
+		return 0, false, "", ""
+	}
+	plainCalled := false
+	pingHysteria2Probe = func(_ string, _ int) (int64, bool, string, string) {
+		plainCalled = true
+		return 0, false, "timeout", "quic_handshake"
+	}
+
+	if code, _ := runPostStartProbe(context.Background(), "hysteria2", "1.2.3.4", 443, 1080, ProxyModeProxy); code != "post_start_probe_failed" {
+		t.Fatalf("ожидали post_start_probe_failed, получили %q", code)
+	}
+	if !plainCalled {
+		t.Fatal("обычная проба не вызвана")
+	}
+}
+
+// Один медленный адрес не имеет права задерживать вердикт: при
+// последовательном обходе одна попытка стоила до 9 с и вылетала за
+// восьмисекундный бюджет, из-за чего pollProbe не делал ни одного
+// повтора.
+func TestProbeHTTPThroughProxy_RacesTargetsAndReturnsOnFirstSuccess(t *testing.T) {
+	var slowHits, fastHits int32
+
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&slowHits, 1)
+		time.Sleep(2 * time.Second)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer slow.Close()
+	fast := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&fastHits, 1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer fast.Close()
+
+	oldURLs := probeTargetURLs
+	defer func() { probeTargetURLs = oldURLs }()
+	probeTargetURLs = func() []string { return []string{slow.URL, slow.URL, fast.URL} }
+
+	start := time.Now()
+	ok, reason := probeHTTPThroughProxy("")
+	elapsed := time.Since(start)
+
+	if !ok {
+		t.Fatalf("ожидали успех, получили reason=%q", reason)
+	}
+	if elapsed > 1500*time.Millisecond {
+		t.Fatalf("вердикт занял %v — адреса опрашиваются последовательно", elapsed)
+	}
+	if atomic.LoadInt32(&fastHits) == 0 {
+		t.Fatal("быстрый адрес не опрошен")
+	}
+}
+
+// Когда не отвечает никто, должна вернуться причина, а не пустая строка.
+func TestProbeHTTPThroughProxy_ReturnsReasonWhenAllTargetsFail(t *testing.T) {
+	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close() // порт закрыт — соединение будет отвергнуто
+
+	oldURLs := probeTargetURLs
+	defer func() { probeTargetURLs = oldURLs }()
+	probeTargetURLs = func() []string { return []string{deadURL, deadURL} }
+
+	ok, reason := probeHTTPThroughProxy("")
+	if ok {
+		t.Fatal("ожидали неудачу")
+	}
+	if reason == "" {
+		t.Fatal("ожидали непустую причину")
 	}
 }

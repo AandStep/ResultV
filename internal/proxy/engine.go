@@ -102,9 +102,30 @@ type EngineConfig struct {
 	KillSwitch   bool
 	LocalPort    int
 	DNSServers   []string
-	TunIPv4      string
-	TunIPv6      string
-	TunStack     string
+	TunIPv4 string
+	// EnableIPv6 is the user-facing "Сеть → IPv6" toggle, default off. It moves
+	// BOTH halves at once: the IPv6 address on the TUN and buildDNS's strategy.
+	// Attaching the address while DNS stayed ipv4_only would make the setting a
+	// lie — no domain would resolve to AAAA, so the TUN's IPv6 would carry
+	// nothing but literal-IPv6 traffic.
+	EnableIPv6 bool
+	// TunIPv6 optionally overrides the default ULA. It says WHICH address, never
+	// WHETHER — that is EnableIPv6's job.
+	TunIPv6  string
+	TunStack string
+	// TunDisableIPv6 strips every IPv6 address from the TUN inbound and forces
+	// strict_route on. It is a RETRY-ONLY switch, never user-facing: startEngine
+	// flips it after sing-tun reports "set ipv6 address: <err>", i.e. the freshly
+	// created Wintun adapter refused an IPv6 address that was explicitly opted
+	// into via TunIPv6.
+	//
+	// Without it that failure is a permanent wedge: the message matches
+	// isTransientTunError, so the retry fires, tears down a device that was never
+	// the problem, and re-Starts the IDENTICAL config — which fails identically.
+	//
+	// It overrides the explicit TunIPv6 opt-in: a tunnel that will not start is
+	// worse than a tunnel without IPv6.
+	TunDisableIPv6 bool
 	DataDir      string
 
 	// RoutingLists are user routing subscriptions resolved to local
@@ -251,6 +272,12 @@ type SBDNSRule struct {
 type SBInbound struct {
 	Type                string   `json:"type"`
 	Tag                 string   `json:"tag"`
+	// InterfaceName pins the Windows TUN adapter name. Left empty, sing-box
+	// falls back to "tun0" (protocol/tun/inbound.go: CalculateInterfaceName)
+	// and sing-tun derives the Wintun GUID from that name — so we would share a
+	// devnode with every other sing-box client on the machine. See
+	// tunInterfaceName for the two constraints on the value.
+	InterfaceName       string   `json:"interface_name,omitempty"`
 	Listen              string   `json:"listen,omitempty"`
 	ListenPort          int      `json:"listen_port,omitempty"`
 	Address             []string `json:"address,omitempty"`
@@ -275,24 +302,38 @@ type SBInbound struct {
 }
 
 type SBOutbound struct {
-	Type                string           `json:"type"`
-	Tag                 string           `json:"tag"`
-	Server              string           `json:"server,omitempty"`
-	ServerPort          int              `json:"server_port,omitempty"`
-	Username            string           `json:"username,omitempty"`
-	Password            string           `json:"password,omitempty"`
-	Method              string           `json:"method,omitempty"`
-	Version             string           `json:"version,omitempty"`
-	UUID                string           `json:"uuid,omitempty"`
-	AlterId             int              `json:"alter_id,omitempty"`
-	Flow                string           `json:"flow,omitempty"`
-	PacketEncoding      string           `json:"packet_encoding,omitempty"`
-	GlobalPadding       bool             `json:"global_padding,omitempty"`
-	AuthenticatedLength bool             `json:"authenticated_length,omitempty"`
-	Security            string           `json:"security,omitempty"`
-	UpMbps              int              `json:"up_mbps,omitempty"`
-	DownMbps            int              `json:"down_mbps,omitempty"`
-	Obfs                *SBHysteria2Obfs `json:"obfs,omitempty"`
+	Type       string `json:"type"`
+	Tag        string `json:"tag"`
+	Server     string `json:"server,omitempty"`
+	ServerPort int    `json:"server_port,omitempty"`
+	Username   string `json:"username,omitempty"`
+	Password   string `json:"password,omitempty"`
+	Method     string `json:"method,omitempty"`
+	// Plugin/PluginOptions carry SIP003 (obfs-local, v2ray-plugin). A node whose
+	// server runs a plugin does not work without them.
+	Plugin        string `json:"plugin,omitempty"`
+	PluginOptions string `json:"plugin_opts,omitempty"`
+	Version       string `json:"version,omitempty"`
+	UUID          string `json:"uuid,omitempty"`
+	AlterId       int    `json:"alter_id,omitempty"`
+	Flow          string `json:"flow,omitempty"`
+	// Encryption carries VLESS Encryption (the post-quantum handshake string
+	// "mlkem768x25519plus.<mode>.<rtt>[.<padding>].<key>"). Without it a node
+	// that runs the feature never completes the handshake the server expects.
+	Encryption          string `json:"encryption,omitempty"`
+	PacketEncoding      string `json:"packet_encoding,omitempty"`
+	GlobalPadding       bool   `json:"global_padding,omitempty"`
+	AuthenticatedLength bool   `json:"authenticated_length,omitempty"`
+	Security            string `json:"security,omitempty"`
+	UpMbps              int    `json:"up_mbps,omitempty"`
+	DownMbps            int    `json:"down_mbps,omitempty"`
+	// ServerPorts/HopInterval drive Hysteria2 port hopping. sing-quic parses only
+	// "start:end" ranges, so the URI's "10000-20000" spelling is converted before
+	// it gets here — a range it cannot parse aborts outbound creation.
+	ServerPorts []string         `json:"server_ports,omitempty"`
+	HopInterval string           `json:"hop_interval,omitempty"`
+	Obfs        *SBHysteria2Obfs `json:"obfs,omitempty"`
+	Multiplex   *SBMultiplex     `json:"multiplex,omitempty"`
 
 	TLS       *SBOutboundTLS       `json:"tls,omitempty"`
 	Transport *SBOutboundTransport `json:"transport,omitempty"`
@@ -303,6 +344,15 @@ type SBOutbound struct {
 type SBHysteria2Obfs struct {
 	Type     string `json:"type,omitempty"`
 	Password string `json:"password,omitempty"`
+}
+
+type SBMultiplex struct {
+	Enabled        bool   `json:"enabled,omitempty"`
+	Protocol       string `json:"protocol,omitempty"`
+	MaxConnections int    `json:"max_connections,omitempty"`
+	MinStreams     int    `json:"min_streams,omitempty"`
+	MaxStreams     int    `json:"max_streams,omitempty"`
+	Padding        bool   `json:"padding,omitempty"`
 }
 
 type SBOutboundTLS struct {
@@ -420,6 +470,51 @@ type SBOutboundTransport struct {
 	ScMinPostsIntervalMs json.RawMessage `json:"sc_min_posts_interval_ms,omitempty"`
 	ScStreamUpServerSecs json.RawMessage `json:"sc_stream_up_server_secs,omitempty"`
 	Xmux                 json.RawMessage `json:"xmux,omitempty"`
+
+	// xhttp padding obfuscation (sing-box-extended >= 1.13.x-extended-2.x).
+	// With x_padding_obfs_mode off the core hardcodes the classic
+	// Referer/x_padding pair; with it on, the padding carrier (cookie /
+	// header / query / queryInHeader), its key/header name and the filler
+	// alphabet come from the node config and must match the server side.
+	// Everything is omitempty: a node that says nothing about padding obfs
+	// produces exactly the same JSON as before.
+	XPaddingObfsMode  *bool  `json:"x_padding_obfs_mode,omitempty"`
+	XPaddingKey       string `json:"x_padding_key,omitempty"`
+	XPaddingHeader    string `json:"x_padding_header,omitempty"`
+	XPaddingPlacement string `json:"x_padding_placement,omitempty"`
+	XPaddingMethod    string `json:"x_padding_method,omitempty"`
+
+	// The rest of the xhttp obfuscation profile (sing-box-extended). These decide
+	// where the session id, the sequence number and the uplink payload ride, so a
+	// server running an obfs profile only matches when the client mirrors it.
+	// session/seq placement: path|cookie|header|query. uplink_data_placement:
+	// auto|body always, cookie|header only in packet-up mode — the core validates
+	// all of them while decoding the config.
+	SessionPlacement     string          `json:"session_placement,omitempty"`
+	SessionKey           string          `json:"session_key,omitempty"`
+	SeqPlacement         string          `json:"seq_placement,omitempty"`
+	SeqKey               string          `json:"seq_key,omitempty"`
+	UplinkDataPlacement  string          `json:"uplink_data_placement,omitempty"`
+	UplinkDataKey        string          `json:"uplink_data_key,omitempty"`
+	SessionIDTable       string          `json:"session_id_table,omitempty"`
+	SessionIDLength      json.RawMessage `json:"session_id_length,omitempty"`
+	UplinkChunkSize      json.RawMessage `json:"uplink_chunk_size,omitempty"`
+	CongestionController string          `json:"congestion_controller,omitempty"`
+	CWND                 int             `json:"cwnd,omitempty"`
+	ScMaxBufferedPosts   int64           `json:"sc_max_buffered_posts,omitempty"`
+
+	// mKCP (type "mkcp" in sing-box, "kcp" in Xray links). UDP-based, no TLS
+	// framing involved — an unmapped network used to fall through to raw TCP,
+	// which cannot talk to a mKCP server at all.
+	MTU              int    `json:"mtu,omitempty"`
+	TTI              int    `json:"tti,omitempty"`
+	UplinkCapacity   int    `json:"uplink_capacity,omitempty"`
+	DownlinkCapacity int    `json:"downlink_capacity,omitempty"`
+	Congestion       bool   `json:"congestion,omitempty"`
+	ReadBufferSize   int    `json:"read_buffer_size,omitempty"`
+	WriteBufferSize  int    `json:"write_buffer_size,omitempty"`
+	HeaderType       string `json:"header_type,omitempty"`
+	Seed             string `json:"seed,omitempty"`
 }
 
 type SBRoute struct {
@@ -442,6 +537,31 @@ type SBRouteRule struct {
 	RuleSet          []string `json:"rule_set,omitempty"`
 	Outbound         string   `json:"outbound,omitempty"`
 	Action           string   `json:"action,omitempty"`
+	// Method qualifies Action="reject": "default" answers with ICMP
+	// port-unreachable, "drop" black-holes silently. Only "default" produces the
+	// fast client-side fallback quicRejectRule relies on.
+	Method string `json:"method,omitempty"`
+}
+
+// quicRejectRule builds the UDP/443 reject that forces a QUIC client back onto
+// TCP. Callers pass the same selector as the route-to-proxy rule it shadows, so
+// the reject covers exactly the traffic we tunnel and nothing else.
+//
+// Why this exists: UDP does not survive every proxy outbound. Measured on a
+// live tunnel (2026-08-17), Smart-list hosts answered over TCP/TLS in ~200 ms
+// while their h3 handshakes timed out at 10 s — reproduced through the local
+// SOCKS inbound with the target named by domain, so sniffing is not the
+// culprit. Whether UDP works depends on the node, which is why users see it as
+// "Discord attachments sometimes open, sometimes don't". A silent black hole
+// leaves Chromium (Discord is Electron) retrying QUIC for seconds; an ICMP
+// unreachable makes it mark h3 broken and switch to HTTP/2 immediately.
+func quicRejectRule(sel SBRouteRule) SBRouteRule {
+	sel.Action = "reject"
+	sel.Method = "default"
+	sel.Network = []string{"udp"}
+	sel.Port = []int{443}
+	sel.Outbound = ""
+	return sel
 }
 
 func effectiveDataDir(cfg EngineConfig) string {
@@ -545,17 +665,21 @@ func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	return sbCfg, nil
 }
 
-// systemHasIPv6 reports whether the host has IPv6 wired up at the OS level.
-// We treat "any non-loopback, non-tunnel interface has at least one IPv6
-// unicast address" as the signal. This catches both adapter-level disabled
-// IPv6 and OS-wide DisabledComponents on Windows: with neither in play, every
-// box has at least a link-local fe80:: on the LAN adapter, which is enough
-// for sing-tun's CreateUnicastIpAddressEntry call to succeed against the TUN.
+// hostSupportsIPv6 reports whether the host has an IPv6 stack at all — the
+// question "will the adapter accept an IPv6 address", NOT "could IPv6 leak".
+// A link-local fe80:: counts and is in fact the normal signal: with neither
+// adapter-level IPv6 nor OS-wide DisabledComponents in play, every box has one,
+// and that is enough for sing-tun's CreateUnicastIpAddressEntry to succeed.
 //
-// Conservative-fail: on enumeration error we assume IPv6 is present, so we
-// don't silently strip IPv6 from the tunnel on hosts where the check is
-// merely flaky (CGO timeout, etc.).
-func systemHasIPv6() bool {
+// This is the preventive half of the no-IPv6 guard: without it, a user ticking
+// the IPv6 box on a machine where IPv6 is switched off gets
+// "set ipv6 address: ..." — which does not degrade the tunnel, it kills the
+// whole inbound.
+//
+// Conservative-fail: on enumeration error assume yes and let the reactive half
+// (TunDisableIPv6, see startEngine) catch it, rather than silently withholding
+// IPv6 from a user who asked for it because a probe was flaky.
+func hostSupportsIPv6() bool {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return true
@@ -579,13 +703,77 @@ func systemHasIPv6() bool {
 			case *net.IPAddr:
 				ip = v.IP
 			}
-			if ip == nil || ip.To4() != nil {
-				continue
+			if ip != nil && ip.To4() == nil && ip.To16() != nil {
+				return true
 			}
-			return true
 		}
 	}
 	return false
+}
+
+// tunCarriesIPv6 is the single predicate behind both halves of the toggle, so
+// the TUN address and the DNS strategy can never disagree.
+func tunCarriesIPv6(cfg EngineConfig) bool {
+	return cfg.EnableIPv6 && !cfg.TunDisableIPv6 && hostSupportsIPv6Fn()
+}
+
+// hasRoutableIPv6 reports whether the host holds an IPv6 address that can
+// actually reach the internet — the only kind that can leak.
+//
+// It replaced systemHasIPv6, which answered a different question ("can this box
+// take an IPv6 address at all") and counted link-local fe80:: — present on
+// practically every Windows machine. That made it useless as a leak signal:
+// keyed on it, we would force the WFP filters on essentially everyone.
+//
+// Conservative-fail: on enumeration error assume yes, so a flaky probe makes us
+// over-block rather than leak.
+func hasRoutableIPv6() bool {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return true
+	}
+	for _, ifi := range ifaces {
+		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if looksLikeTunnelInterface(ifi.Name) {
+			continue
+		}
+		addrs, err := ifi.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			var ip net.IP
+			switch v := a.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if isLeakableIPv6(ip) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isLeakableIPv6 reports whether ip is an IPv6 address that could carry traffic
+// out to the internet past the tunnel. Link-local (fe80::/10) and ULA (fc00::/7)
+// cannot, so they are not leaks — note Go's IsGlobalUnicast returns TRUE for ULA,
+// which is why the ULA check is explicit rather than implied.
+func isLeakableIPv6(ip net.IP) bool {
+	if ip == nil || ip.To4() != nil || ip.To16() == nil {
+		return false
+	}
+	if !ip.IsGlobalUnicast() {
+		return false
+	}
+	if v6 := ip.To16(); v6[0]&0xfe == 0xfc {
+		return false
+	}
+	return true
 }
 
 func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
@@ -593,27 +781,24 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	if cfg.TunIPv4 != "" {
 		tunIPv4 = cfg.TunIPv4
 	}
-	// IPv6 ULA on the TUN keeps IPv6 traffic riding the tunnel. Without
-	// an IPv6 address here, strict_route's WFP filters would silently
-	// blackhole IPv6 — leaving the user without IPv6 connectivity while
-	// connected.
+	// IPv6 on the TUN is off unless the user turns it on (EnableIPv6). It used to
+	// be attached automatically whenever the host had any IPv6 at all, while
+	// buildDNS pinned strategy=ipv4_only — so no domain ever resolved to AAAA and
+	// the address carried nothing but literal-IPv6 traffic. That bought close to
+	// nothing and owned a whole class of hard failures: when Windows refuses the
+	// address, sing-tun fails the ENTIRE inbound with "set ipv6 address: ..." and
+	// the tunnel does not come up.
 	//
-	// But: on Windows boxes where the IPv6 stack is disabled at the adapter
-	// level (or globally via DisabledComponents), sing-tun's attempt to set
-	// the IPv6 address on the TUN interface fails with
-	// "configure tun interface: set ipv6 address: Element not found",
-	// which ClassifyEngineStartError currently maps to "tun_privileges" and
-	// the UI surfaces as "нужны права администратора" — sending users on a
-	// fruitless quest to elevate. Only attach the IPv6 address when the
-	// host actually exposes IPv6 on at least one non-loopback interface,
-	// or when the user explicitly set TunIPv6 (override = "I know what I'm
-	// doing").
+	// tunCarriesIPv6 folds in both guards: hostSupportsIPv6 (the user ticked the
+	// box on a machine with no IPv6 stack — behave as if unticked) and
+	// TunDisableIPv6 (the adapter already refused the address on the previous
+	// attempt, so honouring the opt-in would rebuild the config that just failed).
 	tunIPv6 := "fdfe:dcba:9876::1/126"
 	if cfg.TunIPv6 != "" {
 		tunIPv6 = cfg.TunIPv6
 	}
 	tunAddresses := []string{tunIPv4}
-	if cfg.TunIPv6 != "" || systemHasIPv6() {
+	if tunCarriesIPv6(cfg) {
 		tunAddresses = append(tunAddresses, tunIPv6)
 	}
 	tunStack := effectiveTunStack(cfg.TunStack)
@@ -622,7 +807,19 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	// Multi-Homed Name Resolution from leaking DNS queries to the LAN
 	// adapter, where Russian ISPs transparently hijack UDP/53 (Rostelecom,
 	// MSK-IX). User-controlled via the "DNS leak protection" toggle.
-	strictRoute := cfg.DNSLeakProtection
+	//
+	// Forced on when the TUN carries no IPv6 while the host holds a globally
+	// routable one. Without the WFP filters that traffic is not blackholed, it is
+	// routed out the physical adapter. buildDNS's ipv4_only keeps domain traffic
+	// off IPv6, but any app running its own DoH resolver — every modern browser —
+	// gets AAAA independently, so the leak is real rather than theoretical.
+	//
+	// Deliberately keyed on hasRoutableIPv6 and not on "IPv6 is absent from the
+	// TUN": a host with only fe80::/fd00:: has no IPv6 that can reach the
+	// internet, and forcing the filters there would silently re-enable a feature
+	// the user turned off, for no gain.
+	ipv6Unrouted := len(tunAddresses) == 1 && hasRoutableIPv6Fn()
+	strictRoute := cfg.DNSLeakProtection || ipv6Unrouted
 
 	pt := strings.ToUpper(strings.TrimSpace(cfg.Proxy.Type))
 
@@ -662,6 +859,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	tun := SBInbound{
 		Type:                "tun",
 		Tag:                 "tun-in",
+		InterfaceName:       tunInterfaceName,
 		Address:             tunAddresses,
 		Stack:               tunStack,
 		AutoRoute:           true,
@@ -858,7 +1056,14 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			Servers: servers,
 		}
 
+		// Same predicate as the TUN address, so the two halves can never disagree:
+		// AAAA answers with no IPv6 path to use them would be worse than no AAAA.
+		// prefer_ipv4 rather than prefer_ipv6 even when enabled — IPv4 stays the
+		// first choice and IPv6 is the fallback, the cautious reading of "IPv6 on".
 		dns.Strategy = "ipv4_only"
+		if tunCarriesIPv6(cfg) {
+			dns.Strategy = "prefer_ipv4"
+		}
 
 		// Resolve the server's own hostname. When we pinned its IPs at connect
 		// time (CDN/multi-IP domain), serve them from a static `hosts` record so
@@ -1105,6 +1310,16 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	// proxy never reach us, so the rule would be dead weight.
 	if cfg.Mode == ProxyModeTunnel {
 		if rx := appWhitelistPathRegexes(cfg.AppForceVPN); len(rx) > 0 {
+			// Sending an app through the tunnel wholesale is the workaround
+			// users reach for when a service half-works; it must not hand them
+			// back the QUIC hang the Smart rule below cures. Smart-only on
+			// purpose: in Global mode every app already rides the proxy, so
+			// singling out the force-VPN list would fix QUIC for those apps and
+			// leave it broken for the rest — an inconsistency worth deciding on
+			// its own rather than inheriting from here.
+			if cfg.RoutingMode == ModeSmart {
+				rules = append(rules, quicRejectRule(SBRouteRule{ProcessPathRegex: rx}))
+			}
 			rules = append(rules, SBRouteRule{
 				Action:           "route",
 				ProcessPathRegex: rx,
@@ -1146,12 +1361,16 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 				Format:       "binary",
 				LocalOptions: SBLocalRuleSet{Path: cfg.SmartRuleSetPath},
 			})
+			rules = append(rules, quicRejectRule(SBRouteRule{RuleSet: []string{smartRuleSetTag}}))
 			rules = append(rules, SBRouteRule{
 				Action:   "route",
 				RuleSet:  []string{smartRuleSetTag},
 				Outbound: "proxy",
 			})
 		} else {
+			rules = append(rules, quicRejectRule(SBRouteRule{
+				DomainSuffix: append([]string(nil), cfg.BlockedDomains...),
+			}))
 			rules = append(rules, SBRouteRule{
 				Action:       "route",
 				DomainSuffix: append([]string(nil), cfg.BlockedDomains...),
@@ -1315,7 +1534,7 @@ func PingProxy(ip string, port int) (latencyMs int64, reachable bool, reason str
 
 func PingHysteria2QUIC(ip string, port int) (latencyMs int64, reachable bool, reason, checkType string) {
 
-	latency, ok, r := quicHandshakeProbe(ip, port)
+	latency, ok, r := quicHandshakeProbe(ip, port, "")
 	if ok {
 		return latency, true, "", "quic_handshake"
 	}

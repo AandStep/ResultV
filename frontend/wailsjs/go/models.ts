@@ -52,6 +52,7 @@ export namespace config {
 	    subscriptionSendHWID?: boolean;
 	    subscriptionUserAgent?: string;
 	    dnsLeakProtection?: boolean;
+	    enableIPv6?: boolean;
 	    routingListUpdateHours?: number;
 	    lastChangelogVersion?: string;
 	
@@ -78,6 +79,7 @@ export namespace config {
 	        this.subscriptionSendHWID = source["subscriptionSendHWID"];
 	        this.subscriptionUserAgent = source["subscriptionUserAgent"];
 	        this.dnsLeakProtection = source["dnsLeakProtection"];
+	        this.enableIPv6 = source["enableIPv6"];
 	        this.routingListUpdateHours = source["routingListUpdateHours"];
 	        this.lastChangelogVersion = source["lastChangelogVersion"];
 	    }

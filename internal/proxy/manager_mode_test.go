@@ -144,6 +144,7 @@ func TestConnect_TunnelStartFailureIncludesReasonAndFallbackFlag(t *testing.T) {
 		"",
 		"",
 		false,
+		false,
 	)
 	if !result.Success {
 		t.Fatalf("expected fallback success, got: %+v", result)
@@ -203,6 +204,7 @@ func TestSetMode_ReconnectsWhenConnected(t *testing.T) {
 		"",
 		"",
 		false,
+		false,
 	)
 	if !connectRes.Success {
 		t.Fatalf("initial connect failed: %+v", connectRes)
@@ -252,6 +254,7 @@ func TestConnect_TunnelRequiresAdmin(t *testing.T) {
 		"",
 		"",
 		false,
+		false,
 	)
 	if res.Success {
 		t.Fatalf("expected failure, got %+v", res)
@@ -300,6 +303,7 @@ func TestConnect_Hysteria2PostStartProbeFailure(t *testing.T) {
 		nil,
 		"",
 		"",
+		false,
 		false,
 	)
 	if res.Success {
@@ -351,6 +355,7 @@ func TestConnect_WireGuardTunnelFailsWhenE2EProbeFails(t *testing.T) {
 		"",
 		"",
 		false,
+		false,
 	)
 	if res.Success {
 		t.Fatalf("expected failure when e2e probe fails, got %+v", res)
@@ -401,6 +406,7 @@ func TestConnect_WireGuardPostStartProbeSuccess(t *testing.T) {
 		"",
 		"",
 		false,
+		false,
 	)
 	if !res.Success {
 		t.Fatalf("expected success, got %+v", res)
@@ -448,6 +454,7 @@ func TestConnect_AmneziaWGTunnelFailsWhenE2EProbeFails(t *testing.T) {
 		nil,
 		"",
 		"",
+		false,
 		false,
 	)
 	if res.Success {
@@ -503,6 +510,7 @@ func TestConnect_WireGuardTunnelE2EProbeRetriesThreeTimes(t *testing.T) {
 		"",
 		"",
 		false,
+		false,
 	)
 	if res.Success {
 		t.Fatalf("expected failure, got %+v", res)
@@ -544,6 +552,7 @@ func TestConnect_TrojanTunnelFailsWhenE2EProbeFails(t *testing.T) {
 		nil,
 		"",
 		"",
+		false,
 		false,
 	)
 	if res.Success {
@@ -589,6 +598,7 @@ func TestConnect_TrojanProxyFailsWhenE2EProbeFails(t *testing.T) {
 		nil,
 		"",
 		"",
+		false,
 		false,
 	)
 	if res.Success {
@@ -644,6 +654,7 @@ func TestConnect_AmneziaWGTunnelStopsSessionWhenE2EProbeFails(t *testing.T) {
 		"",
 		"",
 		false,
+		false,
 	)
 	if res.Success {
 		t.Fatalf("expected failure for amneziawg when e2e probe fails, got %+v", res)
@@ -697,6 +708,7 @@ func TestConnect_AmneziaWGTunnelClearsSystemProxy(t *testing.T) {
 		"",
 		"",
 		false,
+		false,
 	)
 	if !res.Success {
 		t.Fatalf("expected success, got %+v", res)
@@ -743,6 +755,7 @@ func TestConnect_FailedSwitchClearsCurrentProxyInStatus(t *testing.T) {
 		"",
 		"",
 		false,
+		false,
 	)
 	if !ok.Success {
 		t.Fatalf("initial connect failed: %+v", ok)
@@ -763,6 +776,7 @@ func TestConnect_FailedSwitchClearsCurrentProxyInStatus(t *testing.T) {
 		nil,
 		"",
 		"",
+		false,
 		false,
 	)
 	if res.Success {
@@ -845,6 +859,7 @@ func TestSetMode_PreservesAppForceVPN(t *testing.T) {
 		nil,
 		"",
 		"",
+		false,
 		false,
 	)
 	if !connectRes.Success {

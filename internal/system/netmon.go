@@ -18,6 +18,8 @@ package system
 import (
 	"context"
 	"net"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -35,21 +37,42 @@ type StatusChangeHandler func(status NetworkStatus)
 
 
 
+// InterfaceChangeHandler is called when the set of local IP addresses changes:
+// a Wi-Fi roam, a switch to a phone hotspot, a cable pulled, a tunnel coming
+// up. Unlike StatusChangeHandler this says nothing about reachability — the
+// machine can stay online across the whole transition — it only reports that
+// the local network identity is no longer the one anything cached earlier was
+// based on.
+type InterfaceChangeHandler func()
+
 type NetMonitor struct {
-	mu       sync.Mutex
-	ctx      context.Context
-	cancel   context.CancelFunc
-	interval time.Duration
-	handler  StatusChangeHandler
-	last     NetworkStatus
-	running  bool
+	mu        sync.Mutex
+	ctx       context.Context
+	cancel    context.CancelFunc
+	interval  time.Duration
+	handler   StatusChangeHandler
+	ifHandler InterfaceChangeHandler
+	ifSig     string
+	last      NetworkStatus
+	running   bool
 }
 
 
+// checkHosts are the reachability targets for the "is there internet at all"
+// check. Literal IPs only, deliberately: a hostname here would be resolved by
+// the OS resolver, and an active tunnel session breaks exactly that — the
+// system-DNS override pins the physical adapters to resolvers reachable only
+// inside the tunnel, while the app's own traffic is self-direct. The monitor
+// then flapped "Интернет-соединение потеряно" while every browser tab worked.
+// See netmon_test.go.
+//
+// All four must fail before the machine is called offline, so one target being
+// throttled or blocked by a national filter can't produce a false negative.
 var checkHosts = []string{
-	"dns.google:443",          
-	"one.one.one.one:443",     
-	"208.67.222.222:443",      
+	"1.1.1.1:443",        // Cloudflare
+	"8.8.8.8:443",        // Google
+	"208.67.222.222:443", // OpenDNS
+	"9.9.9.9:443",        // Quad9
 }
 
 
@@ -97,6 +120,15 @@ func (nm *NetMonitor) GetStatus() NetworkStatus {
 }
 
 
+// SetInterfaceChangeHandler installs the handler for local-address changes.
+// Optional: with none installed the signature is still tracked but nothing is
+// notified.
+func (nm *NetMonitor) SetInterfaceChangeHandler(h InterfaceChangeHandler) {
+	nm.mu.Lock()
+	nm.ifHandler = h
+	nm.mu.Unlock()
+}
+
 func (nm *NetMonitor) SetInterval(d time.Duration) {
 	if d < time.Second {
 		d = time.Second
@@ -129,17 +161,62 @@ func (nm *NetMonitor) loop() {
 
 func (nm *NetMonitor) check() {
 	status := checkConnectivity()
+	sig := localAddrSignature()
 
 	nm.mu.Lock()
 	changed := status.Online != nm.last.Online
 	nm.last = status
 	handler := nm.handler
+	// The very first tick establishes the baseline rather than reporting a
+	// change: at startup nothing has cached a previous network identity yet, so
+	// firing here would only produce a spurious invalidation on every launch.
+	ifChanged := nm.ifSig != "" && sig != "" && sig != nm.ifSig
+	if sig != "" {
+		nm.ifSig = sig
+	}
+	ifHandler := nm.ifHandler
 	nm.mu.Unlock()
 
-	
+
 	if changed && handler != nil {
 		handler(status)
 	}
+	if ifChanged && ifHandler != nil {
+		ifHandler()
+	}
+}
+
+// localAddrSignature fingerprints the machine's current local addressing. The
+// enumeration costs one GetAdaptersAddresses per tick on Windows — the same
+// call preferLANBindIPv4 makes — which is affordable at the monitor's 5s
+// cadence and is what lets everything downstream cache an adapter choice for
+// much longer than that.
+//
+// Interface names are folded in alongside the addresses so that the same IP
+// reappearing on a different adapter (a hotspot handing out the same
+// 192.168.1.x the home router did) still reads as a change. Returns "" if the
+// adapters cannot be enumerated at all, which the caller treats as "no news"
+// rather than as a change.
+func localAddrSignature() string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	parts := make([]string, 0, len(ifaces))
+	for _, ifi := range ifaces {
+		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := ifi.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			parts = append(parts, ifi.Name+"="+a.String())
+		}
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ",")
 }
 
 

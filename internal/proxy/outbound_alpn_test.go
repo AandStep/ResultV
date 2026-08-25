@@ -32,3 +32,25 @@ func TestXHTTPPreferH2ALPN(t *testing.T) {
 		t.Fatalf("default: %v", empty)
 	}
 }
+
+// TestDefaultALPN_NetworkCaseInsensitive: an upper/mixed-case "network" value
+// in extra (reachable via embedded ?extra={...}, which now passes values
+// through as-is instead of always normalizing them) must not be compared
+// case-sensitively against "tcp" in applyTLSAndTransport's default-ALPN
+// branch — that used to force ALPN=["http/1.1"] on a plain-TCP node instead
+// of leaving it empty for the core's own default, the same class of bug
+// applyTransportOnly's own case-insensitive compare already guards against.
+func TestDefaultALPN_NetworkCaseInsensitive(t *testing.T) {
+	extra := map[string]interface{}{
+		"uuid":     "af815621-b245-4149-89da-dd184cfc4b3d",
+		"security": "tls",
+		"network":  "TCP",
+	}
+	out := outboundFromExtra(t, "VLESS", extra)
+	if out.TLS == nil {
+		t.Fatal("no TLS built")
+	}
+	if len(out.TLS.ALPN) != 0 {
+		t.Fatalf("ALPN = %v, want empty (core default) for plain TCP", out.TLS.ALPN)
+	}
+}

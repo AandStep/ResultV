@@ -33,6 +33,7 @@ const defaultSettings = {
     tunStack: "system",
     favorites: [],
     dnsLeakProtection: true,
+    enableIPv6: false,
     subscriptionAutoUpdate: true,
     subscriptionUpdateIntervalHours: 6,
     subscriptionSendHWID: true,

@@ -719,6 +719,12 @@ export const SettingsView = () => {
         </div>
         <div className="space-y-4">
           <SettingToggle
+            title={t("settings.enable_ipv6.title")}
+            description={t("settings.enable_ipv6.desc")}
+            isOn={!!settings.enableIPv6}
+            onToggle={() => updateSetting("enableIPv6", !settings.enableIPv6)}
+          />
+          <SettingToggle
             title={t("settings.lan_listen.toggle_title")}
             description={t("settings.lan_listen.toggle_desc")}
             isOn={!!settings.listenLan}

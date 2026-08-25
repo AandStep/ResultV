@@ -1,62 +1,31 @@
 {
-  "version": "3.3.0",
+  "version": "",
   "releaseTitle": {
-    "ru": "Улучшенный Auto режим, фиксы DNS Smart режима",
-    "en": "Improved Auto mode, Smart mode DNS fixes"
+    "ru": "Небольшие улучшения",
+    "en": "Some fixes"
   },
   "releaseNotes": [
     {
       "type": "fix",
-      "ru": "DNS в Smart режиме шел через туннель, из-за этого в играх могли случаться вылеты и высокий пинг. Теперь в Smart режиме все незаблокированные ресурсы обращаются к вашим DNS",
-      "en": "In Smart mode DNS went through the tunnel, which could cause disconnects and high ping in games. Now everything that is not blocked queries your own DNS"
+      "ru": "Улучшена очистка залипающих tun адаптеров",
+      "en": "Improved cleanup of stuck tun adapters"
     },
     {
       "type": "fix",
-      "ru": "Добавление серверов awg и wg теперь доступно по ссылкам, а не только через файлы",
-      "en": "AWG and WG servers can now be added from a link, not only from a file"
+      "ru": "Sing-box ядро очищено от лишних мусорных логов-ошибок",
+      "en": "The sing-box core no longer floods the log with junk error messages"
+    },
+    {
+      "type": "fix",
+      "ru": "При переключении активного сервера на авто, авто сервер некорректно определял рабочие сервера",
+      "en": "When switching an active server to Auto, Auto mode misjudged which servers were actually working"
     },
     {
       "type": "improve",
-      "ru": "Для комфортной игры теперь достаточно включить Smart режим. Быстрый выбор Battle.net в исключениях остается на случай, если у вас он не работает без ВПН",
-      "en": "Smart mode on its own is now enough for comfortable gaming. The Battle.net shortcut in the exclusions stays for the case where it does not work for you without a VPN"
-    },
-    {
-      "type": "improve",
-      "ru": "Auto режим теперь перебирает сервера, проверяет их доступность и выбирает лучший по пингу, подключение идет дольше, зато сервер наверняка работает",
-      "en": "Auto mode now goes through the servers, checks that each one is actually reachable and picks the best by ping. Connecting takes a little longer, but the server is sure to work"
-    },
-    {
-      "type": "improve",
-      "ru": "Обновление ядер приложения, поддержка AWG расширена до версии 3.0",
-      "en": "Updated the app cores; AWG support extended to version 3.0"
+      "ru": "Ускорен подбор серверов в авто режиме",
+      "en": "Server selection in Auto mode is noticeably faster"
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",
-  "platforms": {
-    "windows-amd64-portable": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.3.0/ResultV.exe",
-      "sha256": "6c1bc78409599bd0cae3b172b0c8c698a53cb0f3ecd29c8e84ef92da6fab77fb",
-      "size": 54530560
-    },
-    "windows-amd64-installer": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.3.0/ResultV-amd64-installer.exe",
-      "sha256": "e28aab613f0e7c78f5422f19163d0c26aa6d224e4fdb7f1727c95ad10562d553",
-      "size": 26605673
-    },
-    "darwin-universal": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.3.0/ResultV.dmg",
-      "sha256": "97a15c64e1746769053dc95de70f57e20eaa80ac4b568955f9eb99fc69bcaa45",
-      "size": 60050717
-    },
-    "linux-amd64-appimage": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.3.0/ResultV-3.3.0-x86_64.AppImage",
-      "sha256": "5c72ee19d85ffcb4485daa4e515cc448de40b8251723e91e00739da53f811763",
-      "size": 93293048
-    },
-    "linux-amd64-deb": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.3.0/resultv_3.3.0_amd64.deb",
-      "sha256": "c44969d7151f9aea292d7264303a2dadabea3670d0764937d62ac4ce1a9cf663",
-      "size": 25584870
-    }
-  }
+  "platforms": {}
 }

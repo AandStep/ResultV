@@ -66,6 +66,16 @@ func cachedPreferLANBindIPv4() (net.IP, error) {
 	return ip, err
 }
 
+// InvalidateLANBindCache drops the cached LAN-bind IP so the next probe
+// re-enumerates the adapters. app.go wires this to the network monitor's
+// interface-change event: without it the 30s TTL below is the only thing that
+// ever refreshes the bind address, so for up to half a minute after roaming
+// from Wi-Fi to a phone hotspot every LAN-bound probe would still try to leave
+// through an address the machine no longer has — and the AUTO sweep cache,
+// whose key folds in that address (autoSweepCacheKey), would keep serving
+// measurements taken over the old link.
+func InvalidateLANBindCache() { invalidateLANBindCache() }
+
 // invalidateLANBindCache drops the cached LAN-bind IP. Call when the network
 // topology might have changed (e.g., post-disconnect, before reconnect).
 func invalidateLANBindCache() {
@@ -238,7 +248,7 @@ func PingWireGuardLANBind(host string, port int) (latencyMs int64, reachable boo
 }
 
 func PingHysteria2QUICLANBind(host string, port int) (latencyMs int64, reachable bool, reason, checkType string) {
-	latency, ok, r := quicHandshakeLANProbe(host, port)
+	latency, ok, r := quicHandshakeLANProbe(host, port, "")
 	if ok {
 		return latency, true, "", "quic_handshake_lan_bind"
 	}
@@ -249,6 +259,20 @@ func PingHysteria2QUICLANBind(host string, port int) (latencyMs int64, reachable
 	}
 	if r == "" {
 		r = tcpReason
+	}
+	return 0, false, r, "quic_handshake_lan_bind"
+}
+
+// PingHysteria2QUICStrictLANBind is PingHysteria2QUICStrict sent from the
+// physical adapter. See PingHysteria2QUICStrict for why there is no TCP
+// fallback and how sni is used.
+func PingHysteria2QUICStrictLANBind(host string, port int, sni string) (latencyMs int64, reachable bool, reason, checkType string) {
+	latency, ok, r := quicHandshakeLANProbe(host, port, sni)
+	if ok {
+		return latency, true, "", "quic_handshake_lan_bind"
+	}
+	if r == "" {
+		r = "quic_handshake_failed"
 	}
 	return 0, false, r, "quic_handshake_lan_bind"
 }

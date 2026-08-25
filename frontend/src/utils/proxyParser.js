@@ -241,26 +241,41 @@ const safeB64Decode = (str) => {
 
 const parseShadowsocks = (uri) => {
     try {
-        const urlPart = uri.replace("ss://", "");
-        let mainPart = urlPart.split("#")[0];
-        const name = decodeURIComponent(urlPart.split("#")[1] || "Shadowsocks");
+        let remainder = uri.replace("ss://", "");
+        let name = "Shadowsocks";
+        const hashIdx = remainder.indexOf("#");
+        if (hashIdx >= 0) {
+            name = decodeURIComponent(remainder.slice(hashIdx + 1)) || "Shadowsocks";
+            remainder = remainder.slice(0, hashIdx);
+        }
+
+        // SIP002 puts the SIP003 plugin in the query string; the legacy
+        // base64 form keeps it right after the blob. Split it off up front:
+        // feeding "?plugin=..." straight into base64 decoding breaks the
+        // whole link (legacy) or leaks into the port (SIP002).
+        let query = "";
+        const qIdx = remainder.indexOf("?");
+        if (qIdx >= 0) {
+            query = remainder.slice(qIdx + 1);
+            remainder = remainder.slice(0, qIdx);
+        }
 
         let method = "";
         let password = "";
         let host = "";
         let port = 0;
 
-        if (mainPart.includes("@")) {
-            
-            const [b64Auth, serverInfo] = mainPart.split("@");
+        if (remainder.includes("@")) {
+
+            const [b64Auth, serverInfo] = remainder.split("@");
             const decodedAuth = safeB64Decode(b64Auth);
             if (decodedAuth) {
                 [method, password] = decodedAuth.split(":");
             }
             [host, port] = serverInfo.split(":");
         } else {
-            
-            const decoded = safeB64Decode(mainPart);
+
+            const decoded = safeB64Decode(remainder);
             if (decoded && decoded.includes("@")) {
                 const [auth, serverInfo] = decoded.split("@");
                 [method, password] = auth.split(":");
@@ -269,6 +284,35 @@ const parseShadowsocks = (uri) => {
         }
 
         if (host && port) {
+            const extra = { method: method || "aes-256-gcm" };
+            if (query) {
+                const queryParams = new URLSearchParams(query);
+                const raw = (queryParams.get("plugin") || "").trim();
+                if (raw) {
+                    // pluginName (not "name" — that would shadow the display
+                    // name parsed above from the URI fragment).
+                    let pluginName = raw;
+                    let opts = "";
+                    const semiIdx = raw.indexOf(";");
+                    if (semiIdx >= 0) {
+                        pluginName = raw.slice(0, semiIdx).trim();
+                        opts = raw.slice(semiIdx + 1).trim();
+                    }
+                    extra.plugin = pluginName;
+                    if (opts) {
+                        // The core's SIP003 option parser errors out on a
+                        // stray empty segment from consecutive/leading/
+                        // trailing semicolons, and that error aborts
+                        // outbound creation. Drop empty segments before they
+                        // ever reach it.
+                        const sanitizedOpts = opts
+                            .split(";")
+                            .filter((seg) => seg !== "")
+                            .join(";");
+                        if (sanitizedOpts) extra.plugin_opts = sanitizedOpts;
+                    }
+                }
+            }
             return {
                 ip: host,
                 port: parseInt(port, 10),
@@ -276,7 +320,7 @@ const parseShadowsocks = (uri) => {
                 name: name,
                 username: "",
                 password: password || "",
-                extra: { method: method || "aes-256-gcm" },
+                extra,
             };
         }
     } catch (e) {
@@ -293,6 +337,30 @@ const parseVMess = (uri) => {
 
         if (json.add && json.port) {
             const security = json.tls === "tls" ? "tls" : "none";
+            const extra = {
+                uuid: json.id,
+                alterId: json.aid,
+                network: json.net || "tcp",
+                path: json.path || "",
+                host: json.host || "",
+                security: security,
+                sni: json.sni || "",
+                fp: json.fp || "",
+                tls: security === "tls",
+            };
+            // In the vmess:// JSON, "type" is the mKCP header type and
+            // "path" carries the mKCP seed — but only when the network is
+            // kcp. For ws/tcp these two fields mean something else
+            // entirely, so the mapping must stay gated on the network:
+            // ws links must keep "path" as a path and must not gain a
+            // headerType/seed.
+            const net = String(json.net || "").trim().toLowerCase();
+            if (net === "kcp" || net === "mkcp") {
+                const headerType = String(json.type || "").trim();
+                if (headerType) extra.headerType = headerType;
+                const seed = String(json.path || "").trim();
+                if (seed) extra.seed = seed;
+            }
             return {
                 ip: json.add,
                 port: parseInt(json.port, 10),
@@ -300,17 +368,7 @@ const parseVMess = (uri) => {
                 name: json.ps || "VMess",
                 username: "",
                 password: "",
-                extra: {
-                    uuid: json.id,
-                    alterId: json.aid,
-                    network: json.net || "tcp",
-                    path: json.path || "",
-                    host: json.host || "",
-                    security: security,
-                    sni: json.sni || "",
-                    fp: json.fp || "",
-                    tls: security === "tls",
-                },
+                extra,
             };
         }
     } catch (e) {
@@ -339,6 +397,64 @@ const mergeVLESSURLEmbeddedExtra = (target, raw) => {
     }
 };
 
+// applyDefaultIfAbsent sets extra[key] = fallback only when the key is not
+// already present. Used for fields like "network"/"security" that carry a
+// hard-coded default: the default must lose to a value already merged in
+// from ?extra={...}, not silently overwrite it.
+const applyDefaultIfAbsent = (extra, key, fallback) => {
+    if (!Object.prototype.hasOwnProperty.call(extra, key)) extra[key] = fallback;
+};
+
+// applyQueryOverrides copies each entry of values into extra, but only when
+// the query actually supplied a non-empty value for it. An empty/absent
+// query param must not stomp a value ?extra={...} already provided — that
+// silent overwrite is the defect class this whole pass exists to close.
+const applyQueryOverrides = (extra, values) => {
+    Object.keys(values).forEach((key) => {
+        const value = values[key];
+        if (value) extra[key] = value;
+    });
+};
+
+// firstNonEmpty returns the first value that is non-empty after trimming,
+// or "" when none of them are.
+const firstNonEmpty = (...values) => {
+    for (const v of values) {
+        if (v != null && String(v).trim() !== "") return String(v).trim();
+    }
+    return "";
+};
+
+// applyMKCPQueryParams copies mKCP's query-string knobs into extra. Shared
+// between vless:// and trojan:// — outbound.go's kcp/mkcp transport branch
+// does not look at the proxy type, so a trojan link needs these knobs
+// exactly as much as a vless one.
+const applyMKCPQueryParams = (params, extra) => {
+    ["seed", "headerType", "uplinkCapacity", "downlinkCapacity", "readBufferSize", "writeBufferSize"].forEach(
+        (key) => {
+            const v = (params.get(key) || "").trim();
+            if (v) extra[key] = v;
+        },
+    );
+    // mtu/tti/congestion must land as native number/boolean: the Go-side
+    // outbound builder reads them through positiveIntFromExtra/getBoolField,
+    // neither of which parses a quoted "1350"/"true" the way a plain string
+    // field would — the value would simply be dropped.
+    const mtu = (params.get("mtu") || "").trim();
+    if (mtu) {
+        const n = Number(mtu);
+        if (Number.isInteger(n) && n > 0) extra.mtu = n;
+    }
+    const tti = (params.get("tti") || "").trim();
+    if (tti) {
+        const n = Number(tti);
+        if (Number.isInteger(n) && n > 0) extra.tti = n;
+    }
+    const congestion = (params.get("congestion") || "").trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(congestion)) extra.congestion = true;
+    else if (["0", "false", "no", "off"].includes(congestion)) extra.congestion = false;
+};
+
 const parseVLESS = (uri) => {
     try {
         const urlStr = uri.replace("vless://", "http://");
@@ -349,18 +465,55 @@ const parseVLESS = (uri) => {
         mergeVLESSURLEmbeddedExtra(extra, params.get("extra"));
 
         extra.uuid = url.username;
-        extra.network = params.get("type") || "tcp";
-        extra.security = params.get("security") || "none";
-        extra.sni = params.get("sni") || "";
-        extra.fp = params.get("fp") || "";
-        extra.pbk = params.get("pbk") || "";
-        extra.sid = params.get("sid") || "";
-        extra.flow = params.get("flow") || "";
-        extra.path = params.get("path") || "";
-        extra.host = params.get("host") || "";
-        extra.alpn = params.get("alpn") || "";
-        extra.mode = params.get("mode") || "";
-        extra.method = params.get("method") || "";
+        // A default here must not overwrite what ?extra={...} already
+        // provided: fall back to it only when neither the query nor the
+        // embedded extra carries the key. This is the fix for the
+        // reality-collapses-to-none bug — the old unconditional assignment
+        // ran after the embedded-extra merge and beat it with the plain-TLS
+        // default every time security= was absent from the query.
+        const networkParam = params.get("type");
+        if (networkParam) extra.network = networkParam;
+        else applyDefaultIfAbsent(extra, "network", "tcp");
+        const securityParam = params.get("security");
+        if (securityParam) extra.security = securityParam;
+        else applyDefaultIfAbsent(extra, "security", "none");
+
+        // Every other query knob only overwrites the embedded-extra value
+        // when the query actually carries it non-empty — an absent query
+        // param must not stomp a value ?extra={...} already supplied.
+        applyQueryOverrides(extra, {
+            sni: params.get("sni"),
+            fp: params.get("fp"),
+            pbk: params.get("pbk"),
+            sid: params.get("sid"),
+            flow: params.get("flow"),
+            path: params.get("path"),
+            host: params.get("host"),
+            alpn: params.get("alpn"),
+            mode: params.get("mode"),
+            method: params.get("method"),
+        });
+        const encryption = params.get("encryption");
+        if (encryption) extra.encryption = encryption;
+
+        const grpcServiceName = firstNonEmpty(
+            params.get("grpc-service-name"),
+            params.get("serviceName"),
+            params.get("service_name"),
+            params.get("grpc_service_name"),
+        );
+        if (grpcServiceName) {
+            extra["grpc-service-name"] = grpcServiceName;
+            extra.serviceName = grpcServiceName;
+        }
+        const authority = firstNonEmpty(
+            params.get("authority"),
+            params.get("grpc-authority"),
+            params.get("grpc_authority"),
+        );
+        if (authority) extra.authority = authority;
+
+        applyMKCPQueryParams(params, extra);
 
         return {
             ip: url.hostname,
@@ -382,33 +535,94 @@ const parseTrojan = (uri) => {
         const urlStr = uri.replace("trojan://", "http://");
         const url = new URL(urlStr);
         const params = url.searchParams;
-        const network = String(params.get("network") || params.get("type") || "tcp").toLowerCase();
-        const sni = params.get("sni") ||
-            params.get("serverName") ||
-            params.get("servername") ||
-            params.get("server_name") ||
-            params.get("peer") ||
-            "";
-        const insecureRaw = String(
-            params.get("insecure") ||
-            params.get("allowInsecure") ||
-            params.get("allow_insecure") ||
-            params.get("skip-cert-verify") ||
-            params.get("skip_cert_verify") ||
-            ""
-        ).trim().toLowerCase();
-        const insecure = insecureRaw === "1" || insecureRaw === "true" || insecureRaw === "yes" || insecureRaw === "on";
-        const grpcServiceName =
-            params.get("grpc-service-name") ||
-            params.get("serviceName") ||
-            params.get("service_name") ||
-            params.get("grpc_service_name") ||
-            "";
-        const authority =
-            params.get("authority") ||
-            params.get("grpc-authority") ||
-            params.get("grpc_authority") ||
-            "";
+
+        const extra = {};
+        mergeVLESSURLEmbeddedExtra(extra, params.get("extra"));
+
+        // network decides which alias order the sni fallback below uses
+        // (grpc prefers sni over peer, everything else prefers peer), so it
+        // must be resolved first — with the same "query wins over embedded,
+        // embedded wins over the tcp default" priority as everything else
+        // here.
+        const networkParam = firstNonEmpty(params.get("network"), params.get("type"));
+        if (networkParam) extra.network = networkParam.toLowerCase();
+        else applyDefaultIfAbsent(extra, "network", "tcp");
+        const network = String(extra.network || "tcp").trim().toLowerCase();
+        const isGrpcNetwork = network === "grpc";
+
+        const sni = isGrpcNetwork
+            ? firstNonEmpty(
+                  params.get("sni"),
+                  params.get("peer"),
+                  params.get("serverName"),
+                  params.get("servername"),
+                  params.get("server_name"),
+              )
+            : firstNonEmpty(
+                  params.get("sni"),
+                  params.get("serverName"),
+                  params.get("servername"),
+                  params.get("server_name"),
+                  params.get("peer"),
+              );
+
+        const securityParam = params.get("security");
+        if (securityParam) extra.security = securityParam;
+        else applyDefaultIfAbsent(extra, "security", "tls");
+
+        // Every other query knob only overwrites the embedded-extra value
+        // when the query actually carries it non-empty — an absent query
+        // param must not stomp a value ?extra={...} already supplied.
+        applyQueryOverrides(extra, {
+            sni,
+            fp: params.get("fp"),
+            path: params.get("path"),
+            host: params.get("host"),
+            mode: params.get("mode"),
+            method: params.get("method"),
+            alpn: params.get("alpn"),
+            pbk: params.get("pbk"),
+            sid: params.get("sid"),
+            spx: params.get("spx"),
+            flow: params.get("flow"),
+        });
+
+        // insecure is only stored when at least one of its aliases is
+        // actually present in the query, regardless of the value it
+        // carries — an absent alias must not stomp a value ?extra={...}
+        // already supplied. Otherwise allowInsecure=0 would stop being
+        // distinguishable from "no alias at all" and clobber the embedded
+        // value.
+        const insecureAliases = ["insecure", "allowInsecure", "allow_insecure", "skip-cert-verify", "skip_cert_verify"];
+        if (insecureAliases.some((key) => params.has(key))) {
+            const insecureRaw = firstNonEmpty(
+                params.get("insecure"),
+                params.get("allowInsecure"),
+                params.get("allow_insecure"),
+                params.get("skip-cert-verify"),
+                params.get("skip_cert_verify"),
+            ).toLowerCase();
+            extra.insecure = ["1", "true", "yes", "on"].includes(insecureRaw);
+        }
+
+        const grpcServiceName = firstNonEmpty(
+            params.get("grpc-service-name"),
+            params.get("serviceName"),
+            params.get("service_name"),
+            params.get("grpc_service_name"),
+        );
+        if (grpcServiceName) {
+            extra["grpc-service-name"] = grpcServiceName;
+            extra.serviceName = grpcServiceName;
+        }
+        const authority = firstNonEmpty(
+            params.get("authority"),
+            params.get("grpc-authority"),
+            params.get("grpc_authority"),
+        );
+        if (authority) extra.authority = authority;
+
+        applyMKCPQueryParams(params, extra);
 
         return {
             ip: url.hostname,
@@ -417,24 +631,7 @@ const parseTrojan = (uri) => {
             name: decodeURIComponent(url.hash.replace("#", "") || "Trojan"),
             username: "",
             password: url.username,
-            extra: {
-                security: params.get("security") || "tls",
-                sni,
-                fp: params.get("fp") || "",
-                network,
-                path: params.get("path") || "",
-                host: params.get("host") || "",
-                alpn: params.get("alpn") || "",
-                insecure,
-                peer: params.get("peer") || "",
-                "grpc-service-name": grpcServiceName,
-                serviceName: grpcServiceName,
-                authority,
-                pbk: params.get("pbk") || "",
-                sid: params.get("sid") || "",
-                spx: params.get("spx") || "",
-                flow: params.get("flow") || "",
-            },
+            extra,
         };
     } catch (e) {
         console.error("Trojan parse error", e);
@@ -453,6 +650,22 @@ const parseHysteria2 = (uri) => {
         const insecureRaw = String(params.get("insecure") || "").trim().toLowerCase();
         const insecure = insecureRaw === "1" || insecureRaw === "true" || insecureRaw === "yes" || insecureRaw === "on";
 
+        const extra = {
+            password: url.username || "",
+            sni: params.get("sni") || "",
+            alpn: params.get("alpn") || "",
+            insecure,
+            obfs_type: params.get("obfs") || "",
+            obfs_password: params.get("obfs-password") || "",
+        };
+        // Port hopping: the Go-side outbound builder turns these into
+        // server_ports; this parser only needs to carry the raw values
+        // through under the names it reads.
+        const mport = firstNonEmpty(params.get("mport"), params.get("ports"));
+        if (mport) extra.mport = mport;
+        const hopInterval = firstNonEmpty(params.get("hop-interval"), params.get("hopInterval"));
+        if (hopInterval) extra.hop_interval = hopInterval;
+
         return {
             ip: url.hostname,
             port: parseInt(url.port, 10),
@@ -460,14 +673,7 @@ const parseHysteria2 = (uri) => {
             name: decodeURIComponent(url.hash.replace("#", "") || "Hysteria2"),
             username: "",
             password: "",
-            extra: {
-                password: url.username || "",
-                sni: params.get("sni") || "",
-                alpn: params.get("alpn") || "",
-                insecure,
-                obfs_type: params.get("obfs") || "",
-                obfs_password: params.get("obfs-password") || "",
-            },
+            extra,
         };
     } catch (e) {
         console.error("Hysteria2 parse error", e);
@@ -800,7 +1006,7 @@ export const isEncryptedSubscription = (text) => {
     );
 };
 
-export const VPN_NETWORK_OPTIONS = ["tcp", "ws", "grpc", "h2", "http", "xhttp"];
+export const VPN_NETWORK_OPTIONS = ["tcp", "ws", "grpc", "h2", "http", "xhttp", "httpupgrade", "kcp"];
 
 export const parseProxyExtra = (raw) => {
     if (raw == null || raw === "") return {};
@@ -865,7 +1071,7 @@ export const applyVpnTransportFieldsToExtra = (extra, network, fields) => {
     const ex = parseProxyExtra(extra);
     const net = String(network || "tcp").toLowerCase();
     const f = fields || {};
-    if (net === "ws" || net === "websocket") {
+    if (net === "ws" || net === "websocket" || net === "httpupgrade") {
         ex.path = f.transPath ? String(f.transPath) : "/";
         ex.host = f.transHost != null ? String(f.transHost) : "";
     } else if (net === "grpc") {
@@ -878,6 +1084,10 @@ export const applyVpnTransportFieldsToExtra = (extra, network, fields) => {
         ex.host = f.transHost != null ? String(f.transHost) : "";
         ex.mode = f.xhttpMode ? String(f.xhttpMode) : "auto";
     }
+    // "kcp" intentionally has no branch here: there is no form UI for its
+    // mKCP knobs (seed/headerType), so this must fall through and leave the
+    // extra map untouched rather than guess at defaults that would clobber
+    // what the link/subscription already put there.
     return ex;
 };
 

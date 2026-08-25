@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -45,6 +46,14 @@ func mkNodes(ips ...string) []config.ProxyEntry {
 }
 
 func TestRankAutoCandidates_OrdersByRTTAndCapsAtFive(t *testing.T) {
+	isolateNodeStats(t)
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
+	stubProbeResolver(t)
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
 	oldTCP, oldTLS := pingTCPProbe, autoTLSProbe
 	defer func() { pingTCPProbe, autoTLSProbe = oldTCP, oldTLS }()
 
@@ -71,11 +80,19 @@ func TestRankAutoCandidates_OrdersByRTTAndCapsAtFive(t *testing.T) {
 }
 
 func TestRankAutoCandidates_DropsUnreachableNodes(t *testing.T) {
+	isolateNodeStats(t)
 	// DepthFull (phase 2) probes the shortlist with a real TLS handshake for
 	// any type not in autoProbeTLSParams' no-TLS list — VLESS (mkNodes'
 	// default) needs one. Without mocking autoTLSProbe too, "live" would hit
 	// the real network via an unresolvable host and be dropped as a false
 	// negative, which is not what this test is checking.
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
+	stubProbeResolver(t)
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
 	oldTCP, oldTLS := pingTCPProbe, autoTLSProbe
 	defer func() { pingTCPProbe, autoTLSProbe = oldTCP, oldTLS }()
 
@@ -97,6 +114,14 @@ func TestRankAutoCandidates_DropsUnreachableNodes(t *testing.T) {
 }
 
 func TestRankAutoCandidates_NoReachableNodesReturnsNil(t *testing.T) {
+	isolateNodeStats(t)
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
+	stubProbeResolver(t)
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
 	oldTCP := pingTCPProbe
 	defer func() { pingTCPProbe = oldTCP }()
 	pingTCPProbe = func(_ string, _ int) (int64, bool, string) { return 0, false, "timeout" }
@@ -107,9 +132,17 @@ func TestRankAutoCandidates_NoReachableNodesReturnsNil(t *testing.T) {
 }
 
 func TestRankAutoCandidates_ReturnsPhase1EvenWhenNoneReachable(t *testing.T) {
+	isolateNodeStats(t)
 	// This is the diagnostic case that matters most: a dead AUTO group is
 	// exactly when the caller's per-member RTT/reason table needs data, so
 	// phase1 must not come back empty just because candidates did.
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
+	stubProbeResolver(t)
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
 	oldTCP := pingTCPProbe
 	defer func() { pingTCPProbe = oldTCP }()
 	pingTCPProbe = func(ip string, _ int) (int64, bool, string) { return 0, false, "timeout: " + ip }
@@ -132,6 +165,14 @@ func TestRankAutoCandidates_ReturnsPhase1EvenWhenNoneReachable(t *testing.T) {
 }
 
 func TestRankAutoCandidates_IncludesPreviousPickInShortlistEvenIfSlow(t *testing.T) {
+	isolateNodeStats(t)
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
+	stubProbeResolver(t)
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
 	oldTCP, oldTLS := pingTCPProbe, autoTLSProbe
 	defer func() { pingTCPProbe, autoTLSProbe = oldTCP, oldTLS }()
 
@@ -163,6 +204,13 @@ func TestRankAutoCandidates_IncludesPreviousPickInShortlistEvenIfSlow(t *testing
 }
 
 func TestRankAutoCandidates_RecordsProbeResultsInStore(t *testing.T) {
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
+	stubProbeResolver(t)
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
 	oldTCP, oldTLS, oldStore := pingTCPProbe, autoTLSProbe, nodeStats()
 	defer func() {
 		pingTCPProbe, autoTLSProbe = oldTCP, oldTLS
@@ -228,6 +276,13 @@ func TestDropEmptyKeyResults_RemovesOnlyZeroValueSlots(t *testing.T) {
 // is exactly the scenario dropEmptyKeyResults exists to filter before either
 // recording or returning.
 func TestRankAutoCandidates_CancelledProbesAreNotRecordedUnderEmptyKey(t *testing.T) {
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
+	stubProbeResolver(t)
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
 	oldTCP, oldStore := pingTCPProbe, nodeStats()
 	defer func() {
 		pingTCPProbe = oldTCP
@@ -326,6 +381,13 @@ func TestScoreNode_ToleranceCreditIsExactlyFifty(t *testing.T) {
 }
 
 func TestRankAutoCandidates_StaysOnCurrentPickWithinTolerance(t *testing.T) {
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
+	stubProbeResolver(t)
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
 	oldTCP, oldTLS, oldStore := pingTCPProbe, autoTLSProbe, nodeStats()
 	defer func() {
 		pingTCPProbe, autoTLSProbe = oldTCP, oldTLS
@@ -452,6 +514,13 @@ func TestDetectClassWeights_TooFewPlainNodesIsNotEvidence(t *testing.T) {
 }
 
 func TestRankAutoCandidates_SwitchesToClearlyFasterRival(t *testing.T) {
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
+	stubProbeResolver(t)
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
 	oldTCP, oldTLS, oldStore := pingTCPProbe, autoTLSProbe, nodeStats()
 	defer func() {
 		pingTCPProbe, autoTLSProbe = oldTCP, oldTLS
@@ -487,6 +556,13 @@ func TestRankAutoCandidates_SwitchesToClearlyFasterRival(t *testing.T) {
 // catch that regression: it puts the plain node in front on raw RTT alone and
 // checks the penalty flips the order.
 func TestRankAutoCandidates_ClassPenaltyChangesFinalOrder(t *testing.T) {
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
+	stubProbeResolver(t)
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
 	oldTCP, oldTLS, oldStore := pingTCPProbe, autoTLSProbe, nodeStats()
 	defer func() {
 		pingTCPProbe, autoTLSProbe = oldTCP, oldTLS
@@ -538,5 +614,198 @@ func TestRankAutoCandidates_ClassPenaltyChangesFinalOrder(t *testing.T) {
 	}
 	if got[len(got)-1].IP != "p1" {
 		t.Errorf("оштрафованный p1 (80ms*%v=%vms) должен проигрывать обоим obfs-узлам (100ms, 110ms без штрафа), получили %+v", autoBlockedClassPenalty, 80*autoBlockedClassPenalty, got)
+	}
+}
+
+// Резолв поднят на уровень ранжирования: обе фазы обязаны дозваниваться по
+// одному и тому же литералу. Иначе round-robin DNS отдаёт фазе 2 другой бэкенд,
+// и медиана TLS считается не для той машины, которую отранжировала фаза 1.
+func TestRankAutoCandidates_ResolvesHostsOncePerSweepNotPerPhase(t *testing.T) {
+	isolateNodeStats(t)
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
+
+	oldTCP, oldTLS, oldBind, oldResolve := pingTCPProbe, autoTLSProbe, autoProbeBindsToLAN, autoProbeResolveHost
+	defer func() {
+		pingTCPProbe, autoTLSProbe = oldTCP, oldTLS
+		autoProbeBindsToLAN, autoProbeResolveHost = oldBind, oldResolve
+	}()
+	autoProbeBindsToLAN = func() bool { return false }
+
+	var mu sync.Mutex
+	lookups := map[string]int{}
+	// Round-robin: каждый следующий лукап отдаёт другой бэкенд. Если фазы
+	// резолвят отдельно, фаза 2 увидит .2 там, где фаза 1 мерила .1.
+	backends := []string{"10.0.0.1", "10.0.0.2", "10.0.0.3"}
+	autoProbeResolveHost = func(_ context.Context, host string) (string, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		ip := backends[lookups[host]%len(backends)]
+		lookups[host]++
+		return ip, true
+	}
+
+	var phase1Dialed, phase2Dialed []string
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) {
+		mu.Lock()
+		phase1Dialed = append(phase1Dialed, ip)
+		mu.Unlock()
+		return 30, true, ""
+	}
+	autoTLSProbe = func(ip string, _ int, _ string, _ []string) (int64, bool, string) {
+		mu.Lock()
+		phase2Dialed = append(phase2Dialed, ip)
+		mu.Unlock()
+		return 30, true, ""
+	}
+
+	node := config.ProxyEntry{
+		ID: "1", IP: "cdn1.example.test", Port: 443, Type: "VLESS",
+		Name: "n", SubscriptionURL: "https://sub.example",
+		Extra: json.RawMessage(`{"security":"tls"}`),
+	}
+	RankAutoCandidates(context.Background(), []config.ProxyEntry{node}, "")
+
+	mu.Lock()
+	defer mu.Unlock()
+	if lookups["cdn1.example.test"] != 1 {
+		t.Fatalf("ожидали один резолв на весь свип, получили %d", lookups["cdn1.example.test"])
+	}
+	if len(phase1Dialed) == 0 || len(phase2Dialed) == 0 {
+		t.Fatalf("обе фазы должны были отработать: фаза 1 %v, фаза 2 %v", phase1Dialed, phase2Dialed)
+	}
+	for _, ip := range append(append([]string{}, phase1Dialed...), phase2Dialed...) {
+		if ip != phase1Dialed[0] {
+			t.Fatalf("обе фазы обязаны мерить один бэкенд: фаза 1 %v, фаза 2 %v", phase1Dialed, phase2Dialed)
+		}
+	}
+}
+
+// Трей и фронтенд промахиваются мимо кэша одновременно и уходят в один и тот же
+// полный свип. Это ровно та дублирующая работа (и двойная нагрузка пробами на
+// провайдера), ради устранения которой кэш и заводился.
+func TestRankAutoCandidates_ConcurrentCallersShareOneSweep(t *testing.T) {
+	isolateNodeStats(t)
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
+	stubProbeResolver(t)
+
+	oldTCP, oldTLS, oldBind := pingTCPProbe, autoTLSProbe, autoProbeBindsToLAN
+	defer func() {
+		pingTCPProbe, autoTLSProbe, autoProbeBindsToLAN = oldTCP, oldTLS, oldBind
+	}()
+	autoProbeBindsToLAN = func() bool { return false }
+
+	var probes int32
+	release := make(chan struct{})
+	pingTCPProbe = func(_ string, _ int) (int64, bool, string) {
+		atomic.AddInt32(&probes, 1)
+		<-release // держим лидера в фазе 1, пока не подтянутся остальные
+		return 20, true, ""
+	}
+	autoTLSProbe = func(_ string, _ int, _ string, _ []string) (int64, bool, string) {
+		return 20, true, ""
+	}
+
+	const callers = 4
+	nodes := mkNodes("a", "b")
+	results := make(chan []config.ProxyEntry, callers)
+	diags := make(chan AutoProbeDiagnostics, callers)
+
+	var started sync.WaitGroup
+	started.Add(callers)
+	for i := 0; i < callers; i++ {
+		go func() {
+			started.Done()
+			got, diag := RankAutoCandidates(context.Background(), nodes, "")
+			results <- got
+			diags <- diag
+		}()
+	}
+	started.Wait()
+
+	// Ждём, пока лидер займёт обе пробы фазы 1; остальные к этому моменту либо
+	// уже ждут на flight.done, либо вот-вот встанут туда.
+	deadline := time.After(5 * time.Second)
+	for atomic.LoadInt32(&probes) < int32(len(nodes)) {
+		select {
+		case <-deadline:
+			t.Fatalf("фаза 1 не стартовала: проб %d", atomic.LoadInt32(&probes))
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	time.Sleep(50 * time.Millisecond) // даём попутчикам встать в очередь
+	close(release)
+
+	for i := 0; i < callers; i++ {
+		got := <-results
+		if len(got) != len(nodes) {
+			t.Fatalf("вызывающий %d получил %d кандидатов, ожидали %d", i, len(got), len(nodes))
+		}
+		diag := <-diags
+		if len(diag.Phase1) != len(nodes) {
+			t.Fatalf("вызывающий %d получил %d строк фазы 1, ожидали %d", i, len(diag.Phase1), len(nodes))
+		}
+	}
+
+	// Один свип трогает транспорт каждого узла дважды: широкая фаза 1 и фаза 2,
+	// которая перед TLS повторяет транспортную пробу (см. probeOne). Итого
+	// 2*len(nodes) на всех четверых — без singleflight было бы вчетверо больше.
+	wantProbes := int32(2 * len(nodes))
+	if got := atomic.LoadInt32(&probes); got != wantProbes {
+		t.Fatalf("ожидали %d проб на один общий свип, получили %d", wantProbes, got)
+	}
+}
+
+// Попутчик обязан получить собственные массивы: два владельца одного среза
+// испортили бы данные друг другу при любой правке или сортировке на месте.
+func TestRankAutoCandidates_JoinerGetsIndependentSlices(t *testing.T) {
+	isolateNodeStats(t)
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
+	stubProbeResolver(t)
+
+	oldTCP, oldTLS, oldBind := pingTCPProbe, autoTLSProbe, autoProbeBindsToLAN
+	defer func() {
+		pingTCPProbe, autoTLSProbe, autoProbeBindsToLAN = oldTCP, oldTLS, oldBind
+	}()
+	autoProbeBindsToLAN = func() bool { return false }
+
+	release := make(chan struct{})
+	pingTCPProbe = func(_ string, _ int) (int64, bool, string) { <-release; return 20, true, "" }
+	autoTLSProbe = func(_ string, _ int, _ string, _ []string) (int64, bool, string) {
+		return 20, true, ""
+	}
+
+	nodes := mkNodes("a", "b")
+	type call struct {
+		candidates []config.ProxyEntry
+		diag       AutoProbeDiagnostics
+	}
+	out := make(chan call, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			c, d := RankAutoCandidates(context.Background(), nodes, "")
+			out <- call{c, d}
+		}()
+	}
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+
+	first, second := <-out, <-out
+	if len(first.candidates) == 0 || len(second.candidates) == 0 {
+		t.Fatalf("оба вызова должны вернуть кандидатов: %+v / %+v", first.candidates, second.candidates)
+	}
+	first.candidates[0].Name = "испорчено"
+	if second.candidates[0].Name == "испорчено" {
+		t.Fatal("вызывающие делят один массив кандидатов")
+	}
+	if len(first.diag.Phase1) == 0 || len(second.diag.Phase1) == 0 {
+		t.Fatal("оба вызова должны получить диагностику фазы 1")
+	}
+	first.diag.Phase1[0].Reason = "испорчено"
+	if second.diag.Phase1[0].Reason == "испорчено" {
+		t.Fatal("вызывающие делят один массив диагностики фазы 1")
 	}
 }
