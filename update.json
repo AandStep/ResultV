@@ -1,29 +1,14 @@
 {
   "version": "",
   "releaseTitle": {
-    "ru": "Небольшие улучшения",
-    "en": "Some fixes"
+    "ru": "Хотфикс",
+    "en": "Hotfix"
   },
   "releaseNotes": [
     {
       "type": "fix",
-      "ru": "Улучшена очистка залипающих tun адаптеров",
-      "en": "Improved cleanup of stuck tun adapters"
-    },
-    {
-      "type": "fix",
-      "ru": "Sing-box ядро очищено от лишних мусорных логов-ошибок",
-      "en": "The sing-box core no longer floods the log with junk error messages"
-    },
-    {
-      "type": "fix",
-      "ru": "При переключении активного сервера на авто, авто сервер некорректно определял рабочие сервера",
-      "en": "When switching an active server to Auto, Auto mode misjudged which servers were actually working"
-    },
-    {
-      "type": "improve",
-      "ru": "Ускорен подбор серверов в авто режиме",
-      "en": "Server selection in Auto mode is noticeably faster"
+      "ru": "Хотфикс для парсинга авто серверов",
+      "en": "Hotfix for parsing auto servers"
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",
