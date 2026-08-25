@@ -88,8 +88,11 @@ func leftoverTunIfIndexesNative() ([]int, error) {
 
 	var idxs []int
 	for cur := aa; cur != nil; cur = cur.Next {
-		desc := windows.UTF16PtrToString(cur.Description)
-		if desc == singTunAdapterDescription {
+		// AdapterName is the NetCfgInstanceId — the adapter GUID string, e.g.
+		// "{0DCCC63E-...}". sing-tun derives it from the interface name, so it
+		// identifies OUR adapter specifically; the "sing-tun Tunnel" description
+		// this used to match is shared by every client built on the same core.
+		if isOurTunAdapterGUID(windows.BytePtrToString(cur.AdapterName)) {
 			idxs = append(idxs, int(cur.IfIndex))
 		}
 	}
@@ -134,7 +137,8 @@ func hasLeftoverTun() bool {
 // NO 0.0.0.0/0 entry at all. A default-route-only delete removes nothing of
 // that set, every metric-0 prefix keeps pointing at the dead adapter and the
 // internet stays black-holed even though cleanup "succeeded". The adapter is
-// exclusively ours (matched by the exact "sing-tun Tunnel" description), so
+// exclusively ours (matched by our own Wintun adapter GUID, not by the
+// "sing-tun Tunnel" description every client on this core shares), so
 // removing all its routes is safe.
 func clearLeftoverTun() error {
 	idxs := leftoverTunIfIndexes()
@@ -172,7 +176,7 @@ func removeAllRoutesPS(idx int) string {
 // Removing the address is synchronous — unlike async pnputil device removal,
 // whose teardown can lag past the retry window and collide again — so by the time
 // sing-tun re-adds the ULA the slot is free. Safe: the adapter is exclusively
-// ours (matched by the exact "sing-tun Tunnel" description) and sing-tun
+// ours (matched by our own Wintun adapter GUID) and sing-tun
 // reconfigures whatever addresses it needs when it reclaims the adapter.
 func removeTunIPv6PS(idx int) string {
 	return fmt.Sprintf("Remove-NetIPAddress -InterfaceIndex %d -AddressFamily IPv6 -Confirm:$false -ErrorAction SilentlyContinue", idx)
