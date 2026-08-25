@@ -884,6 +884,12 @@ export const mergeSubscriptionRefreshCountries = (
         if (t === "SECTION") {
             return `section|${sectionOrdinal(arr, idx)}|${String(p.name || "").trim()}`;
         }
+        // An AUTO head carries no address: keyOf would hash every head to
+        // "|0|AUTO" and collapse a provider's sections into one row. The
+        // section name is its identity — it is what the head IS.
+        if (t === "AUTO") {
+            return `auto|${String(p.name || "").trim()}`;
+        }
         return keyOf(p);
     };
 
@@ -898,7 +904,10 @@ export const mergeSubscriptionRefreshCountries = (
         if (typeof raw === "string") { try { return JSON.parse(raw); } catch { return {}; } }
         return raw || {};
     };
-    const memberKey = (p) => `${keyOf(p)}|member`;
+    // Sections routinely list the SAME backends (impio ships one pool per
+    // tier over one node set), so ip:port:type alone cannot tell a member of
+    // "Авто" from a member of "Авто | Когда не глушат". autoGroup can.
+    const memberKey = (p) => `${keyOf(p)}|member|${String(p.autoGroup || "").trim()}`;
 
     const oldMemberIds = new Set();
     oldSub.forEach((p) => {
