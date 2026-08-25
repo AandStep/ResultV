@@ -251,6 +251,12 @@ type SBDNSRule struct {
 type SBInbound struct {
 	Type                string   `json:"type"`
 	Tag                 string   `json:"tag"`
+	// InterfaceName pins the Windows TUN adapter name. Left empty, sing-box
+	// falls back to "tun0" (protocol/tun/inbound.go: CalculateInterfaceName)
+	// and sing-tun derives the Wintun GUID from that name — so we would share a
+	// devnode with every other sing-box client on the machine. See
+	// tunInterfaceName for the two constraints on the value.
+	InterfaceName       string   `json:"interface_name,omitempty"`
 	Listen              string   `json:"listen,omitempty"`
 	ListenPort          int      `json:"listen_port,omitempty"`
 	Address             []string `json:"address,omitempty"`
@@ -755,6 +761,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	tun := SBInbound{
 		Type:                "tun",
 		Tag:                 "tun-in",
+		InterfaceName:       tunInterfaceName,
 		Address:             tunAddresses,
 		Stack:               tunStack,
 		AutoRoute:           true,
