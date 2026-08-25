@@ -18,6 +18,7 @@ package proxy
 import (
 	"context"
 	"errors"
+	"net"
 	"strings"
 	"testing"
 
@@ -62,12 +63,10 @@ func TestBuildTunnelModeConfig_DisableIPv6DropsTheULA(t *testing.T) {
 				t.Fatalf("TunDisableIPv6 must drop every IPv6 address, got %q", in.Address)
 			}
 		}
-		// Dropping IPv6 from the TUN without strict_route would send the host's
-		// IPv6 traffic straight out the physical adapter — a real-address leak.
-		// strict_route's WFP filters blackhole it instead.
-		if !in.StrictRoute {
-			t.Fatal("dropping IPv6 must force strict_route so IPv6 is blackholed, not leaked")
-		}
+		// Whether that also forces strict_route depends on the host actually
+		// having routable IPv6 to leak — covered by
+		// TestBuildTunnelModeConfig_ForcesStrictRouteWhenIPv6WouldLeak and its
+		// negative twin, not here.
 		return
 	}
 	t.Fatal("no tun-in inbound")
@@ -160,3 +159,81 @@ func (e *recordingEngine) Start(ctx context.Context, cfg EngineConfig) error {
 
 func (e *recordingEngine) Stop() error     { return nil }
 func (e *recordingEngine) IsRunning() bool { return false }
+
+// stubRoutableIPv6 controls the "would IPv6 leak if we do not tunnel it" probe,
+// which otherwise enumerates the real host's interfaces.
+func stubRoutableIPv6(t *testing.T, v bool) {
+	t.Helper()
+	prev := hasRoutableIPv6Fn
+	hasRoutableIPv6Fn = func() bool { return v }
+	t.Cleanup(func() { hasRoutableIPv6Fn = prev })
+}
+
+// Dropping IPv6 from the TUN while the host has a globally routable IPv6 would
+// not blackhole that traffic — it would route it out the physical adapter. Our
+// ipv4_only resolver keeps domain traffic off IPv6, but any app with its own DoH
+// resolver (every modern browser) gets AAAA independently, so the leak is real.
+func TestBuildTunnelModeConfig_ForcesStrictRouteWhenIPv6WouldLeak(t *testing.T) {
+	stubRoutableIPv6(t, true)
+	sb := mustBuildTunnelModeConfig(t, EngineConfig{
+		Proxy:             ProxyConfig{Type: "vless", IP: "203.0.113.7", Port: 443, Password: "p"},
+		Mode:              ProxyModeTunnel,
+		DNSLeakProtection: false,
+	})
+	if !tunInboundOf(t, sb).StrictRoute {
+		t.Fatal("a host with routable IPv6 and no IPv6 on the TUN must get strict_route")
+	}
+}
+
+// ...but only then. Forcing the WFP filters on every host would silently
+// re-enable a feature the user deliberately turned off, for no gain: a host with
+// only fe80::/fd00:: has no IPv6 that can reach the internet, so none can leak.
+func TestBuildTunnelModeConfig_NoForcedStrictRouteWithoutRoutableIPv6(t *testing.T) {
+	stubRoutableIPv6(t, false)
+	sb := mustBuildTunnelModeConfig(t, EngineConfig{
+		Proxy:             ProxyConfig{Type: "vless", IP: "203.0.113.7", Port: 443, Password: "p"},
+		Mode:              ProxyModeTunnel,
+		DNSLeakProtection: false,
+	})
+	if tunInboundOf(t, sb).StrictRoute {
+		t.Fatal("no routable IPv6 means nothing can leak — strict_route must stay off")
+	}
+}
+
+func TestIsLeakableIPv6(t *testing.T) {
+	cases := []struct {
+		ip   string
+		want bool
+	}{
+		{"2001:4860:4860::8888", true},  // global unicast
+		{"2a00:1450:4001:80f::200e", true},
+		{"fe80::5fdd:2162:71f1:268e", false}, // link-local: cannot reach the internet
+		{"fdfd::1a7a:9a83", false},           // ULA: ditto
+		{"fc00::1", false},                   // ULA lower half
+		{"::1", false},                       // loopback
+		{"ff02::1", false},                   // multicast
+		{"::", false},                        // unspecified
+		{"192.168.1.10", false},              // IPv4 is not IPv6
+	}
+	for _, tc := range cases {
+		t.Run(tc.ip, func(t *testing.T) {
+			if got := isLeakableIPv6(net.ParseIP(tc.ip)); got != tc.want {
+				t.Fatalf("isLeakableIPv6(%s) = %v, want %v", tc.ip, got, tc.want)
+			}
+		})
+	}
+	if isLeakableIPv6(nil) {
+		t.Fatal("nil is not a leakable address")
+	}
+}
+
+func tunInboundOf(t *testing.T, sb SingBoxConfig) SBInbound {
+	t.Helper()
+	for _, in := range sb.Inbounds {
+		if in.Tag == "tun-in" {
+			return in
+		}
+	}
+	t.Fatal("no tun-in inbound")
+	return SBInbound{}
+}

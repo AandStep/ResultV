@@ -108,17 +108,15 @@ type EngineConfig struct {
 	// TunDisableIPv6 strips every IPv6 address from the TUN inbound and forces
 	// strict_route on. It is a RETRY-ONLY switch, never user-facing: startEngine
 	// flips it after sing-tun reports "set ipv6 address: <err>", i.e. the freshly
-	// created Wintun adapter refused an IPv6 address even though the host has
-	// IPv6 and systemHasIPv6() said yes.
+	// created Wintun adapter refused an IPv6 address that was explicitly opted
+	// into via TunIPv6.
 	//
 	// Without it that failure is a permanent wedge: the message matches
 	// isTransientTunError, so the retry fires, tears down a device that was never
 	// the problem, and re-Starts the IDENTICAL config — which fails identically.
 	//
-	// It overrides BOTH systemHasIPv6() and an explicit TunIPv6: a tunnel that
-	// will not start is worse than a tunnel without IPv6. strict_route is forced
-	// alongside because a TUN with no IPv6 address and no WFP filters sends the
-	// host's IPv6 traffic straight out the physical adapter — a real-address leak.
+	// It overrides the explicit TunIPv6 opt-in: a tunnel that will not start is
+	// worse than a tunnel without IPv6.
 	TunDisableIPv6 bool
 	DataDir      string
 
@@ -659,17 +657,17 @@ func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	return sbCfg, nil
 }
 
-// systemHasIPv6 reports whether the host has IPv6 wired up at the OS level.
-// We treat "any non-loopback, non-tunnel interface has at least one IPv6
-// unicast address" as the signal. This catches both adapter-level disabled
-// IPv6 and OS-wide DisabledComponents on Windows: with neither in play, every
-// box has at least a link-local fe80:: on the LAN adapter, which is enough
-// for sing-tun's CreateUnicastIpAddressEntry call to succeed against the TUN.
+// hasRoutableIPv6 reports whether the host holds an IPv6 address that can
+// actually reach the internet — the only kind that can leak.
 //
-// Conservative-fail: on enumeration error we assume IPv6 is present, so we
-// don't silently strip IPv6 from the tunnel on hosts where the check is
-// merely flaky (CGO timeout, etc.).
-func systemHasIPv6() bool {
+// It replaced systemHasIPv6, which answered a different question ("can this box
+// take an IPv6 address at all") and counted link-local fe80:: — present on
+// practically every Windows machine. That made it useless as a leak signal:
+// keyed on it, we would force the WFP filters on essentially everyone.
+//
+// Conservative-fail: on enumeration error assume yes, so a flaky probe makes us
+// over-block rather than leak.
+func hasRoutableIPv6() bool {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return true
@@ -693,13 +691,29 @@ func systemHasIPv6() bool {
 			case *net.IPAddr:
 				ip = v.IP
 			}
-			if ip == nil || ip.To4() != nil {
-				continue
+			if isLeakableIPv6(ip) {
+				return true
 			}
-			return true
 		}
 	}
 	return false
+}
+
+// isLeakableIPv6 reports whether ip is an IPv6 address that could carry traffic
+// out to the internet past the tunnel. Link-local (fe80::/10) and ULA (fc00::/7)
+// cannot, so they are not leaks — note Go's IsGlobalUnicast returns TRUE for ULA,
+// which is why the ULA check is explicit rather than implied.
+func isLeakableIPv6(ip net.IP) bool {
+	if ip == nil || ip.To4() != nil || ip.To16() == nil {
+		return false
+	}
+	if !ip.IsGlobalUnicast() {
+		return false
+	}
+	if v6 := ip.To16(); v6[0]&0xfe == 0xfc {
+		return false
+	}
+	return true
 }
 
 func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
@@ -726,11 +740,19 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	if cfg.TunIPv6 != "" {
 		tunIPv6 = cfg.TunIPv6
 	}
-	// TunDisableIPv6 wins over both the explicit override and systemHasIPv6():
-	// it is only ever set after the adapter has already refused an IPv6 address,
-	// so keeping one here would rebuild the exact config that just failed.
+	// IPv6 on the TUN is OPT-IN (EngineConfig.TunIPv6). It used to be attached
+	// automatically whenever the host had any IPv6 at all — but buildDNS pins
+	// strategy=ipv4_only, so no domain ever resolves to AAAA and the TUN's IPv6
+	// only ever carried literal-IPv6 traffic. That bought close to nothing while
+	// owning a whole class of hard failures: when Windows refuses the address,
+	// sing-tun fails the entire inbound with "set ipv6 address: ..." and the
+	// tunnel does not come up at all.
+	//
+	// TunDisableIPv6 additionally overrides the explicit opt-in: it is only ever
+	// set after the adapter has already refused an address, so honouring the
+	// override there would rebuild the exact config that just failed.
 	tunAddresses := []string{tunIPv4}
-	if !cfg.TunDisableIPv6 && (cfg.TunIPv6 != "" || systemHasIPv6()) {
+	if !cfg.TunDisableIPv6 && cfg.TunIPv6 != "" {
 		tunAddresses = append(tunAddresses, tunIPv6)
 	}
 	tunStack := effectiveTunStack(cfg.TunStack)
@@ -740,12 +762,18 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	// adapter, where Russian ISPs transparently hijack UDP/53 (Rostelecom,
 	// MSK-IX). User-controlled via the "DNS leak protection" toggle.
 	//
-	// Forced on whenever TunDisableIPv6 dropped the TUN's IPv6 address: without
-	// the WFP filters the host's IPv6 traffic would not be blackholed but routed
-	// out the physical adapter, leaking the real address on exactly the hosts
-	// that have working IPv6. Blackholed IPv6 is the acceptable cost; leaked
-	// IPv6 is not.
-	strictRoute := cfg.DNSLeakProtection || cfg.TunDisableIPv6
+	// Forced on when the TUN carries no IPv6 while the host holds a globally
+	// routable one. Without the WFP filters that traffic is not blackholed, it is
+	// routed out the physical adapter. buildDNS's ipv4_only keeps domain traffic
+	// off IPv6, but any app running its own DoH resolver — every modern browser —
+	// gets AAAA independently, so the leak is real rather than theoretical.
+	//
+	// Deliberately keyed on hasRoutableIPv6 and not on "IPv6 is absent from the
+	// TUN": a host with only fe80::/fd00:: has no IPv6 that can reach the
+	// internet, and forcing the filters there would silently re-enable a feature
+	// the user turned off, for no gain.
+	ipv6Unrouted := len(tunAddresses) == 1 && hasRoutableIPv6Fn()
+	strictRoute := cfg.DNSLeakProtection || ipv6Unrouted
 
 	pt := strings.ToUpper(strings.TrimSpace(cfg.Proxy.Type))
 

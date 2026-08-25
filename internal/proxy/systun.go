@@ -25,6 +25,10 @@ var (
 	hasLeftoverTunFn        = hasLeftoverTun
 	clearLeftoverTunFn      = clearLeftoverTun
 	removeStaleTunAdapterFn = removeStaleTunAdapter
+
+	// hasRoutableIPv6Fn indirects the host-IPv6 probe so config tests can decide
+	// whether IPv6 would leak instead of depending on the machine they run on.
+	hasRoutableIPv6Fn = hasRoutableIPv6
 )
 
 // tunInterfaceName is the Windows TUN interface name we hand sing-box via
@@ -43,10 +47,9 @@ var (
 //     tunnel adapters by that substring, and three call sites depend on it
 //     classifying OUR adapter as a tunnel: skipAdapterDNS (else our TUN lands in
 //     the physical-adapter DNS snapshot, gets pinned to public resolvers, and
-//     Restore fails on the vanished interface index), systemHasIPv6 (else a
-//     leftover of ours fakes host IPv6 support and brings back the very
-//     "set ipv6 address" failure), and the Ping LAN bind (else Ping binds to our
-//     own TUN).
+//     Restore fails on the vanished interface index), hasRoutableIPv6 (else a
+//     leftover of ours is mistaken for host IPv6 and needlessly forces
+//     strict_route), and the Ping LAN bind (else Ping binds to our own TUN).
 //
 // Changing this name WITHOUT recomputing tunAdapterGUID silently blinds every
 // cleanup path — TestTunAdapterGUIDMatchesInterfaceName exists to stop that.

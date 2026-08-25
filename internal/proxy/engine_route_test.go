@@ -1045,11 +1045,27 @@ func TestBuildTunnelModeConfig_StrictRouteSerializesToJSON(t *testing.T) {
 	}
 }
 
-// TestBuildTunnelModeConfig_TunHasIPv6Address verifies that the TUN inbound
-// carries both an IPv4 and an IPv6 address by default. Without an IPv6
-// address, strict_route's WFP filter would silently blackhole all IPv6
-// traffic — leaving the user without IPv6 connectivity while connected.
-func TestBuildTunnelModeConfig_TunHasIPv6Address(t *testing.T) {
+// TestBuildTunnelModeConfig_TunIsIPv4OnlyByDefault pins the CURRENT intent, which
+// is the reverse of what this test asserted before 2026-08-25.
+//
+// It used to require an IPv6 address on the TUN by default, reasoning that
+// without one strict_route's WFP filters would blackhole IPv6 and leave the user
+// without IPv6 while connected. That reasoning was sound in isolation but ignored
+// buildDNS, which pins strategy=ipv4_only: no domain ever resolves to AAAA, so
+// the TUN's IPv6 only ever carried literal-IPv6 traffic. The address bought
+// almost nothing — and owned a whole class of hard failures, because when Windows
+// refuses it sing-tun fails the ENTIRE inbound with "set ipv6 address: ..." and
+// the tunnel does not come up at all.
+//
+// IPv6 is therefore opt-in via EngineConfig.TunIPv6 (see
+// TestBuildTunnelModeConfig_CustomTunIPv6Respected). The leak this opens on hosts
+// that do have routable IPv6 is closed by forcing strict_route there, not by
+// putting the address back — see
+// TestBuildTunnelModeConfig_ForcesStrictRouteWhenIPv6WouldLeak.
+func TestBuildTunnelModeConfig_TunIsIPv4OnlyByDefault(t *testing.T) {
+	// Stubbed true so this asserts the default even on an IPv6-capable host,
+	// rather than passing for the wrong reason on an IPv4-only CI box.
+	stubRoutableIPv6(t, true)
 	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
 		Mode:  ProxyModeTunnel,
 		Proxy: ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
@@ -1057,20 +1073,15 @@ func TestBuildTunnelModeConfig_TunHasIPv6Address(t *testing.T) {
 	if len(cfg.Inbounds) == 0 {
 		t.Fatal("missing tun inbound")
 	}
-	var v4, v6 bool
 	for _, a := range cfg.Inbounds[0].Address {
 		if strings.Contains(a, ":") {
-			v6 = true
-		} else if strings.Contains(a, ".") {
-			v4 = true
+			t.Fatalf("tun must be IPv4-only by default, got %+v", cfg.Inbounds[0].Address)
 		}
 	}
-	if !v4 {
-		t.Fatalf("expected default IPv4 address in tun, got %+v", cfg.Inbounds[0].Address)
+	if len(cfg.Inbounds[0].Address) != 1 {
+		t.Fatalf("expected exactly the IPv4 address, got %+v", cfg.Inbounds[0].Address)
 	}
-	if !v6 {
-		t.Fatalf("expected default IPv6 address in tun (otherwise strict_route blackholes v6), got %+v", cfg.Inbounds[0].Address)
-	}
+	assertCoreAcceptsConfig(t, cfg)
 }
 
 // TestBuildTunnelModeConfig_CustomTunIPv6Respected verifies that
