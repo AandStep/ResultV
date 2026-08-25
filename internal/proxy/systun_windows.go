@@ -32,13 +32,6 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// singTunAdapterDescription is the fixed NIC description sing-tun gives the
-// Wintun adapter it creates on Windows. Matching on this EXACT string (not a
-// broad "tun" substring) is critical: it guarantees we only ever touch OUR
-// leftover adapter and never the user's other tunnels (Radmin VPN, OpenVPN
-// TAP, Tailscale, WireGuard, …), whose default routes we must not delete.
-const singTunAdapterDescription = "sing-tun Tunnel"
-
 // Indirections for tests so the cleanup can be exercised without a real adapter.
 var (
 	leftoverTunIfIndexesFn  = leftoverTunIfIndexesNative
@@ -203,36 +196,68 @@ func buildTunCleanupScript(idxs []int) string {
 	return b.String()
 }
 
-// staleTunRemovalScript returns the PowerShell that deletes the sing-tun Wintun
-// *device* (not just its routes) from Windows. It selects the adapter by the
-// exact "sing-tun Tunnel" description — never a broad "tun" match — so it can
-// only ever remove OUR adapter, then hands the device's PnP instance id to
-// pnputil. ErrorAction/2>$null keep it silent when no such adapter exists, so
-// the script is a safe no-op on a clean machine.
-func staleTunRemovalScript() string {
-	return fmt.Sprintf(
-		"Get-NetAdapter -InterfaceDescription '%s' -ErrorAction SilentlyContinue | "+
-			"ForEach-Object { & pnputil /remove-device $_.PnpDeviceID 2>$null }",
-		singTunAdapterDescription,
-	)
+// tunPnpInstanceID returns the Windows PnP instance id of the Wintun device
+// sing-tun creates for the given adapter GUID. Wintun enumerates its adapters on
+// the software device bus, so the id is always SWD\WINTUN\{GUID}.
+func tunPnpInstanceID(guid string) string {
+	return `SWD\WINTUN\` + guid
+}
+
+// ghostTunRemovalScript returns the PowerShell that deletes our wedged Wintun
+// *device* (not just its routes) by its exact PnP instance id.
+//
+// Get-PnpDevice, not Get-NetAdapter: the failure this fixes is a NON-PRESENT
+// ("ghost", Status: Unknown) device left behind by an unclean exit. Neither
+// Get-NetAdapter nor GetAdaptersAddresses enumerates non-present devices, so
+// every previous cleanup path looked straight past it while it kept squatting
+// the devnode and degrading CreateAdapter into "configure tun interface: set
+// ipv6 address: Element not found".
+//
+// -eq on the instance id, never -like or a description match: -like would treat
+// [ ] as wildcards, and the "sing-tun Tunnel" description is shared by every
+// client built on this core - matching it risks pnputil-removing someone else's
+// live tunnel.
+//
+// The legacy GUID is additionally gated on the device NOT being present. A live
+// "tun0" may belong to another running sing-box client, and deleting its devnode
+// tears down that session irreversibly; a ghost tun0 belongs to nobody. Our own
+// GUID needs no such gate - nobody else can hold it.
+//
+// ErrorAction/2>$null keep the script silent, so it is a safe no-op on a clean
+// machine - which is why removeStaleTunAdapter no longer pre-checks anything.
+func ghostTunRemovalScript() string {
+	var b strings.Builder
+	b.WriteString("$dev = Get-PnpDevice -Class Net -ErrorAction SilentlyContinue\n")
+	fmt.Fprintf(&b, "$dev | Where-Object { $_.InstanceId -eq '%s' } | "+
+		"ForEach-Object { & pnputil /remove-device $_.InstanceId 2>$null }\n",
+		tunPnpInstanceID(tunAdapterGUID))
+	fmt.Fprintf(&b, "$dev | Where-Object { $_.InstanceId -eq '%s' -and $_.Status -ne 'OK' } | "+
+		"ForEach-Object { & pnputil /remove-device $_.InstanceId 2>$null }\n",
+		tunPnpInstanceID(tunAdapterGUIDLegacy))
+	return b.String()
 }
 
 // removeStaleTunAdapter deletes a wedged sing-tun adapter device so the next
 // CreateAdapter builds a fresh one. clearLeftoverTun only strips routes/DNS and
-// leaves the adapter for sing-box to reclaim — but when the adapter's backing
+// leaves the adapter for sing-box to reclaim - but when the adapter's backing
 // Wintun session is dead (the device lingers in the stack yet its handle is
-// gone), reopening it is what fails with "open interface take too much time" →
+// gone), reopening it is what fails with "open interface take too much time" ->
 // "cannot find the file specified". Reusing that husk on every retry is why the
 // tunnel used to come back only after a reboot; removing the device breaks that
-// loop. No-op when no such adapter is present. Admin removes it directly;
+// loop.
+//
+// There is deliberately NO pre-check for a present adapter here. The check this
+// used to do went through GetAdaptersAddresses, which does not enumerate
+// non-present devices - so in the ghost case, the one that actually wedges
+// startup, it returned "nothing to do" and the retry died on the same ghost.
+// ghostTunRemovalScript is already a silent no-op on a clean machine, so the
+// only cost of always running it is one PowerShell spawn on a path that has
+// just failed to start the tunnel anyway. Admin removes the device directly;
 // without admin we go through the elevated (UAC) PowerShell, mirroring
-// clearLeftoverTun — though tunnel mode is admin-gated up front, so the direct
+// clearLeftoverTun - though tunnel mode is admin-gated up front, so the direct
 // path is the one that runs in practice.
 func removeStaleTunAdapter() error {
-	if len(leftoverTunIfIndexes()) == 0 {
-		return nil
-	}
-	script := staleTunRemovalScript()
+	script := ghostTunRemovalScript()
 	if tunIsAdmin() {
 		return runCmdFn("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
 	}
