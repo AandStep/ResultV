@@ -188,20 +188,35 @@ func splitAutoEntriesByName(entries []config.ProxyEntry) ([]AutoGroup, []config.
 	return []AutoGroup{{Name: name, Members: autoEntries}}, individual, true
 }
 
-// containsWordAuto checks whether s contains "auto" as a case-insensitive
-// whole word (not part of "autostart" etc.).
+// containsWordAuto checks whether s contains "auto" (Latin) or "авто"
+// (Cyrillic) as a case-insensitive whole word — "autostart" and "Автобан"
+// must not match.
+//
+// The boundary test runs on runes. The byte-wise predecessor compared
+// low[end] against 'a'..'z', which can only ever see the FIRST byte of a
+// multi-byte rune: for a Cyrillic name it inspected half a letter and the
+// whole check was meaningless.
+//
+// Every occurrence is examined, not just the first: "Автобан Авто" is an
+// auto group even though its leading match is not a word.
 func containsWordAuto(s string) bool {
 	low := strings.ToLower(s)
-	idx := strings.Index(low, "auto")
-	if idx < 0 {
-		return false
-	}
-	end := idx + 4
-	if end < len(low) {
-		next, _ := utf8.DecodeRuneInString(low[end:])
-		if unicode.IsLetter(next) {
-			return false
+	for _, word := range []string{"auto", "авто"} {
+		for offset := 0; offset < len(low); {
+			idx := strings.Index(low[offset:], word)
+			if idx < 0 {
+				break
+			}
+			end := offset + idx + len(word)
+			if end >= len(low) {
+				return true
+			}
+			next, _ := utf8.DecodeRuneInString(low[end:])
+			if !unicode.IsLetter(next) {
+				return true
+			}
+			offset = end
 		}
 	}
-	return true
+	return false
 }

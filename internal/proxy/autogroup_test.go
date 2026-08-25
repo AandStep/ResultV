@@ -224,3 +224,47 @@ func TestSplitAutoEntriesNoGroups(t *testing.T) {
 		t.Errorf("individual = %d, want 2", len(individual))
 	}
 }
+
+func TestContainsWordAuto(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"impVPN Auto", true},
+		{"AUTO", true},
+		{"impVPN Auto | VLESS", true},
+		{"⚡ Авто | ✅ Когда не глушат интернет", true},
+		{"авто", true},
+		{"Авто", true},
+		{"autostart", false},
+		{"Автобан", false},
+		{"Австрия", false},
+		{"🇺🇸 США | VLESS TCP | №4", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := containsWordAuto(tc.in); got != tc.want {
+			t.Errorf("containsWordAuto(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+// A line-based subscription naming its pool in Cyrillic must still collapse
+// into one AUTO card via the fallback path.
+func TestSplitAutoEntriesFallbackCyrillicName(t *testing.T) {
+	entries := []config.ProxyEntry{
+		{ID: "1", Name: "⚡ Авто | ✅ Когда не глушат интернет", Type: "VLESS", IP: "n1", Port: 443},
+		{ID: "2", Name: "⚡ Авто | ✅ Когда не глушат интернет", Type: "HYSTERIA2", IP: "n2", Port: 443},
+		{ID: "3", Name: "🇺🇸 США | VLESS TCP | №1", Type: "VLESS", IP: "n3", Port: 443},
+	}
+	groups, individual, ok := SplitAutoEntries(entries)
+	if !ok || len(groups) != 1 {
+		t.Fatalf("groups = %+v, ok = %v", groups, ok)
+	}
+	if len(groups[0].Members) != 2 {
+		t.Errorf("members = %d, want 2", len(groups[0].Members))
+	}
+	if len(individual) != 1 || individual[0].ID != "3" {
+		t.Errorf("individual = %+v", individual)
+	}
+}
