@@ -209,16 +209,31 @@ func parseJSONSubscriptionEntry(obj map[string]interface{}) []config.ProxyEntry 
 	// Иногда obj содержит массив outbounds
 	outbounds, ok := asSlice(obj["outbounds"])
 	if ok {
+		remarks := asString(obj["remarks"]) // Top-level remarks
+		groupName, selectors, isBalancer := parseBalancerGroup(obj)
 		for _, ob := range outbounds {
-			if obMap, ok := asMap(ob); ok {
-				remarks := asString(obj["remarks"]) // Top-level remarks
-				if remarks == "" {
-					remarks = asString(obMap["tag"]) // Или используем tag как имя
-				}
-				if entry, ok := parseJSONOutbound(obMap, remarks); ok {
-					entries = append(entries, entry)
-				}
+			obMap, ok := asMap(ob)
+			if !ok {
+				continue
 			}
+			// In a balancer config only the selected outbounds are the pool;
+			// anything else in the file is plumbing, not a server the user
+			// may pick.
+			if isBalancer && !tagMatchesSelector(asString(obMap["tag"]), selectors) {
+				continue
+			}
+			name := remarks
+			if name == "" {
+				name = asString(obMap["tag"]) // Или используем tag как имя
+			}
+			entry, ok := parseJSONOutbound(obMap, name)
+			if !ok {
+				continue
+			}
+			if isBalancer {
+				entry.AutoGroup = groupName
+			}
+			entries = append(entries, entry)
 		}
 	}
 
