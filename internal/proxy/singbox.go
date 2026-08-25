@@ -41,6 +41,23 @@ import (
 )
 
 
+// isTunIPv6Error reports whether a tunnel start failed specifically because the
+// Wintun adapter would not take an IPv6 address ("configure tun interface: set
+// ipv6 address: ..."). This is NOT the same class as a wedged adapter: no amount
+// of device removal fixes it and a retry with the same config reproduces it
+// exactly, so the only remedy is to rebuild the config without IPv6
+// (EngineConfig.TunDisableIPv6).
+//
+// Deliberately narrow — "set ipv4 address" failures of the identical shape must
+// not match, because dropping IPv6 cannot fix them and would only hide the real
+// cause behind a silently degraded tunnel.
+func isTunIPv6Error(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "set ipv6 address")
+}
+
 func ClassifyEngineStartError(mode ProxyMode, err error) (tunnelFailed bool, reason string, errorCode string) {
 	if err == nil {
 		return false, "", ""

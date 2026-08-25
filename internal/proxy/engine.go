@@ -105,6 +105,21 @@ type EngineConfig struct {
 	TunIPv4      string
 	TunIPv6      string
 	TunStack     string
+	// TunDisableIPv6 strips every IPv6 address from the TUN inbound and forces
+	// strict_route on. It is a RETRY-ONLY switch, never user-facing: startEngine
+	// flips it after sing-tun reports "set ipv6 address: <err>", i.e. the freshly
+	// created Wintun adapter refused an IPv6 address even though the host has
+	// IPv6 and systemHasIPv6() said yes.
+	//
+	// Without it that failure is a permanent wedge: the message matches
+	// isTransientTunError, so the retry fires, tears down a device that was never
+	// the problem, and re-Starts the IDENTICAL config — which fails identically.
+	//
+	// It overrides BOTH systemHasIPv6() and an explicit TunIPv6: a tunnel that
+	// will not start is worse than a tunnel without IPv6. strict_route is forced
+	// alongside because a TUN with no IPv6 address and no WFP filters sends the
+	// host's IPv6 traffic straight out the physical adapter — a real-address leak.
+	TunDisableIPv6 bool
 	DataDir      string
 
 	// RoutingLists are user routing subscriptions resolved to local
@@ -711,8 +726,11 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	if cfg.TunIPv6 != "" {
 		tunIPv6 = cfg.TunIPv6
 	}
+	// TunDisableIPv6 wins over both the explicit override and systemHasIPv6():
+	// it is only ever set after the adapter has already refused an IPv6 address,
+	// so keeping one here would rebuild the exact config that just failed.
 	tunAddresses := []string{tunIPv4}
-	if cfg.TunIPv6 != "" || systemHasIPv6() {
+	if !cfg.TunDisableIPv6 && (cfg.TunIPv6 != "" || systemHasIPv6()) {
 		tunAddresses = append(tunAddresses, tunIPv6)
 	}
 	tunStack := effectiveTunStack(cfg.TunStack)
@@ -721,7 +739,13 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	// Multi-Homed Name Resolution from leaking DNS queries to the LAN
 	// adapter, where Russian ISPs transparently hijack UDP/53 (Rostelecom,
 	// MSK-IX). User-controlled via the "DNS leak protection" toggle.
-	strictRoute := cfg.DNSLeakProtection
+	//
+	// Forced on whenever TunDisableIPv6 dropped the TUN's IPv6 address: without
+	// the WFP filters the host's IPv6 traffic would not be blackholed but routed
+	// out the physical adapter, leaking the real address on exactly the hosts
+	// that have working IPv6. Blackholed IPv6 is the acceptable cost; leaked
+	// IPv6 is not.
+	strictRoute := cfg.DNSLeakProtection || cfg.TunDisableIPv6
 
 	pt := strings.ToUpper(strings.TrimSpace(cfg.Proxy.Type))
 

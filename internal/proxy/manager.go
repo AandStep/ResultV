@@ -479,28 +479,58 @@ func isTransientTunError(err error) bool {
 // engine_start whenever we are actually elevated — popping a "restart as admin"
 // prompt at an already-admin user is the bug being fixed, not the cure.
 func (m *Manager) startEngine(ctx context.Context, cfg EngineConfig) (err error, tunnelFailed bool, reason, errorCode string) {
-	err = m.engine.Start(ctx, cfg)
-	if err != nil && cfg.Mode == ProxyModeTunnel && isTransientTunError(err) {
-		m.log.Warning(fmt.Sprintf("[PROXY] TUN не сконфигурировался (%s) — удаление залипшего адаптера и повтор", extractErrorReason(err.Error())))
-		// Report WHICH device was torn down, or that none was found. These are
-		// different outcomes — "found nothing" means the TUN failure has another
-		// cause — and collapsing them into one line is what made the ghost bug
-		// look like a working cleanup for so long.
-		removed, rmErr := removeStaleTunAdapterFn()
-		switch {
-		case rmErr != nil:
-			m.log.Warning(fmt.Sprintf("[PROXY] Не удалось удалить залипший TUN-адаптер: %v", rmErr))
-		case len(removed) > 0:
-			m.log.Success(fmt.Sprintf("[PROXY] Снято залипших TUN-устройств: %d — %s", len(removed), strings.Join(removed, "; ")))
-		default:
-			m.log.Info("[PROXY] Залипших TUN-устройств не найдено — причина отказа TUN в другом")
+	// Two independent one-shot remedies, each applied at most once so the loop is
+	// bounded at three attempts. Order matters: the IPv6 failure text also
+	// contains "configure tun interface", so isTransientTunError would swallow it
+	// and send us down the device-removal path — which cannot fix it.
+	ghostRemoved, ipv6Dropped := false, false
+	for attempt := 1; ; attempt++ {
+		err = m.engine.Start(ctx, cfg)
+		if err == nil {
+			switch {
+			case attempt == 1:
+			case ipv6Dropped:
+				m.log.Success("[PROXY] TUN поднялся без IPv6 — защита от утечек включена принудительно, IPv6 заблокирован, а не пущен мимо туннеля")
+			default:
+				m.log.Success("[PROXY] TUN поднялся со второй попытки")
+			}
+			return nil, false, "", ""
 		}
-		time.Sleep(tunRetryDelay)
-		if err = m.engine.Start(ctx, cfg); err == nil {
-			m.log.Success("[PROXY] TUN поднялся со второй попытки")
-		} else {
+		if cfg.Mode != ProxyModeTunnel {
+			break
+		}
+		// The adapter refused an IPv6 address. Removing a device changes nothing
+		// here and re-Starting the same config reproduces the failure exactly —
+		// the config itself has to change.
+		if isTunIPv6Error(err) && !ipv6Dropped {
+			ipv6Dropped = true
+			cfg.TunDisableIPv6 = true
+			m.log.Warning(fmt.Sprintf("[PROXY] TUN не принял IPv6-адрес (%s) — повтор без IPv6", extractErrorReason(err.Error())))
+			continue
+		}
+		if isTransientTunError(err) && !ghostRemoved {
+			ghostRemoved = true
+			m.log.Warning(fmt.Sprintf("[PROXY] TUN не сконфигурировался (%s) — удаление залипшего адаптера и повтор", extractErrorReason(err.Error())))
+			// Report WHICH device was torn down, or that none was found. These are
+			// different outcomes — "found nothing" means the TUN failure has another
+			// cause — and collapsing them into one line is what made the ghost bug
+			// look like a working cleanup for so long.
+			removed, rmErr := removeStaleTunAdapterFn()
+			switch {
+			case rmErr != nil:
+				m.log.Warning(fmt.Sprintf("[PROXY] Не удалось удалить залипший TUN-адаптер: %v", rmErr))
+			case len(removed) > 0:
+				m.log.Success(fmt.Sprintf("[PROXY] Снято залипших TUN-устройств: %d — %s", len(removed), strings.Join(removed, "; ")))
+			default:
+				m.log.Info("[PROXY] Залипших TUN-устройств не найдено — причина отказа TUN в другом")
+			}
+			time.Sleep(tunRetryDelay)
+			continue
+		}
+		if attempt > 1 {
 			m.log.Warning(fmt.Sprintf("[PROXY] Повторный старт TUN тоже не удался: %s", extractErrorReason(err.Error())))
 		}
+		break
 	}
 	if err == nil {
 		return nil, false, "", ""
