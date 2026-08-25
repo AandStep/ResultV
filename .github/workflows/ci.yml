@@ -78,3 +78,6 @@ jobs:
 
       - name: go test
         run: go test -tags "${{ steps.tags.outputs.tags }}" ./... -count=1
+
+      - name: Check autogroup merge regression
+        run: node scripts/check-autogroup-merge.mjs

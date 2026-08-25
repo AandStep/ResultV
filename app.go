@@ -1999,35 +1999,45 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 
 	autoCreated := false
 	var individualMembers []config.ProxyEntry
-	if autoMembers, autoName, indv, splitOK := proxy.SplitAutoEntries(entries); splitOK && len(autoMembers) > 1 {
+	if groups, indv, splitOK := proxy.SplitAutoEntries(entries); splitOK && len(groups) > 0 {
 		individualMembers = indv
-		// Rename auto members to "<flag> TYPE #N" labels.
-		memberIDs := make([]string, len(autoMembers))
-		for i := range autoMembers {
-			flagEmoji, _ := proxy.StripLeadingFlagEmoji(autoMembers[i].Name)
-			typeName := strings.ToUpper(autoMembers[i].Type)
-			if flagEmoji != "" {
-				autoMembers[i].Name = fmt.Sprintf("%s %s #%d", flagEmoji, typeName, i+1)
-			} else {
-				autoMembers[i].Name = fmt.Sprintf("%s #%d", typeName, i+1)
+		heads := make([]config.ProxyEntry, 0, len(groups))
+		grouped := make([]config.ProxyEntry, 0, len(entries)-len(indv))
+		for _, g := range groups {
+			// Rename auto members to "<flag> TYPE #N" labels. N restarts in
+			// every group: the numbers are per-pool labels, and members are
+			// hidden behind their head anyway.
+			memberIDs := make([]string, len(g.Members))
+			for i := range g.Members {
+				flagEmoji, _ := proxy.StripLeadingFlagEmoji(g.Members[i].Name)
+				typeName := strings.ToUpper(g.Members[i].Type)
+				if flagEmoji != "" {
+					g.Members[i].Name = fmt.Sprintf("%s %s #%d", flagEmoji, typeName, i+1)
+				} else {
+					g.Members[i].Name = fmt.Sprintf("%s #%d", typeName, i+1)
+				}
+				memberIDs[i] = g.Members[i].ID
 			}
-			memberIDs[i] = autoMembers[i].ID
-		}
 
-		membersJSON, _ := json.Marshal(map[string]interface{}{"members": memberIDs})
-		autoID := fmt.Sprintf("%x", crc32.ChecksumIEEE([]byte(subURL+"auto")))
-		autoEntry := config.ProxyEntry{
-			ID:              autoID,
-			Name:            autoName,
-			Type:            "AUTO",
-			SubscriptionURL: subURL,
-			Provider:        providerName,
-			Extra:           json.RawMessage(membersJSON),
+			membersJSON, _ := json.Marshal(map[string]interface{}{"members": memberIDs})
+			// Derived from the group name, not from its position: a provider
+			// reordering its sections must not shuffle head IDs, which the
+			// frontend uses for favourites and last-selected.
+			autoID := fmt.Sprintf("%x", crc32.ChecksumIEEE([]byte(subURL+"auto:"+g.Name)))
+			heads = append(heads, config.ProxyEntry{
+				ID:              autoID,
+				Name:            g.Name,
+				Type:            "AUTO",
+				SubscriptionURL: subURL,
+				Provider:        providerName,
+				Extra:           json.RawMessage(membersJSON),
+			})
+			grouped = append(grouped, g.Members...)
 		}
-		// AUTO entry first, then auto members (hidden), then individual entries.
-		entries = make([]config.ProxyEntry, 0, 1+len(autoMembers)+len(individualMembers))
-		entries = append(entries, autoEntry)
-		entries = append(entries, autoMembers...)
+		// AUTO entries first, then auto members (hidden), then individual entries.
+		entries = make([]config.ProxyEntry, 0, len(heads)+len(grouped)+len(individualMembers))
+		entries = append(entries, heads...)
+		entries = append(entries, grouped...)
 		entries = append(entries, individualMembers...)
 		autoCreated = true
 	}
@@ -2060,15 +2070,10 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 			autoCreated = true
 		}
 	}
-	visibleCount := len(entries)
-	if autoCreated {
-		visibleCount = 1 + len(individualMembers)
-	} else if len(entries) > 1 {
-		// Fallback auto calculation
-		if _, ok := proxy.ExtractAutoGroupName(entries); ok {
-			visibleCount = 1 // Only the AUTO entry is visible
-		}
-	}
+	// One counter for every shape: heads and individuals are visible, members
+	// are not. The hand-rolled "1 + len(individualMembers)" assumed a single
+	// AUTO head and silently undercounted as soon as there were two.
+	visibleCount := visibleSubscriptionCount(entries)
 
 	a.log.Success(fmt.Sprintf("Подписка загружена: %d серверов", visibleCount))
 	return entries, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, nil

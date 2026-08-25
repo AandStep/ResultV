@@ -209,19 +209,53 @@ func parseJSONSubscriptionEntry(obj map[string]interface{}) []config.ProxyEntry 
 	// Иногда obj содержит массив outbounds
 	outbounds, ok := asSlice(obj["outbounds"])
 	if ok {
-		for _, ob := range outbounds {
-			if obMap, ok := asMap(ob); ok {
-				remarks := asString(obj["remarks"]) // Top-level remarks
-				if remarks == "" {
-					remarks = asString(obMap["tag"]) // Или используем tag как имя
-				}
-				if entry, ok := parseJSONOutbound(obMap, remarks); ok {
-					entries = append(entries, entry)
-				}
-			}
+		remarks := asString(obj["remarks"]) // Top-level remarks
+		groupName, selectors, isBalancer := parseBalancerGroup(obj)
+		balancerEntries := collectJSONOutbounds(outbounds, remarks, groupName, selectors, isBalancer)
+		if isBalancer && len(balancerEntries) == 0 {
+			// The declared balancer's selector/fallbackTag prefix-matched
+			// none of this config's own outbound tags — a vestigial
+			// routing.balancers block whose selector uses a different tag
+			// namespace than its outbounds. Dropping every outbound here
+			// would silently lose every real server in the config; fall
+			// back to treating it as an ordinary server list instead.
+			balancerEntries = collectJSONOutbounds(outbounds, remarks, "", nil, false)
 		}
+		entries = append(entries, balancerEntries...)
 	}
 
+	return entries
+}
+
+// collectJSONOutbounds parses a config's outbounds into entries. When
+// isBalancer is true, only outbounds whose tag prefix-matches selectors are
+// kept, and each is stamped with AutoGroup=groupName.
+func collectJSONOutbounds(outbounds []interface{}, remarks, groupName string, selectors []string, isBalancer bool) []config.ProxyEntry {
+	var entries []config.ProxyEntry
+	for _, ob := range outbounds {
+		obMap, ok := asMap(ob)
+		if !ok {
+			continue
+		}
+		// In a balancer config only the selected outbounds are the pool;
+		// anything else in the file is plumbing, not a server the user
+		// may pick.
+		if isBalancer && !tagMatchesSelector(asString(obMap["tag"]), selectors) {
+			continue
+		}
+		name := remarks
+		if name == "" {
+			name = asString(obMap["tag"]) // Или используем tag как имя
+		}
+		entry, ok := parseJSONOutbound(obMap, name)
+		if !ok {
+			continue
+		}
+		if isBalancer {
+			entry.AutoGroup = groupName
+		}
+		entries = append(entries, entry)
+	}
 	return entries
 }
 
@@ -1991,62 +2025,4 @@ func normalizeSectionEntry(e config.ProxyEntry) config.ProxyEntry {
 	e.Extra = nil
 	e.URI = ""
 	return e
-}
-
-// SplitAutoEntries separates entries whose base name (after stripping a
-// leading flag emoji) contains the word "auto" (case-insensitive) from the
-// rest. This handles providers that send a mix of "Auto" and individual
-// server entries in the same subscription response.
-//
-// Returns:
-//   - autoEntries: entries that belong to the auto group
-//   - autoName: the shared display name for the auto group (e.g. "🚀 impVPN Auto")
-//   - individualEntries: entries that are not part of the auto group
-//   - ok: true when at least 2 auto entries were found with the same base name
-func SplitAutoEntries(entries []config.ProxyEntry) (autoEntries []config.ProxyEntry, autoName string, individualEntries []config.ProxyEntry, ok bool) {
-	if len(entries) == 0 {
-		return nil, "", nil, false
-	}
-
-	for _, e := range entries {
-		_, base := StripLeadingFlagEmoji(e.Name)
-		if containsWordAuto(base) {
-			autoEntries = append(autoEntries, e)
-		} else {
-			individualEntries = append(individualEntries, e)
-		}
-	}
-
-	if len(autoEntries) < 2 {
-		// Not enough auto entries — treat everything as individual.
-		return nil, "", entries, false
-	}
-
-	autoName, ok = ExtractAutoGroupName(autoEntries)
-	if !ok {
-		// Auto entries don't share a common name — fall back.
-		return nil, "", entries, false
-	}
-
-	return autoEntries, autoName, individualEntries, true
-}
-
-// containsWordAuto checks whether s contains the word "auto" as a
-// case-insensitive whole word (not part of "autostart" etc.).
-func containsWordAuto(s string) bool {
-	low := strings.ToLower(s)
-	idx := strings.Index(low, "auto")
-	if idx < 0 {
-		return false
-	}
-	// Check that "auto" is at a word boundary (end of string or followed by
-	// a non-letter character).
-	end := idx + 4
-	if end < len(low) {
-		next := low[end]
-		if next >= 'a' && next <= 'z' {
-			return false
-		}
-	}
-	return true
 }

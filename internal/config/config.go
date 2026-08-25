@@ -76,6 +76,22 @@ type ProxyEntry struct {
 	Extra           json.RawMessage `json:"extra,omitempty"`
 	Provider        string          `json:"provider,omitempty"`
 	SubscriptionURL string          `json:"subscriptionUrl,omitempty"`
+
+	// AutoGroup names the provider-declared auto-routing pool this entry
+	// belongs to. It is set only by the subscription parser, from a config's
+	// `remarks` when that config declares an xray `routing.balancers` — i.e.
+	// the provider itself said "these outbounds are one auto group".
+	//
+	// Grouping used to be reverse-engineered from display names, which broke
+	// the moment impio renamed its group to Cyrillic "⚡ Авто | …" and split it
+	// into per-tier sections: every member of the unrecognised section showed
+	// up as a separate server card. The provider's own declaration does not
+	// move when they rename things.
+	//
+	// Empty for manual entries, for line-based subscriptions, and for plain
+	// per-server configs. omitempty keeps pre-existing configs readable with
+	// no migration.
+	AutoGroup string `json:"autoGroup,omitempty"`
 }
 
 type Subscription struct {
