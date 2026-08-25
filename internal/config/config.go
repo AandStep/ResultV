@@ -129,6 +129,18 @@ type AppSettings struct {
 	// downgrade existing installs to a leaky state on upgrade.
 	DNSLeakProtection *bool `json:"dnsLeakProtection,omitempty"`
 
+	// EnableIPv6 turns IPv6 on for the tunnel: the TUN gets an IPv6 address and
+	// the resolver stops being pinned to ipv4_only. Off by default and a plain
+	// bool (not a pointer like DNSLeakProtection) precisely because the default
+	// is false — the zero value of a config written before this field existed is
+	// already the wanted answer, so no Effective* helper is needed.
+	//
+	// Off is the safe default here, not a timid one: IPv6 paths are frequently
+	// broken or unproxied in the networks this app targets, and an IPv6 address
+	// the adapter refuses does not degrade the tunnel — it kills the whole TUN
+	// inbound ("set ipv6 address: ...").
+	EnableIPv6 bool `json:"enableIPv6,omitempty"`
+
 	// RoutingListUpdateHours is the app-wide auto-update interval for
 	// user routing lists. 0/absent → 24h via EffectiveRoutingListUpdateHours.
 	RoutingListUpdateHours int `json:"routingListUpdateHours,omitempty"`

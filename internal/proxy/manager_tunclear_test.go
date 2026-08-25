@@ -57,6 +57,7 @@ func connectWithTunStubs(t *testing.T, mode ProxyMode, present bool) bool {
 		false,
 		0, false, nil, "", "",
 		false,
+		false,
 	)
 	if !res.Success {
 		t.Fatalf("connect failed: %+v", res)

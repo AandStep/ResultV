@@ -29,6 +29,10 @@ var (
 	// hasRoutableIPv6Fn indirects the host-IPv6 probe so config tests can decide
 	// whether IPv6 would leak instead of depending on the machine they run on.
 	hasRoutableIPv6Fn = hasRoutableIPv6
+
+	// hostSupportsIPv6Fn indirects the "can this box take an IPv6 address" probe
+	// so config tests do not depend on the machine they run on.
+	hostSupportsIPv6Fn = hostSupportsIPv6
 )
 
 // tunInterfaceName is the Windows TUN interface name we hand sing-box via

@@ -679,6 +679,7 @@ func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
 		cfg.Settings.TunIPv4,
 		"",
 		cfg.Settings.EffectiveDNSLeakProtection(),
+		cfg.Settings.EnableIPv6,
 	)
 
 	if result.Success {
@@ -959,6 +960,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 			cfg.Settings.TunIPv4,
 			"",
 			cfg.Settings.EffectiveDNSLeakProtection(),
+		cfg.Settings.EnableIPv6,
 		)
 		if result.Success {
 			serverName := fmt.Sprintf("%s:%d", status.CurrentProxy.IP, status.CurrentProxy.Port)
@@ -999,6 +1001,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 				cfg.Settings.TunIPv4,
 				"",
 				cfg.Settings.EffectiveDNSLeakProtection(),
+		cfg.Settings.EnableIPv6,
 			)
 			if rollback.Success {
 				if a.tray != nil {

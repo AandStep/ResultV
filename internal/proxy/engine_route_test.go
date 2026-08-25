@@ -1087,10 +1087,16 @@ func TestBuildTunnelModeConfig_TunIsIPv4OnlyByDefault(t *testing.T) {
 // TestBuildTunnelModeConfig_CustomTunIPv6Respected verifies that
 // EngineConfig.TunIPv6 overrides the default ULA prefix.
 func TestBuildTunnelModeConfig_CustomTunIPv6Respected(t *testing.T) {
+	// EnableIPv6 is required since 2026-08-25: TunIPv6 says WHICH address, never
+	// WHETHER. Whether is the user-facing toggle — see
+	// TestBuildTunnelModeConfig_CustomTunIPv6NeedsTheToggle.
+	stubHostSupportsIPv6(t, true)
+	stubRoutableIPv6(t, false)
 	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
-		Mode:    ProxyModeTunnel,
-		Proxy:   ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
-		TunIPv6: "fd00:dead:beef::1/64",
+		Mode:       ProxyModeTunnel,
+		Proxy:      ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		EnableIPv6: true,
+		TunIPv6:    "fd00:dead:beef::1/64",
 	})
 	if len(cfg.Inbounds) == 0 {
 		t.Fatal("missing tun inbound")

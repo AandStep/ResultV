@@ -123,6 +123,10 @@ type Manager struct {
 	tunIPv6           string
 	tunStack          string
 	dnsLeakProtection bool
+	// enableIPv6 mirrors the user's setting for the LIVE session so the internal
+	// reconnect paths (mode switch, routing-rule change) rebuild the same config
+	// instead of silently reverting to the default.
+	enableIPv6        bool
 
 	// connect cancellation — guarded by connectCancelMu (separate from mu
 	// so Disconnect/GetStatus can call CancelConnect without deadlock)
@@ -558,7 +562,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
 	killSwitch bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
-	dnsLeakProtection bool) ConnectResultDTO {
+	dnsLeakProtection, enableIPv6 bool) ConnectResultDTO {
 
 	dataDir := resultProxyDataDir()
 	usedCachedPin := false
@@ -571,7 +575,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 
 	res := m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist, appForceVPN,
 		killSwitch, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
-		dnsLeakProtection)
+		dnsLeakProtection, enableIPv6)
 
 	if shouldRetryWithoutPin(usedCachedPin, res.ErrorCode) {
 		clearServerPin(dataDir, m.secrets, proxy.IP)
@@ -579,7 +583,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 		proxy.ResolvedIP = ""
 		res = m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist, appForceVPN,
 			killSwitch, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
-			dnsLeakProtection)
+			dnsLeakProtection, enableIPv6)
 	}
 	return res
 }
@@ -588,7 +592,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
 	killSwitch bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
-	dnsLeakProtection bool) ConnectResultDTO {
+	dnsLeakProtection, enableIPv6 bool) ConnectResultDTO {
 
 	// Per-phase timing — emitted as one summary line on the success path so the
 	// connect budget is measured, not estimated.
@@ -750,6 +754,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		DNSServers:        dnsServers,
 		TunIPv4:           tunIPv4,
 		TunIPv6:           tunIPv6,
+		EnableIPv6:        enableIPv6,
 		TunStack:          m.tunStack,
 		DNSLeakProtection: dnsLeakProtection,
 		DataDir:           resultProxyDataDir(),
@@ -814,6 +819,12 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	// Engine запускается с долгоживущим ctx (контекст приложения), НЕ с connectCtx.
 	// connectCtx отменяется когда Connect() возвращается — если передать его движку,
 	// sing-box начнёт умирать сразу после установки соединения (DNS context canceled).
+	// Tell the user when their IPv6 opt-in was overruled by the machine, instead of
+	// silently handing them an IPv4-only tunnel and letting them wonder.
+	if mode == ProxyModeTunnel && enableIPv6 && !hostSupportsIPv6Fn() {
+		m.log.Warning("[PROXY] IPv6 включён в настройках, но система его не поддерживает — туннель поднят без IPv6")
+	}
+
 	tStart := time.Now()
 	if startErr, tunnelFailed, reason, errorCode := m.startEngine(ctx, engineCfg); startErr != nil {
 		m.mu.Lock()
@@ -845,6 +856,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 				m.dnsServers = dnsServers
 				m.tunIPv4 = tunIPv4
 				m.tunIPv6 = tunIPv6
+				m.enableIPv6 = enableIPv6
 				m.dnsLeakProtection = dnsLeakProtection
 				m.clearPendingLocked()
 				m.startHealthWatchdogLocked(proxy, mode)
@@ -998,6 +1010,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	m.dnsServers = dnsServers
 	m.tunIPv4 = tunIPv4
 	m.tunIPv6 = tunIPv6
+	m.enableIPv6 = enableIPv6
 	m.dnsLeakProtection = dnsLeakProtection
 	m.startProcessTrackerLocked()
 	m.startHealthWatchdogLocked(proxy, mode)
@@ -1285,7 +1298,7 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
 	killSwitch bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
-	dnsLeakProtection bool) ConnectResultDTO {
+	dnsLeakProtection, enableIPv6 bool) ConnectResultDTO {
 	if m.connected {
 		m.disconnectLocked()
 	}
@@ -1344,6 +1357,7 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 		DNSServers:        dnsServers,
 		TunIPv4:           tunIPv4,
 		TunIPv6:           tunIPv6,
+		EnableIPv6:        enableIPv6,
 		TunStack:          m.tunStack,
 		DNSLeakProtection: dnsLeakProtection,
 		DataDir:           resultProxyDataDir(),
@@ -1465,6 +1479,7 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 	m.dnsServers = dnsServers
 	m.tunIPv4 = tunIPv4
 	m.tunIPv6 = tunIPv6
+	m.enableIPv6 = enableIPv6
 	m.dnsLeakProtection = dnsLeakProtection
 	m.startProcessTrackerLocked()
 	m.startHealthWatchdogLocked(proxy, mode)
@@ -2174,6 +2189,7 @@ func (m *Manager) SetMode(mode ProxyMode) error {
 			m.tunIPv4,
 			m.tunIPv6,
 			m.dnsLeakProtection,
+			m.enableIPv6,
 		)
 		if !res.Success {
 			return fmt.Errorf("reconnect after mode switch failed: %s", res.Message)
@@ -2231,8 +2247,9 @@ func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode Rou
 	tIPv4 := m.tunIPv4
 	tIPv6 := m.tunIPv6
 	dnsLeak := m.dnsLeakProtection
+	enIPv6 := m.enableIPv6
 
-	return m.connectLocked(ctx, p, mode, routingMode, whitelist, appWhitelist, appForceVPN, killSwitch, lPort, listenLAN, dServers, tIPv4, tIPv6, dnsLeak)
+	return m.connectLocked(ctx, p, mode, routingMode, whitelist, appWhitelist, appForceVPN, killSwitch, lPort, listenLAN, dServers, tIPv4, tIPv6, dnsLeak, enIPv6)
 }
 
 func (m *Manager) GetStatus() StatusDTO {

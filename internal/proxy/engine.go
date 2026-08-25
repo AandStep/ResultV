@@ -102,9 +102,17 @@ type EngineConfig struct {
 	KillSwitch   bool
 	LocalPort    int
 	DNSServers   []string
-	TunIPv4      string
-	TunIPv6      string
-	TunStack     string
+	TunIPv4 string
+	// EnableIPv6 is the user-facing "Сеть → IPv6" toggle, default off. It moves
+	// BOTH halves at once: the IPv6 address on the TUN and buildDNS's strategy.
+	// Attaching the address while DNS stayed ipv4_only would make the setting a
+	// lie — no domain would resolve to AAAA, so the TUN's IPv6 would carry
+	// nothing but literal-IPv6 traffic.
+	EnableIPv6 bool
+	// TunIPv6 optionally overrides the default ULA. It says WHICH address, never
+	// WHETHER — that is EnableIPv6's job.
+	TunIPv6  string
+	TunStack string
 	// TunDisableIPv6 strips every IPv6 address from the TUN inbound and forces
 	// strict_route on. It is a RETRY-ONLY switch, never user-facing: startEngine
 	// flips it after sing-tun reports "set ipv6 address: <err>", i.e. the freshly
@@ -657,6 +665,58 @@ func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	return sbCfg, nil
 }
 
+// hostSupportsIPv6 reports whether the host has an IPv6 stack at all — the
+// question "will the adapter accept an IPv6 address", NOT "could IPv6 leak".
+// A link-local fe80:: counts and is in fact the normal signal: with neither
+// adapter-level IPv6 nor OS-wide DisabledComponents in play, every box has one,
+// and that is enough for sing-tun's CreateUnicastIpAddressEntry to succeed.
+//
+// This is the preventive half of the no-IPv6 guard: without it, a user ticking
+// the IPv6 box on a machine where IPv6 is switched off gets
+// "set ipv6 address: ..." — which does not degrade the tunnel, it kills the
+// whole inbound.
+//
+// Conservative-fail: on enumeration error assume yes and let the reactive half
+// (TunDisableIPv6, see startEngine) catch it, rather than silently withholding
+// IPv6 from a user who asked for it because a probe was flaky.
+func hostSupportsIPv6() bool {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return true
+	}
+	for _, ifi := range ifaces {
+		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if looksLikeTunnelInterface(ifi.Name) {
+			continue
+		}
+		addrs, err := ifi.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			var ip net.IP
+			switch v := a.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip != nil && ip.To4() == nil && ip.To16() != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// tunCarriesIPv6 is the single predicate behind both halves of the toggle, so
+// the TUN address and the DNS strategy can never disagree.
+func tunCarriesIPv6(cfg EngineConfig) bool {
+	return cfg.EnableIPv6 && !cfg.TunDisableIPv6 && hostSupportsIPv6Fn()
+}
+
 // hasRoutableIPv6 reports whether the host holds an IPv6 address that can
 // actually reach the internet — the only kind that can leak.
 //
@@ -721,38 +781,24 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	if cfg.TunIPv4 != "" {
 		tunIPv4 = cfg.TunIPv4
 	}
-	// IPv6 ULA on the TUN keeps IPv6 traffic riding the tunnel. Without
-	// an IPv6 address here, strict_route's WFP filters would silently
-	// blackhole IPv6 — leaving the user without IPv6 connectivity while
-	// connected.
+	// IPv6 on the TUN is off unless the user turns it on (EnableIPv6). It used to
+	// be attached automatically whenever the host had any IPv6 at all, while
+	// buildDNS pinned strategy=ipv4_only — so no domain ever resolved to AAAA and
+	// the address carried nothing but literal-IPv6 traffic. That bought close to
+	// nothing and owned a whole class of hard failures: when Windows refuses the
+	// address, sing-tun fails the ENTIRE inbound with "set ipv6 address: ..." and
+	// the tunnel does not come up.
 	//
-	// But: on Windows boxes where the IPv6 stack is disabled at the adapter
-	// level (or globally via DisabledComponents), sing-tun's attempt to set
-	// the IPv6 address on the TUN interface fails with
-	// "configure tun interface: set ipv6 address: Element not found",
-	// which ClassifyEngineStartError currently maps to "tun_privileges" and
-	// the UI surfaces as "нужны права администратора" — sending users on a
-	// fruitless quest to elevate. Only attach the IPv6 address when the
-	// host actually exposes IPv6 on at least one non-loopback interface,
-	// or when the user explicitly set TunIPv6 (override = "I know what I'm
-	// doing").
+	// tunCarriesIPv6 folds in both guards: hostSupportsIPv6 (the user ticked the
+	// box on a machine with no IPv6 stack — behave as if unticked) and
+	// TunDisableIPv6 (the adapter already refused the address on the previous
+	// attempt, so honouring the opt-in would rebuild the config that just failed).
 	tunIPv6 := "fdfe:dcba:9876::1/126"
 	if cfg.TunIPv6 != "" {
 		tunIPv6 = cfg.TunIPv6
 	}
-	// IPv6 on the TUN is OPT-IN (EngineConfig.TunIPv6). It used to be attached
-	// automatically whenever the host had any IPv6 at all — but buildDNS pins
-	// strategy=ipv4_only, so no domain ever resolves to AAAA and the TUN's IPv6
-	// only ever carried literal-IPv6 traffic. That bought close to nothing while
-	// owning a whole class of hard failures: when Windows refuses the address,
-	// sing-tun fails the entire inbound with "set ipv6 address: ..." and the
-	// tunnel does not come up at all.
-	//
-	// TunDisableIPv6 additionally overrides the explicit opt-in: it is only ever
-	// set after the adapter has already refused an address, so honouring the
-	// override there would rebuild the exact config that just failed.
 	tunAddresses := []string{tunIPv4}
-	if !cfg.TunDisableIPv6 && cfg.TunIPv6 != "" {
+	if tunCarriesIPv6(cfg) {
 		tunAddresses = append(tunAddresses, tunIPv6)
 	}
 	tunStack := effectiveTunStack(cfg.TunStack)
@@ -1010,7 +1056,14 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			Servers: servers,
 		}
 
+		// Same predicate as the TUN address, so the two halves can never disagree:
+		// AAAA answers with no IPv6 path to use them would be worse than no AAAA.
+		// prefer_ipv4 rather than prefer_ipv6 even when enabled — IPv4 stays the
+		// first choice and IPv6 is the fallback, the cautious reading of "IPv6 on".
 		dns.Strategy = "ipv4_only"
+		if tunCarriesIPv6(cfg) {
+			dns.Strategy = "prefer_ipv4"
+		}
 
 		// Resolve the server's own hostname. When we pinned its IPs at connect
 		// time (CDN/multi-IP domain), serve them from a static `hosts` record so

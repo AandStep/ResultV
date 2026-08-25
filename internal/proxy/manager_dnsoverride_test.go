@@ -105,6 +105,7 @@ func TestConnect_PropagatesDNSLeakProtection(t *testing.T) {
 		"",
 		"",
 		true,
+		false,
 	)
 	if !res.Success {
 		t.Fatalf("connect failed: %+v", res)
