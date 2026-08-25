@@ -15,7 +15,13 @@
 
 package proxy
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"resultproxy-wails/internal/config"
+)
 
 // parseBalancerGroup reports whether a subscription config declares an xray
 // load balancer, and returns the group's display name plus the outbound-tag
@@ -104,4 +110,98 @@ func tagMatchesSelector(tag string, prefixes []string) bool {
 		}
 	}
 	return false
+}
+
+// AutoGroup is one auto-routing pool: a display name and the member entries
+// the app picks between.
+type AutoGroup struct {
+	Name    string
+	Members []config.ProxyEntry
+}
+
+// SplitAutoEntries separates auto-routing pools from ordinary servers.
+//
+// Two strategies, in order:
+//
+//  1. Structural — entries carrying AutoGroup, stamped by the parser from a
+//     provider-declared xray balancer. Authoritative, language-agnostic, and
+//     the only one that can express more than one pool.
+//  2. Name heuristic — the legacy fallback for subscriptions that arrive as a
+//     list of vless:// lines, where no structure exists to read. Capped at
+//     one pool, exactly as before.
+//
+// A structural pool is kept even at a single member: the provider explicitly
+// declared a balancer, so that node is an auto section, not a server card.
+// The name heuristic still needs two, because one name proves nothing.
+func SplitAutoEntries(entries []config.ProxyEntry) (groups []AutoGroup, individual []config.ProxyEntry, ok bool) {
+	if len(entries) == 0 {
+		return nil, nil, false
+	}
+	if g, indv, found := splitAutoEntriesByGroupKey(entries); found {
+		return g, indv, true
+	}
+	return splitAutoEntriesByName(entries)
+}
+
+func splitAutoEntriesByGroupKey(entries []config.ProxyEntry) ([]AutoGroup, []config.ProxyEntry, bool) {
+	order := make([]string, 0, 4)
+	byKey := make(map[string][]config.ProxyEntry, 4)
+	var individual []config.ProxyEntry
+	for _, e := range entries {
+		key := strings.TrimSpace(e.AutoGroup)
+		if key == "" {
+			individual = append(individual, e)
+			continue
+		}
+		if _, seen := byKey[key]; !seen {
+			order = append(order, key)
+		}
+		byKey[key] = append(byKey[key], e)
+	}
+	if len(order) == 0 {
+		return nil, nil, false
+	}
+	groups := make([]AutoGroup, 0, len(order))
+	for _, key := range order {
+		groups = append(groups, AutoGroup{Name: key, Members: byKey[key]})
+	}
+	return groups, individual, true
+}
+
+func splitAutoEntriesByName(entries []config.ProxyEntry) ([]AutoGroup, []config.ProxyEntry, bool) {
+	var autoEntries, individual []config.ProxyEntry
+	for _, e := range entries {
+		_, base := StripLeadingFlagEmoji(e.Name)
+		if containsWordAuto(base) {
+			autoEntries = append(autoEntries, e)
+		} else {
+			individual = append(individual, e)
+		}
+	}
+	if len(autoEntries) < 2 {
+		return nil, entries, false
+	}
+	name, ok := ExtractAutoGroupName(autoEntries)
+	if !ok {
+		return nil, entries, false
+	}
+	return []AutoGroup{{Name: name, Members: autoEntries}}, individual, true
+}
+
+// containsWordAuto checks whether s contains "auto" as a case-insensitive
+// whole word (not part of "autostart" etc.).
+func containsWordAuto(s string) bool {
+	low := strings.ToLower(s)
+	idx := strings.Index(low, "auto")
+	if idx < 0 {
+		return false
+	}
+	end := idx + 4
+	if end < len(low) {
+		next, _ := utf8.DecodeRuneInString(low[end:])
+		if unicode.IsLetter(next) {
+			return false
+		}
+	}
+	return true
 }
