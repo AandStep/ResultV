@@ -7,6 +7,11 @@
   "releaseNotes": [
     {
       "type": "fix",
+      "ru": "Улучшена очистка залипающих tun адаптеров",
+      "en": "Improved cleanup of stuck tun adapters"
+    },
+    {
+      "type": "fix",
       "ru": "Sing-box ядро очищено от лишних мусорных логов-ошибок",
       "en": "The sing-box core no longer floods the log with junk error messages"
     },
