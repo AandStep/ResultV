@@ -555,6 +555,43 @@ type SBRouteRule struct {
 // "Discord attachments sometimes open, sometimes don't". A silent black hole
 // leaves Chromium (Discord is Electron) retrying QUIC for seconds; an ICMP
 // unreachable makes it mark h3 broken and switch to HTTP/2 immediately.
+// smartTunneledApps are the processes Smart mode always sends through the
+// tunnel, whatever the domain/CIDR block-lists say. Membership is earned by
+// one property: the app carries traffic that no domain or ip_cidr rule can
+// classify, so leaving it to the block-lists means leaving it censored.
+//
+// Discord (measured 2026-08-26 over 64 voice sessions from Discord's own
+// renderer log): the client opens its voice gateway to *.discord.media:443 —
+// a domain, already covered by the block-list — and is then handed a bare
+// media IP:port to send UDP to. Two backends are in rotation:
+//
+//	104.29.x.x:19294-19335   (Cloudflare)     8 direct / 19 tunnelled / 1 dead
+//	 35.217.x.x:50003-50008  (Google Cloud)   0 direct / 19 tunnelled / 17 dead
+//
+// The GCP backend on the classic 50000+ voice ports never once completed a
+// UDP handshake over the direct path — RU DPI kills it outright — while the
+// same server connects every time through the tunnel. Neither backend can be
+// added to blockedCIDRs: both are shared provider space (PTR
+// googleusercontent.com, AS15169; Cloudflare 104.29.0.0/16), and Discord
+// rotates the addresses per call, so any static list is stale by design.
+// find_process is the only classifier that holds.
+var smartTunneledApps = []string{
+	"Discord.exe",
+	"DiscordPTB.exe",
+	"DiscordCanary.exe",
+	"DiscordDevelopment.exe",
+}
+
+// smartTunneledAppRegexes compiles smartTunneledApps into the process-path
+// regexes buildRoute emits. Split out so route building and the find_process
+// decision can never disagree about whether the built-in is active.
+func smartTunneledAppRegexes(cfg EngineConfig) []string {
+	if cfg.Mode != ProxyModeTunnel || cfg.RoutingMode != ModeSmart {
+		return nil
+	}
+	return appWhitelistPathRegexes(smartTunneledApps)
+}
+
 func quicRejectRule(sel SBRouteRule) SBRouteRule {
 	sel.Action = "reject"
 	sel.Method = "default"
@@ -1203,8 +1240,10 @@ func splitDNSServer(raw string) (string, int) {
 }
 
 func buildRoute(cfg EngineConfig) *SBRoute {
+	builtinAppRegexes := smartTunneledAppRegexes(cfg)
 	findProcess := len(cfg.AppWhitelist) > 0 ||
-		(cfg.Mode == ProxyModeTunnel && len(cfg.AppForceVPN) > 0)
+		(cfg.Mode == ProxyModeTunnel && len(cfg.AppForceVPN) > 0) ||
+		len(builtinAppRegexes) > 0
 	// Smart mode inverts the default: everything goes direct and only the
 	// censored block-list is tunneled (see the blocked-domain rule below).
 	// Global/Whitelist keep proxy as the catch-all.
@@ -1333,6 +1372,25 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 			Action:           "route",
 			ProcessPathRegex: rx,
 			Outbound:         "direct",
+		})
+	}
+
+	// Built-in Smart coverage for apps the block-lists structurally cannot
+	// reach (see smartTunneledApps). Deliberately placed AFTER the
+	// app-whitelist direct rule: a user who puts Discord in
+	// "Приложения-исключения" means it, and their exclusion keeps winning.
+	// Placed BEFORE the blocked-domain/CIDR rules so the process decision is
+	// taken once for the whole app instead of being split between a tunnelled
+	// signalling half and a direct media half — that split is the bug.
+	if len(builtinAppRegexes) > 0 {
+		// Same reasoning as the force-VPN list: sending an app wholesale
+		// through the tunnel must not hand back the QUIC hang. Safe for voice
+		// — Discord media runs on 19294-19335 and 50003-50008, never 443.
+		rules = append(rules, quicRejectRule(SBRouteRule{ProcessPathRegex: builtinAppRegexes}))
+		rules = append(rules, SBRouteRule{
+			Action:           "route",
+			ProcessPathRegex: builtinAppRegexes,
+			Outbound:         "proxy",
 		})
 	}
 

@@ -1220,10 +1220,14 @@ func TestBuildRoute_ExplicitBrowserExclusionGetsDirectRule(t *testing.T) {
 }
 
 func TestBuildRouteAppForceVPN(t *testing.T) {
+	// Deliberately NOT Discord.exe: Smart mode now emits a built-in
+	// process->proxy rule for it (smartTunneledApps), so a Discord fixture
+	// would make "which rule did we find" ambiguous and stop measuring the
+	// force-VPN/whitelist ordering this test exists for.
 	cfg := EngineConfig{
 		Mode:         ProxyModeTunnel,
 		RoutingMode:  ModeSmart,
-		AppForceVPN:  []string{"Discord.exe"},
+		AppForceVPN:  []string{"Telegram.exe"},
 		AppWhitelist: []string{"steam.exe"},
 	}
 	route := buildRoute(cfg)
@@ -1233,7 +1237,7 @@ func TestBuildRouteAppForceVPN(t *testing.T) {
 		if len(rule.ProcessPathRegex) == 0 {
 			continue
 		}
-		if rule.Outbound == "proxy" && strings.Contains(rule.ProcessPathRegex[0], "Discord") {
+		if rule.Outbound == "proxy" && strings.Contains(rule.ProcessPathRegex[0], "Telegram") {
 			forceIdx = i
 		}
 		if rule.Outbound == "direct" && strings.Contains(rule.ProcessPathRegex[0], "steam") {
