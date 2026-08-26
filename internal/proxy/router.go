@@ -416,6 +416,44 @@ func normalizeCIDRs(in []string) []string {
 // domain-suffix block-list can never catch them; Smart mode needs an ip_cidr
 // rule. Sourced from itdoginfo/allow-domains (Subnets/IPv4+IPv6/telegram.lst);
 // kept as a static fallback for when the remote list and cache are unavailable.
+// blockedCIDRFloor are subnets Smart mode must tunnel no matter what the
+// remote list, the cache or the builtin fallback happened to contain. Unlike
+// defaultBlockedCIDRs (a fallback, used only when everything else failed) the
+// floor is unioned into every source.
+//
+// 66.22.192.0/18 is registered at ARIN as US-DISCORD1 — the entire /18 belongs
+// to Discord, sub-allocated per voice region (discord-nlrtm1, discord-brcoa1,
+// discord-sgsin1). Upstream ships it as individually observed /32s, which on
+// 2026-08-26 covered 11.8% of the range and left 36 of its 64 /24s with no
+// entry at all, so whether a guild's voice server happened to be in the
+// sampled 12% decided whether the call connected. Aggregating is safe here
+// precisely because the allocation is Discord's alone — the same move is NOT
+// available for its Cloudflare and Google Cloud voice backends, which is why
+// those need the process rule in buildRoute (see smartTunneledApps).
+func blockedCIDRFloor() []string {
+	return []string{
+		"66.22.192.0/18",
+	}
+}
+
+// withBlockedCIDRFloor unions the floor into a resolved list, preserving the
+// source's own entries and order.
+func withBlockedCIDRFloor(cidrs []string) []string {
+	out := normalizeBlockedCIDRs(cidrs)
+	seen := make(map[string]struct{}, len(out))
+	for _, c := range out {
+		seen[c] = struct{}{}
+	}
+	for _, c := range normalizeBlockedCIDRs(blockedCIDRFloor()) {
+		if _, dup := seen[c]; dup {
+			continue
+		}
+		seen[c] = struct{}{}
+		out = append(out, c)
+	}
+	return out
+}
+
 func defaultBlockedCIDRs() []string {
 	return []string{
 		// IPv4
