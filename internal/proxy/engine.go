@@ -526,6 +526,10 @@ type SBRoute struct {
 }
 
 type SBRouteRule struct {
+	// Inbound scopes a rule to specific listeners by tag. Used to keep probe
+	// traffic ("probe-in", loopback-only in tunnel mode) on a path of its own
+	// without touching what the user's apps do with the same destination.
+	Inbound          []string `json:"inbound,omitempty"`
 	Protocol         []string `json:"protocol,omitempty"`
 	Network          []string `json:"network,omitempty"`
 	Port             []int    `json:"port,omitempty"`
@@ -542,6 +546,11 @@ type SBRouteRule struct {
 	// fast client-side fallback quicRejectRule relies on.
 	Method string `json:"method,omitempty"`
 }
+
+// probeInboundTag names the loopback-only inbound the app's own health probes
+// use in tunnel mode. Route rules key off it to give probe traffic a path the
+// user's traffic does not inherit.
+const probeInboundTag = "probe-in"
 
 // quicRejectRule builds the UDP/443 reject that forces a QUIC client back onto
 // TCP. Callers pass the same selector as the route-to-proxy rule it shadows, so
@@ -922,7 +931,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	}
 	probeIn := SBInbound{
 		Type:       "mixed",
-		Tag:        "probe-in",
+		Tag:        probeInboundTag,
 		Listen:     "127.0.0.1",
 		ListenPort: probePort,
 	}
@@ -1320,6 +1329,20 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 			rules = append(rules, SBRouteRule{
 				Action:   "route",
 				Domain:   append([]string(nil), tunnelProbeDomains...),
+				Outbound: "proxy",
+			})
+		}
+		// The UDP relay probe (ProbeUDPRelay) must measure the node, not the
+		// local uplink: in Smart mode Final=direct would otherwise send its
+		// STUN packets straight out and report every node as UDP-capable.
+		// Scoped to the probe inbound by tag so the same STUN hosts keep
+		// whatever routing the user's own WebRTC traffic would have had.
+		if len(udpRelayProbeDomains) > 0 {
+			rules = append(rules, SBRouteRule{
+				Action:   "route",
+				Inbound:  []string{probeInboundTag},
+				Network:  []string{"udp"},
+				Domain:   append([]string(nil), udpRelayProbeDomains...),
 				Outbound: "proxy",
 			})
 		}

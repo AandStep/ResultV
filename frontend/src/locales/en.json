@@ -351,6 +351,8 @@
     "empty": "The server list is empty.",
     "pinging": "Pinging...",
     "pingTooltip": "Direct TCP latency to server (not through tunnel)",
+    "udpRelayOkTooltip": "This node relays UDP — Discord calls and screen shares work",
+    "udpRelayFailTooltip": "This node does not relay UDP — Discord calls and screen shares will not work on it",
     "searchPlaceholder": "Search by name or IP...",
     "sortBy": "Sort by",
     "sort": {

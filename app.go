@@ -689,9 +689,67 @@ func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
 		}
 		a.setWindowTitleConnected(proxyDTO)
 		wailsRuntime.EventsEmit(a.ctx, "proxy:connected", proxyDTO)
+		a.startUDPRelayProbe(proxyDTO, mode)
 	}
 
 	return result, nil
+}
+
+// udpRelayProbeDelay lets routing and DNS settle after connect before the
+// probe fires. Connect already waited for the post-start health probe, so the
+// tunnel is up; this only avoids racing the first seconds of rule indexing.
+const udpRelayProbeDelay = 2 * time.Second
+
+// udpRelayProbeBudget bounds the whole check. Two STUN targets at 4s each is
+// the worst case for a node that black-holes UDP, and nothing downstream waits
+// on this, so a generous ceiling costs the user nothing.
+const udpRelayProbeBudget = 12 * time.Second
+
+// startUDPRelayProbe answers, in the background, whether the node just
+// connected can carry UDP at all.
+//
+// This is a property no other check in the app measures: a VLESS server on
+// flow=xtls-rprx-vision refuses plain UDP outright, and some servers firewall
+// it, so a node can pass every TCP/TLS/QUIC probe and still be unable to hold
+// a Discord call. Deliberately advisory — the verdict is logged, remembered
+// and pushed to the UI, but never fails a connect: most traffic never needs
+// UDP, and demoting an otherwise healthy node over it would be worse than the
+// symptom.
+func (a *App) startUDPRelayProbe(proxyDTO proxy.ProxyConfig, mode proxy.ProxyMode) {
+	if a.proxy == nil || mode != proxy.ProxyModeTunnel {
+		return
+	}
+	id := a.resolveProxyID(proxyDTO)
+	label := a.resolveProxyDisplayName(proxyDTO)
+
+	go func() {
+		select {
+		case <-time.After(udpRelayProbeDelay):
+		case <-a.ctx.Done():
+			return
+		}
+		ctx, cancel := context.WithTimeout(a.ctx, udpRelayProbeBudget)
+		defer cancel()
+
+		res := a.proxy.ProbeUDPRelayNow(ctx)
+		if res.Reason == "not connected" || strings.HasPrefix(res.Reason, "probe cancelled") {
+			return
+		}
+		proxy.RecordUDPRelayOutcome(id, res.OK)
+
+		if a.log != nil {
+			if res.OK {
+				a.log.Info(fmt.Sprintf("[UDP] %s: UDP проходит через узел (%s, %d мс) — голос Discord будет работать", label, res.Target, res.LatencyMs))
+			} else {
+				a.log.Warning(fmt.Sprintf("[UDP] %s: узел не пропускает UDP (%s). Звонки и демонстрации Discord на этом сервере работать не будут — выберите другой узел", label, res.Reason))
+			}
+		}
+		wailsRuntime.EventsEmit(a.ctx, "proxy:udp-relay", map[string]interface{}{
+			"proxyId":   id,
+			"ok":        res.OK,
+			"latencyMs": res.LatencyMs,
+		})
+	}()
 }
 
 func dnsServersFromProxyExtra(proxyDTO proxy.ProxyConfig) []string {

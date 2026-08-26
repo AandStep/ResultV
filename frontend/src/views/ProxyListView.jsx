@@ -27,7 +27,10 @@ import {
   RefreshCw,
   Zap,
   Star,
+  Mic,
+  MicOff,
 } from "lucide-react";
+import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime";
 import { FlagIcon } from "../components/ui/FlagIcon";
 import { HoverMarquee } from "../components/ui/HoverMarquee";
 import { useConfigContext } from "../context/ConfigContext";
@@ -398,6 +401,20 @@ export const ProxyListView = () => {
     selectAndConnect(proxy);
   };
 
+  // Whether a node relays UDP at all. Emitted by the backend a couple of
+  // seconds after a tunnel connect (see startUDPRelayProbe): a server can pass
+  // every TCP/TLS check and still refuse UDP, and then Discord calls and
+  // screen shares silently do not work on it. Keyed by proxy id; a node not
+  // present here simply has not been measured yet.
+  const [udpRelay, setUdpRelay] = useState({});
+  useEffect(() => {
+    EventsOn("proxy:udp-relay", (payload) => {
+      if (!payload?.proxyId) return;
+      setUdpRelay((prev) => ({ ...prev, [payload.proxyId]: !!payload.ok }));
+    });
+    return () => EventsOff("proxy:udp-relay");
+  }, []);
+
   const renderProxyCard = (proxy) => {
     const isActive = isConnected && activeProxy?.id === proxy.id;
     const isCardConnecting = isConnecting && activeProxy?.id === proxy.id;
@@ -506,6 +523,22 @@ export const ProxyListView = () => {
               </>
             )}
           </div>
+          {!isSectionProxy && udpRelay[proxy.id] !== undefined && (
+            <div
+              className={`text-xs flex items-center shrink-0 ${udpRelay[proxy.id] ? "text-zinc-500" : "text-amber-500"}`}
+              title={
+                udpRelay[proxy.id]
+                  ? t("proxyList.udpRelayOkTooltip")
+                  : t("proxyList.udpRelayFailTooltip")
+              }
+            >
+              {udpRelay[proxy.id] ? (
+                <Mic className="w-3.5 h-3.5 shrink-0" />
+              ) : (
+                <MicOff className="w-3.5 h-3.5 shrink-0" />
+              )}
+            </div>
+          )}
           <div className="flex space-x-1.5 shrink-0">
             {!isSectionProxy && (
               <button

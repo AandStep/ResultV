@@ -56,7 +56,21 @@ type NodeStat struct {
 	LastSuccessAt time.Time `json:"lastSuccessAt"`
 	LastFailAt    time.Time `json:"lastFailAt"`
 	LastReason    string    `json:"lastReason"`
+	// UDPRelay is the node's verdict from ProbeUDPRelay: "" (never probed),
+	// UDPRelayOK or UDPRelayFail. Kept separate from ConnectOK/ConnectFail
+	// because it is an orthogonal property — a node can pass every TCP/TLS
+	// check and still be unable to carry a call. No reason string is stored:
+	// this file is unencrypted on the promise that it holds no addresses, and
+	// a relay failure reason names hosts.
+	UDPRelay          string    `json:"udpRelay,omitempty"`
+	UDPRelayCheckedAt time.Time `json:"udpRelayCheckedAt,omitempty"`
 }
+
+// Verdicts for NodeStat.UDPRelay.
+const (
+	UDPRelayOK   = "ok"
+	UDPRelayFail = "fail"
+)
 
 // NodeStatStore holds per-node stats in memory and persists them to a plain
 // JSON file on explicit Flush. Safe for concurrent use.
@@ -179,6 +193,25 @@ func (s *NodeStatStore) RecordConnect(key string, ok bool, reason string) {
 	s.dirty = true
 }
 
+// RecordUDPRelay stores the node's UDP-relay verdict. Separate from
+// RecordConnect on purpose: a failed relay probe must not count as a failed
+// connect, or a node that is perfectly good for browsing would be demoted out
+// of auto-selection for lacking a property most traffic never needs.
+func (s *NodeStatStore) RecordUDPRelay(key string, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	st := s.stats[key]
+	if ok {
+		st.UDPRelay = UDPRelayOK
+	} else {
+		st.UDPRelay = UDPRelayFail
+	}
+	st.UDPRelayCheckedAt = time.Now()
+	s.stats[key] = st
+	s.dirty = true
+}
+
 // Flush persists the store to disk if and only if something changed since
 // the last successful flush. RecordProbe/RecordConnect only mark the store
 // dirty in memory; a sweep of dozens of probes must cost exactly one
@@ -271,6 +304,17 @@ func sanitizeStatReason(reason string) string {
 // node that just failed to connect would keep dialing first out of the
 // cache for up to autoSweepCacheTTL instead of the failure penalty in
 // scoreNode ever getting a chance to move it down.
+// RecordUDPRelayOutcome is the package-level entry point for the UDP verdict,
+// mirroring RecordConnectOutcome. It deliberately does NOT reset the auto
+// sweep cache: an inability to relay UDP is not a connection failure.
+func RecordUDPRelayOutcome(key string, ok bool) {
+	if strings.TrimSpace(key) == "" {
+		return
+	}
+	nodeStats().RecordUDPRelay(key, ok)
+	_ = nodeStats().Flush()
+}
+
 func RecordConnectOutcome(key string, ok bool, reason string) {
 	nodeStats().RecordConnect(key, ok, reason)
 	_ = nodeStats().Flush()

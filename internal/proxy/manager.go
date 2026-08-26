@@ -2284,6 +2284,33 @@ func (m *Manager) GetStatus() StatusDTO {
 	return m.buildStatusLocked(uptime, bytesDown, bytesUp, speedDown, speedUp)
 }
 
+// ProbeUDPRelayNow answers "can the node currently in use carry UDP" by
+// driving a real STUN exchange through the live engine (see ProbeUDPRelay).
+//
+// Tunnel mode only. The route rule that keeps the probe on the proxy outbound
+// is scoped to the loopback probe inbound, which exists only in tunnel mode;
+// in proxy mode the same inbound carries the user's own traffic and Smart
+// routing would send the STUN packets out directly, turning every node into a
+// false pass.
+func (m *Manager) ProbeUDPRelayNow(ctx context.Context) UDPRelayResult {
+	m.mu.Lock()
+	connected := m.connected
+	mode := m.mode
+	port := m.localPort
+	m.mu.Unlock()
+
+	if !connected {
+		return UDPRelayResult{Reason: "not connected"}
+	}
+	if mode != ProxyModeTunnel {
+		return UDPRelayResult{Reason: "udp relay probe runs in tunnel mode only"}
+	}
+	if port == 0 {
+		return UDPRelayResult{Reason: "local inbound port unknown"}
+	}
+	return ProbeUDPRelay(ctx, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
 func (m *Manager) GetMode() ProxyMode {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -351,6 +351,8 @@
     "empty": "Список серверов пуст.",
     "pinging": "Опрос",
     "pingTooltip": "Прямая TCP-задержка до сервера (не через тоннель)",
+    "udpRelayOkTooltip": "Узел пропускает UDP — звонки и демонстрации Discord работают",
+    "udpRelayFailTooltip": "Узел не пропускает UDP — звонки и демонстрации Discord на нём работать не будут",
     "searchPlaceholder": "Поиск по имени или IP...",
     "sortBy": "Сортировка",
     "sort": {
