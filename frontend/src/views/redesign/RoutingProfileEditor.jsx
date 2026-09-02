@@ -26,7 +26,7 @@
  * панели «Домены» и «IP адреса»), «Стратегия», «Geo данные», «Действия».
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog, Icon, Input, Textarea } from "../../components/kit";
 import "./RoutingProfileEditor.css";
 
@@ -94,15 +94,31 @@ function RulePanel({ label, placeholder, value, onChange, open, onToggle }) {
  *
  * Сделано на указательных событиях, а не на HTML5 drag-and-drop: последний в
  * WebView2 требует зажать и «сорвать» элемент, рисует свой призрак поверх
- * страницы и не даёт менять порядок под пальцем — то есть ровно то поведение,
- * которого просили избежать. Здесь бейдж просто едет за курсором, а соседи
- * расступаются.
+ * страницы и не даёт менять порядок под курсором.
  *
- * С клавиатуры порядок меняют стрелками: перетаскивание мышью — не
- * единственный способ добраться до настройки.
+ * Правила поведения, за которые здесь всё и устроено именно так:
+ *
+ *  - взятый бейдж стоит РОВНО под курсором. Он смещается на `clientX - startX`
+ *    и никуда не «отпрыгивает»: порядок в списке во время перетаскивания не
+ *    меняется вовсе, меняются только сдвиги. Прошлая версия переставляла
+ *    элементы прямо в состоянии, и от сдвига на пиксель элемент уезжал из-под
+ *    курсора, а на границе начинал дрожать;
+ *  - курсор можно увести за пределы блока и даже окна — `setPointerCapture`
+ *    держит события на бейдже до отпускания;
+ *  - соседи расступаются: они едут на ширину взятого бейджа с зазором, и
+ *    только они анимированы. У взятого перехода нет — иначе он отставал бы
+ *    от курсора;
+ *  - порог перестановки — ЦЕНТР соседа, а не его край: у края любое дрожание
+ *    руки меняло бы порядок туда-обратно.
+ *
+ * Новый порядок применяется на отпускании: пока тянут, ничего не сохраняется.
  */
 function StrategyOrder({ order, onChange, labels }) {
-  const [dragging, setDragging] = useState(null);
+  const boxRef = useRef(null);
+  /* Геометрия снимается один раз в начале перетаскивания: мерить на каждом
+     движении значило бы мерить уже сдвинутые элементы. */
+  const geomRef = useRef(null);
+  const [drag, setDrag] = useState(null);
 
   const move = (from, to) => {
     if (to < 0 || to >= order.length || from === to) return;
@@ -116,53 +132,90 @@ function StrategyOrder({ order, onChange, labels }) {
     /* Только основная кнопка: правый клик — это контекстное меню. */
     if (event.button !== 0) return;
     event.preventDefault();
-    setDragging(index);
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-  };
-
-  const onPointerMove = (index) => (event) => {
-    if (dragging === null) return;
-    const badge = event.currentTarget;
-    const rect = badge.getBoundingClientRect();
-    /* Курсор ушёл за середину соседа — меняем их местами. Порог по середине,
-       а не по краю, иначе бейджи прыгали бы туда-обратно на границе. */
-    if (event.clientX < rect.left + rect.width / 2 && index > 0) {
-      move(dragging, index - 1);
-      setDragging(index - 1);
-    } else if (event.clientX > rect.left + rect.width / 2 && index < order.length - 1) {
-      move(dragging, index + 1);
-      setDragging(index + 1);
+    const nodes = [...(boxRef.current?.children || [])];
+    const rects = nodes.map((n) => n.getBoundingClientRect());
+    if (rects.length < 2) return;
+    geomRef.current = {
+      centers: rects.map((r) => r.left + r.width / 2),
+      /* Ширина взятого плюс зазор — на столько едут соседи. */
+      step: rects[index].width + (rects[1].left - (rects[0].left + rects[0].width)),
+      startX: event.clientX,
+    };
+    /*
+     * Сначала состояние, потом захват, и захват — в try. setPointerCapture
+     * бросает NotFoundError, если указателя с таким id уже нет (быстрый клик,
+     * второй палец, синтетическое событие). Стояло наоборот — и любой такой
+     * отказ молча съедал начало перетаскивания: состояние после броска уже не
+     * выставлялось, бейдж не брался вовсе.
+     */
+    setDrag({ from: index, to: index, dx: 0 });
+    try {
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    } catch {
+      /* Без захвата перетаскивание всё равно работает, пока курсор над
+         бейджем; выход за его пределы просто закончит его раньше. */
     }
   };
 
-  const stop = () => setDragging(null);
+  const onPointerMove = (event) => {
+    const g = geomRef.current;
+    if (!drag || !g) return;
+    const dx = event.clientX - g.startX;
+    const center = g.centers[drag.from] + dx;
+    let to = drag.from;
+    while (to > 0 && center < g.centers[to - 1]) to -= 1;
+    while (to < order.length - 1 && center > g.centers[to + 1]) to += 1;
+    setDrag({ from: drag.from, to, dx });
+  };
+
+  const finish = () => {
+    if (drag) move(drag.from, drag.to);
+    geomRef.current = null;
+    setDrag(null);
+  };
+
+  /* Сдвиг соседа: он уступает место ровно на ширину взятого бейджа. */
+  const shiftOf = (index) => {
+    if (!drag || index === drag.from) return 0;
+    const { from, to } = drag;
+    const step = geomRef.current?.step || 0;
+    if (from < to && index > from && index <= to) return -step;
+    if (from > to && index >= to && index < from) return step;
+    return 0;
+  };
 
   return (
-    <div className="rv-profile-editor__strategy rv-border rv-border--static">
-      {order.map((action, index) => (
-        <button
-          key={action}
-          type="button"
-          className="rv-profile-editor__badge"
-          data-action={action}
-          data-dragging={dragging === index || undefined}
-          onPointerDown={onPointerDown(index)}
-          onPointerMove={onPointerMove(index)}
-          onPointerUp={stop}
-          onPointerCancel={stop}
-          onKeyDown={(event) => {
-            if (event.key === "ArrowLeft") {
-              event.preventDefault();
-              move(index, index - 1);
-            } else if (event.key === "ArrowRight") {
-              event.preventDefault();
-              move(index, index + 1);
-            }
-          }}
-        >
-          {labels[action]}
-        </button>
-      ))}
+    <div className="rv-profile-editor__strategy rv-border rv-border--static" ref={boxRef}>
+      {order.map((action, index) => {
+        const held = drag?.from === index;
+        const offset = held ? drag.dx : shiftOf(index);
+        return (
+          <button
+            key={action}
+            type="button"
+            className="rv-profile-editor__badge"
+            data-action={action}
+            data-dragging={held || undefined}
+            style={offset ? { transform: `translateX(${offset}px)` } : undefined}
+            onPointerDown={onPointerDown(index)}
+            onPointerMove={onPointerMove}
+            onPointerUp={finish}
+            onPointerCancel={finish}
+            onLostPointerCapture={finish}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowLeft") {
+                event.preventDefault();
+                move(index, index - 1);
+              } else if (event.key === "ArrowRight") {
+                event.preventDefault();
+                move(index, index + 1);
+              }
+            }}
+          >
+            {labels[action]}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -249,7 +302,7 @@ export default function RoutingProfileEditor({
       onClose={onClose}
       className="rv-profile-editor"
     >
-      <div className="rv-profile-editor__body">
+      <div className="rv-profile-editor__body rv-scroll-dialog">
         <section className="rv-profile-editor__section">
           <p className="rv-profile-editor__label">{text.name}</p>
           <Input

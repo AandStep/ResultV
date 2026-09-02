@@ -23,11 +23,12 @@
  * скругление 24; поле внутри со скруглением 14.
  */
 
+/* Прокрутка на содержимом, а не на окне — причина та же, что у окна списка
+   профилей: псевдоэлемент обводки уезжает вместе с прокруткой. */
 .rv-dialog.rv-profile-editor {
   width: 700px;
   max-height: 600px;
-  overflow-y: auto;
-  overflow-x: clip;
+  overflow: visible;
 }
 
 .rv-profile-editor__body {
@@ -35,6 +36,13 @@
   flex-direction: column;
   gap: var(--rv-space-nest-1);
   width: 100%;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* Полоса съедает часть ширины; вернём её отступом, чтобы поля не сужались
+     относительно шапки. */
+  padding-right: var(--rv-space-nest-3);
+  margin-right: calc(var(--rv-space-nest-3) * -1);
 }
 
 .rv-profile-editor__section {
@@ -133,6 +141,9 @@
 .rv-profile-editor__strategy {
   --rv-border: linear-gradient(var(--rv-white-a10), var(--rv-white-a10));
 
+  /* Взятый бейдж уезжает за пределы блока вслед за курсором, и обрезать его
+     нельзя — он должен оставаться под мышью. */
+  position: relative;
   display: flex;
   gap: var(--rv-space-nest-3);
   /* 17, а не 16: так набрано в макете (6648:4197). */
@@ -165,8 +176,11 @@
 
 .rv-profile-editor__badge[data-dragging] {
   cursor: grabbing;
-  /* Взятый бейдж приподнимается — иначе непонятно, какой именно едет. */
-  transform: scale(1.06);
+  /* У взятого бейджа перехода нет: с ним он отставал бы от курсора, а нужно
+     «где мышь — там и объект». Приподнимаем тенью и слоем, а не масштабом —
+     масштаб сдвинул бы его центр относительно точки захвата. */
+  transition: none;
+  z-index: 2;
   box-shadow: 0 4px 12px var(--rv-black-a25);
 }
 

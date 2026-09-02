@@ -82,15 +82,20 @@ export default function ProfileItem({
         </span>
       </button>
       <div className="rv-profile-item__actions">
-        <button
-          type="button"
-          className="rv-profile-item__action"
-          aria-label={editLabel}
-          title={editLabel}
-          onClick={onEdit}
-        >
-          <Icon name="edit" size={24} color="currentColor" />
-        </button>
+        {/* Правка есть не у всякой строки: маршрутизация, встроенная в тело
+            подписки, приходит готовой и править в ней нечего — карандаш там
+            обещал бы то, чего нет. */}
+        {onEdit && (
+          <button
+            type="button"
+            className="rv-profile-item__action"
+            aria-label={editLabel}
+            title={editLabel}
+            onClick={onEdit}
+          >
+            <Icon name="edit" size={24} color="currentColor" />
+          </button>
+        )}
         <button
           type="button"
           className="rv-profile-item__action"

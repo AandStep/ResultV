@@ -56,6 +56,10 @@ export default function SmartRulesScreen() {
 
   const [profiles, setProfiles] = useState([]);
   const [activeId, setActiveId] = useState("");
+  /* Списки маршрутизации от подписок. Хранятся отдельно от профилей, но по
+     модели пользователя это та же маршрутизация, поэтому показываются в том
+     же окне. */
+  const [lists, setLists] = useState([]);
   const [profilesOpen, setProfilesOpen] = useState(false);
   /* null — закрыт; объект профиля — правка; {} — создание. */
   const [editing, setEditing] = useState(null);
@@ -74,6 +78,23 @@ export default function SmartRulesScreen() {
       }));
       setProfiles(list);
       setActiveId(res?.activeId || "");
+
+      const cfg = await wailsAPI.getConfig();
+      const subs = cfg?.subscriptions || [];
+      const nameOf = (id) => subs.find((sub) => sub.id === id)?.name || "";
+      setLists(
+        (cfg?.routingRules?.routingLists || []).map((rl) => ({
+          ...rl,
+          /* Имя провайдера впереди: списков от одной подписки бывает
+             несколько, и без него в окне три одинаковых «Встроен: direct». */
+          name: [nameOf(rl.subscriptionId), rl.name || rl.url]
+            .filter(Boolean)
+            .join(" · "),
+          counts: {
+            [rl.action]: (rl.domainCount || 0) + (rl.cidrCount || 0),
+          },
+        }))
+      );
     } catch (err) {
       console.error("getRoutingProfiles:", err);
     }
@@ -113,6 +134,32 @@ export default function SmartRulesScreen() {
     if (!ok) return;
     try {
       await wailsAPI.deleteRoutingProfile(profile.id);
+      await reloadProfiles();
+    } catch (err) {
+      report(err);
+    }
+  };
+
+  const toggleList = async (list) => {
+    try {
+      await wailsAPI.updateRoutingList({ ...list, enabled: !list.enabled });
+      await reloadProfiles();
+    } catch (err) {
+      report(err);
+    }
+  };
+
+  const deleteList = async (list) => {
+    const ok = await showConfirmDialog({
+      title: t("common.confirmAction"),
+      message: t("routingProfiles.confirmDelete", { name: list.name }),
+      variant: "danger",
+      confirmText: t("common.delete"),
+      cancelText: t("common.cancel"),
+    });
+    if (!ok) return;
+    try {
+      await wailsAPI.deleteRoutingList(list.id);
       await reloadProfiles();
     } catch (err) {
       report(err);
@@ -240,6 +287,9 @@ export default function SmartRulesScreen() {
     edit: rp("edit"),
     remove: rp("remove"),
     empty: rp("empty"),
+    lists: rp("lists"),
+    listOn: rp("listOn"),
+    listOff: rp("listOff"),
   };
   const editorText = {
     createTitle: rp("createTitle"),
@@ -298,6 +348,9 @@ export default function SmartRulesScreen() {
           text={profilesText}
           profiles={profiles}
           activeId={activeId}
+          lists={lists}
+          onToggleList={toggleList}
+          onDeleteList={deleteList}
           onSelect={selectProfile}
           onEdit={(p) => setEditing(p)}
           onDelete={deleteProfile}

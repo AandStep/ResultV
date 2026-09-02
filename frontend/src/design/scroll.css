@@ -53,3 +53,43 @@
 .rv-scroll::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.16);
 }
+
+/*
+ * Полоса внутри окна.
+ *
+ * Тонкая полоса страницы (`.rv-scroll`, белый 8 %) сделана как можно
+ * незаметнее — на чёрной странице она читалась бы как посторонний элемент.
+ * Внутри окна задача обратная: содержимое заметно длиннее видимой части, и
+ * пользователь должен понимать, что оно прокручивается, ещё не начав крутить.
+ * Поэтому ползунок здесь заметный — белый 20 %, под курсором 40 % — и шире
+ * на пиксель.
+ */
+.rv-scroll-dialog {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rv-white-a20) transparent;
+}
+
+.rv-scroll-dialog::-webkit-scrollbar {
+  width: 8px;
+}
+
+.rv-scroll-dialog::-webkit-scrollbar-track,
+.rv-scroll-dialog::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Стрелки на концах полосы — деталь системной темы, в макете их нет. */
+.rv-scroll-dialog::-webkit-scrollbar-button {
+  display: none;
+}
+
+.rv-scroll-dialog::-webkit-scrollbar-thumb {
+  border-radius: var(--rv-radius-pill);
+  background: var(--rv-white-a20);
+  transition: background var(--rv-transition);
+}
+
+.rv-scroll-dialog::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4);
+}

@@ -40,12 +40,25 @@ export const ROUTING_PROFILES_TEXT = {
   /* Пустого состояния в макете нет — до первого профиля показывать нечего,
      а раздел с одной подписью выглядел бы поломкой. См. GAPS.md. */
   empty: "Профилей пока нет. Создайте свой или импортируйте по ссылке.",
+  lists: "Списки от подписок",
+  listOn: "Список включён",
+  listOff: "Список выключен",
 };
 
 export default function RoutingProfilesDialog({
   open = true,
   profiles = [],
   activeId = "",
+  /*
+   * Списки маршрутизации, пришедшие с подписками. По модели пользователя это
+   * та же маршрутизация, что и профили, поэтому живёт в этом же окне. Хранятся
+   * они по-прежнему списками и включаются каждый сам по себе — в отличие от
+   * профилей, из которых действует ровно один. Своей секции в макете у них
+   * нет, см. docs/design/GAPS.md.
+   */
+  lists = [],
+  onToggleList,
+  onDeleteList,
   onSelect,
   onEdit,
   onDelete,
@@ -82,7 +95,7 @@ export default function RoutingProfilesDialog({
       onClose={onClose}
       className="rv-profiles-dialog"
     >
-      <div className="rv-profiles-dialog__body">
+      <div className="rv-profiles-dialog__body rv-scroll-dialog">
         {active && (
           <section className="rv-profiles-dialog__section">
             <p className="rv-profiles-dialog__label">{text.active}</p>
@@ -99,8 +112,28 @@ export default function RoutingProfilesDialog({
           </section>
         )}
 
-        {profiles.length === 0 && (
+        {profiles.length === 0 && lists.length === 0 && (
           <p className="rv-profiles-dialog__empty">{text.empty}</p>
+        )}
+
+        {lists.length > 0 && (
+          <section className="rv-profiles-dialog__section">
+            <p className="rv-profiles-dialog__label">{text.lists}</p>
+            <div className="rv-profiles-dialog__list">
+              {lists.map((list) => (
+                <ProfileItem
+                  key={list.id}
+                  name={list.name}
+                  counts={list.counts}
+                  active={list.enabled}
+                  deleteLabel={text.remove}
+                  title={list.enabled ? text.listOn : text.listOff}
+                  onSelect={() => onToggleList?.(list)}
+                  onDelete={() => onDeleteList?.(list)}
+                />
+              ))}
+            </div>
+          </section>
         )}
 
         <section className="rv-profiles-dialog__section">
