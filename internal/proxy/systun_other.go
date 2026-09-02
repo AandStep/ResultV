@@ -26,3 +26,6 @@ func hasLeftoverTun() bool { return false }
 func clearLeftoverTun() error { return nil }
 
 func removeStaleTunAdapter() ([]string, error) { return nil, nil }
+
+// Nothing is ever removed here, so there is never a removal to wait out.
+func staleTunDevNodeGone() bool { return true }

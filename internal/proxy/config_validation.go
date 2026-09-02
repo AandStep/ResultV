@@ -27,6 +27,13 @@ const (
 	ConnectErrorInvalidConfig = "invalid_config"
 	ConnectErrorTunPrivileges = "tun_privileges"
 	ConnectErrorEngineStart   = "engine_start_failed"
+	// ConnectErrorTunAdapter is returned when Windows registers the Wintun device
+	// node but never binds a driver to it, so the adapter never becomes usable.
+	// Distinct from tun_privileges on purpose: no amount of elevation helps, and
+	// distinct from engine_start_failed so the UI can stop iterating AUTO
+	// candidates — the adapter is node-independent, every candidate would fail
+	// identically. See isTunAdapterUnavailableError for the two error shapes.
+	ConnectErrorTunAdapter = "tun_adapter_unavailable"
 	// ConnectErrorDNSCensored is returned when a domain-addressed server can't be
 	// resolved to an IP before a TUN connect — the route-exclude/server-pin can't
 	// be built, so dialing the server would loop into the TUN or hit a poisoned IP.

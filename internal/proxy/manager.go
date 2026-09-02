@@ -448,13 +448,43 @@ func (m *Manager) CancelConnect() {
 	_ = m.engine.Stop()
 }
 
-// tunRetryDelay is the settle pause between a failed tunnel-mode engine start and
-// the single automatic retry. Between the two we delete the wedged Wintun adapter
-// device (removeStaleTunAdapterFn) on top of the failed start releasing its
-// partially-created adapter / WFP filters (see SingBoxEngine.bootLocked); this
-// brief pause lets Windows finish tearing the device down before the retry
-// recreates a fresh adapter. A var, not a const, so tests can zero it out.
+// tunRetryDelay is the final settle pause once the wedged Wintun device node is
+// confirmed gone, letting the network stack finish before the retry recreates a
+// fresh adapter. A var, not a const, so tests can zero it out.
 var tunRetryDelay = 700 * time.Millisecond
+
+// tunRemovalPoll / tunRemovalPolls bound the wait for the removed device node to
+// actually leave the device tree: at most tunRemovalPolls checks, tunRemovalPoll
+// apart (~10s).
+//
+// This exists because pnputil returns as soon as the removal is QUEUED — the
+// node lives on for a while afterwards, and a CreateAdapter that lands mid
+// teardown fails with a bare ERROR_FILE_NOT_FOUND. That is how the old fixed
+// 700ms settle turned one recoverable failure into a second, differently-worded
+// one, and left the field report reading as two unrelated bugs.
+var (
+	tunRemovalPoll  = 250 * time.Millisecond
+	tunRemovalPolls = 40
+)
+
+// waitStaleTunGone blocks until the wedged Wintun device node has left the
+// device tree, then lets the stack settle. Bounded on purpose: a node that never
+// disappears must not wedge the connect, so the retry proceeds either way — and
+// the log says which of the two happened, because they mean different things.
+func (m *Manager) waitStaleTunGone() {
+	for i := 0; ; i++ {
+		if tunDevNodeGoneFn() {
+			time.Sleep(tunRetryDelay)
+			return
+		}
+		if i >= tunRemovalPolls {
+			m.log.Warning(fmt.Sprintf("[PROXY] Залипшее TUN-устройство не исчезло за %s — повторяем всё равно",
+				time.Duration(tunRemovalPolls)*tunRemovalPoll))
+			return
+		}
+		time.Sleep(tunRemovalPoll)
+	}
+}
 
 // isTransientTunError reports whether a tunnel-mode engine-start failure is the
 // recoverable kind — a stale Wintun adapter or leftover WFP filters from an
@@ -528,7 +558,7 @@ func (m *Manager) startEngine(ctx context.Context, cfg EngineConfig) (err error,
 			default:
 				m.log.Info("[PROXY] Залипших TUN-устройств не найдено — причина отказа TUN в другом")
 			}
-			time.Sleep(tunRetryDelay)
+			m.waitStaleTunGone()
 			continue
 		}
 		if attempt > 1 {
@@ -542,6 +572,12 @@ func (m *Manager) startEngine(ctx context.Context, cfg EngineConfig) (err error,
 	tunnelFailed, reason, errorCode = ClassifyEngineStartError(cfg.Mode, err)
 	if errorCode == ConnectErrorTunPrivileges && isAdminCheck() {
 		errorCode = ConnectErrorEngineStart
+	}
+	// Say plainly what happened. The engine's own line right after this one
+	// carries Windows' raw errno, which on its own named neither the component
+	// that failed nor anything the user could check.
+	if errorCode == ConnectErrorTunAdapter {
+		m.log.Error("[PROXY] " + tunAdapterUnavailableReason)
 	}
 	return err, tunnelFailed, reason, errorCode
 }

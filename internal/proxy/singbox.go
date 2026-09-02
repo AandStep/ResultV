@@ -58,6 +58,52 @@ func isTunIPv6Error(err error) bool {
 	return strings.Contains(strings.ToLower(err.Error()), "set ipv6 address")
 }
 
+// tunAdapterUnavailableReason is what the user is told when Windows never
+// starts the Wintun adapter. It replaces the raw errno — "The system cannot find
+// the file specified." / "Element not found." — which named neither the thing
+// that failed nor anything the user could act on. The raw text is still carried
+// in ConnectResultDTO.Message for support.
+const tunAdapterUnavailableReason = "Windows создала сетевое устройство Wintun, но не запустила его — драйвер к устройству так и не привязался. " +
+	"Проверьте, что не отключены службы «Служба настройки сети» (NetSetupSvc), «Установка устройств» (DeviceInstall) и " +
+	"«Диспетчер установки устройств» (DsmSvc), и что антивирус не блокирует установку драйверов."
+
+// isTunAdapterUnavailableError reports whether the tunnel failed because Windows
+// registered the Wintun device node but never bound a driver to it — the adapter
+// is created and then never becomes usable.
+//
+// Two texts describe one failure, depending on whether a previous attempt left
+// its half-built node behind:
+//
+//   - Nothing left over: wintun.CreateAdapter builds a node, waits for the device
+//     object, gives up. sing-tun returns that errno BARE (tun_windows.go:43
+//     "return nil, err"), so the message is "configure tun interface: The system
+//     cannot find the file specified." with no label of its own.
+//   - Node left over as CM_PROB_PHANTOM: CreateAdapter reports ErrExist,
+//     OpenAdapter cannot open a non-present device, and sing-tun returns
+//     E.Errors(create adapter: …, open existing adapter: …) — rendered as a
+//     parenthesised group.
+//
+// The bare form is the awkward one: it has no marker, so the only thing telling
+// it apart from the labelled failures deeper in configure() ("set ipv4 address:",
+// "set ipv6 address:", "set ipv4 options:", …) is that the errno sits directly
+// behind "configure tun interface: ". Matching on that position rather than on
+// the errno text alone is what keeps those out — they can carry the same errno.
+func isTunAdapterUnavailableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	const marker = "configure tun interface: "
+	idx := strings.Index(lower, marker)
+	if idx < 0 {
+		return false
+	}
+	if strings.Contains(lower, "open existing adapter") {
+		return true
+	}
+	return strings.HasPrefix(lower[idx+len(marker):], "the system cannot find the file specified")
+}
+
 func ClassifyEngineStartError(mode ProxyMode, err error) (tunnelFailed bool, reason string, errorCode string) {
 	if err == nil {
 		return false, "", ""
@@ -72,6 +118,13 @@ func ClassifyEngineStartError(mode ProxyMode, err error) (tunnelFailed bool, rea
 	if mode == ProxyModeTunnel &&
 		strings.Contains(lower, "set ipv6 address") {
 		return true, extractErrorReason(msg), "tun_ipv6_unavailable"
+	}
+	// Must precede the tun_privileges branch below: that one matches the bare
+	// substring "configure tun interface" and would otherwise swallow this class
+	// whole, sending an already-elevated user through a restart-as-admin loop
+	// that cannot possibly help.
+	if mode == ProxyModeTunnel && isTunAdapterUnavailableError(err) {
+		return true, tunAdapterUnavailableReason, ConnectErrorTunAdapter
 	}
 	if mode == ProxyModeTunnel &&
 		(strings.Contains(lower, "configure tun interface") ||
@@ -92,10 +145,47 @@ func ClassifyEngineStartError(mode ProxyMode, err error) (tunnelFailed bool, rea
 }
 
 func extractErrorReason(msg string) string {
+	if group, ok := trailingMultiErrorGroup(msg); ok {
+		return group
+	}
 	if idx := strings.LastIndex(msg, ": "); idx >= 0 && idx+2 < len(msg) {
 		return msg[idx+2:]
 	}
 	return msg
+}
+
+// trailingMultiErrorGroup returns the contents of the parenthesised group that a
+// sing multiError renders itself as — "(" + causes joined by " | " + ")" — when
+// the message ends in one.
+//
+// Without this, extractErrorReason's cut on the last ": " keeps only the tail of
+// the LAST cause and leaves the group's closing paren dangling, which is how the
+// field report read "Element not found.))": the first cause — the one naming what
+// CreateAdapter actually returned — never reached the log at all.
+//
+// Requiring " | " inside the group is what keeps ordinary messages that merely
+// end in ")" on the plain path.
+func trailingMultiErrorGroup(msg string) (string, bool) {
+	if !strings.HasSuffix(msg, ")") {
+		return "", false
+	}
+	depth := 0
+	for i := len(msg) - 1; i >= 0; i-- {
+		switch msg[i] {
+		case ')':
+			depth++
+		case '(':
+			depth--
+			if depth == 0 {
+				inner := msg[i+1 : len(msg)-1]
+				if !strings.Contains(inner, " | ") {
+					return "", false
+				}
+				return inner, true
+			}
+		}
+	}
+	return "", false
 }
 
 
