@@ -333,3 +333,21 @@ func TestBlockedCIDRSourcesEnvFallback(t *testing.T) {
 		t.Errorf("new env must take precedence, got %v", got)
 	}
 }
+
+// zapret-style lists mark "this host exactly" with a leading "^". We emit
+// domain_suffix rules, so the marker is meaningless here — but left in place it
+// reached the compiled rule-set verbatim ("^dns.google"), where it matches
+// nothing.
+func TestParseDomainPayload_StripsZapretExactPrefix(t *testing.T) {
+	payload := []byte("^dns.google\n^cloudflare-dns.com\ndiscord.com\n")
+	domains := parseDomainPayload(payload)
+	want := []string{"dns.google", "cloudflare-dns.com", "discord.com"}
+	if len(domains) != len(want) {
+		t.Fatalf("got %v, want %v", domains, want)
+	}
+	for i := range want {
+		if domains[i] != want[i] {
+			t.Fatalf("got %v, want %v", domains, want)
+		}
+	}
+}

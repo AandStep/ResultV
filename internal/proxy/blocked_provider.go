@@ -428,6 +428,12 @@ func extractDomainFromLine(line string) string {
 	if idx := strings.Index(s, "#"); idx >= 0 {
 		s = strings.TrimSpace(s[:idx])
 	}
+	// zapret-style lists (Flowseal's list-general.txt) prefix an entry with "^"
+	// to mean "this host exactly, no sub-domains". We emit everything as a
+	// domain_suffix, so the marker carries no meaning here — but left in place
+	// it produced literal "^dns.google" entries in the compiled rule-set, which
+	// match nothing at all (8 dead entries in the live 74k-entry list).
+	s = strings.TrimPrefix(s, "^")
 	if strings.HasPrefix(s, "server=/") {
 		rest := strings.TrimPrefix(s, "server=/")
 		if idx := strings.Index(rest, "/"); idx >= 0 {

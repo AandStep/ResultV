@@ -314,9 +314,20 @@ func TestSetBlockedDomains(t *testing.T) {
 	if !r.IsBlockedDomain("sub.test.org") {
 		t.Error("test.org should be blocked after set")
 	}
-	got := r.GetBlockedDomains()
-	if len(got) != 2 {
-		t.Fatalf("expected 2 normalized domains, got %d (%v)", len(got), got)
+	// GetBlockedDomains unions blockedDomainFloor, so this measures the source's
+	// own contribution: the four raw entries above must normalize down to two.
+	floor := make(map[string]struct{}, len(blockedDomainFloor()))
+	for _, d := range blockedDomainFloor() {
+		floor[d] = struct{}{}
+	}
+	var fromSource []string
+	for _, d := range r.GetBlockedDomains() {
+		if _, isFloor := floor[d]; !isFloor {
+			fromSource = append(fromSource, d)
+		}
+	}
+	if len(fromSource) != 2 {
+		t.Fatalf("expected 2 normalized domains from the source, got %d (%v)", len(fromSource), fromSource)
 	}
 }
 

@@ -62,11 +62,19 @@ func NewRouter() *Router {
 // block-lists. Caller must hold r.mu. Task: keep IsBlockedDomain O(labels)
 // instead of O(list) and suffix-exact instead of substring.
 func (r *Router) rebuildBlockedSetLocked() {
-	set := make(map[string]struct{}, len(r.blockedDomains)+len(r.customDomains))
+	floor := blockedDomainFloor()
+	set := make(map[string]struct{}, len(r.blockedDomains)+len(r.customDomains)+len(floor))
 	for _, d := range r.blockedDomains {
 		set[d] = struct{}{}
 	}
 	for _, d := range r.customDomains {
+		set[d] = struct{}{}
+	}
+	// The floor belongs to the effective list, not to any one source, so it is
+	// folded in here rather than in the loaders: whatever SetBlockedDomains was
+	// handed — a full remote list, a stale cache, or nothing at all — the
+	// account-layer hosts stay tunneled. GetBlockedDomains unions the same set.
+	for _, d := range floor {
 		set[d] = struct{}{}
 	}
 	r.blockedSet = set
@@ -287,9 +295,13 @@ func (r *Router) GetSafeOSWhitelist(whitelist []string) []string {
 func (r *Router) GetBlockedDomains() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	union := make([]string, 0, len(r.blockedDomains)+len(r.customDomains))
+	floor := blockedDomainFloor()
+	union := make([]string, 0, len(r.blockedDomains)+len(r.customDomains)+len(floor))
 	union = append(union, r.blockedDomains...)
 	union = append(union, r.customDomains...)
+	// Appended last so the source keeps its own order; normalizeDomains dedupes,
+	// so a list that already carries a floor host costs nothing.
+	union = append(union, floor...)
 	return normalizeDomains(union)
 }
 
@@ -433,6 +445,60 @@ func normalizeCIDRs(in []string) []string {
 func blockedCIDRFloor() []string {
 	return []string{
 		"66.22.192.0/18",
+	}
+}
+
+// blockedDomainFloor are domains Smart mode must tunnel no matter what the
+// remote list, the cache or the builtin fallback happened to contain. Same
+// contract as blockedCIDRFloor, one level up: it is unioned into every source
+// instead of standing in when they all failed.
+//
+// Membership is earned by one property: the host does not serve the censored
+// product itself, it decides WHICH COUNTRY the product thinks you are in — so
+// leaving it out splits a single service across two exit addresses.
+//
+// Google's account layer (measured 2026-08-27 by replaying a live Smart config
+// through sing-box): the upstream service lists carry the product hosts only —
+// aistudio.google.com and alkalimakersuite-pa.clients6.google.com matched the
+// block-list and left through the tunnel, while accounts.google.com,
+// ogs.google.com, apis.google.com and myaccount.google.com matched no rule at
+// all and fell through to Final=direct. Google then saw the product request
+// from the exit node and the session that authorises it from the user's real
+// address, and an account-gated product answers that with "not available in
+// your country". The static CDNs of the same split (gstatic, googleusercontent)
+// are deliberately NOT here: they carry no account context, so tunnelling them
+// would only cost latency.
+//
+// Anthropic's client-attestation layer (read out of the live claude.ai login
+// page, 2026-09-02): the page preconnects to js.hcaptcha.com and
+// newassets.hcaptcha.com and loads
+// js.hcaptcha.com/1/api.js?render=explicit&onload=__antClientAttestationHcaptchaInvisibleReady
+// — an invisible hCaptcha that decides whether Anthropic trusts the session,
+// and it runs from whatever address the browser has. api.js in turn talks to
+// api.hcaptcha.com, api2.hcaptcha.com and pst-issuer.hcaptcha.com. claude.ai
+// and anthropic.com are both in the upstream block-lists and leave through the
+// tunnel; hcaptcha.com is in none of them, so Smart mode attested the session
+// from the user's real address while serving the page from the exit node.
+// Cloudflare's managed challenge is the same split one layer down: claude.ai
+// answers suspicious requests with `cf-mitigated: challenge`, and that page
+// loads challenges.cloudflare.com.
+//
+// Kept to specific hosts for the same reason blockedCIDRFloor could aggregate
+// only Discord's own /18: buildRoute emits these as domain_suffix, so a bare
+// google.com would pull search and every other Google property into the tunnel
+// — a much larger change of behaviour than the bug being fixed.
+func blockedDomainFloor() []string {
+	return []string{
+		"accounts.google.com",
+		"myaccount.google.com",
+		"apis.google.com",
+		"ogs.google.com",
+		"js.hcaptcha.com",
+		"newassets.hcaptcha.com",
+		"api.hcaptcha.com",
+		"api2.hcaptcha.com",
+		"pst-issuer.hcaptcha.com",
+		"challenges.cloudflare.com",
 	}
 }
 
