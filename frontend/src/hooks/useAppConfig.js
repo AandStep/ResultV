@@ -45,7 +45,11 @@ export const useAppConfig = (addLog) => {
     const [isConfigLoaded, setIsConfigLoaded] = useState(false);
     const [proxies, setProxies] = useState([]);
     const [routingRules, setRoutingRules] = useState({
-        mode: "global",
+        // Стандартный режим — умный, как и в config.DefaultConfig на бэкенде.
+        // Это значение видно только до первого ответа GetConfig, но разойтись
+        // с бэкендом ему нельзя: иначе страница правил на миг покажет чужой
+        // режим и чужие списки.
+        mode: "smart",
         whitelist: ["localhost", "127.0.0.1"],
         appWhitelist: [],
         appForceVPN: [],
@@ -358,14 +362,44 @@ export const useAppConfig = (addLog) => {
     }, [persistSettings]);
 
 
+    /*
+     * Часы автообновления подписок. Раньше это был один таймер на всех, но у
+     * подписки может стоять свой интервал (окно её настроек на странице
+     * серверов: «Никогда», 30 мин, 1 час, ...), поэтому вместо общего таймера
+     * идёт минутный опрос: у кого срок вышел, того и обновляем.
+     *
+     * Отсчёт ведём от запуска приложения, а не от `updatedAt` подписки: так
+     * было и с прежним таймером, и при старте не случается разом запроса ко
+     * всем провайдерам сразу.
+     */
+    const subRefreshedAtRef = useRef({});
+    const subClockStartRef = useRef(Date.now());
+
     useEffect(() => {
         if (!isConfigLoaded || subscriptions.length === 0) return;
         if (settings?.subscriptionAutoUpdate === false) return;
 
-        const refreshAll = async () => {
+        const hours = parseInt(settings?.subscriptionUpdateIntervalHours, 10);
+        const globalMinutes = (Number.isFinite(hours) && hours >= 1 ? hours : 6) * 60;
+
+        /* Свой интервал подписки перебивает общий; 0 — «Никогда». */
+        const intervalMs = (sub) => {
+            const own = sub.updateIntervalMinutes;
+            const minutes = own == null ? globalMinutes : own;
+            return minutes > 0 ? minutes * 60 * 1000 : 0;
+        };
+
+        const tick = async () => {
+            let refreshed = false;
             for (const sub of subscriptions) {
+                const every = intervalMs(sub);
+                if (every === 0) continue;
+                const last = subRefreshedAtRef.current[sub.id] ?? subClockStartRef.current;
+                if (Date.now() - last < every) continue;
+                subRefreshedAtRef.current[sub.id] = Date.now();
                 try {
                     const updated = await wailsAPI.refreshSubscription(sub.id);
+                    refreshed = true;
                     if (updated?.length) {
                         setProxies((prev) => {
                             const filtered = prev.filter((p) => p.subscriptionUrl !== sub.url);
@@ -378,6 +412,7 @@ export const useAppConfig = (addLog) => {
                     console.error("Subscription refresh error:", err);
                 }
             }
+            if (!refreshed) return;
             try {
                 const cfg = await wailsAPI.getConfig();
                 if (cfg?.subscriptions) setSubscriptions(cfg.subscriptions);
@@ -387,10 +422,8 @@ export const useAppConfig = (addLog) => {
             }
         };
 
-        const hours = parseInt(settings?.subscriptionUpdateIntervalHours, 10);
-        const safeHours = Number.isFinite(hours) && hours >= 1 ? hours : 6;
-        const interval = setInterval(refreshAll, safeHours * 60 * 60 * 1000);
-        return () => clearInterval(interval);
+        const timer = setInterval(tick, 60 * 1000);
+        return () => clearInterval(timer);
     }, [isConfigLoaded, subscriptions, settings?.subscriptionAutoUpdate, settings?.subscriptionUpdateIntervalHours, addLog]);
 
     const handleSaveProxy = useCallback(

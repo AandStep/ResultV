@@ -1,0 +1,161 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+
+/*
+ * PowerButton — Figma "App UI-kit" -> фрейм PowerButton (node 6481:7).
+ * 4 варианта (Default/Warning/Success/Error) x 3 состояния
+ * (Default/Hover/Active).
+ *
+ * Круг 220 с иконкой питания 110. В нажатии круг садится до 214, иконка до
+ * 106 и появляется внутренняя тень.
+ *
+ * Свечение вокруг круга: у Warning, Success и Error оно есть, у Default нет.
+ * В покое и в нажатии оно на 20 %, при наведении усиливается до 50 %.
+ * Переменные `Shadow-*` из Figma покрывают только часть этих значений,
+ * см. docs/design/GAPS.md P-1.
+ */
+
+.rv-power-btn {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 220px;
+  height: 220px;
+  padding: 0;
+  border: 0;
+  /*
+   * Кнопка — квадрат, а видно в ней круг. Без скругления углы квадрата тоже
+   * ловят курсор: иконка и свечение зажигались от `:hover` кнопки ещё на
+   * подлёте, а обводка — от `:hover` круга, то есть только когда курсор
+   * действительно доходил до края. Скругление обрезает область попадания по
+   * тому же кругу, и наведение с нажатием начинаются там же, где рисунок.
+   */
+  border-radius: var(--rv-radius-circle);
+  background: none;
+  cursor: pointer;
+
+  /* Обводка наведения у нейтрального варианта — фирменный зелёный. Объявлена
+     здесь, а не в `:hover`: переменная не анимируется, и в состоянии она при
+     уводе курсора мигала бы белым. См. design/borders.css. Остальные варианты
+     перекрывают её ниже своим цветом. */
+  --rv-border-hover: linear-gradient(var(--rv-main-color), var(--rv-main-color));
+
+  --pb-bg: var(--rv-dark-grey);
+  --pb-icon: var(--rv-white-a50);
+  --pb-glow: transparent;
+  --pb-glow-hover: transparent;
+  --pb-inset: var(--rv-black-a80);
+}
+
+.rv-power-btn__circle {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 220px;
+  height: 220px;
+  border: 0;
+  border-radius: var(--rv-radius-circle);
+  background: var(--pb-bg);
+  box-shadow: 0 0 var(--rv-glow-blur) var(--pb-glow);
+  /* Иконка внутри наследует этот цвет через currentColor. */
+  color: var(--pb-icon);
+  transition:
+    transform var(--rv-transition),
+    background var(--rv-transition),
+    box-shadow var(--rv-transition),
+    color var(--rv-transition);
+}
+
+.rv-power-btn__icon {
+  transition:
+    width var(--rv-transition),
+    height var(--rv-transition),
+    color var(--rv-transition);
+}
+
+/* --- Варианты ----------------------------------------------------------- */
+
+.rv-power-btn[data-variant="warning"] {
+  /* Жёлтая обводка в макете сплошная и непрозрачная. См. GAPS.md BR-1. */
+  --rv-border: linear-gradient(var(--rv-warning), var(--rv-warning));
+  --rv-border-hover: linear-gradient(var(--rv-warning), var(--rv-warning));
+  --pb-icon: var(--rv-warning);
+  --pb-glow: var(--rv-warning-a20);
+  --pb-glow-hover: var(--rv-shadow-warning);
+}
+
+/* У Success и Error обводки нет — прозрачная рамка держит ту же геометрию. */
+.rv-power-btn[data-variant="success"] {
+  --pb-bg: var(--rv-main-color);
+  /* У зелёного и красного обводки нет вовсе. */
+  --rv-border: transparent;
+  --rv-border-hover: transparent;
+  --pb-icon: var(--rv-black);
+  --pb-glow: var(--rv-shadow-main);
+  --pb-glow-hover: var(--rv-main-a50);
+  --pb-inset: var(--rv-black-a25);
+}
+
+.rv-power-btn[data-variant="error"] {
+  --rv-border: transparent;
+  --rv-border-hover: transparent;
+  --pb-icon: var(--rv-errors);
+  --pb-glow: var(--rv-shadow-error);
+  --pb-glow-hover: var(--rv-errors-a50);
+}
+
+/* --- Состояния ---------------------------------------------------------- */
+
+/* У нейтрального варианта наведение красит обводку и иконку фирменным цветом,
+   у остальных только усиливает свечение. Цвет обводки задан в базовом
+   правиле выше, здесь остаётся иконка. */
+.rv-power-btn[data-variant="default"]:hover:not([data-state]) .rv-power-btn__circle,
+.rv-power-btn[data-variant="default"][data-state="hover"] .rv-power-btn__circle {
+  color: var(--rv-main-color);
+}
+
+.rv-power-btn:hover:not([data-state]) .rv-power-btn__circle,
+.rv-power-btn[data-state="hover"] .rv-power-btn__circle {
+  box-shadow: 0 0 var(--rv-glow-blur) var(--pb-glow-hover);
+}
+
+/*
+ * Нажатие: круг садится с 220 до 214 вместе с иконкой. Размеры при этом не
+ * меняются — иначе переключатель под кнопкой прыгал бы на каждый клик;
+ * работает масштаб, а он у круга ровный со всех сторон и заодно уменьшает
+ * иконку, как в макете (110 -> 107 против 106).
+ */
+.rv-power-btn:active:not([data-state]) .rv-power-btn__circle,
+.rv-power-btn[data-state="active"] .rv-power-btn__circle {
+  transform: scale(0.9727);
+  box-shadow: 0 0 var(--rv-glow-blur) var(--pb-glow),
+    inset var(--rv-press-offset) var(--rv-press-offset) var(--rv-press-blur) 0
+      var(--pb-inset);
+}
+
+/*
+ * Пока идёт то, что не отменить (подбор узла, отключение, переподключение под
+ * смену режима), кнопка не нажимается. Вида «выключено» у неё в макете нет, и
+ * гасить её незачем — она и так занята; меняется только курсор, чтобы не
+ * обещать нажатие.
+ */
+.rv-power-btn:disabled {
+  cursor: default;
+}

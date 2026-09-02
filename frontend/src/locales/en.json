@@ -14,8 +14,8 @@
     "status": {
       "protected": "Protected",
       "lost": "Connection Lost",
-      "error": "Connection Error",
-      "unprotected": "Unprotected",
+      "error": "Something went wrong",
+      "unprotected": "Not connected",
       "connecting": "Connecting...",
       "disconnecting": "Disconnecting...",
       "resolving": "Finding a server"
@@ -33,13 +33,14 @@
     "buyDiscount": "Buy them with a 5% discount",
     "addServer": "Add Server",
     "addManual": "Click here to enter details manually",
+    "empty": "Add a server or subscription",
     "currentServer": "Current Server",
     "emptyServer": "No Servers",
     "openList": "Open full list",
     "editData": "Edit Details",
     "chooseOther": "Select Another",
     "download": "Download",
-    "upload": "Upload",
+    "upload": "Uploaded",
     "modeProxy": "PROXY",
     "modeTunnel": "TUNNEL",
     "favorites": "Favorites",
@@ -49,7 +50,29 @@
     "sortMenuTooltip": "Sort servers in this list",
     "websiteTooltip": "Official website",
     "telegramTooltip": "Telegram channel",
-    "proxyModeHint": "Some apps (Telegram, games) ignore the system proxy. If an app can't see the VPN — switch to TUNNEL mode."
+    "proxyModeHint": "Some apps (Telegram, games) ignore the system proxy. If an app can't see the VPN — switch to TUNNEL mode.",
+    "ms": "ms",
+    "mode": {
+      "proxy": "Proxy",
+      "tunnel": "Tunnel"
+    }
+  },
+  "addPage": {
+    "title": "Add server",
+    "subtitle": "Add a subscription or a server from a file, the clipboard or by hand.",
+    "fromFile": "From file",
+    "fromClipboard": "From clipboard",
+    "protocol": "Choose a protocol",
+    "link": "Paste a link",
+    "config": "Paste the contents of a JSON or .conf file",
+    "submit": "Add server",
+    "confirmTitle": "Adding servers",
+    "detected_one": "Found {{count}} VPN server",
+    "detected_other": "Found {{count}} VPN servers",
+    "confirmSubmit_one": "Add {{count}} server",
+    "confirmSubmit_other": "Add {{count}} servers",
+    "routingFromSubscription": "Routing from subscription",
+    "confirmTitleSubscription": "Adding subscription"
   },
   "add": {
     "titleAdd": "Add Configuration",
@@ -275,6 +298,27 @@
       "decrypt_error": "Error: Incorrect password or damaged file."
     }
   },
+  "smartRules": {
+    "title": "Smart Rules",
+    "subtitle": "With “Smart mode” routing sets itself up without third-party rules. The client does it all for you.",
+    "smart": "Smart mode",
+    "global": "Global mode",
+    "sitesVpn": "Sites through the VPN",
+    "sitesVpnDesc": "If a site turned out not to be on the smart-mode list, you can add it yourself.",
+    "sitesDirect": "Sites direct",
+    "sitesDirectDesc": "Sites added to this list will not go through the VPN.",
+    "sitesPlaceholder": "Enter an IP or host and press Enter to add",
+    "appsVpn": "Apps through the VPN",
+    "appsVpnDesc": "All traffic from these apps goes into the tunnel.",
+    "appsDirect": "Apps direct",
+    "appsDirectDesc": "All traffic from these apps will not go through the VPN.",
+    "appsPlaceholder": "For example {{example}}",
+    "pickFile": "Choose a file on the computer",
+    "clear": "Clear the list",
+    "remove": "Remove from the list",
+    "confirmClearSites": "Remove every site from the list?",
+    "confirmClearApps": "Remove every app from the list?"
+  },
   "rules": {
     "title": "Smart Routing",
     "desc": "Select the tunnel usage scenario",
@@ -393,6 +437,34 @@
       "resolving": "Finding a server"
     }
   },
+  "serversPage": {
+    "title": "Server list",
+    "subtitle": "Manage your servers: {{servers}} | {{subscriptions}}",
+    "countServers_one": "{{count}} server",
+    "countServers_other": "{{count}} servers",
+    "countSubs_one": "{{count}} subscription",
+    "countSubs_other": "{{count}} subscriptions",
+    "search": "Search servers...",
+    "myServers": "My servers",
+    "subDate": "{{date}} at {{time}}",
+    "subMeta": "Until {{date}} | {{used}} / {{total}}",
+    "subMetaNoDate": "{{used}} / {{total}}",
+    "pingServers": "Measure latency to servers",
+    "sortServers": "List order",
+    "editSubscription": "Subscription settings",
+    "support": "Support",
+    "renameLabel": "Rename",
+    "showOnHome": "Show on the home screen",
+    "intervalLabel": "Custom refresh interval",
+    "interval": {
+      "0": "Never",
+      "30": "30 min",
+      "60": "1 hour",
+      "120": "2 hours",
+      "240": "4 hours",
+      "360": "6 hours"
+    }
+  },
   "logs": {
     "title": "Event Logs",
     "desc": "System logs and connection information",
@@ -503,7 +575,8 @@
   "tunnel": {
     "adminTitle": "Administrator rights required",
     "adminMessage": "Tunnel mode needs administrator privileges for the virtual network adapter. Click the button below and approve the UAC prompt — the app will restart elevated.",
-    "restartAsAdmin": "Restart as administrator"
+    "restartAsAdmin": "Restart as administrator",
+    "endpointOnly": "WireGuard and AmneziaWG do not work in Proxy mode — Tunnel only."
   },
   "toast": {
     "autoResolveHint": "Connecting to an auto server can take longer — we're picking the best node for you."
@@ -515,5 +588,12 @@
     "typeImprove": "Improvement",
     "typeFix": "Fix",
     "typeOther": "Change"
+  },
+  "units": {
+    "kb": "KB",
+    "mb": "MB",
+    "gb": "GB",
+    "kbps": "KB/s",
+    "mbps": "MB/s"
   }
 }

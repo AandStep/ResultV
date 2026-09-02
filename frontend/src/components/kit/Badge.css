@@ -1,0 +1,99 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+
+/*
+ * Badges — Figma "App UI-kit" -> фрейм Badges (node 6503:3035).
+ * 2 варианта (First/Second) x 4 цвета (Default/Warning/Success/Error).
+ *
+ * Высота 29, скругление 100, ширина по содержимому, рамки нет.
+ * Отступы в макете несимметричны по вертикали: 6 сверху, 8 снизу — текст
+ * намеренно приподнят, поэтому воспроизведено буквально, а не центрированием.
+ */
+
+.rv-badge {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 29px;
+  padding: 6px var(--rv-space-10) var(--rv-space-8);
+  border-radius: var(--rv-radius-pill);
+
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-chip-size);
+  /*
+   * Единственное место, где Semibold из макета взят как есть, а не заменён
+   * на Medium: в бейдже стоят имена протоколов латиницей («VLESS», «gRPC»),
+   * и довод про широкую кириллицу к ним не относится — см. общий блок в
+   * design/tokens.css.
+   */
+  font-weight: 600;
+  line-height: var(--rv-chip-leading);
+  /* Разрядка 2 % от кегля — правило дизайнера поверх макета: имена
+     протоколов набраны в верхнем регистре и без неё слипаются. */
+  letter-spacing: 0.02em;
+  text-align: center;
+  white-space: nowrap;
+
+  background: var(--badge-bg);
+  color: var(--badge-text);
+  transition:
+    background var(--rv-transition),
+    color var(--rv-transition);
+}
+
+/* --- Variant=First ------------------------------------------------------ */
+
+.rv-badge[data-variant="first"] {
+  --badge-bg: var(--rv-light-gray);
+  --badge-text: var(--rv-white-a50);
+}
+.rv-badge[data-variant="first"][data-color="warning"] {
+  --badge-bg: var(--rv-warning-a10);
+  --badge-text: var(--rv-warning);
+}
+/* У First зелёный берётся из Main-color, у Second — из Second-color. */
+.rv-badge[data-variant="first"][data-color="success"] {
+  --badge-bg: var(--rv-main-a10);
+  --badge-text: var(--rv-main-color);
+}
+.rv-badge[data-variant="first"][data-color="error"] {
+  --badge-bg: var(--rv-errors-a10);
+  --badge-text: var(--rv-errors);
+}
+
+/* --- Variant=Second ----------------------------------------------------- */
+
+.rv-badge[data-variant="second"] {
+  --badge-bg: var(--rv-light-gray-a50);
+  --badge-text: var(--rv-white-a50);
+}
+.rv-badge[data-variant="second"][data-color="warning"] {
+  --badge-bg: var(--rv-warning-a20);
+  --badge-text: var(--rv-warning);
+}
+/* Заливка 10 %, тогда как у warning и error в этом варианте 20 %.
+   Расхождение макета, см. docs/design/GAPS.md B-1. */
+.rv-badge[data-variant="second"][data-color="success"] {
+  --badge-bg: var(--rv-second-a10);
+  --badge-text: var(--rv-second-color);
+}
+.rv-badge[data-variant="second"][data-color="error"] {
+  --badge-bg: var(--rv-errors-a20);
+  --badge-text: var(--rv-errors);
+}

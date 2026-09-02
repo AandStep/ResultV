@@ -202,6 +202,10 @@ export function SyncProxies(arg1) {
   return window['go']['main']['App']['SyncProxies'](arg1);
 }
 
+export function TakePendingDeepLink() {
+  return window['go']['main']['App']['TakePendingDeepLink']();
+}
+
 export function ToggleKillSwitch(arg1) {
   return window['go']['main']['App']['ToggleKillSwitch'](arg1);
 }
@@ -212,4 +216,8 @@ export function UpdateRoutingList(arg1) {
 
 export function UpdateRules(arg1) {
   return window['go']['main']['App']['UpdateRules'](arg1);
+}
+
+export function UpdateSubscription(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['UpdateSubscription'](arg1, arg2, arg3, arg4);
 }

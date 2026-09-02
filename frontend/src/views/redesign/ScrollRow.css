@@ -1,0 +1,71 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * ScrollRow — ряд кнопок шире своей панели (Figma 6533:2107 на странице
+ * добавления, 6566:4990 в окне настроек подписки).
+ *
+ * Ряд доезжает до самого края панели: он выходит за её внутренний отступ и
+ * обрезается ею же. Глубину выноса держит `--rv-scroll-row-bleed` — по
+ * умолчанию 24, столько в макете у обеих панелей.
+ */
+
+.rv-scroll-row {
+  --rv-scroll-row-bleed: var(--rv-space-24);
+  --rv-scroll-row-bg: var(--rv-grey);
+  position: relative;
+}
+
+.rv-scroll-row__track {
+  display: flex;
+  gap: var(--rv-space-nest-3);
+  overflow-x: auto;
+  margin-right: calc(-1 * var(--rv-scroll-row-bleed));
+  padding-right: var(--rv-scroll-row-bleed);
+  /* Полосы прокрутки в макете нет. */
+  scrollbar-width: none;
+}
+
+.rv-scroll-row__track::-webkit-scrollbar {
+  display: none;
+}
+
+/* Кнопки в ряду не сжимаются — иначе вместо прокрутки они бы просто ужались. */
+.rv-scroll-row__track > * {
+  flex: none;
+}
+
+.rv-scroll-row__fade {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: calc(-1 * var(--rv-scroll-row-bleed));
+  width: 150px;
+  pointer-events: none;
+  background: linear-gradient(to left, var(--rv-scroll-row-bg), transparent);
+  transition: opacity var(--rv-transition);
+}
+
+.rv-scroll-row__fade--start {
+  right: auto;
+  left: calc(-1 * var(--rv-scroll-row-bleed));
+  background: linear-gradient(to right, var(--rv-scroll-row-bg), transparent);
+}
+
+.rv-scroll-row__fade[data-hidden] {
+  opacity: 0;
+}

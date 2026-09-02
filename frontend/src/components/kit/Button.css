@@ -1,0 +1,147 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * Button — Figma "App UI-kit" -> фрейм Button (node 6523:385).
+ * 4 варианта (Default/Green/Yellow/Red) x 5 состояний
+ * (Default/Hover/Active/Idle/Disable).
+ *
+ * Геометрия из макета: 73 px высоты, скругление 24, рамка 1 px, отступы по
+ * горизонтали 49 от края рамки (в CSS это 48 + 1 px рамки при
+ * box-sizing: border-box), зазор между иконкой и текстом 8.
+ * В состоянии Active кнопка садится на 1 px по каждой стороне — это нажатие;
+ * габарит при этом не меняется, см. `.rv-press` в design/borders.css.
+ *
+ * Состояния идут от CSS (:hover / :active / :disabled), чтобы кнопка работала
+ * сама по себе. Атрибут data-mode принудительно включает нужное состояние —
+ * он нужен витрине кита, где все состояния показаны одновременно.
+ */
+
+.rv-btn {
+  /* Значения по умолчанию перекрываются вариантом ниже. */
+  --btn-bg: var(--rv-grey);
+  --btn-bg-hover: var(--rv-dark-grey);
+  --btn-bg-active: var(--rv-dark-grey);
+  --btn-bg-idle: var(--rv-light-gray);
+  --btn-text: var(--rv-white-a80);
+  --btn-shadow-active: var(--rv-black-a20);
+  --rv-press-radius: var(--rv-radius-24);
+
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+
+  height: 73px;
+  /* Отступ 49 — как в макете: обводка градиентная и в габарит не входит. */
+  padding: 0 49px;
+  border: 0;
+  border-radius: var(--rv-radius-24);
+  background: var(--btn-bg);
+
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-btn-size);
+  font-weight: var(--rv-btn-weight);
+  color: var(--btn-text);
+  white-space: nowrap;
+
+  cursor: pointer;
+  transition:
+    clip-path var(--rv-transition),
+    background var(--rv-transition),
+    box-shadow var(--rv-transition),
+    color var(--rv-transition),
+    opacity var(--rv-transition);
+  /* Иконка в слоте берёт цвет текста кнопки — так она нарисована в макете. */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Цвет иконки внутри кнопки совпадает с цветом подписи. */
+.rv-btn > svg {
+  color: currentColor;
+}
+
+/* Подпись ужимается вместе с кнопкой, а не распирает её наружу. */
+.rv-btn > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rv-btn[data-variant="green"] {
+  --btn-bg: var(--rv-main-a10);
+  --btn-bg-hover: var(--rv-main-a20);
+  --btn-bg-active: var(--rv-main-a20);
+  --btn-bg-idle: var(--rv-main-a50);
+  --btn-text: var(--rv-main-color);
+  /* Цветная обводка в макете сплошная, без градиента. См. GAPS.md BR-1. */
+  --rv-border: linear-gradient(var(--rv-main-a10), var(--rv-main-a10));
+  --rv-border-hover: linear-gradient(var(--rv-main-a10), var(--rv-main-a10));
+  --btn-shadow-active: var(--rv-main-a08);
+}
+
+.rv-btn[data-variant="yellow"] {
+  --btn-bg: var(--rv-warning-a10);
+  --btn-bg-hover: var(--rv-warning-a20);
+  --btn-bg-active: var(--rv-warning-a20);
+  --btn-bg-idle: var(--rv-warning-a50);
+  --btn-text: var(--rv-warning);
+  --rv-border: linear-gradient(var(--rv-warning-a10), var(--rv-warning-a10));
+  --rv-border-hover: linear-gradient(var(--rv-warning-a10), var(--rv-warning-a10));
+  --btn-shadow-active: var(--rv-warning-a08);
+}
+
+.rv-btn[data-variant="red"] {
+  --btn-bg: var(--rv-errors-a10);
+  --btn-bg-hover: var(--rv-errors-a20);
+  --btn-bg-active: var(--rv-errors-a20);
+  --btn-bg-idle: var(--rv-errors-a50);
+  --btn-text: var(--rv-errors);
+  --rv-border: linear-gradient(var(--rv-errors-a10), var(--rv-errors-a10));
+  --rv-border-hover: linear-gradient(var(--rv-errors-a10), var(--rv-errors-a10));
+  --btn-shadow-active: var(--rv-errors-a08);
+}
+
+/* --- Состояния ---------------------------------------------------------- */
+
+.rv-btn:hover:not(:disabled):not([data-mode]),
+.rv-btn[data-mode="hover"] {
+  background: var(--btn-bg-hover);
+}
+
+/* Idle — залитое состояние: тот же цвет, но в половину непрозрачности. */
+.rv-btn[data-mode="idle"] {
+  background: var(--btn-bg-idle);
+}
+
+/* Нажатие: заливка нажатого состояния и внутренняя тень из макета. Посадка
+   внутрь идёт от `.rv-press` и размеров не трогает. */
+.rv-btn:active:not(:disabled):not([data-mode]),
+.rv-btn[data-mode="active"] {
+  background: var(--btn-bg-active);
+  box-shadow: inset var(--rv-press-offset) var(--rv-press-offset)
+    var(--rv-press-blur) 0 var(--btn-shadow-active);
+}
+
+.rv-btn:disabled,
+.rv-btn[data-mode="disable"] {
+  background: var(--btn-bg);
+  opacity: 0.5;
+  cursor: default;
+}

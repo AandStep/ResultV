@@ -1,0 +1,263 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * MainPage — Figma "ResultV" -> страница App Design, верхний ряд фреймов
+ * MainPage (6454:971, 6530:763, 6530:863, 6530:963, 6530:1063, 6530:1163).
+ *
+ * Окно в макете 1000x740, слева сайдбар 74. Содержимое — вертикальная
+ * раскладка с отступом 32 по краям и зазором 18 между блоками:
+ *
+ *   Header            862x42
+ *   блок питания      256x305   (по центру: кнопка 220 и переключатель 256,
+ *                                между ними 24)
+ *   нижний блок       862       (карточка сервера 118, зазор 16, дальше либо
+ *                                две плитки скорости 423, либо две кнопки)
+ *
+ * Здесь заданы только раскладка и размеры: всё, что видно, — компоненты кита.
+ */
+
+.rv-main-page {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  background: var(--rv-black);
+  font-family: var(--rv-font-family);
+}
+
+.rv-main-page > .rv-sidebar {
+  flex-shrink: 0;
+}
+
+.rv-main-page__content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  padding: var(--rv-space-page);
+  /* Прокрутка — общая для страниц нового дизайна, см. design/scroll.css:
+     раскрытый список выдавливает плитки скорости вниз, и едет вся страница. */
+  padding-right: calc(var(--rv-space-page) - var(--rv-scrollbar-width));
+  gap: var(--rv-space-nest-1);
+}
+
+/* --- Смена состояния ----------------------------------------------------- */
+
+/*
+ * Подключение меняет разом полстраницы: заливку кнопки питания, цвет
+ * заголовка, плашку времени, подсветку карточки сервера, кривые скорости.
+ * Если пустить всё одним общим проблеском, экран мигает целиком и понять,
+ * что откуда взялось, нельзя.
+ *
+ * Поэтому изменение идёт волной от того места, куда человек нажал: первой
+ * отзывается кнопка питания, за ней заголовок, потом время, потом карточка
+ * сервера и последними плитки скорости. Шаг волны 70 мс — заметно, что
+ * порядок есть, но ждать не приходится: вся волна укладывается в 280 мс
+ * поверх обычных 300.
+ *
+ * При отключении волна идёт обратно, снизу вверх: гаснет сначала то, что
+ * зажглось последним. Задержку каждый раз берёт то состояние, в которое
+ * переходим, — поэтому наборы заданы отдельно.
+ */
+.rv-main-page {
+  --rv-wave: 70ms;
+}
+
+.rv-main-page[data-status="connected"] .rv-header__title {
+  transition-delay: var(--rv-wave);
+}
+
+.rv-main-page[data-status="connected"] .rv-header__time {
+  transition-delay: calc(var(--rv-wave) * 2);
+}
+
+.rv-main-page[data-status="connected"] .rv-flag,
+.rv-main-page[data-status="connected"] .rv-server-item__badge,
+.rv-main-page[data-status="connected"] .rv-badge {
+  transition-delay: calc(var(--rv-wave) * 3);
+}
+
+.rv-main-page[data-status="connected"] .rv-speed__data,
+.rv-main-page[data-status="connected"] .rv-speed__chart--empty {
+  transition-delay: calc(var(--rv-wave) * 4);
+}
+
+.rv-main-page:not([data-status="connected"]) .rv-speed__data,
+.rv-main-page:not([data-status="connected"]) .rv-speed__chart--empty {
+  transition-delay: 0ms;
+}
+
+.rv-main-page:not([data-status="connected"]) .rv-flag,
+.rv-main-page:not([data-status="connected"]) .rv-server-item__badge,
+.rv-main-page:not([data-status="connected"]) .rv-badge {
+  transition-delay: var(--rv-wave);
+}
+
+.rv-main-page:not([data-status="connected"]) .rv-header__time {
+  transition-delay: calc(var(--rv-wave) * 2);
+}
+
+.rv-main-page:not([data-status="connected"]) .rv-header__title {
+  transition-delay: calc(var(--rv-wave) * 3);
+}
+
+/*
+ * Кнопка питания — начало волны, и отзывается она не цветом, а нажатием:
+ * пока идёт подключение, она остаётся вдавленной (состояние `active` из
+ * кита), и распрямляется только когда подключились. Своей анимации ей не
+ * нужно — вдавливание и распрямление сами по себе движение, а прежний
+ * подскок поверх них читался как дрожание.
+ */
+
+/*
+ * Время в шапке не проявляется, а выпадает сверху — из-за края окна, где его
+ * до этого не было. Плашка едет вниз на свою высоту с запасом и там
+ * останавливается; обрезка по своей же высоте прячет её путь, чтобы она не
+ * наезжала на заголовок.
+ */
+.rv-main-page[data-status="connected"] .rv-header__time {
+  animation: rv-time-drop var(--rv-duration) var(--rv-ease)
+    calc(var(--rv-wave) * 2) both;
+}
+
+@keyframes rv-time-drop {
+  from {
+    clip-path: inset(-100% 0 100% 0);
+    transform: translateY(-100%);
+  }
+  to {
+    clip-path: inset(-100% 0 0 0);
+    transform: translateY(0);
+  }
+}
+
+/*
+ * Кому движение мешает — тому его не показываем: остаётся мгновенная смена
+ * состояния без волны и без разворотов.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .rv-main-page * {
+    animation: none !important;
+    transition-delay: 0ms !important;
+  }
+}
+
+/* --- Блок питания -------------------------------------------------------- */
+
+/*
+ * В макете это отдельный кадр шириной 256 по центру: кнопка питания 220
+ * выровнена по его середине, переключатель занимает всю ширину.
+ */
+.rv-main-page__power {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  align-self: center;
+  gap: 24px;
+  width: 256px;
+}
+
+/*
+ * Блоки страницы держат высоту из макета. Без этого раскрытый список ужимал
+ * бы кнопку питания и плитки, вместо того чтобы удлинить страницу.
+ */
+.rv-main-page__content > * {
+  flex-shrink: 0;
+}
+
+/* --- Нижний блок --------------------------------------------------------- */
+
+/*
+ * Пустая главная — фрейм 6752:4237. Серверов нет, поэтому вместо карточки
+ * выбора стоит приглашение: плитка со знаком «плюс» и подпись под ней.
+ * Плиток скорости в этом состоянии в макете нет вовсе.
+ *
+ * Ховера в макете не нарисовано, но блок ведёт на страницу добавления —
+ * иначе у него нет назначения, — и обводка отзывается на наведение так же,
+ * как у остальных нажимаемых элементов.
+ */
+.rv-main-page__empty {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  /* Отступы несимметричны: 36 сверху, 48 снизу — как в макете. */
+  padding: 36px 0 48px;
+  border: 0;
+  border-radius: var(--rv-radius-24);
+  background: var(--rv-grey);
+  cursor: pointer;
+}
+
+.rv-main-page__empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  border-radius: var(--rv-radius-14);
+  background: var(--rv-white-a10);
+  /* Знак «плюс» набран белым 80 %, как и подпись: снято с рендера макета
+     (214 на подложке 48 — это ровно 0.8). */
+  color: var(--rv-white-a80);
+}
+
+.rv-main-page__empty-text {
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-title-size);
+  font-weight: var(--rv-title-weight);
+  line-height: var(--rv-title-leading);
+  text-align: center;
+  color: var(--rv-white-a80);
+}
+
+.rv-main-page__bottom {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-2);
+}
+
+/*
+ * Плитки скорости и кнопки лежат в одной сетке: две колонки поровну с зазором
+ * 16. В макете это 423 + 16 + 423 при ширине 862.
+ */
+.rv-main-page__pair {
+  display: flex;
+  gap: var(--rv-space-nest-2);
+}
+
+.rv-main-page__pair > * {
+  flex: 1;
+  min-width: 0;
+}
+
+/*
+ * Кнопка в ките имеет ширину по содержимому, а на главной растягивается на
+ * половину ряда. Высота при этом остаётся из макета.
+ */
+.rv-main-page__pair > .rv-btn {
+  width: auto;
+}
+
+/* Образец кривой скорости из макета: в приложении сюда идут живые данные. */
+.rv-main-page__chart {
+  display: block;
+  width: 100%;
+  height: 100%;
+}

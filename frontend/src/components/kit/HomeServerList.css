@@ -1,0 +1,113 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+
+/*
+ * HomeServerList — Figma "App UI-kit" -> фрейм HomeServerList
+ * (node 6504:3877). Карточка выбранного сервера на главной: свёрнутая
+ * (только заголовок, 118 высоты) и раскрытая (заголовок плюс список, 330).
+ *
+ * Заливка Black, скругление 24, содержимое обрезается по скруглению.
+ * Наведение меняет только цвет рамки: белый 10 % -> 20 %.
+ *
+ * В раскрытом виде у заголовка появляются кнопки пинга и сортировки, а
+ * шеврон разворачивается остриём вверх.
+ *
+ * Список раскрывается целиком, во всю свою высоту, и никак не прокручивается
+ * сам: длинный список выдавливает страницу, а прокручивается она.
+ */
+
+.rv-home-server-list {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  /* Обводка градиентная и в габарит не входит, а в макете карточка на 2 px
+     выше своего содержимого — этот пиксель отдан отступу. */
+  padding: 1px;
+  border: 0;
+  border-radius: var(--rv-radius-24);
+  background: var(--rv-black);
+  transition: background var(--rv-transition);
+}
+
+/*
+ * Обрезка живёт здесь, а не на карточке: иначе она резала бы собственную
+ * обводку карточки по внешнему краю.
+ */
+.rv-home-server-list__inner {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  border-radius: calc(var(--rv-radius-24) - var(--rv-border-width));
+  overflow: hidden;
+}
+
+.rv-home-server-list__rows {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  background: var(--rv-black);
+  overflow: hidden;
+}
+
+/*
+ * Подпись группы в списке — фрейм 6504:3878. Стоит перед первой строкой
+ * своей подписки; «Мои сервера» идут последними.
+ *
+ * Снизу 4 px: вплотную к строке подпись читалась её частью, а не заголовком
+ * над ней. Сверху отступ по-прежнему больше — подпись принадлежит тому, что
+ * под ней.
+ *
+ * Появляется, лишь когда групп больше одной: с единственной подпиской
+ * подписывать нечего, и заголовок в этом случае не рисуется вовсе — решение
+ * дизайнера, см. HomeScreen.
+ */
+.rv-home-server-list__group {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 16px 24px var(--rv-space-4);
+  background: var(--rv-black);
+
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-chip-size);
+  font-weight: var(--rv-chip-weight);
+  line-height: var(--rv-chip-leading);
+  color: var(--rv-white-a20);
+}
+
+/*
+ * Шеврон шапки при раскрытии смотрит вверх. Поворотом, а не отражением:
+ * отражение по вертикали выглядит кувырком, а поворот — тем же движением,
+ * каким шеврон и открывает карточку.
+ *
+ * Шапкой карточки бывает не только `header`: на странице серверов её место
+ * занимают `subitem` (подписка) и `myitem` («Мои сервера»). Строки списка
+ * правило не задевает — у них вместо шеврона звёздочка.
+ */
+.rv-home-server-list[data-open="true"] .rv-server-item[data-variant="header"]
+  .rv-server-item__chevron,
+.rv-home-server-list[data-open="true"] .rv-server-item[data-variant="subitem"]
+  .rv-server-item__chevron,
+.rv-home-server-list[data-open="true"] .rv-server-item[data-variant="myitem"]
+  .rv-server-item__chevron {
+  transform: rotate(180deg);
+}

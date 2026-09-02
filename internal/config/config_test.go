@@ -118,8 +118,8 @@ func TestManagerLoadSaveRoundTrip(t *testing.T) {
 	}
 
 	cfg := mgr.GetConfig()
-	if cfg.RoutingRules.Mode != "global" {
-		t.Errorf("expected default mode 'global', got %q", cfg.RoutingRules.Mode)
+	if cfg.RoutingRules.Mode != "smart" {
+		t.Errorf("expected default mode 'smart', got %q", cfg.RoutingRules.Mode)
 	}
 	if cfg.Settings.Mode != "proxy" {
 		t.Errorf("expected default settings.mode 'proxy', got %q", cfg.Settings.Mode)
@@ -165,7 +165,7 @@ func TestManagerMissingFile(t *testing.T) {
 	}
 
 	cfg := mgr.GetConfig()
-	if cfg.RoutingRules.Mode != "global" {
+	if cfg.RoutingRules.Mode != "smart" {
 		t.Errorf("expected default mode when file missing, got %q", cfg.RoutingRules.Mode)
 	}
 }
@@ -183,7 +183,7 @@ func TestManagerCorruptedFile(t *testing.T) {
 	}
 
 	cfg := mgr.GetConfig()
-	if cfg.RoutingRules.Mode != "global" {
+	if cfg.RoutingRules.Mode != "smart" {
 		t.Errorf("expected default mode for corrupted file, got %q", cfg.RoutingRules.Mode)
 	}
 }
@@ -216,8 +216,8 @@ func TestEnsureDefaults(t *testing.T) {
 	empty := AppConfig{}
 	result := ensureDefaults(empty)
 
-	if result.RoutingRules.Mode != "global" {
-		t.Errorf("Mode: got %q, want 'global'", result.RoutingRules.Mode)
+	if result.RoutingRules.Mode != "smart" {
+		t.Errorf("Mode: got %q, want 'smart'", result.RoutingRules.Mode)
 	}
 	if result.Proxies == nil {
 		t.Error("Proxies should not be nil after ensureDefaults")

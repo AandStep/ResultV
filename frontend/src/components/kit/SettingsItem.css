@@ -1,0 +1,100 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+
+/*
+ * SettingsItem — Figma "App UI-kit" -> фрейм SettingsItem (node 6636:3953).
+ * Два состояния: Default и Hover. Меняется только цвет рамки.
+ *
+ * Карточка: заливка Grey, скругление 24, отступ 24, рамка 1 px белым 10 %
+ * (в ховере — 20 %). Слева квадрат с иконкой 36 на подложке Main-color 10 %
+ * со скруглением 14 и отступом 16. Справа от него текстовый блок шириной 405:
+ * заголовок стилем Title и описание стилем Chip белым 50 %. Справа карточки —
+ * необязательная иконка внешней ссылки.
+ */
+
+.rv-settings-item {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: var(--rv-space-24);
+  border: 0;
+  border-radius: var(--rv-radius-24);
+  background: var(--rv-grey);
+  text-align: left;
+  transition: background var(--rv-transition);
+}
+
+.rv-settings-item:hover:not([data-state]),
+.rv-settings-item[data-state="hover"] {
+  /* Усиление обводки берёт на себя `rv-border`. */
+}
+
+.rv-settings-item__row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.rv-settings-item__head {
+  display: flex;
+  align-items: center;
+  gap: var(--rv-space-16);
+}
+
+.rv-settings-item__badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: var(--rv-space-16);
+  border-radius: var(--rv-radius-14);
+  background: var(--rv-main-a10);
+  overflow: hidden;
+}
+
+.rv-settings-item__text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--rv-space-8);
+  width: 405px;
+}
+
+.rv-settings-item__title {
+  margin: 0;
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-title-size);
+  font-weight: var(--rv-title-weight);
+  line-height: var(--rv-title-leading);
+  color: var(--rv-white);
+  white-space: nowrap;
+}
+
+/* Описание набрано стилем Chip (интерлиньяж 1.1), а не Regular. */
+.rv-settings-item__desc {
+  margin: 0;
+  min-width: 100%;
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-chip-size);
+  font-weight: var(--rv-chip-weight);
+  line-height: var(--rv-chip-leading);
+  color: var(--rv-white-a50);
+}

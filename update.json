@@ -1,14 +1,19 @@
 {
   "version": "",
   "releaseTitle": {
-    "ru": "Хотфикс",
-    "en": "Hotfix"
+    "ru": "Редизайн и багфиксы",
+    "en": "Redesign and bug fixes"
   },
   "releaseNotes": [
     {
+      "type": "improve",
+      "ru": "Глобальный редизайн интерфейса",
+      "en": "Global interface redesign"
+    },
+    {
       "type": "fix",
-      "ru": "Хотфикс для парсинга авто серверов",
-      "en": "Hotfix for parsing auto servers"
+      "ru": "В смарт режиме сайт claude мог проверить реальный IP и заблокировать доступ, доработано покрытие",
+      "en": "Fixed issue where Claude's website could check real IP and block access, improved coverage"
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",

@@ -834,6 +834,16 @@ const parseWireGuardConf = (content) => {
     };
 };
 
+/*
+ * Протоколы-«эндпоинты»: это не прокси, а сетевой интерфейс, и живут они
+ * только через TUN. Режим «прокси» им недоступен, а туннель требует прав
+ * администратора — на оба вывода опирается главный экран.
+ */
+export const ENDPOINT_TYPES = ["WIREGUARD", "AMNEZIAWG"];
+
+export const isEndpointProtocol = (proxy) =>
+    ENDPOINT_TYPES.includes(String(proxy?.type || "").toUpperCase());
+
 export const VPN_TYPES = [
     "SS",
     "VMESS",

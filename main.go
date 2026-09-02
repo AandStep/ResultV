@@ -56,11 +56,14 @@ func main() {
 	defer cleanupMessenger()
 
 	opts := &options.App{
-		Title:     "ResultV",
-		Width:     1080,
-		Height:    720,
-		MinWidth:  800,
-		MinHeight: 600,
+		Title: "ResultV",
+		// Размер из макета: страницы нарисованы под клиентскую область
+		// 1000x740. Заголовок окна своей высоты не занимает — на главной он
+		// лежит поверх страницы, поэтому дизайну достаются все 740.
+		Width:     1000,
+		Height:    740,
+		MinWidth:  1000,
+		MinHeight: 740,
 		// Frameless on Windows only: enables our React-rendered title bar.
 		// macOS keeps native chrome (traffic lights) — frontend hides custom bar.
 		Frameless: runtime.GOOS == "windows",

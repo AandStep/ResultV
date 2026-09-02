@@ -106,6 +106,12 @@ type Subscription struct {
 	ExpireUnix      int64 `json:"expireUnix,omitempty"`
 
 	IconURL string `json:"iconUrl,omitempty"`
+
+	// SupportURL is the provider's own support address, taken from the
+	// subscription answer (a Support-Url / Profile-Web-Page-Url header, or any
+	// header whose name mentions support). Providers that send nothing leave
+	// it empty, and the UI then has no support link to show.
+	SupportURL string `json:"supportUrl,omitempty"`
 	// Source is an optional provenance marker (e.g. "rvsub" for resultv://rvsub/… deeplinks).
 	Source string `json:"source,omitempty"`
 
@@ -119,6 +125,30 @@ type Subscription struct {
 	// deleted; subscription sync must not re-add them. Cleared only by deleting
 	// the subscription itself.
 	RemovedRoutingListURLs []string `json:"removedRoutingListUrls,omitempty"`
+
+	// NameOverridden records that the user renamed this subscription by hand.
+	// A refresh normally adopts the profile title the provider sends; once the
+	// user has picked a name, that title must not overwrite it again.
+	NameOverridden bool `json:"nameOverridden,omitempty"`
+
+	// ShowOnHome controls whether this subscription's servers appear in the
+	// server list on the home screen. Nil means "shown": a subscription added
+	// before this flag existed must not silently disappear.
+	ShowOnHome *bool `json:"showOnHome,omitempty"`
+
+	// UpdateIntervalMinutes overrides the global subscription auto-refresh
+	// interval for this subscription alone. Nil means "follow the global
+	// setting", 0 means "never refresh on a timer".
+	UpdateIntervalMinutes *int `json:"updateIntervalMinutes,omitempty"`
+}
+
+// EffectiveShowOnHome reports whether this subscription's servers belong in
+// the home-screen list. See ShowOnHome for why the absent value means yes.
+func (s Subscription) EffectiveShowOnHome() bool {
+	if s.ShowOnHome == nil {
+		return true
+	}
+	return *s.ShowOnHome
 }
 
 type AppSettings struct {
@@ -222,7 +252,11 @@ type AppConfig struct {
 	RoutingRules  RoutingRules   `json:"routingRules"`
 	Proxies       []ProxyEntry   `json:"proxies"`
 	Settings      AppSettings    `json:"settings"`
-	Subscriptions []Subscription `json:"subscriptions,omitempty"`
+	// Без `omitempty`: пустой список должен доезжать до фронта именно пустым
+	// списком. С `omitempty` последняя удалённая подписка выпадала из ответа
+	// целиком, фронт видел «поля нет» и оставлял в состоянии прежний список —
+	// на странице серверов оставался заголовок только что удалённой подписки.
+	Subscriptions []Subscription `json:"subscriptions"`
 }
 
 func DefaultConfig() AppConfig {
@@ -231,7 +265,7 @@ func DefaultConfig() AppConfig {
 	subscriptionSendHWID := true
 	return AppConfig{
 		RoutingRules: RoutingRules{
-			Mode:                 "global",
+			Mode:                 "smart",
 			Whitelist:            []string{"localhost", "127.0.0.1"},
 			AppWhitelist:         []string{},
 			AppForceVPN:          []string{},
@@ -472,7 +506,10 @@ func (m *Manager) loadLocked() error {
 
 func ensureDefaults(cfg AppConfig) AppConfig {
 	if cfg.RoutingRules.Mode == "" {
-		cfg.RoutingRules.Mode = "global"
+		/* Умный режим — стандартный: конфиг без режима означает «пользователь
+		   не выбирал», а не «выбрал глобальный». Явно записанный "global"
+		   этой веткой не затрагивается и остаётся как был. */
+		cfg.RoutingRules.Mode = "smart"
 	}
 	if cfg.RoutingRules.Whitelist == nil {
 		cfg.RoutingRules.Whitelist = []string{"localhost", "127.0.0.1"}
@@ -491,6 +528,9 @@ func ensureDefaults(cfg AppConfig) AppConfig {
 	}
 	if cfg.Proxies == nil {
 		cfg.Proxies = []ProxyEntry{}
+	}
+	if cfg.Subscriptions == nil {
+		cfg.Subscriptions = []Subscription{}
 	}
 	if cfg.Settings.Mode == "" {
 		cfg.Settings.Mode = "proxy"

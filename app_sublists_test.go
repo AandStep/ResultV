@@ -206,6 +206,41 @@ func TestDeleteSubscriptionRemovesItsLists(t *testing.T) {
 	}
 }
 
+// Удаление подписки уносит и её серверы: раньше их вычищал только фронт своим
+// списком, и на странице оставался либо заголовок без серверов, либо серверы
+// без подписки — смотря чьё сохранение доехало последним.
+func TestDeleteSubscriptionRemovesItsProxies(t *testing.T) {
+	a := newTestApp(t, t.TempDir())
+	seedSubWithLists(t, a, "sub1", nil, nil)
+
+	cfg := a.config.GetConfig()
+	cfg.Proxies = []config.ProxyEntry{
+		{ID: "auto", Type: "AUTO", Name: "Auto", SubscriptionURL: "https://sub.test/s"},
+		{ID: "m1", Type: "VLESS", Name: "member", SubscriptionURL: "https://sub.test/s"},
+		{ID: "own", Type: "VLESS", Name: "свой"},
+		{ID: "other", Type: "VLESS", Name: "чужая подписка", SubscriptionURL: "https://sub2.test/s"},
+	}
+	if err := a.config.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.DeleteSubscription("sub1"); err != nil {
+		t.Fatalf("delete sub: %v", err)
+	}
+
+	got := a.config.GetConfig()
+	if len(got.Subscriptions) != 0 {
+		t.Errorf("сама подписка должна уйти: %+v", got.Subscriptions)
+	}
+	var ids []string
+	for _, p := range got.Proxies {
+		ids = append(ids, p.ID)
+	}
+	if len(ids) != 2 || ids[0] != "own" || ids[1] != "other" {
+		t.Errorf("должны остаться только чужие серверы, осталось: %v", ids)
+	}
+}
+
 func TestSyncWritesEmbeddedCacheFromBody(t *testing.T) {
 	a := newTestApp(t, t.TempDir())
 	seedSubWithLists(t, a, "sub1", nil, nil) // sub exists, no lists yet

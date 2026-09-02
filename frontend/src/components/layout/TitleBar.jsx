@@ -58,7 +58,12 @@ const ControlButton = ({ onClick, danger, ariaLabel, children }) => (
   </button>
 );
 
-export const TitleBar = () => {
+/*
+ * `overlay` кладёт панель поверх содержимого и убирает её фон: так странице
+ * достаётся вся высота окна, а кнопки окна остаются на месте. Нужен на
+ * экранах нового дизайна, где макет нарисован без заголовка.
+ */
+export const TitleBar = ({ overlay = false }) => {
   const [platform, setPlatform] = useState(null);
   const [isMaximised, setIsMaximised] = useState(false);
 
@@ -99,7 +104,11 @@ export const TitleBar = () => {
     <div
       style={dragStyle}
       onDoubleClick={handleDragDoubleClick}
-      className="flex h-8 w-full shrink-0 items-stretch justify-end bg-zinc-900 select-none"
+      className={`flex h-8 items-stretch justify-end select-none ${
+        overlay
+          ? "absolute inset-x-0 top-0 z-50 bg-transparent"
+          : "w-full shrink-0 bg-zinc-900"
+      }`}
     >
       <ControlButton ariaLabel="Свернуть" onClick={() => WindowMinimise()}>
         <svg viewBox="0 0 22 22" fill="none" className="shrink-0" style={iconStyle}>

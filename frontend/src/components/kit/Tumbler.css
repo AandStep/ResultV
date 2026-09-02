@@ -1,0 +1,61 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+
+/*
+ * Tumbler — Figma "App UI-kit" -> фрейм Tumbler (node 6566:5073).
+ * Два состояния: Default и Active.
+ *
+ * Дорожка 56x30, скругление 100, рамка 1 px, внутренний отступ 4.
+ * Ползунок 20x20: в Default прижат влево и залит белым 20 %, в Active
+ * прижат вправо и залит Main-color.
+ */
+
+.rv-tumbler {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 56px;
+  height: 30px;
+  padding: 4px;
+  border: 0;
+  border-radius: var(--rv-radius-pill);
+  background: var(--rv-grey);
+  cursor: pointer;
+}
+
+/*
+ * Ползунок не переставляется, а едет: дорожка внутри 48, ползунок 20,
+ * значит ход ровно 28.
+ */
+
+.rv-tumbler__knob {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--rv-radius-pill);
+  background: var(--rv-white-a20);
+  transition:
+    transform var(--rv-transition),
+    background var(--rv-transition);
+}
+
+.rv-tumbler[data-state="active"] .rv-tumbler__knob {
+  transform: translateX(28px);
+  background: var(--rv-main-color);
+}

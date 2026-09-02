@@ -119,6 +119,28 @@ export function autoRowPingLabel(proxy, pings, autoStatus) {
 }
 
 /**
+ * Favourited servers float to the top of whatever list they are in, keeping
+ * the order the chosen sort gave them on both sides of the split. Apply it
+ * AFTER sortProxiesByOption: the star is a pin, not a sort key, so it has to
+ * survive every ordering the user can pick.
+ *
+ * Grouped pages (servers page, home list split by subscription) call this per
+ * group — a favourite is pinned inside its own group, not lifted out of it.
+ *
+ * @param {{ id?: string|number }[]} list
+ * @param {Set<string>} favorites ids as strings
+ */
+export function favoritesFirst(list, favorites) {
+    if (!favorites || favorites.size === 0) return list;
+    const starred = [];
+    const rest = [];
+    for (const proxy of list) {
+        (favorites.has(String(proxy.id)) ? starred : rest).push(proxy);
+    }
+    return starred.concat(rest);
+}
+
+/**
  * Same ordering rules as proxy list / home dropdown.
  * @param {unknown[]} list
  * @param {string} sortBy

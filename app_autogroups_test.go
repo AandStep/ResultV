@@ -45,7 +45,8 @@ func TestFetchSubscriptionBuildsOneAutoHeadPerBalancerSection(t *testing.T) {
 	defer ts.Close()
 
 	app := NewApp()
-	entries, _, _, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL, true)
+	res, err := app.fetchSubscriptionFromURL(ts.URL, true)
+	entries := res.Entries
 	if err != nil {
 		t.Fatalf("fetchSubscriptionFromURL: %v", err)
 	}

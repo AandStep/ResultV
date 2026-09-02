@@ -39,7 +39,8 @@ func TestFetchSubscriptionOverHTTPSSendsHWID(t *testing.T) {
 	// available here, so we hit it via the real fetcher and accept that
 	// this test only runs locally with the trusted httptest CA.
 	_ = ts.Client()
-	entries, _, _, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL, false)
+	res, err := app.fetchSubscriptionFromURL(ts.URL, false)
+	entries := res.Entries
 	if err != nil {
 		// Self-signed cert path: the production fetcher uses its own
 		// http.Client with the system root CAs and will reject the test
@@ -102,7 +103,7 @@ func TestFetchSubscriptionHTTPDefaultRefused(t *testing.T) {
 	defer ts.Close()
 
 	app := NewApp()
-	_, _, _, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL, false)
+	_, err := app.fetchSubscriptionFromURL(ts.URL, false)
 	if err == nil {
 		t.Fatal("expected ErrInsecureSubscription for http URL")
 	}
@@ -136,7 +137,8 @@ func TestFetchSubscriptionInsecureSuppressesHWID(t *testing.T) {
 	defer ts.Close()
 
 	app := NewApp()
-	entries, _, _, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL, true)
+	res, err := app.fetchSubscriptionFromURL(ts.URL, true)
+	entries := res.Entries
 	if err != nil {
 		t.Fatalf("unexpected error with allowInsecure=true: %v", err)
 	}
@@ -194,7 +196,8 @@ func TestFetchSubscriptionImpioJSONFallback(t *testing.T) {
 	defer func() { impioSubscriptionHost = oldHost }()
 
 	app := NewApp()
-	entries, _, _, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL+"/api/sub/raw/abc/json", true)
+	res, err := app.fetchSubscriptionFromURL(ts.URL+"/api/sub/raw/abc/json", true)
+	entries := res.Entries
 	if err != nil {
 		t.Fatalf("expected fallback to strip /json and succeed, got %v (paths: %v)", err, paths)
 	}
@@ -233,7 +236,8 @@ func TestFetchSubscriptionImpioRawURLNotRewritten(t *testing.T) {
 	defer func() { impioSubscriptionHost = oldHost }()
 
 	app := NewApp()
-	entries, _, _, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL+"/api/sub/raw/abc", true)
+	res, err := app.fetchSubscriptionFromURL(ts.URL+"/api/sub/raw/abc", true)
+	entries := res.Entries
 	if err != nil {
 		t.Fatalf("raw URL must fetch directly: %v (paths: %v)", err, paths)
 	}
@@ -271,7 +275,7 @@ func TestFetchSubscriptionSendsConfiguredUserAgentAndDeviceHeaders(t *testing.T)
 	}))
 	defer ts.Close()
 
-	if _, _, _, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL, true); err != nil {
+	if _, err := app.fetchSubscriptionFromURL(ts.URL, true); err != nil {
 		t.Fatalf("fetch subscription: %v", err)
 	}
 	if seenUA != "ResultV/Test-UA" {
@@ -329,7 +333,7 @@ func TestFetchSubscriptionFromURLEmptyBodyReturnsHWIDDiagnostic(t *testing.T) {
 	defer ts.Close()
 
 	app := NewApp()
-	_, _, _, _, _, _, _, _, _, err := app.fetchSubscriptionFromURL(ts.URL, true)
+	_, err := app.fetchSubscriptionFromURL(ts.URL, true)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -348,6 +352,71 @@ func TestFetchSubscriptionFromURLEmptyBodyReturnsHWIDDiagnostic(t *testing.T) {
 	}
 }
 
+func TestFetchSubscriptionFromURLSupportURL(t *testing.T) {
+	body := "vless://af815621-b245-4149-89da-dd184cfc4b3d@example.com:443?type=tcp&security=none#Node"
+	cases := []struct {
+		name    string
+		headers map[string]string
+		want    string
+	}{
+		{
+			name:    "support-url header",
+			headers: map[string]string{"Support-Url": "https://t.me/provider_support"},
+			want:    "https://t.me/provider_support",
+		},
+		{
+			// Панели шлют и относительный путь — он относится к хосту подписки.
+			name:    "relative path",
+			headers: map[string]string{"Support-Url": "/support"},
+			want:    "/support",
+		},
+		{
+			// Имя заголовка мы можем и не знать, но оно само говорит, что это.
+			name:    "unknown header mentioning support",
+			headers: map[string]string{"X-Provider-Support-Link": "https://example.com/help"},
+			want:    "https://example.com/help",
+		},
+		{
+			// Страница подписки — последний источник, если поддержки нет.
+			name:    "profile web page as a fallback",
+			headers: map[string]string{"Profile-Web-Page-Url": "https://example.com/me"},
+			want:    "https://example.com/me",
+		},
+		{
+			name:    "nothing sent",
+			headers: map[string]string{},
+			want:    "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				for k, v := range tc.headers {
+					w.Header().Set(k, v)
+				}
+				_, _ = w.Write([]byte(body))
+			}))
+			defer ts.Close()
+
+			want := tc.want
+			if strings.HasPrefix(want, "/") {
+				want = ts.URL + want
+			}
+
+			app := NewApp()
+			res, err := app.fetchSubscriptionFromURL(ts.URL, true)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if res.SupportURL != want {
+				t.Fatalf("support url: want %q got %q", want, res.SupportURL)
+			}
+		})
+	}
+}
+
 func TestFetchSubscriptionFromURLProfileTitleOverridesProvider(t *testing.T) {
 	title := "v2RayTun VPN"
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -358,12 +427,13 @@ func TestFetchSubscriptionFromURLProfileTitleOverridesProvider(t *testing.T) {
 	defer ts.Close()
 
 	app := NewApp()
-	entries, _, _, _, _, _, gotTitle, _, _, err := app.fetchSubscriptionFromURL(ts.URL, true)
+	res, err := app.fetchSubscriptionFromURL(ts.URL, true)
+	entries := res.Entries
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gotTitle != title {
-		t.Fatalf("profile title: want %q got %q", title, gotTitle)
+	if res.ProfileTitle != title {
+		t.Fatalf("profile title: want %q got %q", title, res.ProfileTitle)
 	}
 	if len(entries) != 1 || entries[0].Provider != title {
 		t.Fatalf("provider: want %q got %q", title, entries[0].Provider)

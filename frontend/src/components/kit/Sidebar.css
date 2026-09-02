@@ -1,0 +1,216 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+
+/*
+ * Sidebar — Figma "App UI-kit" -> фрейм Sidebar (node 6492:1648).
+ * Три варианта: Default (свёрнут, 74), OpenHover (свёрнут, курсор на
+ * логотипе), Opened (развёрнут, 240).
+ *
+ * Заливка Grey, рамка 1 px градиентом (белый 20 % слева -> 5 % справа),
+ * отступ 12, пункты прижаты к верху, «Настройки» — к низу. Блок логотипа
+ * высотой 48, зазор до пунктов 16, между пунктами 4.
+ *
+ * Главное в интерактиве: в свёрнутом виде наведение на логотип подменяет его
+ * иконкой `Side` — это и есть кнопка разворота. В развёрнутом виде та же
+ * кнопка стоит отдельно справа от названия.
+ *
+ * Высота в макете 740 — это высота монтажной области. Здесь сайдбар тянется
+ * на всю высоту родителя.
+ */
+
+.rv-sidebar {
+  box-sizing: border-box;
+  /* Точка отсчёта для рамки: псевдоэлемент `rv-border` считает inset от неё. */
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  width: 74px;
+  height: 100%;
+  padding: var(--rv-space-12);
+  border: 0;
+  background: var(--rv-grey);
+  transition: width var(--rv-transition);
+
+  /*
+   * Рамка обходит сайдбар целиком, по всем четырём граням (класс `rv-border`
+   * стоит на элементе), но градиент у неё шире общего: в макете левый край
+   * белый 20 %, правый — 5 %, тогда как у прочих элементов кита слева 10 %.
+   * Проверено по всем трём вариантам фрейма — Default, OpenHover и Opened
+   * светятся одинаково, поэтому обводка статичная.
+   */
+  --rv-border: linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0.2),
+    rgba(255, 255, 255, 0.05)
+  );
+}
+
+.rv-sidebar[data-opened="true"] {
+  width: 240px;
+}
+
+.rv-sidebar__top {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  width: 100%;
+}
+
+/* --- Логотип ------------------------------------------------------------ */
+
+/*
+ * Обрезка живёт на ряду, а не на самом сайдбаре: у сайдбара градиентная
+ * обводка псевдоэлементом, и `overflow: hidden` срезал бы её вместе со
+ * сглаживанием (см. design/borders.css). А обрезать нужно: в свёрнутом виде
+ * название и кнопка свёртки остаются в разметке, только прозрачные.
+ */
+.rv-sidebar__logo-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--rv-space-16);
+  height: 48px;
+  width: 100%;
+  overflow: hidden;
+}
+
+.rv-sidebar[data-opened="true"] .rv-sidebar__logo-row {
+  justify-content: space-between;
+  gap: 0;
+}
+
+.rv-sidebar__logo-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 100%;
+  padding: var(--rv-space-12);
+  border: 0;
+  border-radius: var(--rv-radius-8);
+  background: none;
+  cursor: pointer;
+}
+
+/*
+ * Логотип и иконка разворота лежат друг на друге и перетекают одна в другую,
+ * а не мигают через display.
+ */
+.rv-sidebar__logo-stack {
+  position: relative;
+  width: 24px;
+  height: 30px;
+  flex-shrink: 0;
+}
+
+.rv-sidebar__logo,
+.rv-sidebar__logo-toggle {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  display: block;
+  transition: opacity var(--rv-transition);
+}
+
+.rv-sidebar__logo {
+  width: 24px;
+  height: 30px;
+}
+
+/* Свёрнутый сайдбар: наведение на логотип показывает иконку разворота. */
+.rv-sidebar__logo-toggle {
+  opacity: 0;
+}
+
+.rv-sidebar[data-opened="false"] .rv-sidebar__logo-btn:hover .rv-sidebar__logo,
+.rv-sidebar[data-opened="false"][data-state="openhover"] .rv-sidebar__logo {
+  opacity: 0;
+}
+
+.rv-sidebar[data-opened="false"] .rv-sidebar__logo-btn:hover .rv-sidebar__logo-toggle,
+.rv-sidebar[data-opened="false"][data-state="openhover"] .rv-sidebar__logo-toggle {
+  opacity: 1;
+}
+
+/*
+ * Название набрано шрифтом Benzin Bold — его нет ни в системе, ни в проекте.
+ * До того как файл появится, текст рисуется основным шрифтом.
+ * См. docs/design/GAPS.md SB-1.
+ */
+.rv-sidebar__wordmark {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  padding-top: 5px;
+  font-family: "Benzin", var(--rv-font-family);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+  color: var(--rv-white);
+}
+
+.rv-sidebar__collapse {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: var(--rv-space-12);
+  border: 0;
+  border-radius: var(--rv-radius-8);
+  background: none;
+  cursor: pointer;
+}
+
+/*
+ * Название и кнопка свёртки идут тем же ходом, что подписи пунктов: место
+ * сначала, текст потом. Невидимая кнопка нажатий не принимает — иначе в
+ * свёрнутом сайдбаре по ней можно было бы попасть вслепую.
+ */
+.rv-sidebar__wordmark,
+.rv-sidebar__collapse {
+  opacity: 1;
+  transition: opacity var(--rv-reveal-duration) var(--rv-ease)
+    var(--rv-reveal-delay);
+}
+
+.rv-sidebar__wordmark[data-visible="false"],
+.rv-sidebar__collapse[data-visible="false"] {
+  opacity: 0;
+  pointer-events: none;
+  transition-delay: 0ms;
+}
+
+/* --- Пункты ------------------------------------------------------------- */
+
+.rv-sidebar__items {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--rv-space-4);
+  width: 100%;
+}
+
+/* В сайдбаре пункт занимает всю ширину, а не 118 как в отдельном компоненте. */
+.rv-sidebar .rv-menu-btn {
+  width: 100%;
+}

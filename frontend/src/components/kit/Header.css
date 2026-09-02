@@ -1,0 +1,124 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+
+/*
+ * Header — Figma "App UI-kit" -> фрейм Header (node 6521:263).
+ * Четыре состояния: Default, Processing, Success, Error.
+ *
+ * Три колонки: слева плашка со временем, по центру заголовок стилем H1,
+ * справа две иконки (сайт и телеграм) в блоке шириной 94 с зазором 16.
+ * Меняется только цвет заголовка; плашка времени видна лишь в Success.
+ */
+
+.rv-header {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: fit-content(100%) minmax(0, 1fr) fit-content(100%);
+  align-items: start;
+  width: 100%;
+  overflow: hidden;
+}
+
+/* --- Плашка времени ----------------------------------------------------- */
+
+.rv-header__time {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: start;
+  align-self: start;
+  flex-shrink: 0;
+  gap: var(--rv-space-10);
+  padding: 9px var(--rv-space-18) 9px 9px;
+  border-radius: var(--rv-radius-pill);
+  background: var(--rv-grey);
+  overflow: hidden;
+
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-chip-size);
+  font-weight: var(--rv-chip-weight);
+  line-height: var(--rv-chip-leading);
+  color: var(--rv-white-a50);
+  white-space: nowrap;
+  transition: opacity var(--rv-transition);
+}
+
+/*
+ * Во всех состояниях кроме Success плашка в макете стоит с прозрачностью 0:
+ * она есть в разметке, но не видна. Рамка белым 20 % и отступ 8 вместо 9,
+ * которые в макете появляются вместе с прозрачностью, здесь не нужны: они
+ * невидимы, а отступ отличался только на толщину рамки.
+ * См. docs/design/GAPS.md H-2.
+ */
+.rv-header:not([data-variant="success"]) .rv-header__time {
+  opacity: 0;
+}
+
+/* --- Заголовок ---------------------------------------------------------- */
+
+.rv-header__title {
+  margin: 0;
+  justify-self: stretch;
+  align-self: start;
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-h1-size);
+  font-weight: var(--rv-h1-weight);
+  line-height: var(--rv-h1-leading);
+  text-align: center;
+  color: var(--rv-white-a50);
+  transition: color var(--rv-transition);
+}
+
+.rv-header[data-variant="processing"] .rv-header__title { color: var(--rv-warning); }
+.rv-header[data-variant="success"] .rv-header__title { color: var(--rv-main-color); }
+.rv-header[data-variant="error"] .rv-header__title { color: var(--rv-errors); }
+
+/* --- Ссылки справа ------------------------------------------------------ */
+
+.rv-header__links {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  align-self: stretch;
+  flex-shrink: 0;
+  gap: var(--rv-space-16);
+  width: 94px;
+}
+
+/*
+ * Ссылки справа: в покое белые 50 %, при наведении каждая уходит в свой цвет
+ * — сайт в фирменный зелёный, телеграм в свой бренд-цвет (оба взяты из
+ * фрейма Icons, варианты `Site/Hover` и `Tg/Hover`).
+ */
+.rv-header__link {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--rv-icon-default);
+  cursor: pointer;
+  transition: color var(--rv-transition);
+}
+
+.rv-header__link--site:hover {
+  color: var(--rv-main-color);
+}
+
+.rv-header__link--tg:hover {
+  color: var(--rv-icon-tg-hover);
+}

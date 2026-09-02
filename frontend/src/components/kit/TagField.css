@@ -1,0 +1,131 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * TagField — Figma "ResultV" -> App Design, ряд `SmartRules`.
+ *
+ * Коробка повторяет Textarea из кита один в один (заливка Dark Grey, высота
+ * 156, скругление 24, отступ 16, рамка фокуса Main-color 20 % тенью), поэтому
+ * значения взяты те же и теми же переменными. Отличие одно: внутри не текст,
+ * а строка из тегов и ввода, зазор 10 (6594:3264).
+ *
+ * Тег (6594:3260): заливка Light Gray, скругление 100, отступы 6/10/8/10,
+ * зазор 4, подпись стилем Regular белым 50 %, крестик 14.
+ */
+
+.rv-tag-field {
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  align-items: center;
+  gap: var(--rv-space-10);
+  width: 100%;
+  height: 156px;
+  padding: var(--rv-space-16);
+  border-radius: var(--rv-radius-24);
+  background: var(--rv-dark-grey);
+  cursor: text;
+
+  /* Полоса — общая тонкая из design/scroll.css, но БЕЗ резерва места под неё:
+     `scrollbar-gutter` там держит ширину страницы неизменной, а здесь тот же
+     резерв съел бы часть отступа 16 и сдвинул теги внутрь. */
+  scrollbar-gutter: auto;
+
+  /* Та же тень-рамка, что у Input и Textarea: цвет объявлен заранее, растёт
+     только толщина — иначе первое появление пришлось бы гнать от прозрачного
+     и рамка мигала бы. См. kit/Field.css. */
+  box-shadow: 0 0 0 0 var(--rv-main-a20);
+  transition: box-shadow var(--rv-transition), opacity var(--rv-transition);
+}
+
+.rv-tag-field:focus-within {
+  box-shadow: 0 0 0 var(--rv-border-width) var(--rv-main-a20);
+}
+
+.rv-tag-field[data-disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* --- Тег ---------------------------------------------------------------- */
+
+.rv-tag-field__tag {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--rv-space-4);
+  padding: 6px var(--rv-space-10) 8px;
+  border-radius: var(--rv-radius-pill);
+  background: var(--rv-light-gray);
+
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-regular-size);
+  font-weight: var(--rv-regular-weight);
+  line-height: var(--rv-regular-leading);
+  text-align: center;
+  white-space: nowrap;
+  color: var(--rv-white-a50);
+}
+
+.rv-tag-field__remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  /* Правило дизайнера для иконок: покой 50 %, наведение 100 %. */
+  color: var(--rv-icon-default);
+  transition: color var(--rv-transition);
+}
+
+.rv-tag-field__remove:hover:not(:disabled) {
+  color: var(--rv-icon-hover);
+}
+
+.rv-tag-field__remove:disabled {
+  cursor: default;
+}
+
+/* --- Ввод --------------------------------------------------------------- */
+
+/*
+ * Ввод занимает остаток строки, но не проваливается ниже своей ширины: с
+ * `flex: 1` и без `min-width` длинный черновик растянул бы строку и вытолкнул
+ * теги за край поля.
+ */
+.rv-tag-field__input {
+  flex: 1;
+  min-width: 120px;
+  padding: 0;
+  border: 0;
+  background: none;
+  outline: none;
+
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-regular-size);
+  font-weight: var(--rv-regular-weight);
+  line-height: var(--rv-regular-leading);
+  color: var(--rv-white);
+  caret-color: var(--rv-white-a50);
+}
+
+.rv-tag-field__input::placeholder {
+  color: var(--rv-white-a20);
+}

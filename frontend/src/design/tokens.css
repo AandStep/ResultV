@@ -1,0 +1,319 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * Design tokens, 1:1 с Figma "ResultV" → страница "App UI-kit" (node 0:1).
+ * Источник значений — Figma Variables, снятые через get_variable_defs.
+ * Имена токенов повторяют имена переменных в Figma (kebab-case), чтобы в
+ * обсуждении макета и в коде звучало одно и то же слово.
+ *
+ * Правило: сюда не попадает ни одно значение, которого нет в Figma. Всё, чего
+ * в макете не нашлось, живёт в docs/design/GAPS.md, а не додумывается здесь.
+ */
+
+/*
+ * Segoe UI по весам.
+ *
+ * Без этих правил вес 600 уезжает в Bold: в проекте стоит
+ * `font-synthesis: none`, поэтому браузер не подделывает полужирный, а берёт
+ * ближайшее НАСТОЯЩЕЕ начертание семейства — а у «Segoe UI» это Bold 700.
+ * Отсюда и ощущение, что Chip набран жирным. Здесь каждый вес привязан к
+ * своему системному файлу, и Semibold становится настоящим Semibold.
+ */
+@font-face {
+  font-family: "Segoe UI RV";
+  src: local("Segoe UI"), local("Segoe UI Regular"), local("SegoeUI");
+  font-weight: 400;
+  font-style: normal;
+}
+
+/*
+ * Medium у Segoe UI нет, поэтому вес 500 отдаём обычному начертанию — иначе
+ * правила подбора увели бы его в Semibold или Bold.
+ */
+@font-face {
+  font-family: "Segoe UI RV";
+  src: local("Segoe UI"), local("Segoe UI Regular"), local("SegoeUI");
+  font-weight: 500;
+  font-style: normal;
+}
+
+/*
+ * Semibold (600) в наборе не заведён намеренно.
+ *
+ * У Segoe UI кириллические штрихи шире латинских: на 14 px Semibold кириллица
+ * встаёт в 3 пикселя против 2 у латиницы и читается как Bold. Одно время вес
+ * 600 был разведён по алфавитам — латиница брала настоящий Semibold,
+ * кириллица обычное начертание, — но тогда один и тот же текст в русской и
+ * английской локали выглядел по-разному. Теперь всё, что в макете набрано
+ * Semibold, идёт весом 500: он один на оба алфавита. См. docs/design/GAPS.md.
+ */
+
+@font-face {
+  font-family: "Segoe UI RV";
+  src: local("Segoe UI Bold"), local("SegoeUI-Bold");
+  font-weight: 700;
+  font-style: normal;
+}
+
+/*
+ * Benzin Bold — им набрано название «ResultV». Гарнитура коммерческая, файлы
+ * лежат в репозитории (src/assets/fonts). В поставке дизайнера .eot и .woff
+ * пустые, поэтому подключены только woff2 и ttf.
+ */
+@font-face {
+  font-family: "Benzin";
+  src: url("../assets/fonts/benzin-bold.woff2") format("woff2"),
+    url("../assets/fonts/benzin-bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* --- Colors ------------------------------------------------------- */
+  --rv-white: #ffffff;
+  --rv-black: #141414;
+  --rv-dark-grey: #171717;
+  --rv-grey: #1a1a1a;
+  --rv-light-gray: #1f1f1f;
+
+  --rv-main-color: #007e3a;
+  --rv-second-color: #00a819;
+  --rv-warning: #f2cc0d;
+  --rv-errors: #f20d46;
+
+  /* Цвета теней заданы в Figma вместе с альфой; сами параметры тени
+     (offset/blur/spread) переменными не являются и снимаются с компонентов. */
+  --rv-shadow-main: #007e3a33;
+  --rv-shadow-warning: #f2cc0d80;
+  --rv-shadow-error: #f20d4633;
+
+  /* --- Typography --------------------------------------------------- */
+  /* Все текстовые стили макета — Segoe UI. На Windows это системный шрифт;
+     фолбэки нужны для linux/macos-сборок. */
+  --rv-font-family: "Segoe UI RV", "Segoe UI", "Segoe UI Variable", system-ui,
+    -apple-system, "Noto Sans", "Liberation Sans", Arial, sans-serif;
+
+  --rv-h1-size: 32px;
+  --rv-h1-weight: 700;
+  --rv-h1-leading: 1.2;
+
+  --rv-title-size: 20px;
+  --rv-title-weight: 700;
+  --rv-title-leading: 1.4;
+
+  --rv-title-sm-size: 18px;
+  --rv-title-sm-weight: 700;
+  --rv-title-sm-leading: 1.4;
+
+  --rv-btn-size: 16px;
+  --rv-btn-weight: 700;
+  --rv-btn-leading: 1.3;
+
+  /* В макете Semibold; в коде везде Medium — см. блок @font-face выше. */
+  --rv-regular-size: 14px;
+  --rv-regular-weight: 500;
+  --rv-regular-leading: 1.4;
+
+  --rv-regular-up-size: 14px;
+  --rv-regular-up-weight: 700;
+  --rv-regular-up-leading: 1.1;
+
+  --rv-chip-size: 14px;
+  --rv-chip-weight: 500;
+  --rv-chip-leading: 1.1;
+
+  /* --- Snapped from components (не переменные Figma) ------------------ */
+  /* Цвета иконок заданы в макете прямо на слоях, а не переменными. Значения
+     сняты с фрейма Icons и одинаковы по всем 26 иконкам. См. GAPS.md V-1. */
+  --rv-icon-default: rgba(255, 255, 255, 0.5);
+  /* Правило дизайнера: наведение поднимает иконку с 50 % до 100 %.
+     Во фрейме Icons ховер пока нарисован 80 %, см. GAPS.md I-7. */
+  --rv-icon-hover: var(--rv-white);
+  /* Бренд-цвет Telegram, вне палитры проекта. См. GAPS.md V-3. */
+  --rv-icon-tg-hover: #0088cc;
+
+  /* Подложка под окном поверх страницы: чистый чёрный 50 % и размытие 6.
+     Заданы прямо на слое Frame 359 (6721:3874), переменных в Figma нет. */
+  --rv-overlay: rgba(0, 0, 0, 0.5);
+  --rv-overlay-blur: 6px;
+
+  /* Прозрачные ступени палитры. В Figma это не отдельные переменные, а
+     базовый цвет с непрозрачностью слоя; значения сняты с компонентов кита. */
+  --rv-white-a10: rgba(255, 255, 255, 0.1);
+  --rv-white-a80: rgba(255, 255, 255, 0.8);
+  --rv-black-a20: rgba(20, 20, 20, 0.2);
+
+  --rv-main-a08: rgba(0, 126, 58, 0.08);
+  --rv-main-a10: rgba(0, 126, 58, 0.1);
+  --rv-main-a20: rgba(0, 126, 58, 0.2);
+  --rv-main-a50: rgba(0, 126, 58, 0.5);
+
+  --rv-warning-a08: rgba(242, 204, 13, 0.08);
+  --rv-warning-a10: rgba(242, 204, 13, 0.1);
+  --rv-warning-a20: rgba(242, 204, 13, 0.2);
+  --rv-warning-a50: rgba(242, 204, 13, 0.5);
+
+  --rv-errors-a08: rgba(242, 13, 70, 0.08);
+  --rv-errors-a10: rgba(242, 13, 70, 0.1);
+  --rv-errors-a20: rgba(242, 13, 70, 0.2);
+  --rv-errors-a50: rgba(242, 13, 70, 0.5);
+
+  --rv-white-a20: rgba(255, 255, 255, 0.2);
+  --rv-white-a50: rgba(255, 255, 255, 0.5);
+  --rv-light-gray-a50: rgba(31, 31, 31, 0.5);
+  --rv-second-a10: rgba(0, 168, 25, 0.1);
+
+  --rv-black-a25: rgba(20, 20, 20, 0.25);
+  --rv-black-a80: rgba(20, 20, 20, 0.8);
+
+  /* --- Отступы --------------------------------------------------------- */
+  /*
+   * Правило: у страницы внешний отступ 32, такой же между блоком заголовка с
+   * подзаголовком и содержимым. Внутри блоков шаг убывает по вложенности:
+   * 18 -> 16 -> 8. Ниже и числовая шкала, и имена по уровням — при вёрстке
+   * страницы удобнее вторые, при переносе готового компонента первые.
+   */
+  --rv-space-32: 32px;
+  --rv-space-24: 24px;
+  --rv-space-18: 18px;
+  --rv-space-16: 16px;
+  --rv-space-12: 12px;
+  --rv-space-10: 10px;
+  --rv-space-8: 8px;
+  --rv-space-4: 4px;
+
+  --rv-space-page: var(--rv-space-32);
+  --rv-space-nest-1: var(--rv-space-18);
+  --rv-space-nest-2: var(--rv-space-16);
+  --rv-space-nest-3: var(--rv-space-8);
+
+  /* --- Скругления ------------------------------------------------------ */
+  /* Основные — 32 и 24; чем глубже вложенность, тем меньше. */
+  --rv-radius-32: 32px;
+  --rv-radius-24: 24px;
+  --rv-radius-16: 16px;
+  --rv-radius-14: 14px;
+  --rv-radius-8: 8px;
+  --rv-radius-2: 2px;
+  --rv-radius-pill: 100px;
+  --rv-radius-circle: 50%;
+
+  /* --- Тени ------------------------------------------------------------ */
+  /*
+   * Геометрия во всём ките одна, меняется только цвет. Нажатие даёт
+   * внутреннюю тень со смещением влево-вверх, свечение — ровный ореол.
+   * Цвет подставляет компонент, поэтому здесь только размеры.
+   */
+  --rv-press-offset: -8px;
+  --rv-press-blur: 16px;
+  --rv-glow-blur: 16px;
+
+  /* --- Обводки --------------------------------------------------------- */
+  /*
+   * Обводку получают элементы, с которыми можно взаимодействовать (редкие
+   * исключения есть). Это не сплошной цвет, а градиент, и идёт он строго
+   * поперёк элемента слева направо: у левого края белый 10 %, у правого 5 %.
+   * Наведение держит ту же горизонталь, 20 % -> 15 %.
+   *
+   * Горизонталь снята с рендера макета попиксельно: у сайдбара (74x740),
+   * тумблера (256x61) и карточки сервера (778x118) верхняя и нижняя грани
+   * светятся одинаково, а левая и правая отличаются вдвое — вертикальной
+   * составляющей у градиента нет. Угловые ключевые слова (`to bottom left`
+   * и подобные) сюда не годятся: CSS выводит такой угол из пропорций
+   * элемента, поэтому на узком высоком сайдбаре градиент выродился бы в
+   * вертикальный, а на широкой карточке — почти в горизонтальный, и один
+   * набор значений давал бы разную картинку.
+   *
+   * Применяется классом `rv-border` из design/borders.css.
+   */
+  /* --- Движение -------------------------------------------------------- */
+  /*
+   * Всё, что меняется от состояния, едет 300 мс. Кривая одна на весь
+   * интерфейс: быстрый старт и мягкое торможение — так изменение читается
+   * сразу, но не дёргает глаз.
+   */
+  --rv-duration: 300ms;
+  --rv-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --rv-transition: var(--rv-duration) var(--rv-ease);
+
+  /*
+   * Текст, который появляется вместе с раздвигающимся контейнером (подписи
+   * сайдбара), ждёт, пока для него освободится место, и только потом
+   * проявляется — во второй половине хода. Разом: длительность и задержка
+   * общие, поэтому все подписи зажигаются в один момент, а не вразнобой.
+   *
+   * Убирается текст без задержки: место под него исчезает сразу, и держать
+   * его видимым в сужающемся контейнере не за чем.
+   */
+  --rv-reveal-duration: 150ms;
+  --rv-reveal-delay: 150ms;
+
+  /* Ширина полосы прокрутки. Заведена переменной, потому что на неё же
+     уменьшается правый отступ страницы — см. MainPage.css. */
+  --rv-scrollbar-width: 6px;
+
+  --rv-border-width: 1px;
+  --rv-border: linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0.1),
+    rgba(255, 255, 255, 0.05)
+  );
+  --rv-border-hover: linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0.2),
+    rgba(255, 255, 255, 0.15)
+  );
+}
+
+/*
+ * Два движения на весь интерфейс, оба про ожидание.
+ *
+ * `rv-blink` — «работа идёт, ответа ещё нет»: элемент медленно уходит в
+ * прозрачность и так же медленно возвращается. Именно медленно: частое мигание
+ * читается как тревога, а здесь всего лишь ждут сеть.
+ *
+ * `rv-spin` — равномерное вращение для спиннеров и значка обновления. Линейное
+ * и без пауз: у вращения нет ни начала, ни конца, и общая кривая интерфейса
+ * ему только мешала бы.
+ */
+@keyframes rv-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@keyframes rv-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/*
+ * Базовый вид иконки. Цвет идёт через `currentColor`, поэтому его может
+ * задать любой родитель, и меняется он плавно вместе с остальным состоянием.
+ */
+.rv-icon {
+  display: block;
+  flex-shrink: 0;
+  transition: color var(--rv-transition);
+}

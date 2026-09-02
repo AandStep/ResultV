@@ -18,10 +18,11 @@
 import React from "react";
 import { AppProvider } from "./context/AppContext";
 import { MainLayout } from "./components/layout/MainLayout";
-import { HomeView } from "./views/HomeView";
-import { ProxyListView } from "./views/ProxyListView";
-import { RulesView } from "./views/RulesView";
+import HomeScreen from "./views/redesign/HomeScreen";
+import SmartRulesScreen from "./views/redesign/SmartRulesScreen";
 import { AddProxyView } from "./views/AddProxyView";
+import AddScreen from "./views/redesign/AddScreen";
+import ServersScreen from "./views/redesign/ServersScreen";
 import { BuyProxyView } from "./views/BuyProxyView";
 import { LogsView } from "./views/LogsView";
 import { SettingsView } from "./views/SettingsView";
@@ -45,6 +46,7 @@ const AppContent = () => {
     const {
         isConfigLoaded,
         activeTab,
+        editingProxy,
         showProtocolModal,
         setShowProtocolModal,
         appDialog,
@@ -138,12 +140,13 @@ const AppContent = () => {
 
     return (
         <MainLayout>
-            {activeTab === "home" && <HomeView />}
-            <div className={activeTab === "list" ? "" : "hidden"}>
-                <ProxyListView />
-            </div>
-            {activeTab === "rules" && <RulesView />}
-            {activeTab === "add" && <AddProxyView />}
+            {activeTab === "home" && <HomeScreen />}
+            {activeTab === "list" && <ServersScreen />}
+            {activeTab === "rules" && <SmartRulesScreen />}
+            {/* Добавление переехало на новый дизайн; правка сервера пока
+                идёт по старой форме — её в макете нет. */}
+            {activeTab === "add" &&
+                (editingProxy ? <AddProxyView /> : <AddScreen />)}
             {activeTab === "buy" && <BuyProxyView />}
             {activeTab === "logs" && <LogsView />}
             {activeTab === "settings" && <SettingsView />}

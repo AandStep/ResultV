@@ -1,0 +1,140 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * SmartRulesPage — Figma "ResultV" -> App Design, ряд `SmartRules`
+ * (6569:6229, 6594:3104, 6594:3178 — умный режим).
+ *
+ * Окно 1000x740, слева сайдбар 74. Содержимое — колонка с отступом 32 по
+ * краям и зазором 32 между заголовком и телом:
+ *
+ *   Header    862x61
+ *   тело      862, внутри зазор 18:
+ *     плитки  862x143 (две поровну, между ними 16)
+ *     блок    862, отступ 24, скругление 32, внутри зазор 16:
+ *             заголовок с корзиной 51, поле-теги 156
+ *     блок    862, то же плюс кнопка 73 снизу
+ *
+ * Тело выше окна (810 против 583), поэтому страница прокручивается — как на
+ * странице серверов, полосой из design/scroll.css.
+ */
+
+.rv-smart-rules {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  background: var(--rv-black);
+  font-family: var(--rv-font-family);
+}
+
+.rv-smart-rules > .rv-sidebar {
+  flex-shrink: 0;
+}
+
+.rv-smart-rules__content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  padding: var(--rv-space-page);
+  /* Место под полосу прокрутки уже занято `scrollbar-gutter`, поэтому правый
+     отступ на её ширину меньше — вместе они дают 32 из макета. */
+  padding-right: calc(var(--rv-space-page) - var(--rv-scrollbar-width));
+  gap: var(--rv-space-page);
+}
+
+.rv-smart-rules__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-1);
+}
+
+/* --- Выбор режима -------------------------------------------------------- */
+
+.rv-smart-rules__modes {
+  display: flex;
+  gap: var(--rv-space-nest-2);
+}
+
+.rv-smart-rules__modes > .rv-big-btn {
+  flex: 1;
+  min-width: 0;
+}
+
+/* --- Блок списка --------------------------------------------------------- */
+
+.rv-smart-rules__card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-2);
+  padding: var(--rv-space-24);
+  border-radius: var(--rv-radius-32);
+  background: var(--rv-grey);
+}
+
+.rv-smart-rules__card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--rv-space-nest-2);
+}
+
+.rv-smart-rules__card-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-3);
+  min-width: 0;
+}
+
+.rv-smart-rules__card-title {
+  margin: 0;
+  font-size: var(--rv-title-size);
+  font-weight: var(--rv-title-weight);
+  line-height: var(--rv-title-leading);
+  color: var(--rv-white);
+}
+
+.rv-smart-rules__card-subtitle {
+  margin: 0;
+  font-size: var(--rv-chip-size);
+  font-weight: var(--rv-chip-weight);
+  line-height: var(--rv-chip-leading);
+  color: var(--rv-white-a50);
+}
+
+.rv-smart-rules__clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  /* Правило дизайнера для иконок: покой 50 %, наведение 100 %. */
+  color: var(--rv-icon-default);
+  transition: color var(--rv-transition);
+}
+
+.rv-smart-rules__clear:hover {
+  color: var(--rv-icon-hover);
+}
+
+/* Кнопка выбора файла идёт во всю ширину блока (в макете 814 из 814). */
+.rv-btn.rv-smart-rules__pick {
+  width: 100%;
+}

@@ -1,0 +1,112 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+
+/*
+ * Input и Textarea — Figma "App UI-kit" -> фреймы Input (node 6566:5077)
+ * и Textarea (node 6557:2093). По три состояния: Default, Active, Txt.
+ *
+ * Общее: заливка Dark Grey, внутренний отступ 16, текст стилем Regular,
+ * подсказка белым 20 %, введённый текст белым 100 %. В фокусе появляется
+ * рамка 1 px цветом Main-color 20 %.
+ *
+ * Рамка фокуса нарисована тенью, а не `border`. Причин две. Она должна лечь
+ * СНАРУЖИ поля: настоящая рамка съедает пиксель у содержимого, и текст на
+ * фокусе дёргается внутрь. И она должна появляться плавно: у `border`
+ * анимировать нечего — цвет едет от начального `currentColor`, то есть от
+ * белого, и поле на 300 мс вспыхивает белой рамкой.
+ */
+
+.rv-input,
+.rv-textarea {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  padding: var(--rv-space-16);
+  border: 0;
+  background: var(--rv-dark-grey);
+
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-regular-size);
+  font-weight: var(--rv-regular-weight);
+  line-height: var(--rv-regular-leading);
+  color: var(--rv-white);
+
+  /* В макете состояние Active показано одиноким символом «|» белым 50 %.
+     Прочитано как цвет каретки, см. docs/design/GAPS.md F-1. */
+  caret-color: var(--rv-white-a50);
+  outline: none;
+  /* Цвет задан заранее, а растёт только толщина — иначе первое появление
+     тени пришлось бы анимировать от прозрачного, и она мигала бы. */
+  box-shadow: 0 0 0 0 var(--rv-main-a20);
+  transition:
+    box-shadow var(--rv-transition),
+    opacity var(--rv-transition);
+}
+
+.rv-input::placeholder,
+.rv-textarea::placeholder {
+  color: var(--rv-white-a20);
+}
+
+.rv-input:focus,
+.rv-textarea:focus {
+  box-shadow: 0 0 0 var(--rv-border-width) var(--rv-main-a20);
+}
+
+/* --- Input -------------------------------------------------------------- */
+
+.rv-input {
+  border-radius: var(--rv-radius-16);
+  /* Высота не задана намеренно: 16 + 20 + 16 = 52; в фокусе тень ложится
+     снаружи и добавляет те же 2 px, что рамка в макете. */
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+
+/* --- Textarea ----------------------------------------------------------- */
+
+.rv-textarea {
+  height: 156px;
+  border-radius: var(--rv-radius-24);
+  resize: none;
+}
+
+/* --- Состояния, которых нет в макете ------------------------------------- */
+
+/*
+ * Ошибка и «выключено» в Figma не нарисованы, но приложению нужны: импорт
+ * подписки, ключ, ссылка. Сделаны по правилам самого кита, чтобы не выбиваться:
+ * ошибка повторяет рамку фокуса, только цветом Errors; выключенное поле
+ * гаснет до половины непрозрачности — ровно как `Disable` у кнопки.
+ */
+.rv-input[aria-invalid="true"],
+.rv-textarea[aria-invalid="true"] {
+  box-shadow: 0 0 0 var(--rv-border-width) var(--rv-errors-a20);
+}
+
+.rv-input[aria-invalid="true"]:focus,
+.rv-textarea[aria-invalid="true"]:focus {
+  box-shadow: 0 0 0 var(--rv-border-width) var(--rv-errors);
+}
+
+.rv-input:disabled,
+.rv-textarea:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

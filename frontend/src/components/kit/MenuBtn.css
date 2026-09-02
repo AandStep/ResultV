@@ -1,0 +1,88 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+
+/*
+ * MenuBtn — Figma "App UI-kit" -> фрейм MenuBtn (node 6491:1071).
+ * Пункт бокового меню, четыре состояния: Default, Hover, Active, ActiveHover.
+ *
+ * 118x48, отступ 12, скругление 8, зазор 10. Иконка 24 всегда идёт в цвет
+ * подписи, поэтому цвет задаётся один раз на кнопке и наследуется.
+ *
+ * Подпись набрана Segoe UI Semibold 16 — такого именованного стиля в
+ * переменных Figma нет, см. docs/design/GAPS.md T-3.
+ */
+
+.rv-menu-btn {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 118px;
+  padding: var(--rv-space-12);
+  border: 0;
+  border-radius: var(--rv-radius-8);
+  background: none;
+  cursor: pointer;
+  /* Подпись скрыта прозрачностью, а не размонтированием, и в свёрнутом
+     сайдбаре не помещается — обрезаем её здесь, по краю самой кнопки. */
+  overflow: hidden;
+  transition:
+    background var(--rv-transition),
+    color var(--rv-transition);
+
+  font-family: var(--rv-font-family);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+  color: var(--rv-white-a50);
+}
+
+.rv-menu-btn:hover:not([data-active="true"]):not([data-state]),
+.rv-menu-btn[data-state="hover"] {
+  background: var(--rv-light-gray);
+  color: var(--rv-white-a80);
+}
+
+.rv-menu-btn[data-active="true"],
+.rv-menu-btn[data-state="active"] {
+  background: var(--rv-main-a10);
+  color: var(--rv-main-color);
+}
+
+.rv-menu-btn[data-active="true"]:hover:not([data-state]),
+.rv-menu-btn[data-state="activehover"] {
+  background: var(--rv-main-a20);
+  color: var(--rv-main-color);
+}
+
+/*
+ * Подпись пункта. Проявляется во второй половине хода сайдбара — когда место
+ * под неё уже есть; гаснет сразу, как только сайдбар начал сужаться.
+ */
+.rv-menu-btn__label {
+  opacity: 1;
+  transition: opacity var(--rv-reveal-duration) var(--rv-ease)
+    var(--rv-reveal-delay);
+}
+
+.rv-menu-btn__label[data-visible="false"] {
+  opacity: 0;
+  transition-delay: 0ms;
+}

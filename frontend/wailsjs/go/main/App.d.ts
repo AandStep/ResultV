@@ -107,8 +107,12 @@ export function StartUpdate():Promise<void>;
 
 export function SyncProxies(arg1:Array<config.ProxyEntry>):Promise<void>;
 
+export function TakePendingDeepLink():Promise<Record<string, string>>;
+
 export function ToggleKillSwitch(arg1:boolean):Promise<void>;
 
 export function UpdateRoutingList(arg1:config.RoutingList):Promise<void>;
 
 export function UpdateRules(arg1:config.RoutingRules):Promise<void>;
+
+export function UpdateSubscription(arg1:string,arg2:string,arg3:boolean,arg4:number):Promise<void>;

@@ -10,9 +10,13 @@ export namespace config {
 	    trafficTotal?: number;
 	    expireUnix?: number;
 	    iconUrl?: string;
+	    supportUrl?: string;
 	    source?: string;
 	    allowInsecure?: boolean;
 	    removedRoutingListUrls?: string[];
+	    nameOverridden?: boolean;
+	    showOnHome?: boolean;
+	    updateIntervalMinutes?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Subscription(source);
@@ -29,9 +33,13 @@ export namespace config {
 	        this.trafficTotal = source["trafficTotal"];
 	        this.expireUnix = source["expireUnix"];
 	        this.iconUrl = source["iconUrl"];
+	        this.supportUrl = source["supportUrl"];
 	        this.source = source["source"];
 	        this.allowInsecure = source["allowInsecure"];
 	        this.removedRoutingListUrls = source["removedRoutingListUrls"];
+	        this.nameOverridden = source["nameOverridden"];
+	        this.showOnHome = source["showOnHome"];
+	        this.updateIntervalMinutes = source["updateIntervalMinutes"];
 	    }
 	}
 	export class AppSettings {
@@ -196,7 +204,7 @@ export namespace config {
 	    routingRules: RoutingRules;
 	    proxies: ProxyEntry[];
 	    settings: AppSettings;
-	    subscriptions?: Subscription[];
+	    subscriptions: Subscription[];
 	
 	    static createFrom(source: any = {}) {
 	        return new AppConfig(source);

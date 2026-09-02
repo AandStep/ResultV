@@ -1,0 +1,198 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * Dialog — Figma "ResultV" -> App Design, окна 6721:3593, 6721:3875,
+ * 6721:3993, 6721:4109.
+ *
+ * Подложка: чёрный 50 % и размытие 6. Окно: 440 в ширину, отступ 24, колонка
+ * с зазором 24, скругление 32, заливка Grey, обводка белым 10 %.
+ *
+ * Шапка: подложка иконки 64 (отступ 16 вокруг иконки 32, скругление 14) в
+ * цвет варианта, рядом заголовок стилем Title и, если есть, строка стилем
+ * Chip белым 50 %. Крестик прижат к правому краю.
+ */
+
+.rv-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--rv-space-32);
+  background: var(--rv-overlay);
+  backdrop-filter: blur(var(--rv-overlay-blur));
+  -webkit-backdrop-filter: blur(var(--rv-overlay-blur));
+}
+
+.rv-dialog {
+  --dialog-accent: var(--rv-main-color);
+  --dialog-tint: var(--rv-main-a10);
+
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-24);
+  width: 440px;
+  max-width: 100%;
+  max-height: 100%;
+  padding: var(--rv-space-24);
+  border-radius: var(--rv-radius-32);
+  background: var(--rv-grey);
+  font-family: var(--rv-font-family);
+  overflow-y: auto;
+}
+
+.rv-dialog[data-variant="warning"] {
+  --dialog-accent: var(--rv-warning);
+  --dialog-tint: var(--rv-warning-a10);
+}
+
+.rv-dialog[data-variant="error"] {
+  --dialog-accent: var(--rv-errors);
+  --dialog-tint: var(--rv-errors-a10);
+}
+
+/* --- Шапка --------------------------------------------------------------- */
+
+.rv-dialog__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--rv-space-16);
+}
+
+.rv-dialog__id {
+  display: flex;
+  align-items: center;
+  gap: var(--rv-space-16);
+  min-width: 0;
+}
+
+.rv-dialog__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 64px;
+  height: 64px;
+  border-radius: var(--rv-radius-14);
+  background: var(--dialog-tint);
+  color: var(--dialog-accent);
+}
+
+.rv-dialog__titles {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--rv-space-8);
+  min-width: 0;
+}
+
+.rv-dialog__title {
+  margin: 0;
+  font-size: var(--rv-title-size);
+  font-weight: var(--rv-title-weight);
+  line-height: var(--rv-title-leading);
+  color: var(--rv-white);
+}
+
+.rv-dialog__subtitle {
+  margin: 0;
+  font-size: var(--rv-chip-size);
+  font-weight: var(--rv-chip-weight);
+  line-height: var(--rv-chip-leading);
+  color: var(--rv-white-a50);
+}
+
+/*
+ * Ожидание: значок дышит. Кадра на эту фазу в макете нет, но окно, которое
+ * ничем не отзывается, читается как зависшее — так же ждала и прежняя версия
+ * окна импорта.
+ */
+.rv-dialog--busy .rv-dialog__icon {
+  animation: rv-dialog-breath 1.6s var(--rv-ease) infinite;
+}
+
+@keyframes rv-dialog-breath {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* Крестик живёт по общему правилу иконок: белый 50 %, на наведении 100 %. */
+.rv-dialog__close {
+  display: flex;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--rv-icon-default);
+  cursor: pointer;
+  transition: color var(--rv-transition);
+}
+
+.rv-dialog__close:hover {
+  color: var(--rv-icon-hover);
+}
+
+/* --- Тело и кнопки ------------------------------------------------------- */
+
+/*
+ * Сообщение приходит из приложения одной строкой с переносами (список
+ * снятых хвостов, текст ошибки), поэтому переносы сохраняем.
+ */
+.rv-dialog__text {
+  margin: 0;
+  font-size: var(--rv-regular-size);
+  font-weight: var(--rv-regular-weight);
+  line-height: var(--rv-regular-leading);
+  color: var(--rv-white-a80);
+  white-space: pre-line;
+}
+
+.rv-dialog__actions {
+  display: flex;
+  gap: var(--rv-space-8);
+}
+
+/*
+ * Одна кнопка занимает всю ширину, из двух тянется вторая — как в макете.
+ *
+ * Отступ по горизонтали здесь 32, а не 49, как у отдельно стоящей кнопки.
+ * В макете две кнопки укладываются в 390 ровно (157 + 8 + 225), но только с
+ * подписью «Добавить 38 сервер»; по-русски это «38 серверов», и с отступом 49
+ * пара уже не помещается — подписи начинают обрезаться. Отступ уменьшен,
+ * чтобы кнопки оставались с целыми подписями в любой локали.
+ *
+ * `min-width: 0` оставлен на самый крайний случай: даже если подпись всё
+ * равно не влезет, кнопка ужмётся, а не вылезет за край окна.
+ */
+.rv-dialog__actions > .rv-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 var(--rv-space-32);
+}
+
+.rv-dialog__actions > .rv-btn:first-child:not(:last-child) {
+  flex: 0 1 auto;
+}

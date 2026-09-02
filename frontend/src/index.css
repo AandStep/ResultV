@@ -15,6 +15,10 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+@import "./design/tokens.css";
+@import "./design/borders.css";
+@import "./design/scroll.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

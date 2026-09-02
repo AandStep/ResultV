@@ -1,0 +1,89 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+
+/*
+ * ModeTumbler — Figma "App UI-kit" -> фрейм ModeTumbler (node 6488:48).
+ * Переключатель режима из двух сегментов: «Прокси» и «Туннель».
+ *
+ * Дорожка 256x61: заливка Grey, рамка 1 px белым 10 %, скругление 100,
+ * отступ 8, зазор между сегментами 4. Сегменты делят ширину поровну,
+ * отступы 24 по горизонтали и 12/14 по вертикали, скругление 100.
+ *
+ * Выбранный сегмент залит Main-color, подпись белым 80 %. Невыбранный без
+ * заливки, подпись белым 50 %; при наведении получает заливку Light Gray,
+ * подпись остаётся белой 50 %.
+ *
+ * В макете четыре варианта — по два на каждый выбранный сегмент
+ * (спокойное состояние и наведение на соседний). Здесь это выражено
+ * выбранным значением плюс обычный CSS-ховер.
+ */
+
+.rv-mode-tumbler {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 256px;
+  /* Высота из макета: обводка градиентная и габарит не увеличивает. */
+  height: 61px;
+  padding: 8px;
+  border: 0;
+  border-radius: var(--rv-radius-pill);
+  background: var(--rv-grey);
+}
+
+.rv-mode-tumbler__segment {
+  box-sizing: border-box;
+  display: flex;
+  flex: 1 0 0;
+  min-width: 1px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  /* Отступы несимметричны по вертикали: 12 сверху, 14 снизу — подпись
+     намеренно приподнята, как и в бейдже. */
+  padding: 12px 24px 14px;
+  border: 0;
+  border-radius: var(--rv-radius-pill);
+  background: none;
+  overflow: hidden;
+  cursor: pointer;
+  transition:
+    background var(--rv-transition),
+    color var(--rv-transition);
+
+  /* Типографика переделана дизайнером (фрейм 6752:4237): вместо RegularUp
+     14 в верхнем регистре — Bold 16 обычным регистром, интерлиньяж 1.1. */
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-btn-size);
+  font-weight: var(--rv-btn-weight);
+  line-height: 1.1;
+  text-align: center;
+  color: var(--rv-white-a50);
+  width: 100%;
+}
+
+.rv-mode-tumbler__segment:hover:not([data-selected="true"]) {
+  background: var(--rv-light-gray);
+}
+
+.rv-mode-tumbler__segment[data-selected="true"] {
+  background: var(--rv-main-color);
+  color: var(--rv-white-a80);
+  cursor: default;
+}

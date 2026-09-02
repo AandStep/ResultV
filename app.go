@@ -266,6 +266,41 @@ func (a *App) DecodeDeepLink(url string) (string, error) {
 	return proxy.DecodeDeepLink(url)
 }
 
+// TakePendingDeepLink hands the frontend the queued resultv:// link and clears
+// the queue. This is the ONLY way a link reaches the UI: every arrival — argv
+// at cold start, a second instance while we run — is queued here, and the
+// "deeplink:received" event is just a nudge telling the frontend to come and
+// take it. An event carrying the payload was lost whenever the frontend was
+// not listening yet (cold start), and there is no way for Go to know that it
+// is; a queue plus a drain has no such window. Draining is atomic, so an
+// arrival racing a mount is imported once, not twice.
+//
+// Returns an empty payload when nothing is queued.
+func (a *App) TakePendingDeepLink() map[string]string {
+	empty := map[string]string{"payload": "", "source": ""}
+	if a == nil {
+		return empty
+	}
+	a.deepLinkMu.Lock()
+	url := a.pendingDeepLink
+	a.pendingDeepLink = ""
+	a.deepLinkMu.Unlock()
+	if url == "" {
+		return empty
+	}
+	payload, err := proxy.DecodeDeepLink(url)
+	if err != nil {
+		a.log.Error(fmt.Sprintf("Не удалось обработать ссылку resultv://: %v", err))
+		return empty
+	}
+	source := ""
+	if proxy.DeepLinkUsesRvsubPath(url) {
+		source = "rvsub"
+	}
+	a.log.Info("[ССЫЛКА] интерфейс забрал ссылку из очереди")
+	return map[string]string{"payload": payload, "source": source}
+}
+
 // HandleDeepLink decrypts a resultv:// URL and forwards the decoded payload
 // to the frontend, which routes it through the regular "Add subscription"
 // flow (preview modal → user confirms → import). Called both from main() at
@@ -279,6 +314,8 @@ func (a *App) HandleDeepLink(url string) {
 	if !proxy.IsDeepLink(url) {
 		return
 	}
+	a.log.Info("[ССЫЛКА] пришла ссылка resultv://")
+
 	payload, err := proxy.DecodeDeepLink(url)
 	if err != nil {
 		a.log.Error(fmt.Sprintf("Не удалось обработать ссылку resultv://: %v", err))
@@ -288,20 +325,27 @@ func (a *App) HandleDeepLink(url string) {
 		return
 	}
 
+	// Сначала в очередь, потом окно и звонок интерфейсу: к моменту, когда он
+	// придёт за ссылкой, она уже должна там лежать.
+	a.QueueDeepLink(url)
+
 	a.restoreMainWindow()
 
 	if a.ctx == nil {
-		a.QueueDeepLink(url)
 		return
 	}
+
 	source := ""
 	if proxy.DeepLinkUsesRvsubPath(url) {
 		source = "rvsub"
 	}
+	// Полезная нагрузка идёт и событием — на случай, если у интерфейса старые
+	// биндинги и метода очереди он не знает.
 	wailsRuntime.EventsEmit(a.ctx, "deeplink:received", map[string]interface{}{
 		"payload": payload,
 		"source":  source,
 	})
+	a.log.Info("[ССЫЛКА] раскрыта, интерфейс позван")
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -542,13 +586,9 @@ func (a *App) startup(ctx context.Context) {
 
 	a.log.Success("ResultV готов к работе")
 
-	a.deepLinkMu.Lock()
-	queued := a.pendingDeepLink
-	a.pendingDeepLink = ""
-	a.deepLinkMu.Unlock()
-	if queued != "" {
-		go a.HandleDeepLink(queued)
-	}
+	// A link queued from argv stays queued: the frontend picks it up with
+	// TakePendingDeepLink once it is mounted. Emitting it here raced the
+	// bundle load — startup regularly won, and the cold-start link vanished.
 }
 
 func (a *App) shutdown(ctx context.Context) {
@@ -1490,7 +1530,7 @@ func headerIsTruthy(h http.Header, key string) bool {
 func subscriptionEmptyBodyError(h http.Header) error {
 	title := parseSubscriptionHeaderText(h.Get("Profile-Title"))
 	announce := parseSubscriptionHeaderText(h.Get("Announce"))
-	supportURL := strings.TrimSpace(h.Get("Support-Url"))
+	supportURL := subscriptionSupportURL("", h)
 	hwidLimit := headerIsTruthy(h, "X-Hwid-Limit") || headerIsTruthy(h, "X-Hwid-Max-Devices-Reached")
 	hwidNotSupported := headerIsTruthy(h, "X-Hwid-Not-Supported")
 
@@ -1552,6 +1592,63 @@ func subscriptionHostFromURL(subURL string) string {
 	}
 	host := strings.ToLower(u.Hostname())
 	return host
+}
+
+// subscriptionSupportHeaders lists the header names panels use for the
+// provider's own address — a support page or the subscription's user page.
+// Names are checked in this order; the first http(s) value wins.
+var subscriptionSupportHeaders = []string{
+	"Support-Url",
+	"Subscription-Support-Url",
+	"Support",
+	"Profile-Web-Page-Url",
+}
+
+// subscriptionSupportURL picks the provider's support address out of the
+// subscription answer. Nothing sent — nothing returned: the UI hides its
+// support link rather than inventing one.
+//
+// Besides the known names, any header whose name mentions "support" is taken
+// as long as its value is an http(s) URL. Panels differ in spelling, and a
+// header we do not know by name still says plainly what it is.
+func subscriptionSupportURL(subURL string, h http.Header) string {
+	parsed, err := url.Parse(subURL)
+	if err != nil {
+		parsed = nil
+	}
+	absolute := func(v string) string {
+		v = parseSubscriptionHeaderText(v)
+		if v == "" {
+			return ""
+		}
+		low := strings.ToLower(v)
+		if strings.HasPrefix(low, "http://") || strings.HasPrefix(low, "https://") {
+			return v
+		}
+		// Providers also send bare hosts and site-relative paths.
+		if strings.HasPrefix(v, "/") && parsed != nil && parsed.Scheme != "" && parsed.Host != "" {
+			return parsed.Scheme + "://" + parsed.Host + v
+		}
+		if strings.HasPrefix(low, "t.me/") || strings.HasPrefix(low, "www.") {
+			return "https://" + v
+		}
+		return ""
+	}
+
+	for _, key := range subscriptionSupportHeaders {
+		if v := absolute(h.Get(key)); v != "" {
+			return v
+		}
+	}
+	for key, vals := range h {
+		if len(vals) == 0 || !strings.Contains(strings.ToLower(key), "support") {
+			continue
+		}
+		if v := absolute(vals[0]); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func subscriptionIconCandidates(subURL string, h http.Header) []string {
@@ -1945,24 +2042,42 @@ func isInsecureSubURL(subURL string) bool {
 // must be true to accept http:// URLs; when set, we also suppress the
 // x-hwid header because sending a stable device identifier in plaintext is
 // exactly the leak the warning is opted into.
-func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]config.ProxyEntry, int64, int64, int64, int64, string, string, []config.RoutingList, map[string]proxy.ParsedRoutingList, error) {
+// subscriptionFetch is everything one subscription answer carries: the servers
+// themselves plus the metadata the provider ships alongside them in headers.
+// It used to be ten positional return values, and every field the panels
+// started sending made the next call site harder to read.
+type subscriptionFetch struct {
+	Entries      []config.ProxyEntry
+	Upload       int64
+	Download     int64
+	Total        int64
+	ExpireUnix   int64
+	IconURL      string
+	ProfileTitle string
+	SupportURL   string
+	RoutingLists []config.RoutingList
+	Embedded     map[string]proxy.ParsedRoutingList
+}
+
+func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) (subscriptionFetch, error) {
 	if resolved, err := resolveEncryptedSubscriptionURL(subURL); err != nil {
-		return nil, 0, 0, 0, 0, "", "", nil, nil, err
+		return subscriptionFetch{}, err
 	} else if resolved != "" {
 		subURL = resolved
 	}
 	insecure := isInsecureSubURL(subURL)
 	if insecure && !allowInsecure {
-		return nil, 0, 0, 0, 0, "", "", nil, nil, ErrInsecureSubscription
+		return subscriptionFetch{}, ErrInsecureSubscription
 	}
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Timeout: 15 * time.Second, Jar: jar}
 	metadata := a.subscriptionRequestMetadata()
 
-	doFetch := func(userAgent string) ([]config.ProxyEntry, int64, int64, int64, int64, string, string, []config.RoutingList, map[string]proxy.ParsedRoutingList, bool, error) {
+	doFetch := func(userAgent string) (subscriptionFetch, bool, error) {
+		var out subscriptionFetch
 		req, err := http.NewRequest(http.MethodGet, subURL, nil)
 		if err != nil {
-			return nil, 0, 0, 0, 0, "", "", nil, nil, false, fmt.Errorf("creating subscription request: %w", err)
+			return out, false, fmt.Errorf("creating subscription request: %w", err)
 		}
 		req.Header.Set("User-Agent", userAgent)
 		// Remnawave HWID device identification headers.
@@ -1981,69 +2096,71 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 
 		resp, err := client.Do(req)
 		if err != nil {
-			return nil, 0, 0, 0, 0, "", "", nil, nil, false, fmt.Errorf("fetching subscription: %w", err)
+			return out, false, fmt.Errorf("fetching subscription: %w", err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return nil, 0, 0, 0, 0, "", "", nil, nil, false, fmt.Errorf("subscription returned HTTP %d", resp.StatusCode)
+			return out, false, fmt.Errorf("subscription returned HTTP %d", resp.StatusCode)
 		}
 
-		profileTitle := parseSubscriptionHeaderText(resp.Header.Get("Profile-Title"))
-		up, down, tot, exp := parseSubscriptionUserInfoHeader(resp.Header.Get("Subscription-Userinfo"))
-		iconURL := resolveSubscriptionIcon(client, subURL, resp.Header)
+		out.ProfileTitle = parseSubscriptionHeaderText(resp.Header.Get("Profile-Title"))
+		out.Upload, out.Download, out.Total, out.ExpireUnix = parseSubscriptionUserInfoHeader(resp.Header.Get("Subscription-Userinfo"))
+		out.IconURL = resolveSubscriptionIcon(client, subURL, resp.Header)
+		out.SupportURL = subscriptionSupportURL(subURL, resp.Header)
 		routingListsHeader := resp.Header.Get("Routing-Lists")
 
 		bodyBytes, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return nil, up, down, tot, exp, iconURL, profileTitle, nil, nil, false, fmt.Errorf("reading subscription body: %w", err)
+			return out, false, fmt.Errorf("reading subscription body: %w", err)
 		}
 		bodyStr := string(bodyBytes)
-		routingLists := proxy.ExtractSubscriptionRoutingLists(routingListsHeader, bodyStr)
-		embedded := proxy.ExtractEmbeddedRoutingLists(bodyStr)
+		out.RoutingLists = proxy.ExtractSubscriptionRoutingLists(routingListsHeader, bodyStr)
+		out.Embedded = proxy.ExtractEmbeddedRoutingLists(bodyStr)
 
-		if iconURL == "" && strings.Contains(bodyStr, "<link") {
+		if out.IconURL == "" && strings.Contains(bodyStr, "<link") {
 			if fromBody := pickIconFromSubscriptionHTML(client, subURL, bodyStr); fromBody != "" {
-				iconURL = fromBody
+				out.IconURL = fromBody
 			}
 		}
 
 		trimmed := strings.TrimSpace(strings.TrimPrefix(bodyStr, "\uFEFF"))
 		if trimmed == "" {
-			return nil, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, false, subscriptionEmptyBodyError(resp.Header)
+			return out, false, subscriptionEmptyBodyError(resp.Header)
 		}
 
 		isJSON := strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")
 
-		entries, err := proxy.ParseSubscriptionBody(bodyStr)
+		out.Entries, err = proxy.ParseSubscriptionBody(bodyStr)
 		if err != nil {
-			return nil, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, isJSON, err
+			return out, isJSON, err
 		}
 
-		return entries, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, isJSON, nil
+		return out, isJSON, nil
 	}
 
-	entries, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, _, err := doFetch(metadata.UserAgent)
+	res, _, err := doFetch(metadata.UserAgent)
 	if err != nil {
 		// impio moved its subscription endpoint between ".../json" and the
 		// raw path over time; retry the other form once before giving up.
 		alt := impioAlternateSubscriptionURL(subURL)
 		if alt == "" {
-			return nil, 0, 0, 0, 0, "", "", nil, nil, err
+			return subscriptionFetch{}, err
 		}
 		subURL = alt
 		var altErr error
-		entries, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, _, altErr = doFetch(metadata.UserAgent)
+		res, _, altErr = doFetch(metadata.UserAgent)
 		if altErr != nil {
 			// Report the original failure — it corresponds to the URL the
 			// caller actually asked for.
-			return nil, 0, 0, 0, 0, "", "", nil, nil, err
+			return subscriptionFetch{}, err
 		}
 	}
 
+	entries := res.Entries
 	providerName := extractProviderName(subURL)
-	if profileTitle != "" {
-		providerName = profileTitle
+	if res.ProfileTitle != "" {
+		providerName = res.ProfileTitle
 	}
 	baseID := time.Now().UnixMilli()
 	for i := range entries {
@@ -2134,7 +2251,8 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 	visibleCount := visibleSubscriptionCount(entries)
 
 	a.log.Success(fmt.Sprintf("Подписка загружена: %d серверов", visibleCount))
-	return entries, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, nil
+	res.Entries = entries
+	return res, nil
 }
 
 // FetchSubscription performs a one-off subscription fetch (no persistence).
@@ -2142,9 +2260,9 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 // ErrInsecureSubscription. The frontend should call this with false first
 // and re-call with true only after surfacing the warning to the user.
 func (a *App) FetchSubscription(subURL string, allowInsecure bool) (SubscriptionPreview, error) {
-	entries, _, _, _, _, _, _, lists, embedded, err := a.fetchSubscriptionFromURL(subURL, allowInsecure)
-	lists = append(lists, embeddedRoutingListDeclarations(embedded)...)
-	return SubscriptionPreview{Proxies: entries, RoutingLists: lists}, err
+	res, err := a.fetchSubscriptionFromURL(subURL, allowInsecure)
+	lists := append(res.RoutingLists, embeddedRoutingListDeclarations(res.Embedded)...)
+	return SubscriptionPreview{Proxies: res.Entries, RoutingLists: lists}, err
 }
 
 // ParseSubscriptionText accepts pasted content. When the paste resolves to
@@ -2162,15 +2280,15 @@ func (a *App) ParseSubscriptionText(text string) (SubscriptionPreview, error) {
 	text = strings.TrimSpace(text)
 	lower := strings.ToLower(text)
 	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
-		entries, _, _, _, _, _, _, lists, embedded, ferr := a.fetchSubscriptionFromURL(text, false)
-		lists = append(lists, embeddedRoutingListDeclarations(embedded)...)
-		return SubscriptionPreview{Proxies: entries, RoutingLists: lists}, ferr
+		res, ferr := a.fetchSubscriptionFromURL(text, false)
+		lists := append(res.RoutingLists, embeddedRoutingListDeclarations(res.Embedded)...)
+		return SubscriptionPreview{Proxies: res.Entries, RoutingLists: lists}, ferr
 	}
 	if proxy.IsEncryptedSubscription(text) {
 		if resolved, err := resolveEncryptedSubscriptionURL(text); err == nil && resolved != "" {
-			entries, _, _, _, _, _, _, lists, embedded, ferr := a.fetchSubscriptionFromURL(resolved, false)
-			lists = append(lists, embeddedRoutingListDeclarations(embedded)...)
-			return SubscriptionPreview{Proxies: entries, RoutingLists: lists}, ferr
+			res, ferr := a.fetchSubscriptionFromURL(resolved, false)
+			lists := append(res.RoutingLists, embeddedRoutingListDeclarations(res.Embedded)...)
+			return SubscriptionPreview{Proxies: res.Entries, RoutingLists: lists}, ferr
 		}
 	}
 	entries, err := proxy.ParseSubscriptionBody(text)
@@ -2206,14 +2324,18 @@ func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
 	// they accepted plaintext at AddSubscription time, refresh keeps using
 	// http; if not, an http URL refresh will fail with ErrInsecureSubscription
 	// and the UI must re-prompt before retrying.
-	entries, up, down, tot, exp, iconURL, profileTitle, lists, embedded, err := a.fetchSubscriptionFromURL(sub.URL, sub.AllowInsecure)
+	res, err := a.fetchSubscriptionFromURL(sub.URL, sub.AllowInsecure)
 	if err != nil {
 		return nil, fmt.Errorf("refreshing subscription %s: %w", sub.Name, err)
 	}
+	entries := res.Entries
 
+	// A hand-picked name wins over the profile title: the user renamed this
+	// subscription precisely because the provider's own title was not what
+	// they wanted to see in the list.
 	displayName := sub.Name
-	if profileTitle != "" {
-		displayName = profileTitle
+	if res.ProfileTitle != "" && !sub.NameOverridden {
+		displayName = res.ProfileTitle
 	}
 	for i := range entries {
 		entries[i].Provider = displayName
@@ -2223,24 +2345,27 @@ func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
 	for i := range cfg.Subscriptions {
 		if cfg.Subscriptions[i].ID == subID {
 			cfg.Subscriptions[i].UpdatedAt = time.Now().Format(time.RFC3339)
-			cfg.Subscriptions[i].TrafficUpload = up
-			cfg.Subscriptions[i].TrafficDownload = down
-			cfg.Subscriptions[i].TrafficTotal = tot
-			cfg.Subscriptions[i].ExpireUnix = exp
-			if profileTitle != "" {
-				cfg.Subscriptions[i].Name = profileTitle
+			cfg.Subscriptions[i].TrafficUpload = res.Upload
+			cfg.Subscriptions[i].TrafficDownload = res.Download
+			cfg.Subscriptions[i].TrafficTotal = res.Total
+			cfg.Subscriptions[i].ExpireUnix = res.ExpireUnix
+			if res.ProfileTitle != "" && !cfg.Subscriptions[i].NameOverridden {
+				cfg.Subscriptions[i].Name = res.ProfileTitle
 			}
-			if iconURL != "" {
-				cfg.Subscriptions[i].IconURL = iconURL
+			if res.IconURL != "" {
+				cfg.Subscriptions[i].IconURL = res.IconURL
 			}
+			// Адрес поддержки может и появиться, и пропасть: провайдер волен
+			// убрать заголовок, и тогда тег в окне настроек должен исчезнуть.
+			cfg.Subscriptions[i].SupportURL = res.SupportURL
 			break
 		}
 	}
 	if err := a.config.SaveConfig(cfg); err != nil {
 		a.log.Error(fmt.Sprintf("Ошибка сохранения после обновления подписки: %v", err))
 	}
-	provided := append(append([]config.RoutingList(nil), lists...), embeddedRoutingListDeclarations(embedded)...)
-	if err := a.syncSubscriptionRoutingLists(subID, provided, nil, embedded); err != nil {
+	provided := append(append([]config.RoutingList(nil), res.RoutingLists...), embeddedRoutingListDeclarations(res.Embedded)...)
+	if err := a.syncSubscriptionRoutingLists(subID, provided, nil, res.Embedded); err != nil {
 		a.log.Warning(fmt.Sprintf("Ошибка синхронизации списков маршрутизации подписки: %v", err))
 	}
 
@@ -2311,14 +2436,15 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 		}
 	}
 
-	entries, up, down, tot, exp, iconURL, profileTitle, lists, embedded, err := a.fetchSubscriptionFromURL(subURL, allowInsecure)
+	res, err := a.fetchSubscriptionFromURL(subURL, allowInsecure)
 	if err != nil {
 		return nil, err
 	}
+	entries := res.Entries
 
 	displayName := name
-	if profileTitle != "" {
-		displayName = profileTitle
+	if res.ProfileTitle != "" {
+		displayName = res.ProfileTitle
 	}
 
 	sub := config.Subscription{
@@ -2326,11 +2452,12 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 		Name:            displayName,
 		URL:             subURL,
 		UpdatedAt:       time.Now().Format(time.RFC3339),
-		TrafficUpload:   up,
-		TrafficDownload: down,
-		TrafficTotal:    tot,
-		ExpireUnix:      exp,
-		IconURL:         iconURL,
+		TrafficUpload:   res.Upload,
+		TrafficDownload: res.Download,
+		TrafficTotal:    res.Total,
+		ExpireUnix:      res.ExpireUnix,
+		IconURL:         res.IconURL,
+		SupportURL:      res.SupportURL,
 		Source:          strings.TrimSpace(source),
 		// Only mark as allow-insecure when the URL actually is plaintext —
 		// no need to flag https:// subscriptions, which would be misleading.
@@ -2345,8 +2472,8 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 	if err := a.config.SaveConfig(cfg); err != nil {
 		return nil, fmt.Errorf("saving subscription: %w", err)
 	}
-	provided := append(append([]config.RoutingList(nil), lists...), embeddedRoutingListDeclarations(embedded)...)
-	if err := a.syncSubscriptionRoutingLists(sub.ID, provided, disabledListURLs, embedded); err != nil {
+	provided := append(append([]config.RoutingList(nil), res.RoutingLists...), embeddedRoutingListDeclarations(res.Embedded)...)
+	if err := a.syncSubscriptionRoutingLists(sub.ID, provided, disabledListURLs, res.Embedded); err != nil {
 		a.log.Warning(fmt.Sprintf("[ROUTING] Не удалось применить списки подписки %q: %v", displayName, err))
 	}
 
@@ -2377,6 +2504,62 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 	return entries, nil
 }
 
+// UpdateSubscription stores the per-subscription settings the servers page
+// offers: display name, whether its servers show up on the home screen, and
+// its own auto-refresh interval.
+//
+// updateIntervalMinutes is the interval in minutes; 0 means "never refresh on
+// a timer" and a negative value means "follow the global setting".
+//
+// The name is also written onto every entry of this subscription: Provider is
+// what the tray menu and the "sort by provider" order read, and leaving the
+// old title there would show two different names for one subscription.
+func (a *App) UpdateSubscription(subID, name string, showOnHome bool, updateIntervalMinutes int) error {
+	if a.config == nil {
+		return fmt.Errorf("config manager not initialized")
+	}
+
+	cfg := a.config.GetConfig()
+	idx := -1
+	for i := range cfg.Subscriptions {
+		if cfg.Subscriptions[i].ID == subID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return fmt.Errorf("subscription %s not found", subID)
+	}
+
+	sub := &cfg.Subscriptions[idx]
+	trimmed := strings.TrimSpace(name)
+	if trimmed != "" && trimmed != sub.Name {
+		sub.Name = trimmed
+		sub.NameOverridden = true
+		for i := range cfg.Proxies {
+			if cfg.Proxies[i].SubscriptionURL == sub.URL {
+				cfg.Proxies[i].Provider = trimmed
+			}
+		}
+	}
+
+	show := showOnHome
+	sub.ShowOnHome = &show
+
+	if updateIntervalMinutes < 0 {
+		sub.UpdateIntervalMinutes = nil
+	} else {
+		minutes := updateIntervalMinutes
+		sub.UpdateIntervalMinutes = &minutes
+	}
+
+	if err := a.config.SaveConfig(cfg); err != nil {
+		return err
+	}
+	a.refreshTrayProxyList()
+	return nil
+}
+
 func (a *App) DeleteSubscription(subID string) error {
 	if a.config == nil {
 		return fmt.Errorf("config manager not initialized")
@@ -2384,10 +2567,12 @@ func (a *App) DeleteSubscription(subID string) error {
 
 	cfg := a.config.GetConfig()
 	found := false
+	subURL := ""
 	newSubs := make([]config.Subscription, 0, len(cfg.Subscriptions))
 	for _, s := range cfg.Subscriptions {
 		if s.ID == subID {
 			found = true
+			subURL = s.URL
 			continue
 		}
 		newSubs = append(newSubs, s)
@@ -2396,11 +2581,28 @@ func (a *App) DeleteSubscription(subID string) error {
 		return fmt.Errorf("subscription %s not found", subID)
 	}
 	cfg.Subscriptions = newSubs
+	// Серверы подписки уходят вместе с ней, и уходят здесь: раньше их вычищал
+	// только фронт своим списком, а на диск это попадало отдельным SyncProxies.
+	// Стоило ему не доехать — на странице оставалась подписка без серверов либо
+	// серверы без подписки. Удаление должно быть одним сохранением.
+	//
+	// Свежий слайс обязателен: GetConfig отдаёт слайсы, алиасящие живой кэш.
+	if subURL != "" {
+		kept := make([]config.ProxyEntry, 0, len(cfg.Proxies))
+		for _, p := range cfg.Proxies {
+			if p.SubscriptionURL == subURL {
+				continue
+			}
+			kept = append(kept, p)
+		}
+		cfg.Proxies = kept
+	}
 	a.removeSubscriptionRoutingLists(&cfg, subID)
 	if err := a.config.SaveConfig(cfg); err != nil {
 		return err
 	}
 	a.syncRoutingListSpecs()
+	a.refreshTrayProxyList()
 	return nil
 }
 
