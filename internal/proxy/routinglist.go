@@ -28,6 +28,11 @@ import (
 type ParsedRoutingList struct {
 	Domains []string
 	CIDRs   []string
+	// ExactDomains match the host and nothing under it. Only the geo databases
+	// distinguish the two (xray's `full:` vs `domain:`); every other source we
+	// read is suffix-only and leaves this empty. Kept apart from Domains
+	// because folding an exact entry into a suffix silently widens the rule.
+	ExactDomains []string
 }
 
 // RoutingListSpec is a resolved routing list ready for buildRoute: the
@@ -299,10 +304,10 @@ func RoutingListRuleSetTag(id string) string {
 // rule_set. Returns an error (and writes nothing) when the list is empty, so
 // callers can reject the add and preserve any previous cache on refresh.
 func WriteRoutingListRuleSet(dataDir, id string, p ParsedRoutingList) error {
-	if len(p.Domains) == 0 && len(p.CIDRs) == 0 {
+	if len(p.Domains) == 0 && len(p.CIDRs) == 0 && len(p.ExactDomains) == 0 {
 		return fmt.Errorf("routing list %q is empty", id)
 	}
-	rule := srcRuleSetRule{DomainSuffix: p.Domains, IPCidr: p.CIDRs}
+	rule := srcRuleSetRule{Domain: p.ExactDomains, DomainSuffix: p.Domains, IPCidr: p.CIDRs}
 	f := srcRuleSetFile{Version: routingListRuleSetVersion, Rules: []srcRuleSetRule{rule}}
 	blob, err := json.Marshal(f)
 	if err != nil {
