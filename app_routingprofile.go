@@ -91,6 +91,14 @@ func (a *App) ImportRoutingDeepLink(url string, makeActive bool) (config.Routing
 	}
 	a.log.Info(fmt.Sprintf("[МАРШРУТИЗАЦИЯ] профиль %q импортирован: %d direct, %d proxy, %d block",
 		saved.Name, saved.RuleCount("direct"), saved.RuleCount("proxy"), saved.RuleCount("block")))
+	// Rules that were never compiled route nothing. Compilation reaches the
+	// network, so a failure here is reported but does not undo the import: the
+	// profile is stored and can be retried without re-opening the link.
+	if _, cerr := a.compileRoutingProfile(saved, false); cerr != nil {
+		a.log.Error(fmt.Sprintf("Профиль %q сохранён, но правила не собраны: %v", saved.Name, cerr))
+		return saved, nil
+	}
+	a.syncRoutingListSpecs()
 	return saved, nil
 }
 
@@ -219,6 +227,11 @@ func (a *App) SaveRoutingProfile(p config.RoutingProfile) (config.RoutingProfile
 	if err := a.config.UpdateRoutingRules(rr); err != nil {
 		return config.RoutingProfile{}, err
 	}
+	if _, cerr := a.compileRoutingProfile(p, false); cerr != nil {
+		a.log.Error(fmt.Sprintf("Профиль %q сохранён, но правила не собраны: %v", p.Name, cerr))
+		return p, nil
+	}
+	a.syncRoutingListSpecs()
 	return p, nil
 }
 
@@ -249,7 +262,14 @@ func (a *App) DeleteRoutingProfile(id string) error {
 	if rr.ActiveProfileID == id {
 		rr.ActiveProfileID = ""
 	}
-	return a.config.UpdateRoutingRules(rr)
+	if err := a.config.UpdateRoutingRules(rr); err != nil {
+		return err
+	}
+	// Cached rule-sets outlive the config entry unless they are removed here,
+	// and a stale file would keep routing traffic by a profile that is gone.
+	a.removeRoutingProfileRuleSets(id)
+	a.syncRoutingListSpecs()
+	return nil
 }
 
 // SetActiveRoutingProfile chooses which profile is in force. An empty id turns
@@ -272,7 +292,11 @@ func (a *App) SetActiveRoutingProfile(id string) error {
 		}
 	}
 	rr.ActiveProfileID = id
-	return a.config.UpdateRoutingRules(rr)
+	if err := a.config.UpdateRoutingRules(rr); err != nil {
+		return err
+	}
+	a.syncRoutingListSpecs()
+	return nil
 }
 
 // ActiveRoutingProfile returns the profile in force, and whether there is one.

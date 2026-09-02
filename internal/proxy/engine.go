@@ -102,7 +102,7 @@ type EngineConfig struct {
 	KillSwitch   bool
 	LocalPort    int
 	DNSServers   []string
-	TunIPv4 string
+	TunIPv4      string
 	// EnableIPv6 is the user-facing "Сеть → IPv6" toggle, default off. It moves
 	// BOTH halves at once: the IPv6 address on the TUN and buildDNS's strategy.
 	// Attaching the address while DNS stayed ipv4_only would make the setting a
@@ -126,13 +126,16 @@ type EngineConfig struct {
 	// It overrides the explicit TunIPv6 opt-in: a tunnel that will not start is
 	// worse than a tunnel without IPv6.
 	TunDisableIPv6 bool
-	DataDir      string
+	DataDir        string
 
 	// RoutingLists are user routing subscriptions resolved to local
 	// source-format rule_set caches. Applied in ALL modes as explicit rules
 	// ahead of the built-in Smart/whitelist/ad-block rules, ordered
 	// restrictive-first (block > proxy > direct). See buildRoute.
 	RoutingLists []RoutingListSpec
+	// RoutingOrder is the order the list actions are emitted in. Empty means
+	// DefaultRoutingOrder. An active routing profile may ask for another one.
+	RoutingOrder []string
 
 	// DNSLeakProtection toggles sing-box `strict_route` on the TUN inbound.
 	// When true (the default for new installs), sing-box installs Windows
@@ -180,11 +183,11 @@ type SingBoxConfig struct {
 }
 
 type SBRuleSet struct {
-	Type          string           `json:"type,omitempty"`
-	Tag           string           `json:"tag"`
-	Format        string           `json:"format,omitempty"`
-	RemoteOptions SBRemoteRuleSet  `json:"-"`
-	LocalOptions  SBLocalRuleSet   `json:"-"`
+	Type          string          `json:"type,omitempty"`
+	Tag           string          `json:"tag"`
+	Format        string          `json:"format,omitempty"`
+	RemoteOptions SBRemoteRuleSet `json:"-"`
+	LocalOptions  SBLocalRuleSet  `json:"-"`
 }
 
 type SBRemoteRuleSet struct {
@@ -270,8 +273,8 @@ type SBDNSRule struct {
 }
 
 type SBInbound struct {
-	Type                string   `json:"type"`
-	Tag                 string   `json:"tag"`
+	Type string `json:"type"`
+	Tag  string `json:"tag"`
 	// InterfaceName pins the Windows TUN adapter name. Left empty, sing-box
 	// falls back to "tun0" (protocol/tun/inbound.go: CalculateInterfaceName)
 	// and sing-tun derives the Wintun GUID from that name — so we would share a
@@ -406,10 +409,10 @@ type SBWireGuardAmnezia struct {
 	// upstream sing-box-extended (>= v1.13.11-extended-2.0.0) can
 	// parse them into *Xbadoption.Range and randomize per packet
 	// for AmneziaWG 2.0 H-range support.
-	H1    string `json:"h1,omitempty"`
-	H2    string `json:"h2,omitempty"`
-	H3    string `json:"h3,omitempty"`
-	H4    string `json:"h4,omitempty"`
+	H1 string `json:"h1,omitempty"`
+	H2 string `json:"h2,omitempty"`
+	H3 string `json:"h3,omitempty"`
+	H4 string `json:"h4,omitempty"`
 	I1 string `json:"i1,omitempty"`
 	I2 string `json:"i2,omitempty"`
 	I3 string `json:"i3,omitempty"`
@@ -1315,8 +1318,7 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 
 	// User routing lists win over the built-in Smart/whitelist/ad-block rules:
 	// inserted here, after the DNS/server infra rules but before every built-in.
-	rules = appendRoutingListRouteRules(cfg.RoutingLists, rules)
-
+	rules = appendRoutingListRouteRules(cfg.RoutingLists, rules, cfg.RoutingOrder)
 
 	if cfg.Mode == ProxyModeTunnel {
 		// Probe domains must go through the proxy/endpoint outbound, even when
@@ -1530,7 +1532,6 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	route.Rules = rules
 	return route
 }
-
 
 // OverlappingProbeDomains returns user-whitelist entries that match (exactly
 // or as a parent suffix) one of the tunnelProbeDomains. These are forced

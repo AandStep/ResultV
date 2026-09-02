@@ -15,15 +15,19 @@ import (
 	"resultproxy-wails/internal/config"
 )
 
-// A payload shaped exactly like the one a live panel publishes.
+// A payload shaped like the one a live panel publishes, minus the geo URLs.
+//
+// These tests are about storing and identifying profiles, not about geo data,
+// and a fixture carrying URLs would send every import out to the network to
+// time out three times over — 36 seconds of retries proving nothing. Plain
+// tokens compile offline; the geo path has its own tests in app_geodat_test.go.
+// The full payload, URLs and all, is exercised in internal/proxy.
 const testProfileJSON = `{"Name":"impVPN Routing Whitelist",` +
 	`"RouteOrder":"block-proxy-direct","DomainStrategy":"IPIfNonMatch",` +
-	`"Geoipurl":"https://panel.example/geo/geoip.dat",` +
-	`"Geositeurl":"https://panel.example/geo/geosite.dat",` +
-	`"DirectSites":["geosite:private","geosite:whitelist"],` +
-	`"DirectIp":["geoip:private","geoip:whitelist"],` +
+	`"DirectSites":["gosuslugi.ru","nalog.ru"],` +
+	`"DirectIp":["10.0.0.0/8"],` +
 	`"ProxySites":[],"ProxyIp":[],` +
-	`"BlockSites":["geosite:win-spy","geosite:torrent","geosite:category-ads"],` +
+	`"BlockSites":["ads.example","tracker.example","spy.example"],` +
 	`"BlockIp":[]}`
 
 func testRoutingLink(t *testing.T, payload string) string {

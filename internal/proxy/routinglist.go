@@ -61,11 +61,41 @@ func buildRoutingListRuleSets(specs []RoutingListSpec) []SBRuleSet {
 	return out
 }
 
-// appendRoutingListRouteRules appends one route rule per list, ordered
-// restrictive-first: all block, then proxy, then direct. block → reject;
-// proxy/direct → route to the matching outbound.
-func appendRoutingListRouteRules(specs []RoutingListSpec, rules []SBRouteRule) []SBRouteRule {
-	for _, action := range []string{"block", "proxy", "direct"} {
+// DefaultRoutingOrder is the order rules are emitted in when nothing says
+// otherwise: restrictive first, so a host listed twice is blocked rather than
+// let through.
+var DefaultRoutingOrder = []string{"block", "proxy", "direct"}
+
+// NormalizeRoutingOrder turns a profile's "block-proxy-direct" into the slice
+// form, falling back to the default for anything that is not a permutation of
+// the three actions. The order decides which rule wins when several match, so
+// a half-understood value is refused rather than partially honoured.
+func NormalizeRoutingOrder(raw string) []string {
+	parts := strings.Split(strings.ToLower(strings.TrimSpace(raw)), "-")
+	if len(parts) != 3 {
+		return DefaultRoutingOrder
+	}
+	seen := map[string]bool{}
+	for _, p := range parts {
+		if p != "block" && p != "proxy" && p != "direct" {
+			return DefaultRoutingOrder
+		}
+		if seen[p] {
+			return DefaultRoutingOrder
+		}
+		seen[p] = true
+	}
+	return parts
+}
+
+// appendRoutingListRouteRules appends one route rule per list, in the given
+// action order (see DefaultRoutingOrder). block → reject; proxy/direct → route
+// to the matching outbound.
+func appendRoutingListRouteRules(specs []RoutingListSpec, rules []SBRouteRule, order []string) []SBRouteRule {
+	if len(order) == 0 {
+		order = DefaultRoutingOrder
+	}
+	for _, action := range order {
 		for _, s := range specs {
 			if s.Action != action || !routingListCacheReady(s.Path) {
 				continue

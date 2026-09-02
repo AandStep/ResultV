@@ -110,6 +110,7 @@ type Manager struct {
 	appWhitelist []string
 	appForceVPN  []string
 	routingLists []RoutingListSpec
+	routingOrder []string
 	connectedAt  time.Time
 
 	prevUp   int64
@@ -126,7 +127,7 @@ type Manager struct {
 	// enableIPv6 mirrors the user's setting for the LIVE session so the internal
 	// reconnect paths (mode switch, routing-rule change) rebuild the same config
 	// instead of silently reverting to the default.
-	enableIPv6        bool
+	enableIPv6 bool
 
 	// connect cancellation — guarded by connectCancelMu (separate from mu
 	// so Disconnect/GetStatus can call CancelConnect without deadlock)
@@ -159,7 +160,6 @@ type Manager struct {
 	// upstream dead while kill switch is armed — not on routine Connect.
 	KillSwitchFirewallEngage    func(ProxyConfig, []string)
 	KillSwitchFirewallDisengage func()
-
 
 	// secrets encrypts the persistent server-IP pin cache (server_pins.json)
 	// with the app's hardware-keyed CryptoService — those hostname→backend-IP
@@ -423,7 +423,6 @@ func (m *Manager) stopProcessTrackerLocked() {
 func (m *Manager) LoadBlockedLists(paths ...string) {
 	m.router.LoadBlockedLists(paths...)
 }
-
 
 // setConnectCancel stores the cancel func for the active Connect operation.
 func (m *Manager) setConnectCancel(cancel context.CancelFunc) {
@@ -796,6 +795,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		DataDir:           resultProxyDataDir(),
 	}
 	engineCfg.RoutingLists = m.routingListSpecsLocked()
+	engineCfg.RoutingOrder = m.routingOrderLocked()
 	// Smart mode needs the censored block-list in the engine config so
 	// buildRoute can tunnel those domains/ranges while everything else goes
 	// direct. Only populated for Smart — Global/Whitelist ignore it.
@@ -1399,6 +1399,7 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 		DataDir:           resultProxyDataDir(),
 	}
 	engineCfg.RoutingLists = m.routingListSpecsLocked()
+	engineCfg.RoutingOrder = m.routingOrderLocked()
 	// Smart mode needs the censored block-list in the engine config so
 	// buildRoute can tunnel those domains/ranges while everything else goes
 	// direct. Only populated for Smart — Global/Whitelist ignore it.
@@ -2252,6 +2253,24 @@ func (m *Manager) SetRoutingLists(specs []RoutingListSpec) {
 	m.mu.Unlock()
 }
 
+// SetRoutingOrder replaces the action order used by the next engine start. An
+// empty slice restores DefaultRoutingOrder.
+func (m *Manager) SetRoutingOrder(order []string) {
+	cp := make([]string, len(order))
+	copy(cp, order)
+	m.mu.Lock()
+	m.routingOrder = cp
+	m.mu.Unlock()
+}
+
+// routingOrderLocked returns a copy of the current order. Callers must hold
+// m.mu, like routingListSpecsLocked.
+func (m *Manager) routingOrderLocked() []string {
+	cp := make([]string, len(m.routingOrder))
+	copy(cp, m.routingOrder)
+	return cp
+}
+
 // routingListSpecsLocked returns a copy of the current specs. Callers must
 // hold m.mu — both EngineConfig build sites in Connect/connectLocked already
 // do.
@@ -2807,7 +2826,6 @@ func (m *Manager) Shutdown() {
 		m.engine.Stop()
 	}
 }
-
 
 func (m *Manager) GetRouter() *Router {
 	return m.router
