@@ -79,16 +79,18 @@ var (
 	dllUser32   = windows.NewLazyDLL("user32.dll")
 	dllKernel32 = windows.NewLazyDLL("kernel32.dll")
 
-	procRegisterClassExW   = dllUser32.NewProc("RegisterClassExW")
-	procCreateWindowExW    = dllUser32.NewProc("CreateWindowExW")
-	procDefWindowProcW     = dllUser32.NewProc("DefWindowProcW")
-	procGetMessageW        = dllUser32.NewProc("GetMessageW")
-	procTranslateMessage   = dllUser32.NewProc("TranslateMessage")
-	procDispatchMessageW   = dllUser32.NewProc("DispatchMessageW")
-	procDestroyWindow      = dllUser32.NewProc("DestroyWindow")
-	procPostThreadMessageW = dllUser32.NewProc("PostThreadMessageW")
-	procFindWindowW        = dllUser32.NewProc("FindWindowW")
+	procRegisterClassExW            = dllUser32.NewProc("RegisterClassExW")
+	procCreateWindowExW             = dllUser32.NewProc("CreateWindowExW")
+	procDefWindowProcW              = dllUser32.NewProc("DefWindowProcW")
+	procGetMessageW                 = dllUser32.NewProc("GetMessageW")
+	procTranslateMessage            = dllUser32.NewProc("TranslateMessage")
+	procDispatchMessageW            = dllUser32.NewProc("DispatchMessageW")
+	procDestroyWindow               = dllUser32.NewProc("DestroyWindow")
+	procPostThreadMessageW          = dllUser32.NewProc("PostThreadMessageW")
+	procFindWindowW                 = dllUser32.NewProc("FindWindowW")
 	procSendMessageW                = dllUser32.NewProc("SendMessageW")
+	procAllowSetForegroundWindow    = dllUser32.NewProc("AllowSetForegroundWindow")
+	procGetWindowThreadProcessId    = dllUser32.NewProc("GetWindowThreadProcessId")
 	procShowWindow                  = dllUser32.NewProc("ShowWindow")
 	procUnregisterClassW            = dllUser32.NewProc("UnregisterClassW")
 	procChangeWindowMessageFilterEx = dllUser32.NewProc("ChangeWindowMessageFilterEx")
@@ -99,7 +101,7 @@ const MSGFLT_ALLOW = 1
 
 var (
 	singletonMutexHandle windows.Handle
-	singletonReleaseOnce  sync.Once
+	singletonReleaseOnce sync.Once
 )
 
 // ReleaseSingletonLock frees the single-instance mutex so a successor process
@@ -239,6 +241,17 @@ func notifyRunningInstance(payload string) {
 	if hwnd == 0 {
 		return
 	}
+
+	// Право поднять окно на передний план есть только у процесса, который
+	// сейчас на переднем плане, — а это МЫ: нас только что запустил щелчок по
+	// ссылке. Первый экземпляр без такого разрешения окно не поднимет, Windows
+	// вместо этого мигнёт кнопкой на панели задач. Передаём право ему.
+	var pid uint32
+	procGetWindowThreadProcessId.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
+	if pid != 0 {
+		procAllowSetForegroundWindow.Call(uintptr(pid))
+	}
+
 	var cds copyDataStruct
 	cds.dwData = copyMagic
 	if payload != "" {
