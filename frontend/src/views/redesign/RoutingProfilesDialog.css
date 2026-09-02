@@ -1,0 +1,82 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * Окно «Профили маршрутизации» — Figma 6600:3530.
+ *
+ * От Dialog кита отличается только шириной (700 против 440) и высотой,
+ * ограниченной 600 с прокруткой: профилей может быть много, а окно должно
+ * оставаться в окне приложения (740).
+ */
+
+.rv-dialog.rv-profiles-dialog {
+  width: 700px;
+  max-height: 600px;
+  /* Прокручивается содержимое окна, а не страница под ним. Полоса — общая
+     тонкая из design/scroll.css. */
+  overflow-y: auto;
+  overflow-x: clip;
+}
+
+.rv-profiles-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-2);
+  width: 100%;
+}
+
+.rv-profiles-dialog__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-3);
+  width: 100%;
+}
+
+.rv-profiles-dialog__label {
+  margin: 0;
+  font-size: var(--rv-regular-size);
+  font-weight: var(--rv-regular-weight);
+  line-height: var(--rv-regular-leading);
+  color: var(--rv-white-a50);
+}
+
+.rv-profiles-dialog__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-3);
+}
+
+.rv-profiles-dialog__empty {
+  margin: 0;
+  font-size: var(--rv-regular-size);
+  font-weight: var(--rv-regular-weight);
+  line-height: var(--rv-regular-leading);
+  color: var(--rv-white-a50);
+}
+
+.rv-profiles-dialog__actions {
+  display: flex;
+  gap: var(--rv-space-nest-3);
+  width: 100%;
+}
+
+/* Кнопки делят ширину поровну; отступ 49 из кита распирал бы их по подписи. */
+.rv-btn.rv-profiles-dialog__btn {
+  flex: 1;
+  min-width: 0;
+  padding: 0 var(--rv-space-16);
+}

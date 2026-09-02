@@ -138,3 +138,12 @@
 .rv-btn.rv-smart-rules__pick {
   width: 100%;
 }
+
+/* Кнопка профилей — SettingsItem кита, но как настоящая кнопка: она
+   открывает окно, и клавиатура должна доставать до неё наравне с мышью. */
+.rv-settings-item.rv-smart-rules__profiles {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--rv-font-family);
+}

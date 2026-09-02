@@ -557,6 +557,40 @@ export const wailsAPI = {
       console.error("wailsAPI.ackChangelog error:", e);
     }
   },
+
+  /*
+   * Профили маршрутизации.
+   *
+   * Идут через мост напрямую, а не через сгенерированные обёртки: файлы в
+   * wailsjs/ пересобирает `wails build`, и до первой такой сборки импорт
+   * несуществующего имени уронил бы весь бандл, а не одну кнопку. Имена и
+   * порядок аргументов те же, что у методов App, так что после генерации
+   * можно перевести на импорт, ничего не меняя в вызовах.
+   */
+  getRoutingProfiles: () => callApp("GetRoutingProfiles", [], { profiles: [], activeId: "" }),
+  saveRoutingProfile: (profile) => callApp("SaveRoutingProfile", [profile]),
+  deleteRoutingProfile: (id) => callApp("DeleteRoutingProfile", [id]),
+  setActiveRoutingProfile: (id) => callApp("SetActiveRoutingProfile", [id]),
+  compileRoutingProfile: (id, refreshGeo) => callApp("CompileRoutingProfile", [id, !!refreshGeo]),
+  previewRoutingDeepLink: (url) => callApp("PreviewRoutingDeepLink", [url]),
+  importRoutingDeepLink: (url, makeActive) =>
+    callApp("ImportRoutingDeepLink", [url, !!makeActive]),
 };
+
+/*
+ * Вызов метода App через мост. `fallback` возвращается только когда моста нет
+ * вовсе (заглушка при проверке вида) — настоящую ошибку метода пробрасываем
+ * наверх: интерфейсу есть что показать, а молчаливый успех прячет отказ.
+ */
+async function callApp(method, args = [], fallback) {
+  const app = typeof window !== "undefined" ? window.go?.main?.App : undefined;
+  const fn = app?.[method];
+  if (typeof fn !== "function") {
+    console.warn(`wailsAPI: метод ${method} недоступен — пересоберите биндинги`);
+    if (fallback !== undefined) return fallback;
+    throw new Error(`${method} недоступен`);
+  }
+  return fn(...args);
+}
 
 export default wailsAPI;

@@ -298,6 +298,41 @@
       "decrypt_error": "Error: Incorrect password or damaged file."
     }
   },
+  "routingProfiles": {
+    "title": "Routing profiles",
+    "subtitle": "Manage traffic rules yourself",
+    "active": "Active profile",
+    "all": "All profiles",
+    "actions": "Actions",
+    "create": "Create profile",
+    "import": "Import profile",
+    "edit": "Edit profile",
+    "remove": "Delete profile",
+    "empty": "No profiles yet. Create one or import it from a link.",
+    "confirmDelete": "Delete the profile “{{name}}”?",
+    "importHint": "Copy a routing profile link to the clipboard and press again.",
+    "createTitle": "Add a profile",
+    "createSubtitle": "Creating a new routing profile",
+    "editTitle": "Edit profile",
+    "editSubtitle": "Editing profile",
+    "name": "Name",
+    "namePlaceholder": "My rules",
+    "direct": "Direct",
+    "proxy": "Proxy",
+    "block": "Block",
+    "domains": "Domains",
+    "ips": "IP addresses",
+    "domainsPlaceholder": "geosite:private\nexample.com\ndomain:nalog.ru",
+    "ipsPlaceholder": "geoip:private\n10.0.0.0/8",
+    "strategy": "Strategy",
+    "strategyHint": "Rule processing order — drag to change",
+    "geo": "Geo data",
+    "geoip": "GeoIP URL",
+    "geosite": "GeoSite URL",
+    "urlPlaceholder": "https://example.com",
+    "reset": "Reset",
+    "save": "Save"
+  },
   "smartRules": {
     "title": "Smart Rules",
     "subtitle": "With “Smart mode” routing sets itself up without third-party rules. The client does it all for you.",
@@ -317,7 +352,9 @@
     "clear": "Clear the list",
     "remove": "Remove from the list",
     "confirmClearSites": "Remove every site from the list?",
-    "confirmClearApps": "Remove every app from the list?"
+    "confirmClearApps": "Remove every app from the list?",
+    "profilesTitle": "Routing profiles",
+    "profilesDesc": "Set up your own routing here, or use the one your provider ships"
   },
   "rules": {
     "title": "Smart Routing",

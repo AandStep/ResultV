@@ -30,6 +30,7 @@ export { default as Tumbler } from "./Tumbler";
 export { default as ModeTumbler } from "./ModeTumbler";
 export { Input, Textarea } from "./Field";
 export { default as TagField } from "./TagField";
+export { default as ProfileItem } from "./ProfileItem";
 export { default as SettingsItem } from "./SettingsItem";
 export { default as Header, HEADER_VARIANTS } from "./Header";
 export { default as Speed } from "./Speed";

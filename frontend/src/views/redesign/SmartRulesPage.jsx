@@ -33,7 +33,7 @@
  * приходит пропом `text`.
  */
 
-import { BigBtn, Button, Icon, TagField } from "../../components/kit";
+import { BigBtn, Button, Icon, SettingsItem, TagField } from "../../components/kit";
 import PageHeader from "./PageHeader";
 import "./SmartRulesPage.css";
 
@@ -58,6 +58,9 @@ export const SMART_RULES_TEXT = {
   pickFile: "Выбрать файл на компьютере",
   clear: "Очистить список",
   remove: "Убрать из списка",
+  profilesTitle: "Профили маршрутизации",
+  profilesDesc:
+    "Здесь вы можете настроить собственную маршрутизацию или использовать маршрутизацию провайдера",
 };
 
 /*
@@ -99,6 +102,9 @@ export default function SmartRulesPage({
   onRemoveApp,
   onClearApps,
   onPickApp,
+  /* Профили работают только в глобальном режиме: в умном клиент считает
+     маршруты сам. Кнопка появляется вместе с режимом. */
+  onOpenProfiles,
   sidebar,
   text = SMART_RULES_TEXT,
 }) {
@@ -162,6 +168,19 @@ export default function SmartRulesPage({
               {text.pickFile}
             </Button>
           </RuleCard>
+
+          {mode === "global" && (
+            <SettingsItem
+              as="button"
+              type="button"
+              icon="subrouting"
+              title={text.profilesTitle}
+              description={text.profilesDesc}
+              external
+              className="rv-smart-rules__profiles"
+              onClick={onOpenProfiles}
+            />
+          )}
         </div>
       </div>
     </div>

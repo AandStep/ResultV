@@ -28,10 +28,14 @@
  * переворачиваются подписи, а переключение режима не рушит списки соседнего.
  */
 
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useConfigContext } from "../../context/ConfigContext";
 import { PickAppForWhitelist } from "../../../wailsjs/go/main/App";
+import wailsAPI from "../../utils/wailsAPI";
 import SmartRulesPage from "./SmartRulesPage";
+import RoutingProfilesDialog from "./RoutingProfilesDialog";
+import RoutingProfileEditor from "./RoutingProfileEditor";
 import AppSidebar from "./AppSidebar";
 
 export default function SmartRulesScreen() {
@@ -40,12 +44,120 @@ export default function SmartRulesScreen() {
     routingRules: rules,
     setRoutingRules: setRules,
     showConfirmDialog,
+    showAlertDialog,
     platform,
   } = useConfigContext();
 
   const isWin =
     platform === "win32" || platform === "windows" || platform === "win64";
   const isSmart = rules.mode === "smart";
+
+  /* --- Профили маршрутизации (только глобальный режим) -------------------- */
+
+  const [profiles, setProfiles] = useState([]);
+  const [activeId, setActiveId] = useState("");
+  const [profilesOpen, setProfilesOpen] = useState(false);
+  /* null — закрыт; объект профиля — правка; {} — создание. */
+  const [editing, setEditing] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const reloadProfiles = useCallback(async () => {
+    try {
+      const res = await wailsAPI.getRoutingProfiles();
+      const list = (res?.profiles || []).map((p) => ({
+        ...p,
+        counts: {
+          direct: (p.directSites?.length || 0) + (p.directIp?.length || 0),
+          proxy: (p.proxySites?.length || 0) + (p.proxyIp?.length || 0),
+          block: (p.blockSites?.length || 0) + (p.blockIp?.length || 0),
+        },
+      }));
+      setProfiles(list);
+      setActiveId(res?.activeId || "");
+    } catch (err) {
+      console.error("getRoutingProfiles:", err);
+    }
+  }, []);
+
+  /* Список нужен только когда окно открыто — до этого читать нечего. */
+  useEffect(() => {
+    if (profilesOpen) reloadProfiles();
+  }, [profilesOpen, reloadProfiles]);
+
+  const report = (err) =>
+    showAlertDialog({
+      title: t("common.error"),
+      message: String(err?.message || err),
+      variant: "danger",
+    });
+
+  const selectProfile = async (profile) => {
+    /* Повторное нажатие по активному выключает профили, не удаляя их. */
+    const next = profile.id === activeId ? "" : profile.id;
+    try {
+      await wailsAPI.setActiveRoutingProfile(next);
+      await reloadProfiles();
+    } catch (err) {
+      report(err);
+    }
+  };
+
+  const deleteProfile = async (profile) => {
+    const ok = await showConfirmDialog({
+      title: t("common.confirmAction"),
+      message: t("routingProfiles.confirmDelete", { name: profile.name }),
+      variant: "danger",
+      confirmText: t("common.delete"),
+      cancelText: t("common.cancel"),
+    });
+    if (!ok) return;
+    try {
+      await wailsAPI.deleteRoutingProfile(profile.id);
+      await reloadProfiles();
+    } catch (err) {
+      report(err);
+    }
+  };
+
+  const saveProfile = async (draft) => {
+    setBusy(true);
+    try {
+      await wailsAPI.saveRoutingProfile(draft);
+      setEditing(null);
+      await reloadProfiles();
+    } catch (err) {
+      report(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const importProfile = async () => {
+    let url = "";
+    try {
+      url = await navigator.clipboard.readText();
+    } catch (err) {
+      console.error("clipboard:", err);
+    }
+    url = (url || "").trim();
+    if (!url) {
+      showAlertDialog({
+        title: t("common.notice"),
+        message: t("routingProfiles.importHint"),
+        variant: "warning",
+      });
+      return;
+    }
+    setBusy(true);
+    try {
+      await wailsAPI.importRoutingDeepLink(url, true);
+      await reloadProfiles();
+    } catch (err) {
+      report(err);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const siteField = isSmart ? "customBlockedDomains" : "whitelist";
   const appField = isSmart ? "appForceVPN" : "appWhitelist";
@@ -112,10 +224,51 @@ export default function SmartRulesScreen() {
     pickFile: t("smartRules.pickFile"),
     clear: t("smartRules.clear"),
     remove: t("smartRules.remove"),
+    profilesTitle: t("smartRules.profilesTitle"),
+    profilesDesc: t("smartRules.profilesDesc"),
+  };
+
+  const rp = (key, opts) => t(`routingProfiles.${key}`, opts);
+  const profilesText = {
+    title: rp("title"),
+    subtitle: rp("subtitle"),
+    active: rp("active"),
+    all: rp("all"),
+    actions: rp("actions"),
+    create: rp("create"),
+    import: rp("import"),
+    edit: rp("edit"),
+    remove: rp("remove"),
+    empty: rp("empty"),
+  };
+  const editorText = {
+    createTitle: rp("createTitle"),
+    createSubtitle: rp("createSubtitle"),
+    editTitle: rp("editTitle"),
+    editSubtitle: rp("editSubtitle"),
+    name: rp("name"),
+    namePlaceholder: rp("namePlaceholder"),
+    direct: rp("direct"),
+    proxy: rp("proxy"),
+    block: rp("block"),
+    domains: rp("domains"),
+    ips: rp("ips"),
+    domainsPlaceholder: rp("domainsPlaceholder"),
+    ipsPlaceholder: rp("ipsPlaceholder"),
+    strategy: rp("strategy"),
+    strategyHint: rp("strategyHint"),
+    geo: rp("geo"),
+    geoip: rp("geoip"),
+    geosite: rp("geosite"),
+    urlPlaceholder: rp("urlPlaceholder"),
+    actions: rp("actions"),
+    reset: rp("reset"),
+    save: rp("save"),
   };
 
   return (
-    <SmartRulesPage
+    <>
+      <SmartRulesPage
       mode={isSmart ? "smart" : "global"}
       onModeChange={(mode) => setRules({ ...rules, mode })}
       sites={sites}
@@ -129,8 +282,40 @@ export default function SmartRulesScreen() {
       onRemoveApp={(value) => put(appField, apps.filter((i) => i !== value))}
       onClearApps={() => clear(appField, apps, t("smartRules.confirmClearApps"))}
       onPickApp={pickApp}
+      onOpenProfiles={() => setProfilesOpen(true)}
       sidebar={<AppSidebar />}
       text={text}
-    />
+      />
+
+      {/*
+        Окно всегда одно: редактор открывается ПОВЕРХ списка, и оставленный
+        под ним список давал вторую подложку — страница темнела вдвое, а
+        Escape закрывал не то окно. Список прячется, пока идёт правка, и
+        возвращается, когда редактор закрыт.
+      */}
+      {profilesOpen && !editing && (
+        <RoutingProfilesDialog
+          text={profilesText}
+          profiles={profiles}
+          activeId={activeId}
+          onSelect={selectProfile}
+          onEdit={(p) => setEditing(p)}
+          onDelete={deleteProfile}
+          onCreate={() => setEditing({})}
+          onImport={importProfile}
+          onClose={() => setProfilesOpen(false)}
+        />
+      )}
+
+      {editing && (
+        <RoutingProfileEditor
+          text={editorText}
+          profile={editing.id ? editing : null}
+          busy={busy}
+          onSave={saveProfile}
+          onClose={() => setEditing(null)}
+        />
+      )}
+    </>
   );
 }
