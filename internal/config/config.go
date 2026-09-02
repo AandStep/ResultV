@@ -40,6 +40,73 @@ type RoutingRules struct {
 	CustomBlockedDomains []string `json:"customBlockedDomains"`
 	// RoutingLists are user-managed routing subscriptions (URL + action).
 	RoutingLists []RoutingList `json:"routingLists"`
+	// Profiles are whole routing rule sets — the shape panels and deep links
+	// deliver. Only one is in effect at a time (ActiveProfileID), and only in
+	// Global mode: in Smart the client decides routing itself, so a profile
+	// there would be fighting the very thing Smart exists to do.
+	Profiles []RoutingProfile `json:"routingProfiles"`
+	// ActiveProfileID names the profile in effect, "" for none.
+	ActiveProfileID string `json:"activeRoutingProfileId"`
+}
+
+// RoutingProfile is one complete routing rule set: what goes direct, what goes
+// through the proxy and what is blocked, plus where the geo databases those
+// rules reference are fetched from.
+//
+// It is the same object however it arrives — typed in by hand, delivered inside
+// a node subscription, or opened from a routing deep link. That is deliberate:
+// the three are the same thing from the user's side, and keeping three models
+// for them would mean three code paths to keep in step.
+type RoutingProfile struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+
+	// Rule tokens exactly as authored — "geosite:private", "domain:example.com",
+	// "10.0.0.0/8". Kept raw rather than pre-expanded so the editor shows the
+	// author's own text back, and so a geo database update changes what a
+	// profile matches without a re-import.
+	DirectSites []string `json:"directSites,omitempty"`
+	DirectIPs   []string `json:"directIp,omitempty"`
+	ProxySites  []string `json:"proxySites,omitempty"`
+	ProxyIPs    []string `json:"proxyIp,omitempty"`
+	BlockSites  []string `json:"blockSites,omitempty"`
+	BlockIPs    []string `json:"blockIp,omitempty"`
+
+	// RouteOrder is the order actions are evaluated in, e.g. "block-proxy-direct".
+	RouteOrder string `json:"routeOrder,omitempty"`
+	// DomainStrategy mirrors the xray option of the same name (IPIfNonMatch…).
+	DomainStrategy string `json:"domainStrategy,omitempty"`
+
+	GeoIPURL   string `json:"geoipUrl,omitempty"`
+	GeoSiteURL string `json:"geositeUrl,omitempty"`
+
+	// Source records where the profile came from: "manual", "deeplink" or
+	// "subscription". SubscriptionID is set for the last one.
+	Source         string `json:"source,omitempty"`
+	SubscriptionID string `json:"subscriptionId,omitempty"`
+	// OriginName is the name the publisher gave this profile, kept as it first
+	// arrived. Name is the user's to change; this is not, because it is the
+	// only handle a re-published payload can be matched against — the JSON
+	// carries no id of its own. Matching on Name instead would fork a renamed
+	// profile into two the next time its link was opened.
+	OriginName string `json:"originName,omitempty"`
+
+	UpdatedAt int64  `json:"updatedAt,omitempty"`
+	LastError string `json:"lastError,omitempty"`
+}
+
+// RuleCount totals the tokens of one action, for the "• 4 direct • 3 block"
+// line in the profile list.
+func (p RoutingProfile) RuleCount(action string) int {
+	switch action {
+	case "direct":
+		return len(p.DirectSites) + len(p.DirectIPs)
+	case "proxy":
+		return len(p.ProxySites) + len(p.ProxyIPs)
+	case "block":
+		return len(p.BlockSites) + len(p.BlockIPs)
+	}
+	return 0
 }
 
 // RoutingList is a user-managed routing subscription: a remote list of
@@ -249,9 +316,9 @@ func (s AppSettings) EffectiveSubscriptionSendHWID() bool {
 }
 
 type AppConfig struct {
-	RoutingRules  RoutingRules   `json:"routingRules"`
-	Proxies       []ProxyEntry   `json:"proxies"`
-	Settings      AppSettings    `json:"settings"`
+	RoutingRules RoutingRules `json:"routingRules"`
+	Proxies      []ProxyEntry `json:"proxies"`
+	Settings     AppSettings  `json:"settings"`
 	// Без `omitempty`: пустой список должен доезжать до фронта именно пустым
 	// списком. С `omitempty` последняя удалённая подписка выпадала из ответа
 	// целиком, фронт видел «поля нет» и оставлял в состоянии прежний список —
@@ -271,6 +338,7 @@ func DefaultConfig() AppConfig {
 			AppForceVPN:          []string{},
 			CustomBlockedDomains: []string{},
 			RoutingLists:         []RoutingList{},
+			Profiles:             []RoutingProfile{},
 		},
 		Proxies: []ProxyEntry{},
 		Settings: AppSettings{
@@ -522,6 +590,9 @@ func ensureDefaults(cfg AppConfig) AppConfig {
 	}
 	if cfg.RoutingRules.CustomBlockedDomains == nil {
 		cfg.RoutingRules.CustomBlockedDomains = []string{}
+	}
+	if cfg.RoutingRules.Profiles == nil {
+		cfg.RoutingRules.Profiles = []RoutingProfile{}
 	}
 	if cfg.RoutingRules.RoutingLists == nil {
 		cfg.RoutingRules.RoutingLists = []RoutingList{}

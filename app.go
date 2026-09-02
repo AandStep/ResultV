@@ -277,7 +277,7 @@ func (a *App) DecodeDeepLink(url string) (string, error) {
 //
 // Returns an empty payload when nothing is queued.
 func (a *App) TakePendingDeepLink() map[string]string {
-	empty := map[string]string{"payload": "", "source": ""}
+	empty := map[string]string{"payload": "", "source": "", "kind": ""}
 	if a == nil {
 		return empty
 	}
@@ -287,6 +287,13 @@ func (a *App) TakePendingDeepLink() map[string]string {
 	a.deepLinkMu.Unlock()
 	if url == "" {
 		return empty
+	}
+	// A routing link carries a public profile, not an encrypted subscription
+	// body: sending it through DecodeDeepLink would only fail to decrypt it.
+	// The link itself goes to the UI, which previews it before importing.
+	if proxy.DeepLinkKind(url) == proxy.DeepLinkKindRouting {
+		a.log.Info("[ССЫЛКА] интерфейс забрал ссылку маршрутизации из очереди")
+		return map[string]string{"payload": url, "source": "", "kind": proxy.DeepLinkKindRouting}
 	}
 	payload, err := proxy.DecodeDeepLink(url)
 	if err != nil {
@@ -298,7 +305,7 @@ func (a *App) TakePendingDeepLink() map[string]string {
 		source = "rvsub"
 	}
 	a.log.Info("[ССЫЛКА] интерфейс забрал ссылку из очереди")
-	return map[string]string{"payload": payload, "source": source}
+	return map[string]string{"payload": payload, "source": source, "kind": proxy.DeepLinkKindSubscription}
 }
 
 // HandleDeepLink decrypts a resultv:// URL and forwards the decoded payload
@@ -315,6 +322,30 @@ func (a *App) HandleDeepLink(url string) {
 		return
 	}
 	a.log.Info("[ССЫЛКА] пришла ссылка resultv://")
+
+	// Routing links skip the subscription decoder entirely — see
+	// TakePendingDeepLink for why. Queue, raise the window, nudge the UI.
+	if proxy.DeepLinkKind(url) == proxy.DeepLinkKindRouting {
+		if _, perr := proxy.DecodeRoutingDeepLink(url); perr != nil {
+			a.log.Error(fmt.Sprintf("Не удалось разобрать ссылку маршрутизации: %v", perr))
+			if a.ctx != nil {
+				wailsRuntime.EventsEmit(a.ctx, "deeplink:error", perr.Error())
+			}
+			return
+		}
+		a.QueueDeepLink(url)
+		a.restoreMainWindow()
+		if a.ctx == nil {
+			return
+		}
+		wailsRuntime.EventsEmit(a.ctx, "deeplink:received", map[string]interface{}{
+			"payload": url,
+			"source":  "",
+			"kind":    proxy.DeepLinkKindRouting,
+		})
+		a.log.Info("[ССЫЛКА] маршрутизация раскрыта, интерфейс позван")
+		return
+	}
 
 	payload, err := proxy.DecodeDeepLink(url)
 	if err != nil {
@@ -344,6 +375,7 @@ func (a *App) HandleDeepLink(url string) {
 	wailsRuntime.EventsEmit(a.ctx, "deeplink:received", map[string]interface{}{
 		"payload": payload,
 		"source":  source,
+		"kind":    proxy.DeepLinkKindSubscription,
 	})
 	a.log.Info("[ССЫЛКА] раскрыта, интерфейс позван")
 }
@@ -421,7 +453,6 @@ func (a *App) startup(ctx context.Context) {
 
 	rootDir := a.getAppRootDir()
 	a.initSmartBlockedDomains(userDataPath, rootDir)
-
 
 	// Leftover kill-switch firewall rules from a crashed / force-killed prior
 	// run are NOT silently cleared here (the old Disable() call was a no-op on a
@@ -1058,7 +1089,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 			cfg.Settings.TunIPv4,
 			"",
 			cfg.Settings.EffectiveDNSLeakProtection(),
-		cfg.Settings.EnableIPv6,
+			cfg.Settings.EnableIPv6,
 		)
 		if result.Success {
 			serverName := fmt.Sprintf("%s:%d", status.CurrentProxy.IP, status.CurrentProxy.Port)
@@ -1099,7 +1130,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 				cfg.Settings.TunIPv4,
 				"",
 				cfg.Settings.EffectiveDNSLeakProtection(),
-		cfg.Settings.EnableIPv6,
+				cfg.Settings.EnableIPv6,
 			)
 			if rollback.Success {
 				if a.tray != nil {

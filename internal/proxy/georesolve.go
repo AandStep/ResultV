@@ -41,10 +41,14 @@ type GeoResolveReport struct {
 	// DroppedFromDB counts geosite entries the database itself carried in a
 	// form no rule-set can express (keyword and regex matchers).
 	DroppedFromDB int
+	// DroppedAsJunk counts bare tokens that survived parsing but do not look
+	// like host names. Only bare tokens are judged this way — an explicit
+	// `domain:`/`full:` prefix or a geo category states what the value is.
+	DroppedAsJunk int
 }
 
 func (r GeoResolveReport) Empty() bool {
-	return len(r.Unresolved) == 0 && r.DroppedFromDB == 0
+	return len(r.Unresolved) == 0 && r.DroppedFromDB == 0 && r.DroppedAsJunk == 0
 }
 
 // Tokens returns the unresolved tokens in a stable order for messages.
@@ -78,7 +82,12 @@ type GeoDatabases struct {
 // and sorted by shape rather than by which field they came from.
 func ResolveGeoTokens(tokens []string, db GeoDatabases) (ParsedRoutingList, GeoResolveReport) {
 	report := GeoResolveReport{Unresolved: map[string]string{}}
-	var suffixes, exact, cidrs []string
+	// Bare tokens are kept apart until the end: they are the only junk-prone
+	// input here and the only ones the plausibility filter should judge. Run
+	// over everything, that filter also throws away single-label hosts like
+	// "localhost", which the geo databases legitimately carry and which a
+	// `domain:` prefix states outright.
+	var suffixes, exact, cidrs, bare []string
 
 	for _, raw := range tokens {
 		token := strings.TrimSpace(raw)
@@ -138,7 +147,7 @@ func ResolveGeoTokens(tokens []string, db GeoDatabases) (ParsedRoutingList, GeoR
 			// route identical lists differently depending on where they came
 			// from.
 			if d := extractDomainFromLine(lower); d != "" {
-				suffixes = append(suffixes, d)
+				bare = append(bare, d)
 			} else {
 				report.Unresolved[token] = "not a domain, IP or known geo reference"
 			}
@@ -147,14 +156,17 @@ func ResolveGeoTokens(tokens []string, db GeoDatabases) (ParsedRoutingList, GeoR
 
 	report.DroppedFromDB = db.SiteDropped
 
+	kept := plausibleDomains(normalizeDomains(bare))
+	report.DroppedAsJunk = len(normalizeDomains(bare)) - len(kept)
+	suffixes = append(suffixes, kept...)
+
 	parsed := ParsedRoutingList{
-		Domains: compressDomainSuffixes(plausibleDomains(normalizeDomains(suffixes))),
+		Domains: compressDomainSuffixes(normalizeDomains(suffixes)),
 		CIDRs:   normalizeCIDRs(cidrs),
 	}
 	// An exact entry covered by a suffix in the same rule is redundant: the
 	// suffix already matches the host itself.
-	parsed.ExactDomains = dropCoveredBySuffix(
-		plausibleDomains(normalizeDomains(exact)), parsed.Domains)
+	parsed.ExactDomains = dropCoveredBySuffix(normalizeDomains(exact), parsed.Domains)
 	return parsed, report
 }
 
