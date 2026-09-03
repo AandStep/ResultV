@@ -61,6 +61,9 @@ export default function SmartRulesScreen() {
   /* null — закрыт; объект профиля — правка; {} — создание. */
   const [editing, setEditing] = useState(null);
   const [busy, setBusy] = useState(false);
+  /* Чей именно перезапуск идёт — чтобы жёлтым ждала одна строка, а не всё
+     окно разом. */
+  const [pendingId, setPendingId] = useState("");
 
   const reloadProfiles = useCallback(async () => {
     try {
@@ -103,13 +106,21 @@ export default function SmartRulesScreen() {
   const selectProfile = async (profile) => {
     /* Повторное нажатие по активному выключает профили, не удаляя их. */
     const next = profile.id === activeId ? "" : profile.id;
+    /*
+     * Ждём на самой строке, а не только на странице: перезапуск движка
+     * занимает пару секунд, и всё это время нажатая строка обязана показывать,
+     * что её услышали. Ставим до вызова — иначе жёлтого не увидеть вовсе.
+     */
+    setPendingId(profile.id);
     try {
-      /* Движок перезапускается с новыми правилами — пока это идёт, интерфейс
-         должен показывать «подключение», а не выглядеть замершим. */
+      /* Плюс общее состояние применения: страница уходит в «подключение», как
+         при смене режима. */
       await runApplyingRules(() => wailsAPI.setActiveRoutingProfile(next));
       await reloadProfiles();
     } catch (err) {
       report(err);
+    } finally {
+      setPendingId("");
     }
   };
 
@@ -122,11 +133,14 @@ export default function SmartRulesScreen() {
       cancelText: t("common.cancel"),
     });
     if (!ok) return;
+    setPendingId(profile.id);
     try {
       await runApplyingRules(() => wailsAPI.deleteRoutingProfile(profile.id));
       await reloadProfiles();
     } catch (err) {
       report(err);
+    } finally {
+      setPendingId("");
     }
   };
 
@@ -309,6 +323,7 @@ export default function SmartRulesScreen() {
           text={profilesText}
           profiles={profiles}
           activeId={activeId}
+          pendingId={pendingId}
           onSelect={selectProfile}
           onEdit={(p) => setEditing(p)}
           onDelete={deleteProfile}

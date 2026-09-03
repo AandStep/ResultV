@@ -45,7 +45,34 @@
   --rv-border: linear-gradient(var(--rv-main-a10), var(--rv-main-a10));
 }
 
+/*
+ * Ожидание: правила применяются, движок перезапускается — это пара секунд.
+ *
+ * Кадра на эту фазу в макете нет, но без него нажатие выглядит непрошедшим:
+ * строка оставалась серой всё время перезапуска и зеленела внезапно. Взят цвет
+ * предупреждения — тот же, которым ждёт кнопка питания на главной, — и то же
+ * дыхание, что у значка окна импорта. Правило идёт ПОСЛЕ активного, чтобы
+ * перебивать его: применяться может и уже активный профиль.
+ */
+.rv-profile-item[data-pending],
+.rv-profile-item[data-active][data-pending] {
+  background: var(--rv-warning-a10);
+  --rv-border: linear-gradient(var(--rv-warning-a20), var(--rv-warning-a20));
+}
+
+.rv-profile-item[data-pending] .rv-profile-item__badge,
+.rv-profile-item[data-active][data-pending] .rv-profile-item__badge {
+  background: var(--rv-warning-a10);
+  color: var(--rv-warning);
+  animation: rv-blink 1.6s var(--rv-ease) infinite;
+}
+
 /* --- Выбор ---------------------------------------------------------------- */
+
+/* Пока идёт применение, строка не нажимается — и курсор об этом говорит. */
+.rv-profile-item__pick:disabled {
+  cursor: default;
+}
 
 .rv-profile-item__pick {
   display: flex;

@@ -34,6 +34,14 @@ export default function ProfileItem({
   name,
   counts = {},
   active = false,
+  /*
+   * Правила применяются прямо сейчас: движок перезапускается с новым набором,
+   * и это занимает пару секунд. Всё это время строка ждёт жёлтым — по тому же
+   * правилу, что кнопка питания на главной. Без этого состояния нажатие
+   * выглядело как непрошедшее: строка оставалась серой до самого конца
+   * перезапуска и зеленела внезапно.
+   */
+  pending = false,
   onSelect,
   onEdit,
   onDelete,
@@ -52,6 +60,8 @@ export default function ProfileItem({
     <div
       className={`rv-profile-item rv-border ${className}`}
       data-active={active || undefined}
+      data-pending={pending || undefined}
+      aria-busy={pending || undefined}
       {...rest}
     >
       {/*
@@ -63,6 +73,9 @@ export default function ProfileItem({
         type="button"
         className="rv-profile-item__pick"
         aria-pressed={active}
+        /* Пока правила применяются, второе нажатие только запутает: оно
+           встало бы в очередь на ещё один перезапуск движка. */
+        disabled={pending}
         onClick={onSelect}
       >
         <span className="rv-profile-item__badge">

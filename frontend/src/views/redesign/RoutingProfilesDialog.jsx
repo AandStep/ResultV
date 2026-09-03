@@ -46,6 +46,9 @@ export default function RoutingProfilesDialog({
   open = true,
   profiles = [],
   activeId = "",
+  /* Профиль, правила которого применяются прямо сейчас: движок
+     перезапускается, и строка ждёт жёлтым, пока это идёт. */
+  pendingId = "",
   onSelect,
   onEdit,
   onDelete,
@@ -65,6 +68,7 @@ export default function RoutingProfilesDialog({
       name={profile.name}
       counts={profile.counts}
       active={isActive}
+      pending={profile.id === pendingId}
       editLabel={text.edit}
       deleteLabel={text.remove}
       onSelect={() => onSelect?.(profile)}
