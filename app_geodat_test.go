@@ -290,7 +290,8 @@ func geoSiteListMsgForTest(category, domain string) []byte {
 	}
 	pbString := func(field int, s string) []byte { return pbBytes(field, []byte(s)) }
 
-	dom := append([]byte{byte(1<<3 | 0), 2}, pbString(2, domain)...)
+	/* поле 1, wire-type varint (0) — тип домена; 2 = Domain. */
+	dom := append([]byte{byte(1 << 3), 2}, pbString(2, domain)...)
 	site := append(pbString(1, category), pbBytes(2, dom)...)
 	return pbBytes(1, site)
 }

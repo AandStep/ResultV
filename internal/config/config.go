@@ -80,6 +80,17 @@ type RoutingProfile struct {
 	GeoIPURL   string `json:"geoipUrl,omitempty"`
 	GeoSiteURL string `json:"geositeUrl,omitempty"`
 
+	// ListURLs are remote rule lists this profile pulls in, keyed by action
+	// ("direct"/"proxy"/"block"). A provider may hand out its routing as links
+	// to fetchable lists rather than as inline rules; inlining a 74k-entry list
+	// into the config would bloat it past usefulness, so the profile keeps the
+	// link and the compile step fetches it.
+	ListURLs map[string][]string `json:"listUrls,omitempty"`
+	// AllowInsecure carries the subscription's plaintext consent down to those
+	// fetches: a provider list inherits the choice the user already made about
+	// that provider, and never grants itself one.
+	AllowInsecure bool `json:"allowInsecure,omitempty"`
+
 	// Source records where the profile came from: "manual", "deeplink" or
 	// "subscription". SubscriptionID is set for the last one.
 	Source         string `json:"source,omitempty"`
@@ -96,15 +107,17 @@ type RoutingProfile struct {
 }
 
 // RuleCount totals the tokens of one action, for the "• 4 direct • 3 block"
-// line in the profile list.
+// line in the profile list. Remote lists count as one entry each: how many
+// rules hide behind a link is unknown until it is fetched.
 func (p RoutingProfile) RuleCount(action string) int {
+	n := len(p.ListURLs[action])
 	switch action {
 	case "direct":
-		return len(p.DirectSites) + len(p.DirectIPs)
+		return n + len(p.DirectSites) + len(p.DirectIPs)
 	case "proxy":
-		return len(p.ProxySites) + len(p.ProxyIPs)
+		return n + len(p.ProxySites) + len(p.ProxyIPs)
 	case "block":
-		return len(p.BlockSites) + len(p.BlockIPs)
+		return n + len(p.BlockSites) + len(p.BlockIPs)
 	}
 	return 0
 }

@@ -240,7 +240,7 @@ func (a *App) compileRoutingProfile(p config.RoutingProfile, refreshGeo bool) (m
 		id := routingProfileRuleSetID(p.ID, action)
 		path := proxy.RoutingListCachePath(dir, id)
 		tokens := proxy.RoutingProfileTokens(p, action)
-		if len(tokens) == 0 {
+		if len(tokens) == 0 && len(p.ListURLs[action]) == 0 {
 			// An action the profile does not use must leave no stale file from
 			// a previous version of it behind.
 			_ = removeFileIfExists(path)
@@ -250,6 +250,19 @@ func (a *App) compileRoutingProfile(p config.RoutingProfile, refreshGeo bool) (m
 		parsed, report := proxy.ResolveGeoTokens(tokens, db)
 		for token, reason := range report.Unresolved {
 			unresolved[token] = reason
+		}
+		// Rules the provider only linked to are fetched now and merged in. A
+		// failed fetch is reported, not fatal: the rest of the profile still
+		// routes, and saying nothing would leave traffic quietly unrouted.
+		for _, listURL := range p.ListURLs[action] {
+			extra, ferr := a.fetchProfileList(listURL, p.AllowInsecure)
+			if ferr != nil {
+				unresolved[listURL] = ferr.Error()
+				continue
+			}
+			parsed.Domains = append(parsed.Domains, extra.Domains...)
+			parsed.ExactDomains = append(parsed.ExactDomains, extra.ExactDomains...)
+			parsed.CIDRs = append(parsed.CIDRs, extra.CIDRs...)
 		}
 		total := len(parsed.Domains) + len(parsed.ExactDomains) + len(parsed.CIDRs)
 		counts[action] = total
@@ -273,6 +286,24 @@ func (a *App) compileRoutingProfile(p config.RoutingProfile, refreshGeo bool) (m
 		"counts":     counts,
 		"unresolved": unresolved,
 	}, nil
+}
+
+// fetchProfileList downloads one linked rule list and parses it. Same guard and
+// bounds as a user-added routing list — a profile's link is no more trusted for
+// coming from a provider.
+func (a *App) fetchProfileList(listURL string, allowInsecure bool) (proxy.ParsedRoutingList, error) {
+	body, err := a.fetchRoutingListPayload(listURL, allowInsecure)
+	if err != nil {
+		return proxy.ParsedRoutingList{}, err
+	}
+	if proxy.LooksLikeRoutingListHTML(body) {
+		return proxy.ParsedRoutingList{}, fmt.Errorf("ссылка вернула веб-страницу, а не список правил")
+	}
+	parsed := proxy.ParseRoutingListPayload(body)
+	if len(parsed.Domains) == 0 && len(parsed.CIDRs) == 0 {
+		return proxy.ParsedRoutingList{}, fmt.Errorf("в списке не найдено доменов или подсетей")
+	}
+	return parsed, nil
 }
 
 // removeRoutingProfileRuleSets deletes a profile's cached rule-sets.

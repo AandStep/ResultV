@@ -330,7 +330,7 @@
     "geoip": "GeoIP URL",
     "geosite": "GeoSite URL",
     "urlPlaceholder": "https://example.com",
-    "reset": "Reset",
+    "reset": "Cancel",
     "save": "Save"
   },
   "smartRules": {

@@ -119,6 +119,7 @@ function StrategyOrder({ order, onChange, labels }) {
      движении значило бы мерить уже сдвинутые элементы. */
   const geomRef = useRef(null);
   const [drag, setDrag] = useState(null);
+  const [settling, setSettling] = useState(false);
 
   const move = (from, to) => {
     if (to < 0 || to >= order.length || from === to) return;
@@ -169,7 +170,21 @@ function StrategyOrder({ order, onChange, labels }) {
   };
 
   const finish = () => {
-    if (drag) move(drag.from, drag.to);
+    if (drag && drag.from !== drag.to) {
+      /*
+       * На кадре применения переходы отключаются.
+       *
+       * Иначе выходило так: сосед стоял со сдвигом -61px, порядок менялся, и
+       * он одновременно получал НОВОЕ место в разметке и обнулённый сдвиг —
+       * а `transition: transform` доигрывал путь с -61 до нуля уже с нового
+       * места. Со стороны это выглядело как прыжок слева направо после того,
+       * как бейдж отпустили.
+       */
+      setSettling(true);
+      move(drag.from, drag.to);
+      /* Два кадра: первый — применение порядка, второй — снятие запрета. */
+      requestAnimationFrame(() => requestAnimationFrame(() => setSettling(false)));
+    }
     geomRef.current = null;
     setDrag(null);
   };
@@ -185,7 +200,11 @@ function StrategyOrder({ order, onChange, labels }) {
   };
 
   return (
-    <div className="rv-profile-editor__strategy rv-border rv-border--static" ref={boxRef}>
+    <div
+      className="rv-profile-editor__strategy rv-border rv-border--static"
+      data-settling={settling || undefined}
+      ref={boxRef}
+    >
       {order.map((action, index) => {
         const held = drag?.from === index;
         const offset = held ? drag.dx : shiftOf(index);

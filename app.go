@@ -2396,7 +2396,7 @@ func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
 		a.log.Error(fmt.Sprintf("Ошибка сохранения после обновления подписки: %v", err))
 	}
 	provided := append(append([]config.RoutingList(nil), res.RoutingLists...), embeddedRoutingListDeclarations(res.Embedded)...)
-	if err := a.syncSubscriptionRoutingLists(subID, provided, nil, res.Embedded); err != nil {
+	if err := a.syncSubscriptionRoutingProfile(subID, provided, nil, res.Embedded, false); err != nil {
 		a.log.Warning(fmt.Sprintf("Ошибка синхронизации списков маршрутизации подписки: %v", err))
 	}
 
@@ -2504,7 +2504,10 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 		return nil, fmt.Errorf("saving subscription: %w", err)
 	}
 	provided := append(append([]config.RoutingList(nil), res.RoutingLists...), embeddedRoutingListDeclarations(res.Embedded)...)
-	if err := a.syncSubscriptionRoutingLists(sub.ID, provided, disabledListURLs, res.Embedded); err != nil {
+	// The user answered the routing question in the import dialog just now, so
+	// what they accepted takes effect immediately rather than on some later
+	// connect.
+	if err := a.syncSubscriptionRoutingProfile(sub.ID, provided, disabledListURLs, res.Embedded, true); err != nil {
 		a.log.Warning(fmt.Sprintf("[ROUTING] Не удалось применить списки подписки %q: %v", displayName, err))
 	}
 
@@ -2629,6 +2632,11 @@ func (a *App) DeleteSubscription(subID string) error {
 		cfg.Proxies = kept
 	}
 	a.removeSubscriptionRoutingLists(&cfg, subID)
+	defer func() {
+		if err := a.removeSubscriptionRoutingProfile(subID); err != nil {
+			a.log.Warning(fmt.Sprintf("Не удалось убрать профиль маршрутизации подписки: %v", err))
+		}
+	}()
 	if err := a.config.SaveConfig(cfg); err != nil {
 		return err
 	}

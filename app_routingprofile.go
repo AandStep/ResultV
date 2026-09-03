@@ -98,7 +98,9 @@ func (a *App) ImportRoutingDeepLink(url string, makeActive bool) (config.Routing
 		a.log.Error(fmt.Sprintf("Профиль %q сохранён, но правила не собраны: %v", saved.Name, cerr))
 		return saved, nil
 	}
-	a.syncRoutingListSpecs()
+	if aerr := a.applyRoutingRulesAndReconnect(a.config.GetConfig().RoutingRules); aerr != nil {
+		a.log.Error(fmt.Sprintf("Профиль %q собран, но не применён: %v", saved.Name, aerr))
+	}
 	return saved, nil
 }
 
@@ -214,6 +216,11 @@ func (a *App) SaveRoutingProfile(p config.RoutingProfile) (config.RoutingProfile
 			p.Source = existing.Source
 			p.SubscriptionID = existing.SubscriptionID
 			p.OriginName = existing.OriginName
+			// Ссылок на списки и согласия на plaintext в редакторе нет —
+			// значит редактор и не может их потерять. Иначе первая же правка
+			// имени вырезала бы из профиля подписки всю связанную часть.
+			p.ListURLs = existing.ListURLs
+			p.AllowInsecure = existing.AllowInsecure
 			out[i] = p
 			found = true
 			break
@@ -231,7 +238,9 @@ func (a *App) SaveRoutingProfile(p config.RoutingProfile) (config.RoutingProfile
 		a.log.Error(fmt.Sprintf("Профиль %q сохранён, но правила не собраны: %v", p.Name, cerr))
 		return p, nil
 	}
-	a.syncRoutingListSpecs()
+	if aerr := a.applyRoutingRulesAndReconnect(a.config.GetConfig().RoutingRules); aerr != nil {
+		a.log.Error(fmt.Sprintf("Профиль %q собран, но не применён: %v", p.Name, aerr))
+	}
 	return p, nil
 }
 
@@ -268,8 +277,7 @@ func (a *App) DeleteRoutingProfile(id string) error {
 	// Cached rule-sets outlive the config entry unless they are removed here,
 	// and a stale file would keep routing traffic by a profile that is gone.
 	a.removeRoutingProfileRuleSets(id)
-	a.syncRoutingListSpecs()
-	return nil
+	return a.applyRoutingRulesAndReconnect(a.config.GetConfig().RoutingRules)
 }
 
 // SetActiveRoutingProfile chooses which profile is in force. An empty id turns
@@ -292,11 +300,13 @@ func (a *App) SetActiveRoutingProfile(id string) error {
 		}
 	}
 	rr.ActiveProfileID = id
-	if err := a.config.UpdateRoutingRules(rr); err != nil {
-		return err
-	}
-	a.syncRoutingListSpecs()
-	return nil
+	/*
+	 * Выбор профиля применяется НЕМЕДЛЕННО, если соединение живо.
+	 * Раньше здесь стоял только `syncRoutingListSpecs`, а он готовит правила к
+	 * СЛЕДУЮЩЕМУ запуску движка — пользователь переключал профиль, и ничего не
+	 * происходило до переподключения вручную.
+	 */
+	return a.applyRoutingRulesAndReconnect(rr)
 }
 
 // ActiveRoutingProfile returns the profile in force, and whether there is one.

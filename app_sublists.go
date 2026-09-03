@@ -16,8 +16,7 @@
 package main
 
 import (
-	"bytes"
-	"os"
+	"fmt"
 	"strings"
 	"time"
 
@@ -56,128 +55,153 @@ func embeddedRoutingListDeclarations(embedded map[string]proxy.ParsedRoutingList
 	return out
 }
 
-// syncSubscriptionRoutingLists reconciles provider-declared routing lists into
-// the config. Provider controls composition (add/update/remove); the user
-// controls Enabled (never overwritten). Tombstoned URLs are never re-added.
-// No-op sync writes nothing and does not reconnect.
-func (a *App) syncSubscriptionRoutingLists(subID string, provided []config.RoutingList, disabledURLs []string, embedded map[string]proxy.ParsedRoutingList) error {
+// syncSubscriptionRoutingProfile folds everything a subscription says about
+// routing into ONE profile.
+//
+// A subscription used to arrive as a handful of separate routing lists, one per
+// action. That was never how a user thinks about it: routing from a provider
+// and routing from a link are the same thing — a set of rules that is either in
+// force or not — and only one such set is in force at a time. So the provider's
+// direct/proxy/block rules become one editable profile, exactly like the one a
+// deep link brings.
+//
+// Inline rules (the provider's embedded xray routing) become tokens; rules the
+// provider only links to stay links in ListURLs and are fetched at compile time
+// — inlining a 74k-entry list would bloat the config past usefulness.
+//
+// `activate` marks the profile as the one in force. True when the user just
+// said yes to this subscription's routing; false on a background refresh, which
+// must not quietly take over from whatever they chose since.
+func (a *App) syncSubscriptionRoutingProfile(
+	subID string,
+	provided []config.RoutingList,
+	disabledURLs []string,
+	embedded map[string]proxy.ParsedRoutingList,
+	activate bool,
+) error {
 	if a.config == nil || subID == "" {
 		return nil
 	}
 	cfg := a.config.GetConfig()
-	var tombstones map[string]bool
-	subAllowInsecure := false // spec: provider lists inherit the subscription's plaintext consent
-	subFound := false
+	var sub *config.Subscription
 	for i := range cfg.Subscriptions {
 		if cfg.Subscriptions[i].ID == subID {
-			subFound = true
-			subAllowInsecure = cfg.Subscriptions[i].AllowInsecure
-			tombstones = make(map[string]bool, len(cfg.Subscriptions[i].RemovedRoutingListURLs))
-			for _, u := range cfg.Subscriptions[i].RemovedRoutingListURLs {
-				tombstones[u] = true
-			}
+			sub = &cfg.Subscriptions[i]
 			break
 		}
 	}
-	if !subFound {
+	if sub == nil {
 		return nil
 	}
+
 	disabled := make(map[string]bool, len(disabledURLs))
 	for _, u := range disabledURLs {
 		disabled[proxy.NormalizeRoutingListURL(u)] = true
 	}
-	providedByURL := make(map[string]config.RoutingList, len(provided))
-	for _, p := range provided {
-		providedByURL[p.URL] = p // URLs already normalized by the parser
+	tombstoned := make(map[string]bool, len(sub.RemovedRoutingListURLs))
+	for _, u := range sub.RemovedRoutingListURLs {
+		tombstoned[u] = true
 	}
 
-	rr := cfg.RoutingRules
-	merged := make([]config.RoutingList, 0, len(rr.RoutingLists)+len(provided))
-	existingByURL := make(map[string]bool)
-	changed := false
-	var needFetch []string // IDs to (re)download
+	profile := config.RoutingProfile{
+		Name:           sub.Name,
+		OriginName:     sub.Name,
+		Source:         "subscription",
+		SubscriptionID: subID,
+		AllowInsecure:  sub.AllowInsecure,
+		UpdatedAt:      time.Now().Unix(),
+		ListURLs:       map[string][]string{},
+	}
 
-	for _, rl := range rr.RoutingLists {
-		if rl.SubscriptionID != subID {
-			merged = append(merged, rl)
-			continue
-		}
-		p, still := providedByURL[rl.URL]
-		if !still {
-			_ = removeFileIfExists(proxy.RoutingListCachePath(a.routingListDataDir(), rl.ID))
-			changed = true
-			continue
-		}
-		existingByURL[rl.URL] = true
-		if rl.Name != p.Name || rl.Action != p.Action {
-			rl.Name, rl.Action = p.Name, p.Action
-			changed = true
-		}
-		merged = append(merged, rl)
-	}
 	for _, p := range provided {
-		if existingByURL[p.URL] || tombstones[p.URL] {
+		if disabled[p.URL] || tombstoned[p.URL] {
 			continue
 		}
-		nl := config.RoutingList{
-			ID: newRoutingListID(), SubscriptionID: subID,
-			Name: p.Name, URL: p.URL, Action: p.Action,
-			Enabled:       !disabled[p.URL],
-			AllowInsecure: subAllowInsecure,
-		}
-		merged = append(merged, nl)
-		needFetch = append(needFetch, nl.ID)
-		changed = true
-	}
-	// Content step: embedded lists write their cache directly from the body on
-	// EVERY sync (the provider doesn't expose a fetchable URL); non-embedded
-	// lists are only downloaded for NEW entries before persisting counts — a
-	// failed download keeps the entry with LastError — the import must not
-	// fail.
-	dir := a.routingListDataDir()
-	for i := range merged {
-		if merged[i].SubscriptionID != subID {
-			continue
-		}
-		if strings.HasPrefix(merged[i].URL, "embedded:") {
-			parsed, ok := embedded[strings.TrimPrefix(merged[i].URL, "embedded:")]
+		if strings.HasPrefix(p.URL, "embedded:") {
+			action := strings.TrimPrefix(p.URL, "embedded:")
+			parsed, ok := embedded[action]
 			if !ok {
-				continue // provider dropped this action; the remove-branch already handled it
-			}
-			cachePath := proxy.RoutingListCachePath(dir, merged[i].ID)
-			oldBytes, _ := os.ReadFile(cachePath)
-			if err := proxy.WriteRoutingListRuleSet(dir, merged[i].ID, parsed); err != nil {
-				merged[i].LastError = err.Error()
-			} else {
-				newBytes, _ := os.ReadFile(cachePath)
-				if !bytes.Equal(oldBytes, newBytes) {
-					changed = true
-				}
-				merged[i].DomainCount, merged[i].CIDRCount = len(parsed.Domains), len(parsed.CIDRs)
-				merged[i].UpdatedAt = time.Now().Unix()
-				merged[i].LastError = ""
-			}
-			continue
-		}
-		for _, id := range needFetch {
-			if merged[i].ID != id {
 				continue
 			}
-			dn, cn, err := a.fetchParseAndCache(merged[i].ID, merged[i].URL, merged[i].AllowInsecure)
-			if err != nil {
-				merged[i].LastError = err.Error()
-			} else {
-				merged[i].DomainCount, merged[i].CIDRCount = dn, cn
-				merged[i].UpdatedAt = time.Now().Unix()
-				merged[i].LastError = ""
-			}
+			addProfileTokens(&profile, action, parsed.Domains, parsed.CIDRs)
+			continue
+		}
+		profile.ListURLs[p.Action] = append(profile.ListURLs[p.Action], p.URL)
+	}
+
+	total := profile.RuleCount("direct") + profile.RuleCount("proxy") + profile.RuleCount("block")
+
+	// Whatever this subscription used to own as separate lists goes away: the
+	// profile replaces them, and leaving both would route by the same rules
+	// twice and show them in two places.
+	cfgCopy := a.config.GetConfig()
+	before := len(cfgCopy.RoutingRules.RoutingLists)
+	a.removeSubscriptionRoutingLists(&cfgCopy, subID)
+	droppedLegacy := before != len(cfgCopy.RoutingRules.RoutingLists)
+	if droppedLegacy {
+		if err := a.config.SaveConfig(cfgCopy); err != nil {
+			return err
 		}
 	}
-	if !changed {
+
+	if total == 0 {
+		// The user turned this subscription's routing off, or the provider
+		// stopped sending any: drop the profile rather than keep an empty one.
+		if err := a.removeSubscriptionRoutingProfile(subID); err != nil {
+			return err
+		}
+		if droppedLegacy {
+			return a.applyRoutingRulesAndReconnect(a.config.GetConfig().RoutingRules)
+		}
 		return nil
 	}
-	rr.RoutingLists = merged
-	return a.applyRoutingRulesAndReconnect(rr)
+
+	saved, err := a.upsertRoutingProfile(profile, activate)
+	if err != nil {
+		return err
+	}
+	if _, cerr := a.compileRoutingProfile(saved, false); cerr != nil {
+		a.log.Warning(fmt.Sprintf("Маршрутизация подписки %q сохранена, но правила не собраны: %v", sub.Name, cerr))
+	}
+	return a.applyRoutingRulesAndReconnect(a.config.GetConfig().RoutingRules)
+}
+
+// addProfileTokens appends inline rules to the right pair of fields.
+func addProfileTokens(p *config.RoutingProfile, action string, domains, cidrs []string) {
+	switch action {
+	case "direct":
+		p.DirectSites = append(p.DirectSites, domains...)
+		p.DirectIPs = append(p.DirectIPs, cidrs...)
+	case "proxy":
+		p.ProxySites = append(p.ProxySites, domains...)
+		p.ProxyIPs = append(p.ProxyIPs, cidrs...)
+	case "block":
+		p.BlockSites = append(p.BlockSites, domains...)
+		p.BlockIPs = append(p.BlockIPs, cidrs...)
+	}
+}
+
+// removeSubscriptionRoutingProfile drops the profile a subscription owns.
+func (a *App) removeSubscriptionRoutingProfile(subID string) error {
+	rr := a.config.GetConfig().RoutingRules
+	out := make([]config.RoutingProfile, 0, len(rr.Profiles))
+	found := false
+	for _, p := range rr.Profiles {
+		if p.Source == "subscription" && p.SubscriptionID == subID {
+			a.removeRoutingProfileRuleSets(p.ID)
+			if rr.ActiveProfileID == p.ID {
+				rr.ActiveProfileID = ""
+			}
+			found = true
+			continue
+		}
+		out = append(out, p)
+	}
+	if !found {
+		return nil
+	}
+	rr.Profiles = out
+	return a.config.UpdateRoutingRules(rr)
 }
 
 // removeSubscriptionRoutingLists drops every routing list owned by subID from

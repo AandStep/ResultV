@@ -535,6 +535,24 @@ export const useAppConfig = (addLog) => {
         [addLog]
     );
 
+    /*
+     * Обёртка для действий, после которых бэкенд перезапускает движок с новыми
+     * правилами (выбор профиля маршрутизации, его правка, удаление).
+     *
+     * Пока идёт перезапуск, интерфейс обязан это показывать: `isApplyingMode`
+     * переводит ConnectionContext в «подключение», и страница желтеет вместо
+     * того, чтобы выглядеть не отреагировавшей. Без него пользователь жал на
+     * профиль и не понимал, случилось ли хоть что-нибудь.
+     */
+    const runApplyingRules = useCallback(async (fn) => {
+        setIsApplyingMode(true);
+        try {
+            return await fn();
+        } finally {
+            setIsApplyingMode(false);
+        }
+    }, []);
+
     return {
         isConfigLoaded,
         proxies,
@@ -547,6 +565,7 @@ export const useAppConfig = (addLog) => {
         updateSetting,
         toggleFavorite,
         isApplyingMode,
+        runApplyingRules,
         handleSaveProxy,
         handleBulkSaveProxies,
         showProtocolModal,
