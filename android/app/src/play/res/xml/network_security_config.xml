@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Дистрибутив Play: никаких исключений в доверии сертификатам.
+
+     В full-сборке здесь есть точечное исключение для example.com — оно нужно
+     самопроверке доверия к корневому CA браузерного ad-block. В этой сборке
+     ad-block отсутствует и в Kotlin, и в .so, значит и проверять нечего.
+     Ресурс оставлен, а не удалён: манифест лежит в src/main и ссылается на
+     него в обоих флейворах. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

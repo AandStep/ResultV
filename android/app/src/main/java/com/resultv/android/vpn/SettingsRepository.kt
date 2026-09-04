@@ -115,7 +115,12 @@ object SettingsRepository {
             dnsCustom = prefs.getString(K_DNS_CUSTOM, "") ?: "",
             killSwitch = prefs.getBoolean(K_KILL_SWITCH, false),
             adblock = prefs.getBoolean(K_ADBLOCK, false),
-            browserAdBlock = prefs.getBoolean(K_BROWSER_ADBLOCK, false),
+            // В Play-сборке функции нет ни в Kotlin, ни в .so. Сохранённое
+            // значение может прийти из full-сборки при установке поверх, и
+            // включённый флаг заставил бы ResultVpnService дёргать биндинг,
+            // который здесь возвращает ошибку.
+            browserAdBlock = com.resultv.android.BuildConfig.BROWSER_ADBLOCK &&
+                prefs.getBoolean(K_BROWSER_ADBLOCK, false),
             certTrustState = runCatching {
                 CertTrustState.valueOf(prefs.getString(K_CERT_TRUST_STATE, CertTrustState.UNKNOWN.name)!!)
             }.getOrDefault(CertTrustState.UNKNOWN),

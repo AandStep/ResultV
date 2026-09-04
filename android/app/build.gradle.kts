@@ -37,6 +37,24 @@ android {
         versionCode = (project.findProperty("versionCode") as String?)?.toInt() ?: 10101
     }
 
+    // Дистрибутивы. play — сборка для Google Play, без браузерного ad-block
+    // (MITM); full — для раздачи с сайта, со всем. Разрез идёт по обоим слоям:
+    // в Go тег no_mitm выкидывает internal/filter из линковки и даёт отдельный
+    // AAR, в Kotlin реализации живут в src/full, а в src/play лежат заглушки.
+    // Одного разреза в Kotlin мало: ревью Google смотрит на содержимое бинаря,
+    // а не на то, что из него вызывается.
+    flavorDimensions += "dist"
+    productFlavors {
+        create("full") {
+            dimension = "dist"
+            buildConfigField("boolean", "BROWSER_ADBLOCK", "true")
+        }
+        create("play") {
+            dimension = "dist"
+            buildConfigField("boolean", "BROWSER_ADBLOCK", "false")
+        }
+    }
+
     if (hasReleaseKeystore) {
         signingConfigs {
             create("release") {
@@ -137,7 +155,11 @@ android {
 }
 
 dependencies {
-    implementation(files("$rootDir/libs/libbox.aar"))
+    // По AAR на дистрибутив: play-вариант собран с тегом no_mitm и не содержит
+    // ни генерации корневого CA, ни перехвата TLS. Собираются скриптом
+    // scripts/build-android-aar.sh с DIST=full / DIST=play.
+    "fullImplementation"(files("$rootDir/libs/libbox-full.aar"))
+    "playImplementation"(files("$rootDir/libs/libbox-play.aar"))
 
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")

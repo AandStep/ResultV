@@ -408,7 +408,10 @@ private fun AppShell(
         LogsScreen(onBack = { showLogs = false })
     }
 
-    if (showCertWizard) {
+    // Мастер сертификата — часть браузерного ad-block, которого в Play-сборке
+    // нет. Флаг здесь, а не только на кнопке, чтобы восстановленное состояние
+    // (rememberSaveable) не открыло экран-заглушку после смены дистрибутива.
+    if (com.resultv.android.BuildConfig.BROWSER_ADBLOCK && showCertWizard) {
         BackHandler { showCertWizard = false }
         CertWizardScreen(dataDir = dataDir, onClose = { showCertWizard = false })
     }

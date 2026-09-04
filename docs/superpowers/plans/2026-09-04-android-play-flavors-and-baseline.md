@@ -488,15 +488,22 @@ Run: `cd android && ./gradlew testFullDebugUnitTest testPlayDebugUnitTest`
 
 - [ ] **Step 7: Проверить APK — критерий приёмки**
 
+Искать **не** имена классов: `CertWizardScreen`, `CertStore` и прочие есть в обоих флейворах — в play это заглушки с теми же именами, и их присутствие ничего не доказывает. Проверяемы только строки, которых у заглушек нет: `AndroidCAStore` (обращение к системному хранилищу CA), `resultv-ca.crt` (имя файла экспорта) и `gomitmproxy`.
+
 ```bash
-cd android
-unzip -p app/build/outputs/apk/play/debug/app-play-debug.apk classes*.dex > /tmp/play.dex 2>/dev/null || true
+SC=/tmp/apkcheck; rm -rf "$SC"
 for v in full play; do
-  echo -n "$v: упоминаний CertWizard/gomitmproxy в APK: "
-  unzip -p "app/build/outputs/apk/$v/debug/app-$v-debug.apk" '*' 2>/dev/null | strings | grep -ciE 'gomitmproxy|CertWizardScreen'
+  mkdir -p "$SC/$v"
+  unzip -o -j "android/app/build/outputs/apk/$v/debug/app-$v-debug.apk" 'lib/*/libgojni.so' -d "$SC/$v" >/dev/null
+  unzip -o    "android/app/build/outputs/apk/$v/debug/app-$v-debug.apk" 'classes*.dex'      -d "$SC/$v" >/dev/null
+  echo -n "$v: "
+  for m in AndroidCAStore resultv-ca.crt gomitmproxy; do
+    printf "%s=%s  " "$m" "$(cat "$SC/$v"/classes*.dex "$SC/$v"/libgojni.so 2>/dev/null | grep -ac "$m")"
+  done
+  echo
 done
 ```
-Expected: у `play` — 0, у `full` — ненулевое.
+Expected: у `play` все три **0**, у `full` — ненулевые.
 
 - [ ] **Step 8: Коммит**
 

@@ -295,7 +295,11 @@ private fun AdBlockGroup(settings: com.resultv.android.vpn.SettingsState, onOpen
             if (it) AdBlockRepository.refreshAsync()
         },
     )
-    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+    // В Play-сборке функции нет ни в Kotlin (src/play — заглушки), ни в .so
+    // (тег no_mitm), поэтому переключателя тоже быть не должно.
+    if (com.resultv.android.BuildConfig.BROWSER_ADBLOCK &&
+        android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
+    ) {
         HorizontalDivider(color = Brand.SurfaceHigh)
         BrowserAdBlockRow(settings, onOpenCertWizard)
     }
