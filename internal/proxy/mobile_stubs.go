@@ -33,3 +33,8 @@ func resultProxyDataDir() string {
 // connectivity feedback through the OS itself, so the desktop's
 // post-start HTTP probe is unnecessary.
 var tunnelProbeDomains = []string{}
+
+// defaultUTLSFingerprint is "chrome" on mobile: there is no Edge WebView2 to
+// match against, and chrome is the safest mainstream fingerprint that still
+// passes Reality's masquerade check.
+func defaultUTLSFingerprint() string { return "chrome" }

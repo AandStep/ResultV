@@ -26,7 +26,7 @@ func awgExtra(am map[string]interface{}) map[string]interface{} {
 //
 // Length clipping does not help here: the payload needs only a few bytes.
 func TestAmneziaValidationRejectsLineBreakInjection(t *testing.T) {
-	slots := append([]string{"i1", "i2", "i3", "i4", "i5"}, awg3DeviceKnobs...)
+	slots := append([]string{"i1", "i2", "i3", "i4", "i5"}, awg3Keys...)
 	for _, slot := range slots {
 		t.Run(slot, func(t *testing.T) {
 			err := validateAmneziaOptions(awgExtra(map[string]interface{}{

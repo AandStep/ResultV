@@ -211,11 +211,30 @@ type SBOutbound struct {
 
 	DomainStrategy string `json:"domain_strategy,omitempty"`
 
+	// Shadowsocks SIP003 plugin.
+	Plugin        string `json:"plugin,omitempty"`
+	PluginOptions string `json:"plugin_opts,omitempty"`
+	// Строка VLESS Encryption — раньше терялась молча.
+	Encryption string `json:"encryption,omitempty"`
+	// Hysteria2 port hopping.
+	ServerPorts []string     `json:"server_ports,omitempty"`
+	HopInterval string       `json:"hop_interval,omitempty"`
+	Multiplex   *SBMultiplex `json:"multiplex,omitempty"`
+
 	// urltest/selector group fields (mobile kill-switch only; omitempty keeps
 	// every existing outbound's JSON byte-identical).
 	Outbounds []string `json:"outbounds,omitempty"`
 	URL       string   `json:"url,omitempty"`
 	Interval  string   `json:"interval,omitempty"`
+}
+
+type SBMultiplex struct {
+	Enabled        bool   `json:"enabled,omitempty"`
+	Protocol       string `json:"protocol,omitempty"`
+	MaxConnections int    `json:"max_connections,omitempty"`
+	MinStreams     int    `json:"min_streams,omitempty"`
+	MaxStreams     int    `json:"max_streams,omitempty"`
+	Padding        bool   `json:"padding,omitempty"`
 }
 
 type SBHysteria2Obfs struct {
@@ -339,6 +358,51 @@ type SBOutboundTransport struct {
 	ScMinPostsIntervalMs json.RawMessage `json:"sc_min_posts_interval_ms,omitempty"`
 	ScStreamUpServerSecs json.RawMessage `json:"sc_stream_up_server_secs,omitempty"`
 	Xmux                 json.RawMessage `json:"xmux,omitempty"`
+
+	// xhttp padding obfuscation (sing-box-extended >= 1.13.x-extended-2.x).
+	// With x_padding_obfs_mode off the core hardcodes the classic
+	// Referer/x_padding pair; with it on, the padding carrier (cookie /
+	// header / query / queryInHeader), its key/header name and the filler
+	// alphabet come from the node config and must match the server side.
+	// Everything is omitempty: a node that says nothing about padding obfs
+	// produces exactly the same JSON as before.
+	XPaddingObfsMode  *bool  `json:"x_padding_obfs_mode,omitempty"`
+	XPaddingKey       string `json:"x_padding_key,omitempty"`
+	XPaddingHeader    string `json:"x_padding_header,omitempty"`
+	XPaddingPlacement string `json:"x_padding_placement,omitempty"`
+	XPaddingMethod    string `json:"x_padding_method,omitempty"`
+
+	// The rest of the xhttp obfuscation profile (sing-box-extended). These decide
+	// where the session id, the sequence number and the uplink payload ride, so a
+	// server running an obfs profile only matches when the client mirrors it.
+	// session/seq placement: path|cookie|header|query. uplink_data_placement:
+	// auto|body always, cookie|header only in packet-up mode — the core validates
+	// all of them while decoding the config.
+	SessionPlacement     string          `json:"session_placement,omitempty"`
+	SessionKey           string          `json:"session_key,omitempty"`
+	SeqPlacement         string          `json:"seq_placement,omitempty"`
+	SeqKey               string          `json:"seq_key,omitempty"`
+	UplinkDataPlacement  string          `json:"uplink_data_placement,omitempty"`
+	UplinkDataKey        string          `json:"uplink_data_key,omitempty"`
+	SessionIDTable       string          `json:"session_id_table,omitempty"`
+	SessionIDLength      json.RawMessage `json:"session_id_length,omitempty"`
+	UplinkChunkSize      json.RawMessage `json:"uplink_chunk_size,omitempty"`
+	CongestionController string          `json:"congestion_controller,omitempty"`
+	CWND                 int             `json:"cwnd,omitempty"`
+	ScMaxBufferedPosts   int64           `json:"sc_max_buffered_posts,omitempty"`
+
+	// mKCP (type "mkcp" in sing-box, "kcp" in Xray links). UDP-based, no TLS
+	// framing involved — an unmapped network used to fall through to raw TCP,
+	// which cannot talk to a mKCP server at all.
+	MTU              int    `json:"mtu,omitempty"`
+	TTI              int    `json:"tti,omitempty"`
+	UplinkCapacity   int    `json:"uplink_capacity,omitempty"`
+	DownlinkCapacity int    `json:"downlink_capacity,omitempty"`
+	Congestion       bool   `json:"congestion,omitempty"`
+	ReadBufferSize   int    `json:"read_buffer_size,omitempty"`
+	WriteBufferSize  int    `json:"write_buffer_size,omitempty"`
+	HeaderType       string `json:"header_type,omitempty"`
+	Seed             string `json:"seed,omitempty"`
 }
 
 type SBRoute struct {

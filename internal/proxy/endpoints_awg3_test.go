@@ -77,7 +77,7 @@ func TestBuiltConfigCarriesAWG3Knobs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	for _, key := range awg3DeviceKnobs {
+	for _, key := range awg3Keys {
 		if !strings.Contains(string(raw), `"`+key+`"`) {
 			t.Errorf("config lost %q — the tunnel would fall back to AWG 2.0:\n%s", key, raw)
 		}

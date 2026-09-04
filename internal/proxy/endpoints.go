@@ -276,7 +276,7 @@ func amneziaRangeString(v interface{}) string {
 	return s
 }
 
-// awg3DeviceKnobs are the AmneziaWG 3.0 device-level knobs, in the order the
+// awg3Keys are the AmneziaWG 3.0 device-level knobs, in the order the
 // user-facing ordering, and the order they are written to the IPC string.
 //
 // Supported end to end since sing-box-extended v1.13.16-extended-2.6.1: the
@@ -285,7 +285,7 @@ func amneziaRangeString(v interface{}) string {
 // transport/wireguard/endpoint.go to write them. Before 2.6.1 the fork had them
 // but the core could not express them, so they reached the handshake probe —
 // which builds its own UAPI — but never the tunnel.
-var awg3DeviceKnobs = []string{
+var awg3Keys = []string{
 	"header_protection_key",
 	"content_padding_addition",
 	"rekey_after_time",
@@ -417,4 +417,17 @@ func normalizeAmnezia(am *SBWireGuardAmnezia) {
 	am.I3 = clip(am.I3)
 	am.I4 = clip(am.I4)
 	am.I5 = clip(am.I5)
+}
+
+// normalizeAWGKey folds the spellings providers use for the same knob:
+// "HeaderProtectionKey" (amneziawg .conf style), "header_protection_key"
+// (JSON subscriptions) and "header-protection-key" all collapse to one form.
+func normalizeAWGKey(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(s)) {
+		if r != '_' && r != '-' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }

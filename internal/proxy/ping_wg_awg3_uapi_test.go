@@ -170,7 +170,7 @@ func TestBuildWGUAPIKeepsAWG3KnobsInTheDeviceBlock(t *testing.T) {
 	if peerAt < 0 {
 		t.Fatalf("no peer block in:\n%s", uapi)
 	}
-	for _, key := range awg3DeviceKnobs {
+	for _, key := range awg3Keys {
 		at := strings.Index(uapi, key+"=")
 		if at < 0 {
 			t.Errorf("%s never reached the UAPI string:\n%s", key, uapi)

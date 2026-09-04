@@ -78,14 +78,14 @@ func validateAmneziaOptions(extra map[string]interface{}) error {
 	// arbitrary WireGuard device keys — including ones we deliberately refuse
 	// to emit, like j1 — so reject them outright. Clipping the length does not
 	// help: the injection needs only a few bytes.
-	slots := append([]string{"i1", "i2", "i3", "i4", "i5"}, awg3DeviceKnobs...)
+	slots := append([]string{"i1", "i2", "i3", "i4", "i5"}, awg3Keys...)
 	for _, slot := range slots {
 		if strings.ContainsAny(stringFromExtraValue(m[slot]), "\r\n") {
 			return fmt.Errorf("amneziawg %s must not contain line breaks", slot)
 		}
 	}
 
-	for _, name := range awg3DeviceKnobs {
+	for _, name := range awg3Keys {
 		value := strings.TrimSpace(stringFromExtraValue(m[name]))
 		if value == "" || value == "0" {
 			continue

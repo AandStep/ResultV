@@ -236,7 +236,7 @@ func buildWGUAPI(entry config.ProxyEntry) (uapi string, endpoint string, err err
 //
 // This builder speaks to wireguard-go directly rather than through sing-box's
 // option struct, so it is the one path that can carry the full AmneziaWG 3.0
-// knob set — see awg3DeviceKnobs for why the tunnel cannot. A probe against a
+// knob set — see awg3Keys for why the tunnel cannot. A probe against a
 // server that requires header protection only completes if we send them.
 func writeAmneziaUAPI(b *strings.Builder, extra map[string]any) {
 	amRaw, ok := extra["amnezia"].(map[string]any)
@@ -285,7 +285,7 @@ func writeAmneziaUAPI(b *strings.Builder, extra map[string]any) {
 			fmt.Fprintf(b, "header_protection_key=%s\n", h)
 		}
 	}
-	for _, k := range awg3DeviceKnobs {
+	for _, k := range awg3Keys {
 		if k == "header_protection_key" {
 			continue
 		}
