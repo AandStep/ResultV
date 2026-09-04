@@ -103,8 +103,10 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {
         CategoryHeader("Безопасность")
         SettingsCard {
             SubcategoryRow(SettingsSubcategory.Security) { activeSheet = SettingsSubcategory.Security }
-            HorizontalDivider(color = Brand.SurfaceHigh)
-            SubcategoryRow(SettingsSubcategory.AdBlock) { activeSheet = SettingsSubcategory.AdBlock }
+            if (com.resultv.android.BuildConfig.DNS_ADBLOCK) {
+                HorizontalDivider(color = Brand.SurfaceHigh)
+                SubcategoryRow(SettingsSubcategory.AdBlock) { activeSheet = SettingsSubcategory.AdBlock }
+            }
         }
 
         CategoryHeader("Приложение")

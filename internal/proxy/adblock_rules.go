@@ -5,10 +5,11 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
+//go:build !no_adblock
+
 package proxy
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -16,8 +17,6 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-
-	"github.com/sagernet/sing-box/common/srs"
 )
 
 // Ad-blocking is implemented as pure sing-box routing: DNS + route `reject`
@@ -39,6 +38,13 @@ const (
 // urls are tried in order until one yields a valid SRS — the jsDelivr CDN
 // mirror is a fallback for when raw.githubusercontent.com is blocked/down in
 // Russia (a frequent cause of "ads appear intermittently").
+// adBlockSupported is the compile-time switch the engine checks alongside
+// cfg.AdBlock. It is false in the no_adblock build (adblock_stub.go), which
+// lets the compiler drop the whole DNS-filtering branch rather than leaving it
+// to run against empty lists — a reject rule with no matchers matches every
+// connection, so "empty data" would not be a safe way to disable this.
+const adBlockSupported = true
+
 type adBlockRuleSetSource struct {
 	tag      string
 	fileName string
@@ -114,19 +120,6 @@ func availableAdBlockRuleSetTags(dataDir string) []string {
 		}
 	}
 	return tags
-}
-
-// validateSRS parses data with sing-box's own rule-set reader — the exact code
-// path the engine uses at load time. A nil return therefore guarantees sing-box
-// will accept the file. It catches the field failure mode a bare size check
-// cannot: a truncated download whose zlib stream fails its checksum on read
-// ("restore cached rule-set: read rule[0] zlib invalid checksum"), which
-// otherwise bricks ad-block startup.
-func validateSRS(data []byte) error {
-	if _, err := srs.Read(bytes.NewReader(data), false); err != nil {
-		return fmt.Errorf("invalid SRS: %w", err)
-	}
-	return nil
 }
 
 // localAdBlockSRSUsable reports whether the cached SRS at path can be referenced

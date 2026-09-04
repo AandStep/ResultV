@@ -81,10 +81,19 @@ git-команды, запущенные из этой папки, отвеча�
 **Решение:** два product flavor.
 
 - `play` — без `browserAdBlock` (MITM, `internal/filter`, `CertWizardScreen`,
-  `CertInstaller`, `CertSelfTest`, `FilterProxyWatchdog`). DNS-adblock
-  (`SettingsState.adblock`) остаётся, но переупаковывается: выключен по
-  умолчанию, без предзагруженного включённого рекламного списка, формулировки
-  про трекеры и вредоносные домены.
+  `CertInstaller`, `CertSelfTest`, `FilterProxyWatchdog`) и **без DNS-adblock**.
+
+  Первоначально решение было мягче: DNS-фильтрацию оставить, но переупаковать —
+  выключенной по умолчанию и с формулировками про трекеры. **Пересмотрено
+  2026-09-04 при исполнении задачи 8.** Причина: сборка грузит
+  `adblock_reject.srs` и `geosite-category-ads-all.srs`, а `extra_ads.go` и
+  `youtube_ads.go` зашивают рекламные домены (в том числе YouTube) прямо в
+  бинарь и подключены в `engine.go` без всякого тега. Переименование интерфейса
+  поверх этого — не переупаковка, а расхождение описания с поведением, которое
+  проверяется распаковкой .so за минуту. Поэтому DNS-фильтрация вырезана из
+  play целиком: тег `no_adblock` + `internal/proxy/adblock_stub.go`, флаг
+  `BuildConfig.DNS_ADBLOCK` в Kotlin. Формулировки про трекеры не понадобились —
+  описывать в магазинной сборке стало нечего.
 - `full` — для раздачи с сайта, без изменений.
 
 Разрез ложится на существующий код: `adblock` и `browserAdBlock` уже два
@@ -446,7 +455,10 @@ launcher-активити после этого станут невидимы �
 `SettingsRepository` и `BuildOptions`, `BrowserAdBlockRow` из
 `SettingsScreen.kt:305`, а также `network_security_config.xml` (его единственная
 причина существования — self-test доверия к MITM CA) и `BrowserAdBlockSocksPort`
-из `mobile/libbox.go`. Переформулировать DNS-adblock и выключить по умолчанию.
+из `mobile/libbox.go`. DNS-adblock вырезан из play целиком (см. раздел 2):
+тег `no_adblock` убирает списки и домены из .so, `BuildConfig.DNS_ADBLOCK`
+убирает раздел из настроек и глушит сохранённый флаг, приехавший из
+full-сборки.
 
 ### 4.5 Декларации в Play Console
 

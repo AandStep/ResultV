@@ -703,7 +703,7 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		// blocking them makes the OS mark the VPN as "no internet".
 		// YouTube / video CDN / ad-delivery hosts must resolve even when ad lists
 		// flag them — route rules pick proxy vs direct.
-		if cfg.AdBlock {
+		if cfg.AdBlock && adBlockSupported {
 			if tag := firstUpstreamDNSTag(servers); tag != "" {
 				dns.Rules = append(dns.Rules, SBDNSRule{
 					Domain: adBlockConnectivityBypassDomains,
@@ -946,7 +946,7 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	// Ad-block rule-sets (binary SRS): cached-local if present, else remote
 	// (sing-box downloads them via the direct outbound). Referenced by tag from
 	// the reject rules below and in buildDNS.
-	if cfg.AdBlock {
+	if cfg.AdBlock && adBlockSupported {
 		route.RuleSet = append(route.RuleSet, buildAdBlockRuleSets(effectiveDataDir(cfg))...)
 	}
 
@@ -1014,7 +1014,7 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	// MUST come after sniff so the rule_set domain matcher sees the host.
 	// Android captive-portal / Private-DNS hosts bypass the reject list so the
 	// OS doesn't flag the VPN as offline (see adBlockConnectivityBypassDomains).
-	if cfg.AdBlock {
+	if cfg.AdBlock && adBlockSupported {
 		// Video CDN is often in ad SRS lists; pin to proxy before reject.
 		rules = append(rules, SBRouteRule{
 			Domain:       youTubeCoreDomains,

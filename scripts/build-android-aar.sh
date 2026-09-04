@@ -94,18 +94,21 @@ if [[ "${1:-}" == "--with-naive" ]]; then
     echo "⚠️  Including with_naive_outbound — requires compatible NDK/cronet-go"
 fi
 
-# Distribution: `full` ships everything, `play` drops the browser ad-block
-# (MITM). The no_mitm tag swaps mobile/libbox_filter.go for its stub, which
-# takes internal/filter — the CA generation and TLS interception — out of the
-# linked .so entirely. Google Play reviews what the binary contains, not what
-# Kotlin calls, so gating this in Kotlin alone would not be enough.
+# Distribution: `full` ships everything, `play` drops both filtering features.
+# no_mitm swaps mobile/libbox_filter.go for its stub, which takes
+# internal/filter — the CA generation and TLS interception — out of the linked
+# .so entirely. no_adblock does the same for DNS filtering: adblock_rules.go,
+# extra_ads.go and youtube_ads.go leave the build and adblock_stub.go stands in,
+# so the store binary carries no ad or tracker lists and no ad-delivery domains.
+# Google Play reviews what the binary contains, not what Kotlin calls, so gating
+# either of these in Kotlin alone would not be enough.
 DIST="${DIST:-full}"
 case "${DIST}" in
     full)
         OUTPUT="${REPO_ROOT}/android/libs/libbox-full.aar"
         ;;
     play)
-        TAGS="${TAGS},no_mitm"
+        TAGS="${TAGS},no_mitm,no_adblock"
         OUTPUT="${REPO_ROOT}/android/libs/libbox-play.aar"
         ;;
     *)

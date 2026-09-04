@@ -177,12 +177,17 @@ func TestUserRuleOrder(t *testing.T) {
 	// block/route decision ever gets a chance. The ad-block reject rule is
 	// the reliable anchor: it's the only rule carrying rule_set, since it
 	// references the SRS rule-set tags rather than inline domains.
-	ruleSet := indexOfRuleSet(rules)
-	if ruleSet < 0 {
-		t.Fatal("no rule_set rule emitted despite AdBlock: true")
-	}
-	if !(block < ruleSet && route < ruleSet) {
-		t.Fatalf("want block < ruleSet and route < ruleSet, got block=%d route=%d ruleSet=%d", block, route, ruleSet)
+	// no_adblock (the `play` distribution) compiles the ad-block branch out,
+	// so there is no rule_set rule to anchor on and nothing to order against.
+	// The sniff/block/route and port-853 invariants below still hold there.
+	if adBlockCompiledIn {
+		ruleSet := indexOfRuleSet(rules)
+		if ruleSet < 0 {
+			t.Fatal("no rule_set rule emitted despite AdBlock: true")
+		}
+		if !(block < ruleSet && route < ruleSet) {
+			t.Fatalf("want block < ruleSet and route < ruleSet, got block=%d route=%d ruleSet=%d", block, route, ruleSet)
+		}
 	}
 	// The port-853 DoT reject must keep firing before an into-VPN rule could
 	// send port 853 to the proxy and re-introduce the 5s stall it prevents.

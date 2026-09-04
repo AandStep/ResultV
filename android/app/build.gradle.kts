@@ -48,10 +48,15 @@ android {
         create("full") {
             dimension = "dist"
             buildConfigField("boolean", "BROWSER_ADBLOCK", "true")
+            buildConfigField("boolean", "DNS_ADBLOCK", "true")
         }
         create("play") {
             dimension = "dist"
             buildConfigField("boolean", "BROWSER_ADBLOCK", "false")
+            // DNS-фильтрация целиком отсутствует в магазинной сборке: тег
+            // no_adblock убирает списки и домены из .so (см. adblock_stub.go),
+            // а этот флаг убирает то, что от неё оставалось в Kotlin.
+            buildConfigField("boolean", "DNS_ADBLOCK", "false")
         }
     }
 

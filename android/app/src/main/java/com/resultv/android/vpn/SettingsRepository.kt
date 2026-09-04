@@ -114,7 +114,11 @@ object SettingsRepository {
             dnsPreset = prefs.getString(K_DNS_PRESET, "Cloudflare") ?: "Cloudflare",
             dnsCustom = prefs.getString(K_DNS_CUSTOM, "") ?: "",
             killSwitch = prefs.getBoolean(K_KILL_SWITCH, false),
-            adblock = prefs.getBoolean(K_ADBLOCK, false),
+            // Как и browserAdBlock ниже: в Play-сборке фильтрации нет ни в
+            // Kotlin, ни в .so, а сохранённое true может приехать из
+            // full-сборки, поставленной поверх.
+            adblock = com.resultv.android.BuildConfig.DNS_ADBLOCK &&
+                prefs.getBoolean(K_ADBLOCK, false),
             // В Play-сборке функции нет ни в Kotlin, ни в .so. Сохранённое
             // значение может прийти из full-сборки при установке поверх, и
             // включённый флаг заставил бы ResultVpnService дёргать биндинг,
