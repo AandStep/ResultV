@@ -8,6 +8,7 @@
 package proxy
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -206,5 +207,38 @@ func TestRedactionCoversOurOwnUAPIString(t *testing.T) {
 	}
 	if !strings.Contains(got, "public_key="+hexkey(0x02)) {
 		t.Errorf("public_key should stay visible:\n%s", got)
+	}
+}
+
+// Ошибка старта движка — отдельный от лога путь: она возвращается наверх и на
+// Android оказывается сразу в logcat, в VpnStatus.Error и в AppLog, который
+// пользователь выгружает в поддержку. Маскировка singBoxLogWriter его не
+// закрывает, поэтому Start редактирует текст сам.
+func TestStartErrorRedactsWireGuardKeys(t *testing.T) {
+	const priv = "e8bd3f19a0c74d2b5f6a1c8e93b47d05a2f6c1e84b9d70f3a5c2e6b18d4f90a7"
+	const hdr = "7b1e4c9a2f6d80b3e5a7c14f9d2b6e08a3f5c7d19b4e60a2c8f3d5b7e9a1c04f"
+	// Ровно та форма, в которой ядро отдаёт отказ IpcSet.
+	raw := errors.New("start outbound/wireguard[proxy]: setup wireguard: \n" +
+		"private_key=" + priv + "\n" +
+		"header_protection_key=" + hdr + "\n" +
+		"jc=8\npublic_key=deadbeef\nendpoint=203.0.113.7:51820\n")
+
+	got := wrapStartError(raw).Error()
+
+	if strings.Contains(got, priv) {
+		t.Error("private_key утёк в текст ошибки старта")
+	}
+	if strings.Contains(got, hdr) {
+		t.Error("header_protection_key утёк в текст ошибки старта")
+	}
+	// Диагностику ломать нельзя: без публичного ключа и адреса ошибка
+	// перестаёт быть полезной.
+	for _, keep := range []string{"public_key=deadbeef", "203.0.113.7:51820", "jc=8"} {
+		if !strings.Contains(got, keep) {
+			t.Errorf("из ошибки пропало %q — она стала недиагностируемой", keep)
+		}
+	}
+	if wrapStartError(nil) != nil {
+		t.Error("wrapStartError(nil) должна возвращать nil")
 	}
 }

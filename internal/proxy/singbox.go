@@ -143,6 +143,25 @@ var ansiEscapeRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 // leaves the dump diagnosable.
 var engineSecretRE = regexp.MustCompile(`(?i)\b(private_key|pre_shared_key|preshared_key|header_protection_key)=\S*`)
 
+// wrapStartError redacts the engine's own start error before it leaves the
+// package.
+//
+// When IpcSet rejects a WireGuard config, sing-box-extended reports the failure
+// by returning the entire UAPI dump as the error text — private_key included.
+// That error travels up to the caller, and on Android it lands in three places
+// at once: logcat, VpnStatus.Error on screen, and AppLog — the journal users
+// export into support tickets. The redaction in singBoxLogWriter does not cover
+// this path: the error never goes through the log writer.
+//
+// Kept as a named function so the seam is testable; Start has exactly one
+// failure return and it goes through here.
+func wrapStartError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("starting sing-box: %s", redactEngineSecrets(err.Error()))
+}
+
 func redactEngineSecrets(msg string) string {
 	if !strings.Contains(msg, "_key=") {
 		return msg
@@ -362,7 +381,7 @@ func (e *SingBoxEngine) Start(ctx context.Context, cfg EngineConfig) error {
 
 	if err := instance.Start(); err != nil {
 		cancel()
-		return fmt.Errorf("starting sing-box: %w", err)
+		return wrapStartError(err)
 	}
 	e.instance = instance
 	e.cancel = cancel
