@@ -2,14 +2,43 @@ package mobile
 
 import (
 	"encoding/json"
+	"fmt"
+	"path/filepath"
 	"testing"
+
+	"resultproxy-wails/internal/proxy"
 )
 
 const rulesTestURI = "vless://11111111-1111-1111-1111-111111111111@1.2.3.4:443?security=tls&type=tcp#rules"
 
+// seedAdBlockSRS кладёт в dataDir валидные SRS ad-block списков.
+//
+// buildAdBlockRuleSets ссылается только на SRS, который лежит на диске И
+// разбирается парсером sing-box (adblock_rules.go:88, 137) — иначе битый
+// rule_set уронил бы старт движка. Пустой t.TempDir() поэтому даёт конфиг
+// вообще без rule_set, и проверка порядка правил теряет свой якорь.
+//
+// 200 доменов дают ~1.4 КБ, минимум minLocalSRSBytes — 512 байт.
+func seedAdBlockSRS(t *testing.T, dataDir string) {
+	t.Helper()
+	domains := make([]string, 0, 200)
+	for i := 0; i < 200; i++ {
+		domains = append(domains, fmt.Sprintf("ad-%d-tracker-%d.example%d.com", i, i*7919, i%97))
+	}
+	for _, name := range []string{"ads.srs", "ads-ru.srs"} {
+		if err := proxy.CompileSmartSRS(domains, filepath.Join(dataDir, "adblock", name)); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+}
+
 func buildRules(t *testing.T, opts BuildOptions) []map[string]any {
 	t.Helper()
-	out, err := BuildSingBoxConfigV2(rulesTestURI, t.TempDir(), encodeOptions(opts))
+	dir := t.TempDir()
+	if opts.AdBlock {
+		seedAdBlockSRS(t, dir)
+	}
+	out, err := BuildSingBoxConfigV2(rulesTestURI, dir, encodeOptions(opts))
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
