@@ -1,0 +1,212 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * SettingsPage — Figma "ResultV" -> App Design, фрейм Settings (6628:3208).
+ *
+ * Окно 1000x740, слева сайдбар 74. Содержимое — колонка с отступом 32 по
+ * краям и зазором 32 между заголовком и телом:
+ *
+ *   Header    862x61
+ *   тело      862, внутри зазор 18:
+ *     карточки 862x118, между ними 16
+ *     панель   862x200, отступ 24, скругление 32, внутри зазор 24:
+ *              заголовок с подписью 51, ряд из двух кнопок 75
+ *
+ * Уже в покое тело выше окна (738 против 583), поэтому страница
+ * прокручивается — как страницы серверов и умных правил.
+ *
+ * Карточка — кнопка: она уводит на страницу своего пункта. Справа у неё в
+ * макете пусто, и добавлять там нечего — значок внешней ссылки, который у
+ * SettingsItem есть, означает «открывает окно».
+ */
+
+.rv-settings-page {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  background: var(--rv-black);
+  font-family: var(--rv-font-family);
+}
+
+.rv-settings-page > .rv-sidebar {
+  flex-shrink: 0;
+}
+
+.rv-settings-page__content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  padding: var(--rv-space-page);
+  /* Место под полосу прокрутки уже занято `scrollbar-gutter`, поэтому правый
+     отступ на её ширину меньше — вместе они дают 32 из макета. */
+  padding-right: calc(var(--rv-space-page) - var(--rv-scrollbar-width));
+  gap: var(--rv-space-page);
+}
+
+.rv-settings-page__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-1);
+}
+
+.rv-settings-page__groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-2);
+}
+
+.rv-settings-page__groups > .rv-settings-item {
+  cursor: pointer;
+  font-family: var(--rv-font-family);
+}
+
+/*
+ * Страница пункта: шапка со стрелкой возврата и одна панель со строками.
+ * Такой страницы в макете нет — панель повторяет блок экспорта и карточки
+ * умных правил: заливка Grey, скругление 32, отступ 24, зазор 24.
+ */
+.rv-settings-page__panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-24);
+  padding: var(--rv-space-24);
+  border-radius: var(--rv-radius-32);
+  background: var(--rv-grey);
+}
+
+/* --- Строка настройки ----------------------------------------------------
+ *
+ * Строк настроек в макете нет. Раскладка взята у карточки пункта — название
+ * с пояснением слева, элемент справа, — а типографика на ступень ниже:
+ * 16 Bold вместо 20, чтобы строка не спорила с названием страницы.
+ */
+
+.rv-settings-page__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--rv-space-24);
+}
+
+/* Ряд кнопок и поле ввода занимают всю ширину — справа от текста им не
+   встать, поэтому они уходят под него, как поля в окне настроек подписки. */
+.rv-settings-page__row[data-stacked] {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--rv-space-nest-2);
+}
+
+.rv-settings-page__row-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-3);
+  min-width: 0;
+}
+
+.rv-settings-page__row-title {
+  margin: 0;
+  font-size: var(--rv-btn-size);
+  font-weight: var(--rv-btn-weight);
+  line-height: var(--rv-btn-leading);
+  color: var(--rv-white);
+}
+
+.rv-settings-page__row-desc {
+  margin: 0;
+  font-size: var(--rv-chip-size);
+  font-weight: var(--rv-chip-weight);
+  line-height: var(--rv-chip-leading);
+  color: var(--rv-white-a50);
+}
+
+.rv-settings-page__row-control {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.rv-settings-page__row[data-stacked] .rv-settings-page__row-control {
+  flex-direction: column;
+  gap: var(--rv-space-nest-2);
+}
+
+/* Ряд кнопок выносится за отступ панели и гаснет у её края — заливка у
+   растяжки та же, что у панели. */
+.rv-settings-page__row .rv-scroll-row {
+  width: 100%;
+}
+
+/* Порт — число до пяти знаков, полю во всю ширину панели там делать
+   нечего. */
+.rv-settings-page__port {
+  width: 200px;
+}
+
+/* Адрес для клиентов: подпись под полем, набранная как пояснение строки. */
+.rv-settings-page__hint {
+  margin: 0;
+  font-size: var(--rv-chip-size);
+  font-weight: var(--rv-chip-weight);
+  line-height: var(--rv-chip-leading);
+  color: var(--rv-white-a50);
+  overflow-wrap: anywhere;
+}
+
+/* --- Экспорт и импорт ---------------------------------------------------- */
+
+.rv-settings-page__export {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-24);
+  padding: var(--rv-space-24);
+  border-radius: var(--rv-radius-32);
+  background: var(--rv-grey);
+}
+
+.rv-settings-page__export-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-3);
+}
+
+.rv-settings-page__export-title {
+  margin: 0;
+  font-size: var(--rv-title-size);
+  font-weight: var(--rv-title-weight);
+  line-height: var(--rv-title-leading);
+  color: var(--rv-white);
+}
+
+.rv-settings-page__export-desc {
+  margin: 0;
+  font-size: var(--rv-chip-size);
+  font-weight: var(--rv-chip-weight);
+  line-height: var(--rv-chip-leading);
+  color: var(--rv-white-a50);
+}
+
+/* Кнопки делят ширину панели поровну — в макете обе по 398 при зазоре 16. */
+.rv-settings-page__export-actions {
+  display: flex;
+  gap: var(--rv-space-nest-2);
+}
+
+.rv-settings-page__export-actions > .rv-btn {
+  flex: 1;
+  min-width: 0;
+}

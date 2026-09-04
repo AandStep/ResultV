@@ -128,6 +128,54 @@ export namespace config {
 	        this.autoGroup = source["autoGroup"];
 	    }
 	}
+	export class RoutingProfile {
+	    id: string;
+	    name: string;
+	    directSites?: string[];
+	    directIp?: string[];
+	    proxySites?: string[];
+	    proxyIp?: string[];
+	    blockSites?: string[];
+	    blockIp?: string[];
+	    routeOrder?: string;
+	    domainStrategy?: string;
+	    geoipUrl?: string;
+	    geositeUrl?: string;
+	    listUrls?: Record<string, Array<string>>;
+	    allowInsecure?: boolean;
+	    source?: string;
+	    subscriptionId?: string;
+	    originName?: string;
+	    updatedAt?: number;
+	    lastError?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RoutingProfile(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.directSites = source["directSites"];
+	        this.directIp = source["directIp"];
+	        this.proxySites = source["proxySites"];
+	        this.proxyIp = source["proxyIp"];
+	        this.blockSites = source["blockSites"];
+	        this.blockIp = source["blockIp"];
+	        this.routeOrder = source["routeOrder"];
+	        this.domainStrategy = source["domainStrategy"];
+	        this.geoipUrl = source["geoipUrl"];
+	        this.geositeUrl = source["geositeUrl"];
+	        this.listUrls = source["listUrls"];
+	        this.allowInsecure = source["allowInsecure"];
+	        this.source = source["source"];
+	        this.subscriptionId = source["subscriptionId"];
+	        this.originName = source["originName"];
+	        this.updatedAt = source["updatedAt"];
+	        this.lastError = source["lastError"];
+	    }
+	}
 	export class RoutingList {
 	    id: string;
 	    name: string;
@@ -167,6 +215,8 @@ export namespace config {
 	    appForceVPN: string[];
 	    customBlockedDomains: string[];
 	    routingLists: RoutingList[];
+	    routingProfiles: RoutingProfile[];
+	    activeRoutingProfileId: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new RoutingRules(source);
@@ -180,6 +230,8 @@ export namespace config {
 	        this.appForceVPN = source["appForceVPN"];
 	        this.customBlockedDomains = source["customBlockedDomains"];
 	        this.routingLists = this.convertValues(source["routingLists"], RoutingList);
+	        this.routingProfiles = this.convertValues(source["routingProfiles"], RoutingProfile);
+	        this.activeRoutingProfileId = source["activeRoutingProfileId"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -236,6 +288,7 @@ export namespace config {
 		    return a;
 		}
 	}
+	
 	
 	
 	

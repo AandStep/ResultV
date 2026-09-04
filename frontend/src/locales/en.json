@@ -2,7 +2,7 @@
   "sidebar": {
     "offline": "Daemon Offline",
     "home": "Home",
-    "buy": "impVPN Servers",
+    "buy": "Buy Servers",
     "add": "Add Proxy",
     "list": "Server List",
     "rules": "Smart Rules",
@@ -185,25 +185,29 @@
     "awgMaxHandshakes": "Max handshake attempts"
   },
   "settings": {
-    "title": "Application Settings",
+    "title": "Settings",
     "desc": "Manage security and system options",
     "back": "Back to settings",
     "groups": {
       "advanced": {
         "title": "Advanced settings",
-        "desc": "Startup, TUN, and traffic filtering options."
+        "desc": "Startup, TUN, and traffic filtering options.",
+        "items": "• TUN mode  • Launch at system startup"
       },
       "subscriptions": {
         "title": "Subscriptions",
-        "desc": "Auto refresh and the data sent to subscription providers."
+        "desc": "Auto refresh and the data sent to subscription providers.",
+        "items": "• Updates • HWID  • UA"
       },
       "security": {
         "title": "Security",
-        "desc": "Connection protection for failures and DNS leaks."
+        "desc": "Connection protection for failures and DNS leaks.",
+        "items": "• KillSwitch  • DNS leak protection"
       },
       "network": {
         "title": "Network",
-        "desc": "DNS, local access, and proxy port."
+        "desc": "DNS, local access, and proxy port.",
+        "items": "• DNS  • IPv6 • Local network"
       }
     },
     "tun_stack": {
@@ -235,7 +239,8 @@
     },
     "subscription_interval": {
       "title": "Refresh interval",
-      "desc": "How often to refresh subscriptions, in hours."
+      "desc": "How often to refresh subscriptions, in hours.",
+      "hours": "{{hours}} h"
     },
     "subscription_hwid": {
       "title": "Send HWID",
@@ -274,8 +279,8 @@
       "desc": "On: better speed and compatibility for YouTube/Google. Off: compatibility mode for networks where QUIC is unstable."
     },
     "export_import": {
-      "title": "Export / Import Configurations",
-      "desc": "Save config to a secure file. It will be encrypted with your personal password.",
+      "title": "Export / import configurations",
+      "desc": "Save all app settings and servers to move them to another device.",
       "export_btn": "Export",
       "import_btn": "Import"
     },
@@ -296,6 +301,12 @@
       "read_error": "File read error!",
       "decrypt_success": "Secure configuration successfully decrypted and applied!",
       "decrypt_error": "Error: Incorrect password or damaged file."
+    },
+    "language": {
+      "title": "Interface language",
+      "desc": "Language of the app's labels.",
+      "ru": "Русский",
+      "en": "English"
     }
   },
   "routingProfiles": {
@@ -504,7 +515,7 @@
   },
   "logs": {
     "title": "Event Logs",
-    "desc": "System logs and connection information",
+    "desc": "System logs and connection information. If you found a bug, the logs will help us fix it.",
     "empty": "No logs available",
     "clear_btn": "Clear",
     "save_btn": "Save to file",
@@ -539,16 +550,11 @@
     }
   },
   "buy": {
-    "title": "impVPN Servers",
-    "desc": "Reliable IPv4 and IPv6 proxies for any tasks from our partners",
-    "vpn_section_title": "impVPN Servers",
-    "vpn_section_desc": "impVPN — Just making the internet freer🛸",
-    "proxy_section_title": "Buy Proxies",
-    "proxy_section_desc": "Reliable IPv4 and IPv6 proxies for any tasks from our partners",
+    "title": "Buy Servers",
+    "subtitle": "Here you can get the best subscriptions from our partners with a bonus for our promo code.",
     "imp_vpn": {
-      "discount": "20% off from impVPN",
-      "discount_desc": "Open the Telegram bot via the link below, enter the promo code and get a 20% top-up bonus on the best VPN servers",
-      "promo_title": "20% Promo Code"
+      "discount": "20% top-up bonus from impVPN",
+      "discount_desc": "Open the Telegram bot or the website via the links below, enter the promo code result and get a bonus on your balance top-up"
     },
     "proxy_seller": {
       "discount": "Discount from Proxy-Seller",

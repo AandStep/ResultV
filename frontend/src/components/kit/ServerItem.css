@@ -295,9 +295,13 @@
   animation: rv-blink 1.6s var(--rv-ease) infinite;
 }
 
-/* У обновления сверх мигания крутится сама иконка — это его собственный жест. */
+/*
+ * У обновления сверх мигания крутится сама иконка — это его собственный жест.
+ * Крутится против часовой: стрелки значка нарисованы в эту сторону, и по
+ * часовой он ехал против собственного рисунка.
+ */
 .rv-server-item__icon-btn[data-action="sync"][data-busy] .rv-icon {
-  animation: rv-spin 1.1s linear infinite;
+  animation: rv-spin 1.1s linear infinite reverse;
 }
 
 /*

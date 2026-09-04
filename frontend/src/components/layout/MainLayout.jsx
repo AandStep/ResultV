@@ -81,6 +81,9 @@ export const MainLayout = ({ children }) => {
     activeTab === "home" ||
     activeTab === "list" ||
     activeTab === "rules" ||
+    activeTab === "buy" ||
+    activeTab === "logs" ||
+    activeTab === "settings" ||
     (activeTab === "add" && !editingProxy);
 
   if (redesigned) {

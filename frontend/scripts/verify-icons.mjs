@@ -71,6 +71,7 @@ let failed = 0;
 let checked = 0;
 const skipped = [];
 const pending = [];
+const absent = [];
 
 for (const [name, lib] of Object.entries(LIB)) {
   const fig = FIG[name];
@@ -79,6 +80,12 @@ for (const [name, lib] of Object.entries(LIB)) {
     // (`npm run find:icon`). Это долг, а не расхождение.
     if (lib.reference === 'pending') {
       pending.push(name);
+      continue;
+    }
+    // Иконки, которых в макете нет вовсе: они заведены под то, чего дизайнер
+    // не рисовал (см. docs/design/GAPS.md). Эталона у них не будет.
+    if (lib.reference === 'absent') {
+      absent.push(name);
       continue;
     }
     console.error(`  ${name}: нет эталона в icons.figma.js`);
@@ -110,4 +117,5 @@ for (const [name, lib] of Object.entries(LIB)) {
 console.log(`\nсверено путей: ${checked}, расхождений: ${failed}, порог ${TOLERANCE} px (сетка 24)`);
 if (skipped.length) console.log(`взято прямо из макета, сверять не с чем: ${skipped.join(', ')}`);
 if (pending.length) console.log(`эталон из макета ещё не снят: ${pending.join(', ')}`);
+if (absent.length) console.log(`в макете нет вовсе: ${absent.join(', ')}`);
 process.exit(failed ? 1 : 0);

@@ -1732,3 +1732,94 @@ func TestBuildRoute_GlobalMode_KeepsQUIC(t *testing.T) {
 		t.Fatalf("global mode must not reject udp:443, rule=%+v", route.Rules[i])
 	}
 }
+
+// isBareQUICBackstop reports whether r is the unconditional Smart-mode UDP/443
+// reject: no domain, rule-set, process or address selector of any kind.
+func isBareQUICBackstop(r SBRouteRule) bool {
+	if r.Action != "reject" || len(r.Network) != 1 || r.Network[0] != "udp" ||
+		len(r.Port) != 1 || r.Port[0] != 443 {
+		return false
+	}
+	return len(r.RuleSet) == 0 && len(r.DomainSuffix) == 0 && len(r.Domain) == 0 &&
+		len(r.ProcessPathRegex) == 0 && len(r.IPCidr) == 0 && len(r.Inbound) == 0
+}
+
+// Captured on a live Smart session (2026-09-02): HTTP/3 to claude.ai and six
+// other Anthropic hosts left the machine direct, from the real address, while
+// the same hosts over TCP went through the node — even though all seven are in
+// the block-list. Replaying the captured client Initials through sing-box's own
+// QUIC sniffer reproduces the cause: Chrome's ClientHello spans several Initial
+// datagrams, and by the second one the DCID is the server's, so the sniffer's
+// per-packet key derivation fails the AEAD check and gives up with a hard
+// error. No domain means no rule-set match, and Smart's Final="direct" then
+// lets the flow out. The backstop has to fire on traffic carrying no
+// classification at all, so it must carry no selector itself.
+func TestBuildRoute_SmartMode_UnclassifiedQUICRejected(t *testing.T) {
+	cfg := EngineConfig{
+		Mode:           ProxyModeTunnel,
+		RoutingMode:    ModeSmart,
+		Proxy:          ProxyConfig{Type: "hysteria2", IP: "1.2.3.4", Port: 443},
+		BlockedDomains: []string{"claude.ai"},
+		Whitelist:      []string{"example.org"},
+	}
+	route := buildRoute(cfg)
+	if route.Final != "direct" {
+		t.Fatalf("Final = %q, want direct", route.Final)
+	}
+	last := route.Rules[len(route.Rules)-1]
+	if !isBareQUICBackstop(last) {
+		t.Fatalf("last Smart rule must be the unconditional udp/443 reject, got %+v", last)
+	}
+	// Every classifying rule has to be evaluated first, or the backstop would
+	// swallow QUIC the user's own rules meant to keep.
+	for i, r := range route.Rules[:len(route.Rules)-1] {
+		if isBareQUICBackstop(r) {
+			t.Fatalf("backstop duplicated at index %d, it must appear once and last", i)
+		}
+	}
+}
+
+// Global/whitelist mode routes the unclassified case to the proxy via
+// Final="proxy", so there is nothing to back up — and rejecting there would
+// break QUIC that the tunnel is willing to carry.
+func TestBuildRoute_GlobalMode_NoQUICBackstop(t *testing.T) {
+	cfg := EngineConfig{
+		Mode:        ProxyModeTunnel,
+		RoutingMode: ModeWhitelist,
+		Proxy:       ProxyConfig{Type: "hysteria2", IP: "1.2.3.4", Port: 443},
+		Whitelist:   []string{"example.org"},
+	}
+	for _, r := range buildRoute(cfg).Rules {
+		if isBareQUICBackstop(r) {
+			t.Fatalf("unconditional udp/443 reject must not be emitted outside Smart mode")
+		}
+	}
+}
+
+// An app the user excluded from the tunnel keeps its own routing decision, and
+// that decision is terminal — the backstop must never reach it.
+func TestBuildRoute_SmartMode_BackstopAfterAppWhitelist(t *testing.T) {
+	cfg := EngineConfig{
+		Mode:         ProxyModeTunnel,
+		RoutingMode:  ModeSmart,
+		Proxy:        ProxyConfig{Type: "hysteria2", IP: "1.2.3.4", Port: 443},
+		AppWhitelist: []string{"game.exe"},
+	}
+	rules := buildRoute(cfg).Rules
+	appIdx := -1
+	for i, r := range rules {
+		if len(r.ProcessPathRegex) == 1 && strings.Contains(r.ProcessPathRegex[0], "game") {
+			appIdx = i
+			break
+		}
+	}
+	if appIdx < 0 {
+		t.Fatal("app-whitelist rule missing")
+	}
+	if !isBareQUICBackstop(rules[len(rules)-1]) {
+		t.Fatal("backstop missing")
+	}
+	if appIdx >= len(rules)-1 {
+		t.Fatalf("app-whitelist rule at %d must precede the backstop at %d", appIdx, len(rules)-1)
+	}
+}

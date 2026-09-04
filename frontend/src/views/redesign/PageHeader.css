@@ -24,9 +24,19 @@
 
 .rv-page-header {
   display: flex;
-  flex-direction: column;
-  gap: var(--rv-space-nest-3);
+  align-items: flex-start;
+  gap: var(--rv-space-16);
   width: 100%;
+}
+
+/* Название с подписью. Отдельной колонкой, потому что слева от них бывает
+   стрелка возврата — подпись должна равняться по названию, а не по ней. */
+.rv-page-header__text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  gap: var(--rv-space-nest-3);
 }
 
 /*
@@ -43,7 +53,7 @@
   width: 100%;
 }
 
-.rv-page-header[data-actions="true"] {
+.rv-page-header[data-actions="true"] .rv-page-header__text {
   gap: var(--rv-space-4);
 }
 
@@ -70,6 +80,26 @@
 }
 
 .rv-page-header__btn:hover {
+  color: var(--rv-icon-hover);
+}
+
+/* Стрелка возврата встаёт по середине строки названия (38 — её высота), а не
+   по её верхнему краю: так она читается как часть заголовка. */
+.rv-page-header__back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  height: 38px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--rv-icon-default);
+  cursor: pointer;
+  transition: color var(--rv-transition);
+}
+
+.rv-page-header__back:hover {
   color: var(--rv-icon-hover);
 }
 

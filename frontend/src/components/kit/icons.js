@@ -37,6 +37,7 @@
 import {
   mdiAlertCircleOutline,
   mdiArrowDecision,
+  mdiArrowLeft,
   mdiBrain,
   mdiCallSplit,
   mdiCart,
@@ -46,6 +47,7 @@ import {
   mdiClose,
   mdiCog,
   mdiContentCopy,
+  mdiContentSave,
   mdiEarth,
   mdiSync,
   mdiPencil,
@@ -231,6 +233,18 @@ export const ICONS = {
     states: ['default'],
   },
   /*
+   * Во фрейме Icons этой иконки тоже нет, и в макете её негде взять: страниц
+   * внутри пунктов настроек не нарисовано, а возвращаться с них надо.
+   * См. docs/design/GAPS.md.
+   */
+  back: {
+    path: mdiArrowLeft,
+    size: 24,
+    states: ['default', 'hover'],
+    // Сверять не с чем: в макете этой иконки нет вовсе.
+    reference: 'absent',
+  },
+  /*
    * Во фрейме Icons этой иконки нет — она встречается внутри SettingsItem
    * (слой «mdi:external-link», белый 50 %). Заведена здесь, чтобы компонент
    * не рисовал свой SVG. См. docs/design/GAPS.md I-6.
@@ -288,6 +302,18 @@ export const ICONS = {
     path: mdiCreation,
     size: 24,
     states: ['default'],
+  },
+  /*
+   * Сохранение журнала в файл — слой «mdi:floppy-disc» в шапке страницы
+   * логов (6618:4194). Во фрейме Icons его тоже нет, поэтому и сырого
+   * экспорта в icons.figma.js нет: соответствие доказано `find:icon`
+   * (mdiContentSave, 0.0002). См. GAPS.md I-6.
+   */
+  save: {
+    path: mdiContentSave,
+    size: 24,
+    states: ['default'],
+    reference: 'pending',
   },
   /*
    * Иконки окон: щит у «Добавления серверов», кружок с восклицательным знаком

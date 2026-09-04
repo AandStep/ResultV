@@ -23,9 +23,9 @@ import SmartRulesScreen from "./views/redesign/SmartRulesScreen";
 import { AddProxyView } from "./views/AddProxyView";
 import AddScreen from "./views/redesign/AddScreen";
 import ServersScreen from "./views/redesign/ServersScreen";
-import { BuyProxyView } from "./views/BuyProxyView";
-import { LogsView } from "./views/LogsView";
-import { SettingsView } from "./views/SettingsView";
+import BuyScreen from "./views/redesign/BuyScreen";
+import LogsScreen from "./views/redesign/LogsScreen";
+import SettingsScreen from "./views/redesign/SettingsScreen";
 import { formatBytes, formatSpeed } from "./utils/formatters";
 import { useConfigContext } from "./context/ConfigContext";
 import wailsAPI from "./utils/wailsAPI";
@@ -147,9 +147,9 @@ const AppContent = () => {
                 идёт по старой форме — её в макете нет. */}
             {activeTab === "add" &&
                 (editingProxy ? <AddProxyView /> : <AddScreen />)}
-            {activeTab === "buy" && <BuyProxyView />}
-            {activeTab === "logs" && <LogsView />}
-            {activeTab === "settings" && <SettingsView />}
+            {activeTab === "buy" && <BuyScreen />}
+            {activeTab === "logs" && <LogsScreen />}
+            {activeTab === "settings" && <SettingsScreen />}
 
             <ChangelogModal changelog={changelog} onClose={dismissChangelog} />
 

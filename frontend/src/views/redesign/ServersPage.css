@@ -101,7 +101,10 @@
 .rv-servers-page__search-input {
   flex: 1;
   min-width: 0;
-  padding: 0;
+  /* Отступ — только под каретку, наружу он не выходит: отрицательное поле
+     той же ширины возвращает текст на место. См. --rv-caret-room. */
+  padding: 0 var(--rv-caret-room);
+  margin: 0 calc(-1 * var(--rv-caret-room));
   border: 0;
   background: none;
 

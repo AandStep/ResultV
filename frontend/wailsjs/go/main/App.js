@@ -6,6 +6,10 @@ export function AckChangelog() {
   return window['go']['main']['App']['AckChangelog']();
 }
 
+export function ActiveRoutingProfile() {
+  return window['go']['main']['App']['ActiveRoutingProfile']();
+}
+
 export function AddRoutingList(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['AddRoutingList'](arg1, arg2, arg3, arg4);
 }
@@ -26,6 +30,10 @@ export function CancelUpdate() {
   return window['go']['main']['App']['CancelUpdate']();
 }
 
+export function CompileRoutingProfile(arg1, arg2) {
+  return window['go']['main']['App']['CompileRoutingProfile'](arg1, arg2);
+}
+
 export function Connect(arg1, arg2, arg3) {
   return window['go']['main']['App']['Connect'](arg1, arg2, arg3);
 }
@@ -40,6 +48,10 @@ export function DecodeDeepLink(arg1) {
 
 export function DeleteRoutingList(arg1) {
   return window['go']['main']['App']['DeleteRoutingList'](arg1);
+}
+
+export function DeleteRoutingProfile(arg1) {
+  return window['go']['main']['App']['DeleteRoutingProfile'](arg1);
 }
 
 export function DeleteSubscription(arg1) {
@@ -102,6 +114,10 @@ export function GetPlatform() {
   return window['go']['main']['App']['GetPlatform']();
 }
 
+export function GetRoutingProfiles() {
+  return window['go']['main']['App']['GetRoutingProfiles']();
+}
+
 export function GetStatus() {
   return window['go']['main']['App']['GetStatus']();
 }
@@ -122,6 +138,10 @@ export function ImportConfig(arg1, arg2, arg3) {
   return window['go']['main']['App']['ImportConfig'](arg1, arg2, arg3);
 }
 
+export function ImportRoutingDeepLink(arg1, arg2) {
+  return window['go']['main']['App']['ImportRoutingDeepLink'](arg1, arg2);
+}
+
 export function IsAdmin() {
   return window['go']['main']['App']['IsAdmin']();
 }
@@ -140,6 +160,10 @@ export function PickAppForWhitelist() {
 
 export function PingProxy(arg1, arg2, arg3) {
   return window['go']['main']['App']['PingProxy'](arg1, arg2, arg3);
+}
+
+export function PreviewRoutingDeepLink(arg1) {
+  return window['go']['main']['App']['PreviewRoutingDeepLink'](arg1);
 }
 
 export function QueueDeepLink(arg1) {
@@ -172,6 +196,14 @@ export function RestartAsAdmin() {
 
 export function SaveConfig(arg1) {
   return window['go']['main']['App']['SaveConfig'](arg1);
+}
+
+export function SaveRoutingProfile(arg1) {
+  return window['go']['main']['App']['SaveRoutingProfile'](arg1);
+}
+
+export function SetActiveRoutingProfile(arg1) {
+  return window['go']['main']['App']['SetActiveRoutingProfile'](arg1);
 }
 
 export function SetAutostart(arg1) {

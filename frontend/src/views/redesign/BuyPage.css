@@ -1,0 +1,157 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * BuyPage — Figma "ResultV" -> App Design, фрейм BuyServers (6613:3136).
+ *
+ * Раскладка:
+ *
+ *   Header    862x61   название, под ним строка о том, что здесь покупают
+ *   карточка  862x243  знак 96, название с описанием, ряд из трёх кнопок
+ *
+ * Отступ страницы 32, между шапкой и телом 32, внутри карточки 24. Заливка
+ * карточки Grey без обводки — проверено по рендеру макета попиксельно
+ * (верхняя грань идёт ровно #1a1a1a, светлой линии на ней нет).
+ *
+ * Здесь только раскладка карточки: кнопки — компонент кита Button.
+ */
+
+.rv-buy-page {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  background: var(--rv-black);
+  font-family: var(--rv-font-family);
+}
+
+.rv-buy-page > .rv-sidebar {
+  flex-shrink: 0;
+}
+
+.rv-buy-page__content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  padding: var(--rv-space-page);
+  /* Прокрутка общая для страниц нового дизайна, см. design/scroll.css. */
+  padding-right: calc(var(--rv-space-page) - var(--rv-scrollbar-width));
+  gap: var(--rv-space-page);
+}
+
+.rv-buy-page__content > * {
+  flex-shrink: 0;
+}
+
+/* Партнёр в макете один; шаг между карточками — обычный шаг между блоками
+   страницы. */
+.rv-buy-page__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-1);
+}
+
+/* --- Карточка партнёра --------------------------------------------------- */
+
+.rv-buy-page__card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-24);
+  padding: var(--rv-space-24);
+  border-radius: var(--rv-radius-32);
+  background: var(--rv-grey);
+}
+
+.rv-buy-page__head {
+  display: flex;
+  align-items: center;
+  gap: var(--rv-space-nest-2);
+}
+
+/*
+ * Подложка под знак партнёра. В макете слой зовётся `Flag`, но это не
+ * компонент кита: у того 68 и скругление 14, здесь 96 и 24.
+ */
+.rv-buy-page__logo {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 96px;
+  height: 96px;
+  padding: var(--rv-space-24);
+  border-radius: var(--rv-radius-24);
+  background: var(--rv-light-gray);
+  overflow: hidden;
+}
+
+.rv-buy-page__logo-img {
+  display: block;
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+}
+
+.rv-buy-page__text {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--rv-space-nest-3);
+  flex: 1;
+  min-width: 0;
+}
+
+.rv-buy-page__title {
+  margin: 0;
+  font-size: var(--rv-title-size);
+  font-weight: var(--rv-title-weight);
+  line-height: var(--rv-title-leading);
+  color: var(--rv-white);
+  overflow-wrap: break-word;
+}
+
+.rv-buy-page__desc {
+  margin: 0;
+  font-size: var(--rv-chip-size);
+  font-weight: var(--rv-chip-weight);
+  line-height: var(--rv-chip-leading);
+  color: var(--rv-white-a50);
+  overflow-wrap: break-word;
+}
+
+/* --- Кнопки -------------------------------------------------------------- */
+
+.rv-buy-page__actions {
+  display: flex;
+  gap: var(--rv-space-nest-3);
+}
+
+/*
+ * Кнопка без подписи: в макете она 74 в ширину, то есть иконка 24 плюс по 25
+ * с каждой стороны. Отступ 49 из кита раздул бы её вдвое.
+ */
+.rv-btn.rv-buy-page__icon-btn {
+  flex-shrink: 0;
+  padding: 0 25px;
+}
+
+/* Кнопка промокода занимает остаток ряда (в макете 650 из 814). */
+.rv-btn.rv-buy-page__promo {
+  flex: 1;
+  min-width: 0;
+}

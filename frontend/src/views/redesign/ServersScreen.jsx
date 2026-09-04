@@ -96,6 +96,9 @@ export default function ServersScreen() {
   const {
     activeProxy,
     isConnected,
+    isConnecting,
+    isResolving,
+    isDisconnecting,
     pings,
     refreshPings,
     isManualPinging,
@@ -182,11 +185,22 @@ export default function ServersScreen() {
     [pings, autoStatusById, t],
   );
 
+  /* Запуск идёт — те же флаги, из которых главная собирает свой жёлтый этап. */
+  const busy = isConnecting || isResolving || isDisconnecting;
+
   const toRow = useCallback(
     (p) => {
-      /* Подключённый сервер подсвечен зелёным — фрейм 6744:4162. Других
-         состояний у строки в макете нет. */
-      const current = isConnected && String(activeProxy?.id) === String(p.id);
+      /*
+       * Подключённый сервер подсвечен зелёным — фрейм 6744:4162. Пока к
+       * выбранному только идёт подключение, флаг и бейджи держат жёлтый, как
+       * шапка на главной: у авто-группы один подбор узла занимает секунды, и
+       * без этого нажатие на строку проваливалось в тишину до самого конца
+       * запуска. Подложку строки жёлтый не трогает — она в макете есть только
+       * у подключённого.
+       */
+      const target = String(activeProxy?.id) === String(p.id);
+      const current = isConnected && target;
+      const accent = !target ? "default" : busy ? "warning" : current ? "success" : "default";
       const badges = protocolBadges(p, t);
       if (udpRelay[p.id] === false) {
         badges.push({
@@ -205,7 +219,7 @@ export default function ServersScreen() {
         pingBusy: isPingPending(p),
         favorite: favorites.has(String(p.id)),
         active: current,
-        accent: current ? "success" : "default",
+        accent,
         onFavorite: () => toggleFavorite(p.id),
         onSelect: () => selectAndConnect(p),
       };
@@ -216,6 +230,7 @@ export default function ServersScreen() {
       isPingPending,
       favorites,
       isConnected,
+      busy,
       activeProxy,
       toggleFavorite,
       selectAndConnect,

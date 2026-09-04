@@ -1,0 +1,149 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * LogsPage — Figma "ResultV" -> App Design, фрейм Logs (6618:4063).
+ *
+ * Раскладка:
+ *
+ *   Header  862x61   название, под ним строка о том, зачем журнал нужен,
+ *                    справа кнопки «сохранить» и «очистить»
+ *   панель  862x583  строки лога, во всю оставшуюся высоту
+ *
+ * Отступ страницы 32, между шапкой и панелью 32, внутри панели 24 и шаг 16.
+ * Обводка панели — общая градиентная: замер по рендеру макета даёт белый
+ * ~10 % у левого края и ~5,7 % у правого (48/43/39 при фоне 26), то есть ту
+ * же горизонталь, что у сайдбара и карточек.
+ *
+ * Строки набраны стилем Regular, а не моноширинным: в макете это обычный
+ * Segoe UI.
+ */
+
+.rv-logs-page {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  background: var(--rv-black);
+  font-family: var(--rv-font-family);
+}
+
+.rv-logs-page > .rv-sidebar {
+  flex-shrink: 0;
+}
+
+/*
+ * Страница целиком не прокручивается: панель занимает остаток высоты, а
+ * едут строки внутри неё.
+ */
+.rv-logs-page__content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--rv-space-page);
+  gap: var(--rv-space-page);
+}
+
+/* --- Панель -------------------------------------------------------------- */
+
+/*
+ * Прокрутка живёт на вложенном списке, а не на самой панели. Обводка — это
+ * два слоя `position: absolute; inset: 0` (см. design/borders.css), а такие
+ * слои внутри прокручиваемого элемента едут вместе с содержимым: панель
+ * теряла и рамку, и нижнее скругление, стоило списку прокрутиться. Панель
+ * стоит на месте, список ездит внутри неё.
+ */
+.rv-logs-page__panel {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: var(--rv-space-24);
+  /* Полоса прокрутки идёт внутри панели и съедает часть правого отступа —
+     вместе они дают те же 24 из макета. См. design/scroll.css. */
+  padding-right: calc(var(--rv-space-24) - var(--rv-scrollbar-width));
+  border-radius: var(--rv-radius-32);
+  background: var(--rv-grey);
+  /* Лог читают и копируют, поэтому здесь снят общий запрет выделения. */
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.rv-logs-page__list {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: var(--rv-space-nest-2);
+}
+
+.rv-logs-page__list > * {
+  flex-shrink: 0;
+}
+
+.rv-logs-page__empty {
+  margin: 0;
+  font-size: var(--rv-regular-size);
+  font-weight: var(--rv-regular-weight);
+  line-height: var(--rv-regular-leading);
+  color: var(--rv-white-a50);
+}
+
+/* --- Строка -------------------------------------------------------------- */
+
+/*
+ * Линия под строкой есть и у последней — так в макете (Line 1..3 идут после
+ * каждой из трёх строк). Отступ до неё и шаг между строками одинаковые, 16.
+ */
+.rv-logs-page__row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--rv-space-nest-2);
+  padding-bottom: var(--rv-space-nest-2);
+  border-bottom: 1px solid var(--rv-white-a10);
+  font-size: var(--rv-regular-size);
+  font-weight: var(--rv-regular-weight);
+  line-height: var(--rv-regular-leading);
+}
+
+.rv-logs-page__time {
+  flex-shrink: 0;
+  color: var(--rv-white-a20);
+}
+
+.rv-logs-page__msg {
+  margin: 0;
+  min-width: 0;
+  flex: 1;
+  color: var(--rv-white);
+  overflow-wrap: anywhere;
+}
+
+/* Источник идёт тем же приглушённым цветом, что и время. */
+.rv-logs-page__source {
+  color: var(--rv-white-a20);
+}
+
+/*
+ * Цвет по важности записи. В макете нарисованы только обычные строки, но
+ * журнал различает их и до редизайна: цвета взяты из палитры. См. GAPS.md.
+ */
+.rv-logs-page__msg[data-type="error"] { color: var(--rv-errors); }
+.rv-logs-page__msg[data-type="success"] { color: var(--rv-main-color); }
+.rv-logs-page__msg[data-type="warning"] { color: var(--rv-warning); }

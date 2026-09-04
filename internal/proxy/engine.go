@@ -1529,6 +1529,44 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		}
 	}
 
+	// Smart-mode QUIC backstop. Everything above classifies UDP/443 by the
+	// sniffed SNI; this catches what the sniffer could not name, which in Smart
+	// mode would otherwise fall through to Final="direct" and leave the tunnel.
+	//
+	// That is not hypothetical. Captured on the user's Ethernet adapter
+	// (2026-09-02) while Smart was connected: HTTP/3 flows to claude.ai,
+	// a-api.anthropic.com, a-cdn.anthropic.com, www.anthropic.com,
+	// assets.claude.ai, a.claude.ai and claude.com all left direct, from the
+	// real address, while the same hosts over TCP went through the node. All
+	// seven are in the block-list, so the rules above should have caught them.
+	// Replaying the captured client Initials through sing-box's own sniffer
+	// shows why they did not:
+	//
+	//	packet 1  DCID 528f6c7b…  -> "need more data: length check 2 failed"
+	//	packet 2  DCID 01063525…  -> "cipher: message authentication failed"
+	//
+	// Chrome's ClientHello spans more than one Initial datagram. The first is
+	// forwarded while the sniffer waits for the rest; the server answers it and
+	// hands the client its own connection ID, so the client's next Initial
+	// carries the SERVER's DCID. sing-box re-derives the Initial keys from each
+	// packet's own DCID, but RFC 9000 keys the whole Initial space off the
+	// ORIGINAL one — so the AEAD check fails. That is a hard error rather than
+	// ErrNeedMoreData, so the sniff loop gives up and the connection is routed
+	// with no domain at all.
+	//
+	// Rejecting here rather than routing to "proxy" for the same reason the
+	// per-domain rule above rejects: UDP through the node is unreliable, and a
+	// rejected QUIC attempt makes the client fall back to TCP at once, where
+	// the domain rules do work. Placed last on purpose — every earlier rule,
+	// including the user's own app exclusions and whitelist, still wins, so
+	// this only ever fires on traffic that had no classification to lose. The
+	// cost is HTTP/3 for direct destinations, which drop to TCP; Global mode
+	// already loses h3 the same way (Final="proxy" sends it into the node's
+	// dead UDP path), so this only brings Smart in line.
+	if cfg.RoutingMode == ModeSmart {
+		rules = append(rules, quicRejectRule(SBRouteRule{}))
+	}
+
 	route.Rules = rules
 	return route
 }

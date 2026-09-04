@@ -30,17 +30,27 @@
  * последних кнопок не добраться.
  */
 
-import { Children, useEffect, useRef, useState } from "react";
+import { Children, useLayoutEffect, useRef, useState } from "react";
 import "./ScrollRow.css";
 
 export default function ScrollRow({ children, className = "", ...rest }) {
   const ref = useRef(null);
-  const [edges, setEdges] = useState({ start: true, end: true });
+  /*
+   * `null` — ряд ещё не мерили, и растяжек в разметке нет вовсе.
+   *
+   * Начинать со спрятанных нельзя: измерить ряд можно только по готовой
+   * разметке, и первый же замер зажигал бы правую растяжку — вход на
+   * страницу каждый раз показывал её плавное появление на ровном месте.
+   * Растяжка же не событие, она просто край ряда. Замер идёт до отрисовки
+   * (`useLayoutEffect`), а только что вставленному элементу переход
+   * анимировать не от чего — он появляется сразу таким, какой нужен.
+   */
+  const [edges, setEdges] = useState(null);
   /* Сами дети — новый массив на каждую отрисовку; пересобирать по ним
      слушатели незачем, меняется только их число. */
   const count = Children.count(children);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return undefined;
 
@@ -77,11 +87,15 @@ export default function ScrollRow({ children, className = "", ...rest }) {
       <div className="rv-scroll-row__track" ref={ref}>
         {children}
       </div>
-      <div
-        className="rv-scroll-row__fade rv-scroll-row__fade--start"
-        data-hidden={edges.start || undefined}
-      />
-      <div className="rv-scroll-row__fade" data-hidden={edges.end || undefined} />
+      {edges && (
+        <>
+          <div
+            className="rv-scroll-row__fade rv-scroll-row__fade--start"
+            data-hidden={edges.start || undefined}
+          />
+          <div className="rv-scroll-row__fade" data-hidden={edges.end || undefined} />
+        </>
+      )}
     </div>
   );
 }
