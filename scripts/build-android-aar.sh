@@ -26,7 +26,6 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUTPUT="${REPO_ROOT}/android/libs/libbox.aar"
 
 # --- Auto-detect toolchain paths when not already exported -------------------
 # macOS ships /usr/bin/javac as a stub that prompts to install Java; gomobile
@@ -94,6 +93,27 @@ if [[ "${1:-}" == "--with-naive" ]]; then
     TAGS="${TAGS},with_naive_outbound"
     echo "⚠️  Including with_naive_outbound — requires compatible NDK/cronet-go"
 fi
+
+# Distribution: `full` ships everything, `play` drops the browser ad-block
+# (MITM). The no_mitm tag swaps mobile/libbox_filter.go for its stub, which
+# takes internal/filter — the CA generation and TLS interception — out of the
+# linked .so entirely. Google Play reviews what the binary contains, not what
+# Kotlin calls, so gating this in Kotlin alone would not be enough.
+DIST="${DIST:-full}"
+case "${DIST}" in
+    full)
+        OUTPUT="${REPO_ROOT}/android/libs/libbox-full.aar"
+        ;;
+    play)
+        TAGS="${TAGS},no_mitm"
+        OUTPUT="${REPO_ROOT}/android/libs/libbox-play.aar"
+        ;;
+    *)
+        echo "ERROR: DIST must be 'full' or 'play', got '${DIST}'" >&2
+        exit 1
+        ;;
+esac
+echo "📦 Distribution: ${DIST}"
 
 # Build the ldflags string. -checklinkname=0 is the gomobile baseline we've
 # always needed; the -X injection is what teaches the binary to decode

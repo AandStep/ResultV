@@ -230,16 +230,19 @@ DIST=play bash scripts/build-android-aar.sh
 
 - [ ] **Step 4: Проверить, что play-сборка действительно меньше и без MITM**
 
+`strings` на машине разработки не установлен и молча даёт ноль на обоих файлах — проверять `grep -a` прямо по бинарю:
+
 ```bash
 ls -la android/libs/libbox-full.aar android/libs/libbox-play.aar
 for d in full play; do
   unzip -o -j "android/libs/libbox-$d.aar" 'jni/arm64-v8a/libgojni.so' -d "/tmp/$d" >/dev/null
-  echo -n "$d: "; ls -la "/tmp/$d/libgojni.so" | awk '{print $5}'
-  echo -n "  строк gomitmproxy в бинаре: "; strings "/tmp/$d/libgojni.so" | grep -ci gomitmproxy
+  echo -n "$d: размер=$(stat -c%s "/tmp/$d/libgojni.so")"
+  echo -n "  internal/filter=$(grep -ac 'internal/filter' "/tmp/$d/libgojni.so")"
+  echo    "  vendoredproxy=$(grep -ac 'vendoredproxy' "/tmp/$d/libgojni.so")"
 done
 ```
 
-Expected: у `play` символов `gomitmproxy` **0**, у `full` — ненулевое число; play-библиотека заметно меньше.
+Expected: у `play` оба счётчика **0**, у `full` — ненулевые; play-библиотека меньше примерно на 1.8 МБ.
 
 - [ ] **Step 5: Перепроверить выравнивание 16 КБ в обоих AAR**
 

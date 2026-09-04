@@ -47,8 +47,12 @@ INSTALL_FLAG="${2:-}"
 ABI="${ABI:-arm64-v8a}"
 
 echo
-echo "==> Step 1/2: rebuild gomobile AAR"
-bash "${REPO_ROOT}/scripts/build-android-aar.sh"
+# Distribution: DIST=full (default) or DIST=play — see scripts/build-android-aar.sh.
+# Only the requested one is rebuilt: a gomobile bind takes minutes, and building
+# the other variant nobody asked for costs that on every iteration.
+DIST="${DIST:-full}"
+echo "==> Step 1/2: rebuild gomobile AAR (dist=${DIST})"
+DIST="${DIST}" bash "${REPO_ROOT}/scripts/build-android-aar.sh"
 
 echo
 echo "==> Step 2/2: gradle assemble (${VARIANT})"
