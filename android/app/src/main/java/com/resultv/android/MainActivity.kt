@@ -2,10 +2,12 @@ package com.resultv.android
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.net.VpnService
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -143,7 +145,19 @@ class MainActivity : ComponentActivity() {
         // Edge-to-edge: app draws behind status + nav bars; Scaffold's TopAppBar
         // and NavigationBar consume the window-inset paddings so content above
         // the gesture nav stays tappable.
-        enableEdgeToEdge()
+        //
+        // Both bars are pinned to the dark style instead of the default auto(),
+        // which follows the *system* light/dark setting. This UI is dark at all
+        // times (Brand.Bg), so on a phone in light mode auto() picked dark icons
+        // — an unreadable clock over our near-black background — and painted the
+        // three-button nav bar white. Until targetSdk 35 the splash theme's
+        // statusBarColor/navigationBarColor hid that; API 35 ignores both, so
+        // the styles have to say it here. TRANSPARENT scrims keep the bars
+        // showing app content rather than a tinted band.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+        )
         ProfileRepository.init(applicationContext)
         com.resultv.android.vpn.SubscriptionRepository.init(applicationContext)
         AppRoutingRepository.init(applicationContext)

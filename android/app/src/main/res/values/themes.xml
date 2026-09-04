@@ -8,8 +8,13 @@
          the moment Compose takes over. -->
     <style name="Theme.ResultV.Splash" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@drawable/splash_background</item>
-        <item name="android:statusBarColor">#FF060608</item>
-        <item name="android:navigationBarColor">#FF060608</item>
+        <!-- statusBarColor / navigationBarColor are deliberately absent: API 35
+             made edge-to-edge mandatory and ignores both, so setting them would
+             only mislead. Transparent bars let splash_background (#FF060608 with
+             the logo) show through the bar areas on every API level, which is
+             what 35+ does anyway. -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
     </style>
 </resources>

@@ -22,12 +22,12 @@ val hasReleaseKeystore = keystoreProps.containsKey("storeFile")
 
 android {
     namespace = "com.resultv.android"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.resultv.android"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 36
         // Version is injected from the android-v* release tag via
         // -PversionName / -PversionCode (see release-android.yml). The
         // fallbacks keep local/dev builds working without any -P flags.
