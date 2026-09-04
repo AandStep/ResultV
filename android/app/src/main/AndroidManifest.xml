@@ -1,16 +1,42 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Required to enumerate other apps for the per-app routing picker on
-         Android 11+. VPN-per-app routing is one of the policy-approved
-         justifications for this permission. -->
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
-        tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Видимость приложений для пикера per-app маршрутизации и для
+         SmartAppMembership. Раньше здесь стоял QUERY_ALL_PACKAGES: Google
+         выдаёт его только приложениям, чья основная функция — видеть все
+         установленные приложения (поиск по устройству, антивирусы, файловые
+         менеджеры, браузеры), и требует обосновать, почему менее интрузивный
+         способ не подходит. Маршрутизация VPN по приложениям в этот перечень
+         не входит.
+
+         MAIN/LAUNCHER отдаёт приложения с иконкой — ровно те, которые
+         пользователь стал бы исключать и которые важны Smart-режиму
+         (браузеры, YouTube, соцсети). Второй фильтр нужен
+         AppInventory.browserPackages: она ищет настоящие браузеры через
+         хостless http-интент.
+
+         Проверено на эмуляторе: после смены пикер по-прежнему показывает и
+         системные пакеты без иконки (carrierconfig, cellbroadcastreceiver,
+         localtransport) — платформа помечает системные пакеты forceQueryable,
+         и они видны без всякого разрешения. То есть список сузился заметно
+         меньше, чем можно было бы предположить по одному лишь числу
+         launcher-активити. На реальном устройстве состав стоит сверить
+         отдельно: там сторонних приложений много, а на эмуляторе оно одно. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="http" />
+        </intent>
+    </queries>
 
     <application
         android:label="@string/app_name"

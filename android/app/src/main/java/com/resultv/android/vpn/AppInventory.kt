@@ -113,6 +113,12 @@ object AppInventory {
             .map { it.packageName }
             .filter { it != own }
             .toList()
+        // Видимость приложений держится на <queries> в манифесте, а не на
+        // QUERY_ALL_PACKAGES. Ошибка там проявляется не отказом, а молча
+        // укоротившимся списком: приложение, которого мы не видим, не попадёт
+        // ни в пикер исключений, ни в Smart-членство, и его трафик пойдёт
+        // мимо туннеля. Поэтому счётчик виден в логе.
+        Log.i(TAG, "visible apps: ${apps.size}")
         cachedApps = apps
         return apps
     }
