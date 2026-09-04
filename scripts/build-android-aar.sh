@@ -100,7 +100,12 @@ fi
 # RVSUB1 / resultv:// payloads. When the env var is missing we emit a warning
 # and continue — the build still works, the user just can't import encrypted
 # subscriptions (same behaviour the desktop workflow falls back to).
-LDFLAGS="-checklinkname=0"
+# -checklinkname=0 — базовая потребность gomobile. max-page-size=16384 —
+# требование Google Play с 1 ноября 2025: без него сегменты .so выходят с
+# выравниванием 4 КБ и Play блокирует релиз. NDK r28 делает это сам, r27 —
+# только по флагу. Проверяется замером program headers готового .so, а не
+# наличием флага здесь: см. docs/android-pc-sync-and-play-spec.md.
+LDFLAGS="-checklinkname=0 -extldflags=-Wl,-z,max-page-size=16384"
 if [[ -n "${SUBSCRIPTION_ENCRYPT_KEY:-}" ]]; then
     LDFLAGS="${LDFLAGS} -X resultproxy-wails/internal/proxy.subscriptionEncryptKey=${SUBSCRIPTION_ENCRYPT_KEY}"
     echo "🔐 Embedding subscription decryption key from SUBSCRIPTION_ENCRYPT_KEY"
