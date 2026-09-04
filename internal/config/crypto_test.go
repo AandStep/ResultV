@@ -16,7 +16,10 @@
 package config
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -152,6 +155,136 @@ func TestNodeJSCompatibility(t *testing.T) {
 	
 	
 	t.Skip("TODO: populate with actual Node.js encrypted output for cross-compat validation")
+}
+
+// NewCryptoService must generate an install-salt file on first use and
+// derive a key that differs from the legacy sha256(machineID+keySalt).
+// Without this, the migration to per-install salt would be silently a
+// no-op — the new key would equal the legacy key on a fresh install.
+func TestNewCryptoServiceGeneratesInstallSalt(t *testing.T) {
+	dir := t.TempDir()
+	cs, err := NewCryptoService(dir)
+	if err != nil {
+		t.Fatalf("NewCryptoService: %v", err)
+	}
+	saltPath := filepath.Join(dir, installSaltFile)
+	if _, err := os.Stat(saltPath); err != nil {
+		t.Fatalf("expected install-salt file at %s, got %v", saltPath, err)
+	}
+
+	// Derive what the legacy scheme would produce for the same machineID.
+	// We don't know the actual machineID here — NewCryptoService resolved
+	// it from OS APIs / fallback file — so reuse the legacyKey the service
+	// stored. The point: legacyKey != key, otherwise no migration value.
+	if cs.key == cs.legacyKey {
+		t.Fatal("expected key to differ from legacyKey after salt derivation")
+	}
+}
+
+// Subsequent calls must read the existing salt rather than overwriting it,
+// otherwise every restart would invalidate all previously-encrypted configs.
+func TestNewCryptoServiceReusesExistingSalt(t *testing.T) {
+	dir := t.TempDir()
+	cs1, err := NewCryptoService(dir)
+	if err != nil {
+		t.Fatalf("first NewCryptoService: %v", err)
+	}
+	cs2, err := NewCryptoService(dir)
+	if err != nil {
+		t.Fatalf("second NewCryptoService: %v", err)
+	}
+	if cs1.key != cs2.key {
+		t.Fatal("salt rotated across calls — config would be unreadable on next launch")
+	}
+}
+
+// Wiping the salt file should produce a NEW key (otherwise the salt did
+// nothing). Existing legacy-encrypted configs are still openable through
+// the legacy fallback, so this is safe.
+func TestDeletingSaltFileRotatesKey(t *testing.T) {
+	dir := t.TempDir()
+	cs1, err := NewCryptoService(dir)
+	if err != nil {
+		t.Fatalf("first NewCryptoService: %v", err)
+	}
+	if err := os.Remove(filepath.Join(dir, installSaltFile)); err != nil {
+		t.Fatalf("remove salt: %v", err)
+	}
+	cs2, err := NewCryptoService(dir)
+	if err != nil {
+		t.Fatalf("second NewCryptoService: %v", err)
+	}
+	if cs1.key == cs2.key {
+		t.Fatal("removing the salt file should have produced a different key")
+	}
+}
+
+// Configs encrypted by older builds (sha256(machineID + keySalt), no salt)
+// must still open on a build that introduced PBKDF2 + install-salt. The
+// migration is signalled via needsReencrypt.
+func TestDecryptFallsBackToLegacyKey(t *testing.T) {
+	machineID := "migration-test-machine"
+	legacyKey := sha256.Sum256([]byte(machineID + keySalt))
+
+	// Simulate an older build: encrypt under legacyKey only.
+	legacyCS := &CryptoService{key: legacyKey, legacyKey: legacyKey}
+	payload, err := legacyCS.Encrypt(map[string]string{"hello": "world"})
+	if err != nil {
+		t.Fatalf("legacy encrypt: %v", err)
+	}
+
+	// New build: different primary key, same legacyKey. Decrypt should
+	// succeed via the fallback and set the migration flag.
+	newCS := &CryptoService{
+		legacyKey: legacyKey,
+	}
+	// Construct a definitely-different primary key.
+	newCS.key = sha256.Sum256([]byte("a totally unrelated salt"))
+
+	raw, err := newCS.Decrypt(payload)
+	if err != nil {
+		t.Fatalf("expected legacy fallback to succeed, got %v", err)
+	}
+	if !newCS.NeedsReencrypt() {
+		t.Fatal("legacy fallback did not set needsReencrypt")
+	}
+	var got map[string]string
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal plaintext: %v", err)
+	}
+	if got["hello"] != "world" {
+		t.Fatalf("plaintext mismatch: %v", got)
+	}
+
+	// After ClearReencryptFlag the flag must stay cleared even though the
+	// CryptoService can still decrypt with legacy (which would otherwise
+	// re-set the flag on the next Decrypt call).
+	newCS.ClearReencryptFlag()
+	if newCS.NeedsReencrypt() {
+		t.Fatal("ClearReencryptFlag did not clear the flag")
+	}
+}
+
+// Wrong-key path: when neither current nor legacy can open the ciphertext
+// we must return an error, not silently produce garbage plaintext.
+func TestDecryptFailsWhenBothKeysWrong(t *testing.T) {
+	srcKey := sha256.Sum256([]byte("source-key"))
+	srcCS := &CryptoService{key: srcKey, legacyKey: srcKey}
+	payload, err := srcCS.Encrypt(map[string]string{"x": "y"})
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+
+	dst := &CryptoService{
+		key:       sha256.Sum256([]byte("wrong-key-1")),
+		legacyKey: sha256.Sum256([]byte("wrong-key-2")),
+	}
+	if _, err := dst.Decrypt(payload); err == nil {
+		t.Fatal("expected decryption to fail with both wrong keys")
+	}
+	if dst.NeedsReencrypt() {
+		t.Fatal("failed decrypt must not set needsReencrypt")
+	}
 }
 
 func TestEncryptProducesUniqueIVs(t *testing.T) {

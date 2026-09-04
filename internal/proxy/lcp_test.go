@@ -132,7 +132,7 @@ func TestSplitAutoEntriesMulti(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
-			groups, individuals := SplitAutoEntriesMulti(tc.entries)
+			groups, individuals, _ := SplitAutoEntries(tc.entries)
 			if len(groups) != len(tc.wantGroupNames) {
 				t.Fatalf("groups=%d, want %d", len(groups), len(tc.wantGroupNames))
 			}
@@ -148,5 +148,45 @@ func TestSplitAutoEntriesMulti(t *testing.T) {
 				t.Errorf("individuals=%d, want %d", len(individuals), tc.wantIndvCount)
 			}
 		})
+	}
+}
+
+// Структурная стратегия должна побеждать: когда провайдер объявил
+// балансировщик, флаги в именах значения не имеют.
+func TestSplitAutoEntriesPrefersDeclaredGroup(t *testing.T) {
+	entries := []config.ProxyEntry{
+		{Name: "🇳🇱 Auto NL", IP: "1.1.1.1", AutoGroup: "Pool A"},
+		{Name: "🇩🇪 Auto DE", IP: "2.2.2.1", AutoGroup: "Pool A"},
+		{Name: "Amsterdam #1", IP: "3.3.3.1"},
+	}
+	groups, individual, ok := SplitAutoEntries(entries)
+	if !ok || len(groups) != 1 {
+		t.Fatalf("groups=%d ok=%v, want 1 group", len(groups), ok)
+	}
+	if groups[0].Name != "Pool A" {
+		t.Errorf("group name = %q, want %q", groups[0].Name, "Pool A")
+	}
+	if len(groups[0].Members) != 2 {
+		t.Errorf("members=%d, want 2", len(groups[0].Members))
+	}
+	if len(individual) != 1 {
+		t.Errorf("individual=%d, want 1", len(individual))
+	}
+}
+
+// Объявленная провайдером группа из одного узла остаётся группой: провайдер
+// сказал «это авто-секция» явно, и одного члена достаточно. Эвристике по
+// именам по-прежнему нужны двое — одно имя ничего не доказывает.
+func TestSplitAutoEntriesKeepsSingleDeclaredMember(t *testing.T) {
+	entries := []config.ProxyEntry{
+		{Name: "Tokyo #1", IP: "1.1.1.1", AutoGroup: "Pool JP"},
+		{Name: "Osaka #1", IP: "2.2.2.1"},
+	}
+	groups, individual, ok := SplitAutoEntries(entries)
+	if !ok || len(groups) != 1 || len(groups[0].Members) != 1 {
+		t.Fatalf("groups=%d ok=%v, want one group of one member", len(groups), ok)
+	}
+	if len(individual) != 1 {
+		t.Errorf("individual=%d, want 1", len(individual))
 	}
 }

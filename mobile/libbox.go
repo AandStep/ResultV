@@ -560,7 +560,7 @@ func buildAutoAwareEntries(entries []config.ProxyEntry) []config.ProxyEntry {
 		return entries
 	}
 
-	groups, individuals := proxy.SplitAutoEntriesMulti(entries)
+	groups, individuals, _ := proxy.SplitAutoEntries(entries)
 	if len(groups) > 0 {
 		out := make([]config.ProxyEntry, 0, len(groups)+len(individuals))
 		for _, g := range groups {
