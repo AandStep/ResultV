@@ -170,8 +170,6 @@ func TestCompressDomainSuffixes(t *testing.T) {
 func TestDefaultPublicSourceTemplatesRU(t *testing.T) {
 	sources := defaultPublicSourceTemplates("ru")
 	wantContains := []string{
-		"citizenlab/test-lists/master/lists/global.csv",
-		"citizenlab/test-lists/master/lists/ru.csv",
 		"itdoginfo/allow-domains/main/Russia/inside-raw.lst",
 		"1andrevich/Re-filter-lists/main/domains_all.lst",
 		"1andrevich/Re-filter-lists/main/community.lst",
@@ -190,6 +188,14 @@ func TestDefaultPublicSourceTemplatesRU(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("ru sources missing %q; got %v", frag, sources)
+		}
+	}
+	// citizenlab для RU исключён намеренно: это список для ИЗМЕРЕНИЯ цензуры,
+	// он содержит ~2000 разрешённых доменов (ok.ru, vk.com, yandex.ru), и как
+	// блок-лист гнал бы их через прокси. См. blocked_provider.go:325.
+	for _, s := range sources {
+		if strings.Contains(s, "citizenlab") {
+			t.Errorf("ru sources must not contain citizenlab probe lists; got %q", s)
 		}
 	}
 	for _, s := range sources {
