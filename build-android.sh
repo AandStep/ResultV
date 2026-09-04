@@ -6,11 +6,16 @@
 #
 # Usage:
 #   На новой машине сперва: bash scripts/bootstrap.sh  (см. docs/PORTING.md)
-#   bash build-android.sh                       # debug APK (arm64-v8a)
-#   bash build-android.sh release               # release APK (requires keystore.properties)
+#   bash build-android.sh                       # debug APK, full dist (arm64-v8a)
+#   bash build-android.sh release               # release APKs per ABI, full dist
+#   DIST=play bash build-android.sh release     # release AAB for Google Play
 #   bash build-android.sh debug --install       # build + adb install on the connected device
-#   bash build-android.sh release --install     # same for release
+#   bash build-android.sh release --install     # same for release (APK dists only)
 #   ABI=armeabi-v7a bash build-android.sh       # override debug ABI
+#
+# DIST picks the distribution *and* the release format: `full` builds the
+# per-ABI APKs handed out from the site, `play` builds the App Bundle the
+# store requires. Both rebuild their own AAR first (see step 1 below).
 #
 # Env (read from .env if present, then overridden by anything already
 # exported in the current shell):
@@ -75,14 +80,38 @@ fi
 
 cd "${REPO_ROOT}/android"
 
+# Gradle task fragment for the flavour. Spelled out rather than built with
+# ${DIST^} so this keeps running on macOS's bash 3.2. Without the flavour in
+# the task name `assembleDebug` builds *both* dists and writes them under
+# apk/<dist>/debug — while this script used to look in apk/debug, which still
+# exists from before the flavours and holds a stale APK. Silently installing
+# that is worse than failing, hence the explicit task and path.
+case "${DIST}" in
+    full) FLAVOR="Full" ;;
+    play) FLAVOR="Play" ;;
+    *)
+        echo "ERROR: DIST must be 'full' or 'play', got '${DIST}'" >&2
+        exit 1
+        ;;
+esac
+
 case "${VARIANT}" in
     debug)
-        ./gradlew assembleDebug "-Pdebug.abi=${ABI}"
-        APK_DIR="app/build/outputs/apk/debug"
+        ./gradlew "assemble${FLAVOR}Debug" "-Pdebug.abi=${ABI}"
+        OUT_DIR="app/build/outputs/apk/${DIST}/debug"
         ;;
     release)
-        ./gradlew assembleRelease
-        APK_DIR="app/build/outputs/apk/release"
+        # Play accepts only an App Bundle and re-signs it with Play App
+        # Signing; the site distribution stays per-ABI APKs. The ABI splits in
+        # app/build.gradle.kts stand down for bundle* tasks, because AGP
+        # refuses to build an AAB while multi-APK is on.
+        if [[ "${DIST}" == "play" ]]; then
+            ./gradlew "bundle${FLAVOR}Release"
+            OUT_DIR="app/build/outputs/bundle/${DIST}Release"
+        else
+            ./gradlew "assemble${FLAVOR}Release"
+            OUT_DIR="app/build/outputs/apk/${DIST}/release"
+        fi
         ;;
     *)
         echo "ERROR: unknown variant '${VARIANT}' (expected: debug | release)" >&2
@@ -92,15 +121,20 @@ esac
 
 echo
 echo "✅ Build complete."
-ls -lh "${APK_DIR}"
+ls -lh "${OUT_DIR}"
 
 # Optional: push to the connected device. Uses `adb install -r` so an
 # existing install of the same package is upgraded in place (preserves the
 # user's profiles / subscriptions / settings under filesDir).
 if [[ "${INSTALL_FLAG}" == "--install" ]]; then
-    APK_FILE=$(ls -1 "${APK_DIR}"/*.apk | head -n1)
+    if [[ "${VARIANT}" == "release" && "${DIST}" == "play" ]]; then
+        echo "ERROR: --install has nothing to push — a play release is an .aab and adb installs APKs." >&2
+        echo "       Use DIST=full for an installable release build." >&2
+        exit 1
+    fi
+    APK_FILE=$(ls -1 "${OUT_DIR}"/*.apk | head -n1)
     if [[ -z "${APK_FILE}" ]]; then
-        echo "ERROR: no APK found under ${APK_DIR}" >&2
+        echo "ERROR: no APK found under ${OUT_DIR}" >&2
         exit 1
     fi
     echo

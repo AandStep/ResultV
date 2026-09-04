@@ -109,9 +109,19 @@ android {
     // arm64-v8a/armeabi-v7a regardless of the flag. build-android.sh always
     // passes -Pdebug.abi for debug builds, so that property's presence is
     // what distinguishes "debug run" from "release run" here.
+    // A bundle slices itself by ABI, and AGP refuses to build one while APK
+    // splits are on: "Multiple shrunk-resources files found ... Please disable
+    // building multiple APKs when building an Android app bundle"
+    // (issuetracker.google.com/402800800). Play takes the AAB, the site takes
+    // the per-ABI APKs, so the splits stand down for any bundle* invocation
+    // rather than being deleted.
+    val buildingBundle = gradle.startParameter.taskNames.any {
+        it.substringAfterLast(':').startsWith("bundle", ignoreCase = true)
+    }
+
     splits {
         abi {
-            isEnable = !project.hasProperty("debug.abi")
+            isEnable = !project.hasProperty("debug.abi") && !buildingBundle
             reset()
             include("arm64-v8a", "armeabi-v7a")
             isUniversalApk = true  // fallback for sideloading
