@@ -112,9 +112,14 @@ git-команды, запущенные из этой папки, отвеча�
 | `congestion: off/no` | распознаётся только `true/yes/on` |
 | `AutoGroup` в `config.ProxyEntry` | группы AUTO угадываются по именам, а не по объявлению провайдера |
 
-Плюс два файла проб, полезных именно на телефоне: `probe_udp_relay.go`
-(релеит ли узел UDP — голос и игры) и `doh.go` + `ping_resolve.go` (резолв
-через DoH, когда локальный резолвер убит VPN-сессией).
+Отдельно рассматривались `probe_udp_relay.go` (релеит ли узел UDP — голос и
+игры) и `doh.go` + `ping_resolve.go` (резолв через DoH, когда локальный
+резолвер убит VPN-сессией). **При исполнении они были отклонены:** файлы
+компилируются на `android` без единой правки, но вызывать их там некому — на
+ПК их дёргает `manager.go`, которого мы не переносим. Проверка «компилируется»
+не равна «подключено». Их место — в задаче, которая заодно их и подключит:
+для UDP-пробы это ещё и поле `SBRouteRule.Inbound` и выделенный probe-inbound
+в `engine.go`, которых на `android` нет.
 
 Отдельно — блокер публикации: `jni/arm64-v8a/libgojni.so` в текущем
 `android/libs/libbox.aar` собран с `LOAD align = 0x1000` (4 КБ). Google Play с
@@ -163,11 +168,29 @@ git-команды, запущенные из этой папки, отвеча�
 internal/proxy/uriparser.go
 internal/proxy/outbound.go
 internal/proxy/autogroup.go        (новый)
-internal/proxy/probe_udp_relay.go  (новый)
-internal/proxy/doh.go              (новый)
-internal/proxy/ping_resolve.go     (новый)
 internal/config/*.go               (все, включая новый export_v2.go)
 ```
+
+Плюс тесты с `dev`, покрывающие перенесённое, — без них ~1500 строк новой
+логики разбора не покрыты на этой ветке ничем:
+
+```
+autogroup_test.go  build_config_testhelpers_test.go  uriparser_mkcp_test.go
+outbound_{mkcp,multiplex,ss_plugin,vless_encryption,ws_host}_test.go
+outbound_{hysteria2_hop,transport_headers}_test.go
+outbound_{xhttp_obfs,xhttp_padding,xmux_guard}_test.go
+```
+
+Ценность именно этого набора в `assertCoreAcceptsConfig` из
+`build_config_testhelpers_test.go`: он отдаёт собранный конфиг настоящему
+закреплённому ядру sing-box, которое декодирует с `DisallowUnknownFields`.
+Незнакомое ядру поле — это не проигнорированная опция, а мёртвый движок.
+
+Две правки в перенесённых тестах: обёртки `mustBuild*ModeConfig` подогнать под
+мобильные сигнатуры (`BuildTunnelModeConfig` / `BuildProxyModeConfig` здесь
+возвращают одно значение, без ошибки), и убрать `ResolvedIPs` из литерала в
+`outbound_xhttp_padding_test.go` — это поле десктопного пининга серверов,
+к предмету теста отношения не имеющее.
 
 **Шаг 2. НЕ копировать.** `engine.go` и `singbox.go` разъехались слишком
 сильно и в мобильную сторону: на `android` там Smart через локальный SRS,
@@ -210,7 +233,11 @@ func defaultUTLSFingerprint() string { return "chrome" }
 3в. `internal/proxy/endpoints.go`: `dev` называет список ключей AWG 3.0
 `awg3Keys`, `android` — `awg3DeviceKnobs`. Списки идентичны, сверено построчно.
 Привести к одному имени (предпочтительно переименовать на `android` в
-`awg3Keys`, тогда следующие переносы не потребуют правки) и добавить с `dev`
+`awg3Keys`, тогда следующие переносы не потребуют правки). Переименование
+задевает шесть файлов, а не четыре: кроме `endpoints.go`,
+`config_validation.go`, `uriparser.go` и `ping_wg_handshake.go` — ещё
+`config_validation_awg3_test.go`, `endpoints_awg3_test.go` и
+`ping_wg_awg3_uapi_test.go`. Добавить с `dev`
 функцию `normalizeAWGKey` — она складывает написания провайдеров
 (`HeaderProtectionKey`, `header_protection_key`, `header-protection-key`)
 в одну форму. Этой функции на `android` нет, и она нужна перенесённому
@@ -229,8 +256,18 @@ func defaultUTLSFingerprint() string { return "chrome" }
 
 3е. `internal/proxy/lcp_test.go:135`: то же переименование в тесте.
 
-**Шаг 4. Регрессия, которую надо закрыть.** После переноса падает
-`mobile/libbox_awg_knobs_test.go` → `TestUnsupportedAWGKnobsFromParsedURI`:
+**Шаг 4. Регрессия, которую надо закрыть.** После переноса падают три
+проверки из двух корней (первоначально в спеке была названа одна — оценка была
+занижена):
+
+```
+--- FAIL: TestSplitAutoEntriesMulti/two_flags_two_auto-groups   (корень: AUTO, шаг 5)
+--- FAIL: TestSplitAutoEntriesMulti/auto_groups_plus_individuals (корень: AUTO, шаг 5)
+--- FAIL: TestAmneziaWGURIRoundTripAWG2Fields                    (корень: AWG)
+--- FAIL: TestUnsupportedAWGKnobsFromParsedURI                   (корень: AWG)
+```
+
+Про AWG:
 
 ```
 knobs = "", want "j1,itime"
@@ -253,11 +290,23 @@ knobs = "", want "j1,itime"
   и только при её неудаче — эвристика по именам, **ограниченная одним пулом**.
 
 Структурная стратегия строго лучше: она не ломается при переименовании группы
-и переживает кириллическое «Авто». Но для строчных подписок (просто список
-`vless://`), где структуры нет, откат `dev` схлопнет несколько флаг-групп в
-одну. Рекомендация: взять структурную стратегию с `dev`, а на месте её
-name-эвристики оставить флаг-разбиение `android` — тогда ни один сценарий не
-деградирует. Решение зафиксировать до начала работ.
+и переживает кириллическое «Авто».
+
+А вот про откат первоначальная рекомендация («взять флаг-разбиение `android`»)
+**оказалась неверной, и это выяснилось только на тестах**. Провайдеры раздают
+авто-секции строками в двух разных формах, и обе настоящие:
+
+1. **Один пул на несколько стран** — `🇨🇦 impVPN Auto | VLESS`,
+   `🇩🇪 impVPN Auto | HYSTERIA2`. Флаг здесь свойство узла, а не граница
+   группы. Флаг-разбиение рвёт такой пул на одиночек.
+2. **Пул на страну** — `🇷🇺 RU Auto VLESS`, `🇺🇸 US Auto VLESS`. Разбиение на
+   один пул схлопывает секции и отбирает у пользователя выбор страны.
+
+Различает их `ExtractAutoGroupName`: у формы 1 общее имя набора есть
+(«impVPN Auto»), у формы 2 его нет (замерено). Отсюда принятое решение —
+**двухступенчатый откат**: сначала общее имя на всём наборе, и только когда его
+нет — раскладка по флагу. Реализовано в `splitAutoEntriesByName` +
+`splitAutoEntriesByFlag`, обе формы покрыты тестами.
 
 **Шаг 6. Выравнивание 16 КБ.** В `scripts/build-android-aar.sh` в строку
 `LDFLAGS` добавить `-extldflags=-Wl,-z,max-page-size=16384`, пересобрать AAR
