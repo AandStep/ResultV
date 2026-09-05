@@ -537,3 +537,124 @@ func TestFormatAutoSweepTimingLine_SaysWhenPhase2NeverRan(t *testing.T) {
 		t.Fatalf("измеренная фаза 2 должна показывать длительность: %s", line)
 	}
 }
+
+// Не нашли узел — значит не нашли.
+//
+// Регрессия по логам 2026-09-05: подбор вернул пусто, ResolveAutoCandidates
+// отдал вызывающему саму AUTO-запись, а у неё нет ни адреса, ни протокола.
+// Ядро собирало из неё http-аутбаунд с пустым сервером, поднималось без
+// ошибок и рапортовало «Подключено (AUTO)» — кнопка зелёная, интернета нет.
+// Пустой список честнее: у него хотя бы есть обработчик отказа.
+func TestResolveAutoCandidates_UnresolvableGroupYieldsNothingNotTheHead(t *testing.T) {
+	a := newTestApp(t, t.TempDir())
+	cfg := a.config.GetConfig()
+	cfg.Proxies = []config.ProxyEntry{{
+		ID:    "auto-1",
+		Name:  "⚡ Авто",
+		Type:  "AUTO",
+		Extra: json.RawMessage(`{"members":["ушедший-узел"]}`),
+	}}
+	if err := a.config.SaveConfig(cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	got := a.ResolveAutoCandidates("auto-1")
+	if len(got) != 0 {
+		t.Fatalf("ожидали пустой список, получили %+v", got)
+	}
+}
+
+// Обычный сервер по-прежнему разрешается сам в себя — правило выше касается
+// только заголовков групп.
+func TestResolveAutoCandidates_PlainEntryStillResolvesToItself(t *testing.T) {
+	a := newTestApp(t, t.TempDir())
+	cfg := a.config.GetConfig()
+	cfg.Proxies = []config.ProxyEntry{{
+		ID: "plain-1", Name: "Personal", Type: "VLESS", IP: "1.2.3.4", Port: 443,
+	}}
+	if err := a.config.SaveConfig(cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	got := a.ResolveAutoCandidates("plain-1")
+	if len(got) != 1 || got[0].ID != "plain-1" {
+		t.Fatalf("обычная запись должна разрешаться сама в себя, получили %+v", got)
+	}
+}
+
+// Переоценка на ходу не трогает сессию без веских оснований.
+//
+// Переключение рвёт все открытые соединения, поэтому решает не порядок в
+// списке, а разрыв в счёте: одного «кто-то оказался быстрее» мало, нужен
+// заметный отрыв, подтверждённый дважды подряд. Узел, переставший отвечать
+// вовсе, — исключение: подтверждать там нечего.
+func TestAutoRecheck_SwitchesOnlyOnDecisiveEvidence(t *testing.T) {
+	const cur, rival = "current-key", "rival-key"
+
+	cases := []struct {
+		name       string
+		scores     map[string]float64
+		streakIn   int
+		wantSwitch bool
+		wantStreak int
+	}{
+		{
+			name:       "разрыв меньше порога — сессию не трогаем",
+			scores:     map[string]float64{cur: 500, rival: 300},
+			wantSwitch: false,
+		},
+		{
+			name:       "заметный отрыв, но первое подтверждение",
+			scores:     map[string]float64{cur: 900, rival: 100},
+			wantSwitch: false,
+			wantStreak: 1,
+		},
+		{
+			name:       "тот же отрыв во второй раз — переключаемся",
+			scores:     map[string]float64{cur: 900, rival: 100},
+			streakIn:   1,
+			wantSwitch: true,
+		},
+		{
+			name:       "узел выпал из выдачи — переключаемся сразу",
+			scores:     map[string]float64{rival: 100},
+			wantSwitch: true,
+		},
+		{
+			name:       "отрыв пропал — счётчик подтверждений сбрасывается",
+			scores:     map[string]float64{cur: 320, rival: 300},
+			streakIn:   1,
+			wantSwitch: false,
+			wantStreak: 0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			streak := tc.streakIn
+			reason, gotStreak := autoRecheckVerdict(cur, rival, tc.scores, streak)
+			gotSwitch := reason != ""
+			if gotSwitch != tc.wantSwitch {
+				t.Fatalf("решение о переключении: получили %v, ожидали %v", gotSwitch, tc.wantSwitch)
+			}
+			if !tc.wantSwitch && gotStreak != tc.wantStreak {
+				t.Errorf("счётчик подтверждений: получили %d, ожидали %d", gotStreak, tc.wantStreak)
+			}
+			if tc.wantSwitch && gotStreak != 0 {
+				t.Errorf("после переключения счётчик обязан обнулиться, получили %d", gotStreak)
+			}
+		})
+	}
+}
+
+// Порог переключения должен быть заметно выше форы, которую текущий узел уже
+// получает в scoreNode: иначе группа начнёт перескакивать на соседа при
+// разнице в единицы миллисекунд, обрывая всё живое.
+func TestAutoRecheckSwitchMarginIsFarAboveTheTolerance(t *testing.T) {
+	if autoRecheckSwitchMargin < 300 {
+		t.Fatalf("порог %v слишком мал: переключение рвёт все соединения и не должно срабатывать на шуме", autoRecheckSwitchMargin)
+	}
+	if autoRecheckConfirmations < 2 {
+		t.Fatal("одна плохая сметка не должна двигать сессию — нужно минимум два подтверждения")
+	}
+}

@@ -271,6 +271,18 @@ type AppSettings struct {
 	// user routing lists. 0/absent → 24h via EffectiveRoutingListUpdateHours.
 	RoutingListUpdateHours int `json:"routingListUpdateHours,omitempty"`
 
+	// AutoNodeRecheck lets an AUTO group re-evaluate its pick while the session
+	// is running and move to a better node when the one in use has clearly
+	// degraded. Pointer with an "on unless explicitly disabled" default, like
+	// DNSLeakProtection: the whole point of an auto group is that the choice is
+	// not the user's problem, and a group that picks once and then rides a
+	// dying node for hours is not doing its job.
+	//
+	// It is a setting at all because the switch is not free — reconnecting
+	// tears down every open connection — so someone who would rather keep a
+	// mediocre-but-stable session needs a way to say so.
+	AutoNodeRecheck *bool `json:"autoNodeRecheck,omitempty"`
+
 	// LastChangelogVersion is the product version whose release notes the user
 	// has already seen. Empty in a config written before this field existed —
 	// which is exactly how an upgraded install is told apart from a brand-new
@@ -287,6 +299,16 @@ func (s AppSettings) EffectiveDNSLeakProtection() bool {
 		return true
 	}
 	return *s.DNSLeakProtection
+}
+
+// EffectiveAutoNodeRecheck returns true unless the user has explicitly turned
+// the mid-session AUTO recheck off. Configs written before the field existed
+// have nil here and get the feature.
+func (s AppSettings) EffectiveAutoNodeRecheck() bool {
+	if s.AutoNodeRecheck == nil {
+		return true
+	}
+	return *s.AutoNodeRecheck
 }
 
 func (s AppSettings) EffectiveTunStack() string {

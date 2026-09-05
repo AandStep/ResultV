@@ -123,6 +123,12 @@ type App struct {
 	autoCandidatesMu sync.Mutex
 	autoCandidates   map[string][]config.ProxyEntry
 
+	// How many consecutive mid-session evaluations have agreed that a rival
+	// beats the node in use (see autoRecheckOnce). No mutex: the only writer
+	// and reader is runAutoRecheckLoop's single goroutine, ticking every
+	// autoRecheckInterval.
+	autoRecheckStreak int
+
 	startInTray bool
 
 	deepLinkMu      sync.Mutex
@@ -451,6 +457,12 @@ func (a *App) startup(ctx context.Context) {
 	a.leftoverDone = make(chan struct{})
 	go a.recoverLeftovers()
 
+	// Re-evaluate a live AUTO group's pick for as long as the app runs. Started
+	// unconditionally and gated per tick (connected, on an AUTO member, setting
+	// on) — see runAutoRecheckLoop for why one always-on loop beats starting
+	// and stopping one per connection.
+	go a.runAutoRecheckLoop()
+
 	rootDir := a.getAppRootDir()
 	a.initSmartBlockedDomains(userDataPath, rootDir)
 
@@ -761,6 +773,7 @@ func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
 		a.setWindowTitleConnected(proxyDTO)
 		wailsRuntime.EventsEmit(a.ctx, "proxy:connected", proxyDTO)
 		a.startUDPRelayProbe(proxyDTO, mode)
+		a.startThroughputProbe(proxyDTO)
 	}
 
 	return result, nil
@@ -806,7 +819,13 @@ func (a *App) startUDPRelayProbe(proxyDTO proxy.ProxyConfig, mode proxy.ProxyMod
 		if res.Reason == "not connected" || strings.HasPrefix(res.Reason, "probe cancelled") {
 			return
 		}
-		proxy.RecordUDPRelayOutcome(id, res.OK)
+		// AutoNodeKeyOf, not the config id: NodeStat is keyed by AutoNodeKey
+		// everywhere else, and for an AUTO member `id` is the GROUP head's id
+		// (ResolveAutoCandidates stamps it), so recording under it filed every
+		// member's verdict under one key that no scorer ever reads. `id` stays
+		// the identifier for the UI event below — the frontend keys rows by
+		// config id and knows nothing about node keys.
+		proxy.RecordUDPRelayOutcome(proxy.AutoNodeKeyOf(proxyDTO), res.OK)
 
 		if a.log != nil {
 			if res.OK {
@@ -820,6 +839,64 @@ func (a *App) startUDPRelayProbe(proxyDTO proxy.ProxyConfig, mode proxy.ProxyMod
 			"ok":        res.OK,
 			"latencyMs": res.LatencyMs,
 		})
+	}()
+}
+
+// throughputProbeDelay starts the download after the UDP probe's own budget
+// has expired. Both measure the same session through the same inbound, and a
+// STUN exchange racing a half-megabyte transfer would give each of them the
+// other's interference to report.
+const throughputProbeDelay = udpRelayProbeDelay + udpRelayProbeBudget
+
+// throughputProbeBudget bounds the whole measurement. Generous on purpose: on
+// a genuinely slow node the transfer taking a while IS the result, and cutting
+// it short would record the deadline instead of the link.
+const throughputProbeBudget = 20 * time.Second
+
+// startThroughputProbe measures, in the background, how fast the node just
+// connected actually moves bytes, and remembers it against that node.
+//
+// This is the one input to selection that cannot come from a sweep: measuring
+// a candidate's throughput would mean speaking its full protocol, i.e. running
+// an engine per candidate. Measuring the node in use costs one small download
+// and turns "we have used this node before" into a number the next ranking can
+// weigh — which is how a congested node with a short path stops beating a free
+// one slightly further away.
+//
+// Advisory, exactly like the UDP probe: a failed measurement is simply not
+// recorded. RecordThroughputOutcome drops non-positive rates, so a node that
+// could not be measured stays unmeasured rather than acquiring a "0 KB/s"
+// record that scoring would read as the slowest node in the group.
+func (a *App) startThroughputProbe(proxyDTO proxy.ProxyConfig) {
+	if a.proxy == nil {
+		return
+	}
+	key := proxy.AutoNodeKeyOf(proxyDTO)
+	label := a.resolveProxyDisplayName(proxyDTO)
+
+	go func() {
+		select {
+		case <-time.After(throughputProbeDelay):
+		case <-a.ctx.Done():
+			return
+		}
+		ctx, cancel := context.WithTimeout(a.ctx, throughputProbeBudget)
+		defer cancel()
+
+		res := a.proxy.ProbeThroughputNow(ctx)
+		if !res.OK {
+			// Not a warning: the user has no action to take, and a node we
+			// failed to measure is treated as unmeasured, not as slow.
+			if a.log != nil && res.Reason != "not connected" {
+				a.log.Info(fmt.Sprintf("[СКОРОСТЬ] %s: замер не удался (%s) — на подбор не влияет", label, res.Reason))
+			}
+			return
+		}
+		proxy.RecordThroughputOutcome(key, res.KBps)
+		if a.log != nil {
+			a.log.Info(fmt.Sprintf("[СКОРОСТЬ] %s: %.1f Мбит/с через узел — учтено в подборе",
+				label, res.KBps*8/1024))
+		}
 	}()
 }
 
@@ -3004,9 +3081,68 @@ func formatAutoSweepTimingLine(groupName string, probed int, diag proxy.AutoProb
 	if len(diag.Phase2) == 0 {
 		phase2 = "не запускалась"
 	}
-	return fmt.Sprintf("[PROXY] AUTO «%s»: опрошено %d узлов — фаза 1 %dms, фаза 2 %s",
+	// Survivor counts, not just durations. When AUTO misbehaves the one thing
+	// a log reader needs is which phase lost the nodes — the 2026-09-05 report
+	// had to be reconstructed from node_stats.json timestamps because these
+	// two numbers were not written down anywhere. Counts and milliseconds
+	// only: this line lands in an exportable log, so no node may be named.
+	line := fmt.Sprintf("[PROXY] AUTO «%s»: опрошено %d узлов — фаза 1 %dms (живых %d), фаза 2 %s (прошли %d)",
 		strings.TrimSpace(groupName), probed,
-		diag.Phase1Dur.Milliseconds(), phase2)
+		diag.Phase1Dur.Milliseconds(), countProbeOK(diag.Phase1),
+		phase2, countProbeOK(diag.Phase2))
+	if diag.DegradedToPhase1 {
+		line += " — фаза 2 не подтвердила ни одного узла, выбор сделан по фазе 1"
+		if reasons := summarizeProbeFailures(diag.Phase2); reasons != "" {
+			line += " [" + reasons + "]"
+		}
+	}
+	return line
+}
+
+// countProbeOK counts the rows a probe phase marked reachable.
+func countProbeOK(rows []proxy.AutoProbeResult) int {
+	n := 0
+	for _, r := range rows {
+		if r.OK {
+			n++
+		}
+	}
+	return n
+}
+
+// summarizeProbeFailures renders a phase's failure reasons as "stage/reason×N",
+// ordered so the log line is identical for identical input. The vocabulary is
+// the fixed one sanitizeStatReason enforces (timeout, connection_refused, …),
+// never an interpolated address — that is what makes it safe to print here.
+func summarizeProbeFailures(rows []proxy.AutoProbeResult) string {
+	counts := map[string]int{}
+	for _, r := range rows {
+		if r.OK {
+			continue
+		}
+		reason := strings.TrimSpace(r.Reason)
+		if reason == "" {
+			reason = "неизвестно"
+		}
+		stage := strings.TrimSpace(r.Stage)
+		if stage == "" {
+			stage = "?"
+		}
+		counts[stage+"/"+reason]++
+	}
+	if len(counts) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(counts))
+	for k := range counts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s×%d", k, counts[k]))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // extractAutoMembers reads the member ID list out of an AUTO head's Extra.
@@ -3201,10 +3337,25 @@ func (a *App) GetAutoGroupStatus(proxyID string) AutoGroupStatus {
 // to selection had to be made twice or it silently missed one of them.
 //
 // Non-AUTO entries resolve to themselves. An AUTO head with no reachable
-// member resolves to the head itself, preserving the previous fallback.
+// member resolves to NOTHING — see the empty-ranked branch below for why the
+// head itself is not a usable answer.
 func (a *App) ResolveAutoCandidates(proxyID string) []config.ProxyEntry {
+	out, _, _ := a.resolveAutoCandidatesWithDiag(proxyID)
+	return out
+}
+
+// resolveAutoCandidatesWithDiag is ResolveAutoCandidates plus the sweep's own
+// diagnostics and the group head it resolved.
+//
+// The exported form deliberately returns only the list: it is bound to the
+// frontend, and a probe table is not something the UI should be handed. The
+// mid-session recheck (autoRecheckOnce) is the one caller that needs more than
+// the order — it needs the margin between the node in use and the winner, and
+// that lives in diag.Scores.
+func (a *App) resolveAutoCandidatesWithDiag(proxyID string) ([]config.ProxyEntry, proxy.AutoProbeDiagnostics, *config.ProxyEntry) {
+	var noDiag proxy.AutoProbeDiagnostics
 	if a.config == nil {
-		return nil
+		return nil, noDiag, nil
 	}
 	cfg := a.config.GetConfig()
 
@@ -3216,10 +3367,10 @@ func (a *App) ResolveAutoCandidates(proxyID string) []config.ProxyEntry {
 		}
 	}
 	if head == nil {
-		return nil
+		return nil, noDiag, nil
 	}
 	if !strings.EqualFold(head.Type, "AUTO") {
-		return []config.ProxyEntry{*head}
+		return []config.ProxyEntry{*head}, noDiag, head
 	}
 
 	memberIDs := extractAutoMembers(head.Extra)
@@ -3267,10 +3418,19 @@ func (a *App) ResolveAutoCandidates(proxyID string) []config.ProxyEntry {
 			// line above: an unresolvable member ID or a SECTION label was
 			// never dialed, so counting it here would overstate how many nodes
 			// actually failed.
-			a.log.Warning(fmt.Sprintf("[PROXY] AUTO «%s»: ни один из %d узлов не доступен — попытка по AUTO-записи",
+			a.log.Error(fmt.Sprintf("[PROXY] AUTO «%s»: ни один из %d узлов не доступен — подключаться не к чему",
 				strings.TrimSpace(head.Name), probeable))
 		}
-		return []config.ProxyEntry{*head}
+		// Deliberately NOT falling back to the head itself, which is what this
+		// used to do. The head is a group marker: no address, no port, no
+		// protocol. buildProxyOutbound has no case for type AUTO, so it built
+		// an http outbound with an empty server; sing-box started on that
+		// config without complaint and the app announced "Подключено (AUTO)"
+		// over a tunnel where every connection failed with "invalid address"
+		// (2026-09-05 logs). An empty result is the honest answer — the tray
+		// and the frontend both already have a path for "nothing to connect
+		// to", and a named failure beats a green button that lies.
+		return nil, diag, head
 	}
 
 	// Keep the AUTO head's identity on every candidate: manager.Connect
@@ -3295,7 +3455,163 @@ func (a *App) ResolveAutoCandidates(proxyID string) []config.ProxyEntry {
 		// country while leaving its address out.
 		a.log.Info(formatAutoPickLine(head.Name, len(out), ranked[0]))
 	}
-	return out
+	return out, diag, head
+}
+
+// autoRecheckInterval is how often a live AUTO session re-measures its group.
+//
+// Fifteen minutes is a compromise between two real costs. Too often and the
+// app hammers the provider with full sweeps — a probe storm is how a source
+// gets rate-limited or banned, which is a failure mode this project has
+// already paid for once. Too rarely and "the auto group picks the best node"
+// quietly means "picked the best node at the moment you clicked, hours ago".
+const autoRecheckInterval = 15 * time.Minute
+
+// autoRecheckSwitchMargin is how much better a rival must score before the
+// session moves to it.
+//
+// The current node already carries autoTolerance (50) as a head start, which
+// is enough to stop two near-identical nodes trading places on every
+// evaluation. This is a much larger bar on top of that, because the two
+// decisions are not comparable: reordering a list costs nothing, while acting
+// on the reorder drops every open connection — a download, a call, a game.
+// At 400 the rival has to be better by more than the entire throughput term
+// can express, i.e. visibly better rather than measurably better.
+const autoRecheckSwitchMargin = 400.0
+
+// autoRecheckConfirmations is how many consecutive evaluations must agree
+// before a merely-slower node is replaced. Two, at the interval above, means
+// half an hour of consistent evidence — a lone bad sweep (congestion, a
+// probe storm, a Wi-Fi hiccup) cannot move the session on its own.
+//
+// A node that has stopped answering entirely does not go through this: there
+// is nothing to confirm about a node that is gone, and making the user wait
+// out a confirmation window on a dead session would be the opposite of the
+// point.
+const autoRecheckConfirmations = 2
+
+// autoRecheckVerdict decides whether a live session should move to bestKey,
+// and returns the updated confirmation streak.
+//
+// A non-empty reason means switch, and the streak is reset with it. Split out
+// as a pure function because this is the whole risk of the feature in four
+// lines: everything around it is plumbing, while getting this wrong means
+// either a session that reconnects on noise or one that never moves at all.
+func autoRecheckVerdict(currentKey, bestKey string, scores map[string]float64, streak int) (reason string, newStreak int) {
+	currentScore, scored := scores[currentKey]
+	if !scored {
+		// The node in use did not survive its own group's sweep — it is not in
+		// the ranking at all. There is nothing to confirm about a node that has
+		// stopped answering, and making the user sit out a confirmation window
+		// on it would defeat the point.
+		return "узел перестал отвечать на пробы", 0
+	}
+	if currentScore-scores[bestKey] < autoRecheckSwitchMargin {
+		// Includes the ordinary case where the current node simply lost its
+		// first place by a hair. Reordering is free; acting on it is not.
+		return "", 0
+	}
+	streak++
+	if streak < autoRecheckConfirmations {
+		return "", streak
+	}
+	return "текущий узел стабильно проигрывает", 0
+}
+
+// runAutoRecheckLoop re-evaluates a live AUTO group's choice for as long as the
+// app runs.
+//
+// One long-lived goroutine that checks the preconditions on every tick, rather
+// than a loop started and stopped around each connection: there is no state to
+// keep in sync, nothing to leak, and no way for a missed stop to leave a timer
+// probing a group the user has since left.
+func (a *App) runAutoRecheckLoop() {
+	ticker := time.NewTicker(autoRecheckInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-a.ctx.Done():
+			return
+		case <-ticker.C:
+			a.autoRecheckOnce()
+		}
+	}
+}
+
+// autoRecheckOnce runs one evaluation of the AUTO group currently in use and
+// switches node if the evidence is decisive. A no-op unless every precondition
+// holds, which is the common case.
+func (a *App) autoRecheckOnce() {
+	if a.proxy == nil || a.config == nil {
+		return
+	}
+	cfg := a.config.GetConfig()
+	if !cfg.Settings.EffectiveAutoNodeRecheck() {
+		return
+	}
+	// SessionState, not GetStatus: GetStatus advances the traffic-speed
+	// sampling window, so polling it here would quietly corrupt the speed the
+	// UI shows. `establishing` means a connect is already in flight — the
+	// user's or a previous recheck's — and sweeping then would measure a
+	// network mid-teardown before queueing a second connect behind the first.
+	connected, establishing := a.proxy.SessionState()
+	if !connected || establishing {
+		return
+	}
+	currentKey := a.getLastAutoNodeKey()
+	if currentKey == "" {
+		return // not on an AUTO member
+	}
+
+	headID := strings.TrimSpace(cfg.Settings.LastSelectedProxyID)
+	if headID == "" {
+		return
+	}
+	var head *config.ProxyEntry
+	for i := range cfg.Proxies {
+		if cfg.Proxies[i].ID == headID && strings.EqualFold(cfg.Proxies[i].Type, "AUTO") {
+			head = &cfg.Proxies[i]
+			break
+		}
+	}
+	if head == nil {
+		return // the selected entry is a plain server, or has gone away
+	}
+
+	candidates, diag, _ := a.resolveAutoCandidatesWithDiag(headID)
+	if len(candidates) == 0 {
+		// The whole group is unreachable. Switching is not an option and
+		// tearing the session down would replace a working-ish node with
+		// nothing; the health watchdog owns genuinely dead sessions.
+		return
+	}
+	// Keys come from the unstamped cache, never from the returned candidates:
+	// the stamping fills in an empty SubscriptionURL from the head, and that
+	// field is hashed into the key. See autoOutcomeKey.
+	bestKey := a.autoOutcomeKey(headID, true, 0)
+	if bestKey == "" || bestKey == currentKey {
+		a.autoRecheckStreak = 0
+		return
+	}
+
+	reason, streak := autoRecheckVerdict(currentKey, bestKey, diag.Scores, a.autoRecheckStreak)
+	a.autoRecheckStreak = streak
+	if reason == "" {
+		if streak > 0 && a.log != nil {
+			a.log.Info(fmt.Sprintf("[PROXY] AUTO «%s»: есть узел заметно лучше текущего (%d/%d подтверждений)",
+				strings.TrimSpace(head.Name), streak, autoRecheckConfirmations))
+		}
+		return
+	}
+
+	if a.log != nil {
+		a.log.Info(fmt.Sprintf("[PROXY] AUTO «%s»: %s — переключаюсь на лучший узел группы",
+			strings.TrimSpace(head.Name), reason))
+	}
+	if err := a.connectCandidates(headID, true, candidates, cfg, "AUTO"); err != nil && a.log != nil {
+		a.log.Warning(fmt.Sprintf("[PROXY] AUTO «%s»: переключение не удалось (%v)",
+			strings.TrimSpace(head.Name), err))
+	}
 }
 
 func (a *App) connectFromTray(proxyID string) error {
@@ -3352,6 +3668,13 @@ func (a *App) connectFromTray(proxyID string) error {
 	// gives the tray the same failover the frontend already had.
 	candidates := a.ResolveAutoCandidates(proxyID)
 	if len(candidates) == 0 {
+		// For an AUTO group this is now reachable in production (the sweep
+		// found no usable member and no longer falls back to the head), so the
+		// message has to say what actually happened instead of naming an
+		// internal id the user has never seen.
+		if isAuto {
+			return fmt.Errorf("авто-группа «%s»: ни один узел не отвечает — подключаться не к чему", clickedLabel)
+		}
 		return fmt.Errorf("proxy %s not resolvable", proxyID)
 	}
 
@@ -3360,6 +3683,23 @@ func (a *App) connectFromTray(proxyID string) error {
 		return err
 	}
 
+	return a.connectCandidates(proxyID, isAuto, candidates, cfg, "TRAY")
+}
+
+// connectCandidates walks a ranked candidate list, connecting to the first one
+// that comes up and recording every outcome against the node it belongs to.
+//
+// Shared by the tray click and the mid-session AUTO recheck. The recheck must
+// not get a weaker path than a click: it tears down a working session to make
+// the switch, so "the replacement did not come up" has to fall through to the
+// next candidate rather than strand the user, and the kill switch has to stay
+// armed across the gap. That is all here, and duplicating it for one caller is
+// how the two would drift.
+//
+// origin only labels the log lines. cfg supplies routing rules and the kill
+// switch flag; it is passed in rather than re-read so a caller that already
+// wrote to the config acts on the same snapshot it saved.
+func (a *App) connectCandidates(proxyID string, isAuto bool, candidates []config.ProxyEntry, cfg config.AppConfig, origin string) error {
 	// SubscriptionURL/Provider MUST be propagated: manager.Connect branches
 	// log output on SubscriptionURL != "" — without this the user sees the
 	// raw member IP in logs whenever they connect via the tray (which is
@@ -3368,7 +3708,7 @@ func (a *App) connectFromTray(proxyID string) error {
 	for i, candidate := range candidates {
 		if i > 0 {
 			if a.log != nil {
-				a.log.Info(fmt.Sprintf("[TRAY] AUTO: узел не поднялся, пробуем следующий — %s", proxyLogLabel(candidate)))
+				a.log.Info(fmt.Sprintf("[%s] AUTO: узел не поднялся, пробуем следующий — %s", origin, proxyLogLabel(candidate)))
 			}
 			// Tear down only the engine here, NOT a.Disconnect(): that also
 			// disables the kill switch (app.go's Disconnect, ~line 733-736),

@@ -1043,3 +1043,106 @@ func TestAutoProbeHysteria2SNI_FallsBackToServerNameThenAddress(t *testing.T) {
 		t.Fatalf("ожидали адрес узла как SNI по умолчанию, получили %q", got)
 	}
 }
+
+// Одна сорвавшаяся выборка из трёх — не приговор узлу.
+//
+// Регрессия по логам 2026-09-05: фаза 2 срезала всю пятёрку лидеров и группа
+// осталась без единого кандидата. Три рукопожатия подряд летят в один узел
+// очередью, и на нагруженном канале потерять одно из них — обычное дело;
+// медиана из трёх выборок ровно для того и берётся, чтобы один выброс её не
+// решал. Отказ засчитываем, когда большинство не прошло.
+func TestProbeOne_TolerlatesOneFailedTLSSampleOfThree(t *testing.T) {
+	oldTCP, oldTLS, oldBind := pingTCPProbe, autoTLSProbe, autoProbeBindsToLAN
+	defer func() { pingTCPProbe, autoTLSProbe, autoProbeBindsToLAN = oldTCP, oldTLS, oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+	pingTCPProbe = func(_ string, _ int) (int64, bool, string) { return 10, true, "" }
+
+	node := config.ProxyEntry{ID: "1", IP: "1.1.1.1", Port: 443, Type: "VLESS", Extra: []byte(`{"security":"tls"}`)}
+
+	t.Run("одна потеря из трёх — узел жив", func(t *testing.T) {
+		var n int
+		autoTLSProbe = func(_ string, _ int, _ string, _ []string) (int64, bool, string) {
+			n++
+			if n == 2 {
+				return 0, false, "timeout"
+			}
+			return 40, true, ""
+		}
+		got := probeOne(node, DepthFull, "1.1.1.1")
+		if !got.OK {
+			t.Fatalf("узел должен остаться живым при одной потере из трёх, получили %+v", got)
+		}
+		if got.RTTms != 40 {
+			t.Errorf("медиана должна считаться по выжившим выборкам, получили %d", got.RTTms)
+		}
+	})
+
+	t.Run("две потери из трёх — узел мёртв", func(t *testing.T) {
+		var n int
+		autoTLSProbe = func(_ string, _ int, _ string, _ []string) (int64, bool, string) {
+			n++
+			if n == 1 {
+				return 40, true, ""
+			}
+			return 0, false, "timeout"
+		}
+		got := probeOne(node, DepthFull, "1.1.1.1")
+		if got.OK {
+			t.Fatalf("большинство выборок не прошло — узел должен считаться мёртвым, получили %+v", got)
+		}
+		if got.Stage != "tls" || got.Reason != "timeout" {
+			t.Errorf("ожидали stage=tls reason=timeout, получили %+v", got)
+		}
+	})
+
+	t.Run("вторая потеря обрывает опрос — третьей выборки нет", func(t *testing.T) {
+		var n int
+		autoTLSProbe = func(_ string, _ int, _ string, _ []string) (int64, bool, string) {
+			n++
+			return 0, false, "timeout"
+		}
+		probeOne(node, DepthFull, "1.1.1.1")
+		if n != 2 {
+			t.Fatalf("после двух потерь большинство недостижимо — ожидали 2 попытки, было %d", n)
+		}
+	})
+}
+
+// Вердикт о UDP пишется тем же ключом, каким его потом читает подбор.
+//
+// Регрессия, доказанная на живых данных 2026-09-05: в node_stats.json все 34
+// записи с udpRelay лежали под идентификаторами из конфига («15c398c1»,
+// «1788349753570»), а не под AutoNodeKey — потому что startUDPRelayProbe
+// записывал результат по resolveProxyID. Ни один из них не совпадал ни с
+// одним ключом статистики, так что вердикт был мусором, а для авто-группы ещё
+// и общим: у всех участников он схлопывался на ID заголовка.
+func TestAutoNodeKeyOf_MatchesEntryKeyForTheSameNode(t *testing.T) {
+	entry := config.ProxyEntry{
+		ID:              "1788349753601",
+		Name:            "VLESS #11",
+		IP:              "cdn7.example.test",
+		Port:            1443,
+		Type:            "VLESS",
+		Username:        "u",
+		Password:        "p",
+		SubscriptionURL: "https://provider.example/sub",
+		Extra:           []byte(`{"security":"reality","pbk":"abc"}`),
+	}
+	// Тот же узел, каким он доезжает до Connect: ID подменён на заголовок
+	// группы (ResolveAutoCandidates штампует его), имя тоже — а ключ обязан
+	// остаться прежним, иначе история узла расколется надвое.
+	connected := ProxyConfig{
+		ID:              "767448",
+		IP:              entry.IP,
+		Port:            entry.Port,
+		Type:            entry.Type,
+		Username:        entry.Username,
+		Password:        entry.Password,
+		SubscriptionURL: entry.SubscriptionURL,
+		Extra:           entry.Extra,
+	}
+
+	if got, want := AutoNodeKeyOf(connected), AutoNodeKey(entry); got != want {
+		t.Fatalf("ключ подключённого узла разошёлся с ключом записи:\n  got  %s\n  want %s", got, want)
+	}
+}

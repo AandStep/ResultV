@@ -1348,6 +1348,19 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 				Outbound: "proxy",
 			})
 		}
+		// The throughput probe has the same exposure as the UDP one: in Smart
+		// mode Final=direct would send its download out of the local uplink
+		// and record the user's own broadband as the node's speed. Scoped to
+		// the probe inbound so a user visiting the same host gets whatever
+		// routing they would have had.
+		if len(throughputProbeDomains) > 0 {
+			rules = append(rules, SBRouteRule{
+				Action:   "route",
+				Inbound:  []string{probeInboundTag},
+				Domain:   append([]string(nil), throughputProbeDomains...),
+				Outbound: "proxy",
+			})
+		}
 		// Self-direct: keep our own process's non-probe traffic (updater,
 		// telemetry, internal HTTP) out of the tunnel. Without this, sing-box's
 		// auto_route pulls every socket of the host process into the TUN, and
