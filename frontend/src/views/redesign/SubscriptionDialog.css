@@ -1,0 +1,98 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * Окно настроек подписки (Figma 6566:4928). Само окно — Dialog из кита;
+ * здесь только то, чем оно от него отличается: ширина 700 вместо 440,
+ * логотип провайдера на месте значка и тег «Поддержка» на месте подписи.
+ * Начинка идёт колонкой с зазором 16, поля — подпись и элемент с зазором 8.
+ */
+
+.rv-sub-dialog {
+  width: 700px;
+  /* Ряд интервалов шире окна и выходит за его внутренний отступ — окно
+     обрезает его по своему краю, как `overflow-clip` в макете. Вертикальная
+     прокрутка при этом остаётся: она нужна окну кита в тесном экране. */
+  overflow-x: hidden;
+}
+
+/* На месте значка кита — логотип провайдера, поэтому подложка не тонируется
+   цветом варианта, а берёт ту же заливку, что и подложка логотипа в строке
+   подписки. */
+.rv-sub-dialog .rv-dialog__icon {
+  background: var(--rv-light-gray);
+}
+
+.rv-sub-dialog__logo {
+  display: block;
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+}
+
+/* Тег «Поддержка» стоит на месте подписи окна, поэтому наследует её строку и
+   перебивает цвет с размерами сам. */
+.rv-sub-dialog__tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--rv-space-4);
+  padding: var(--rv-space-8) var(--rv-space-10);
+  border-radius: var(--rv-radius-pill);
+  background: var(--rv-light-gray);
+  font-size: var(--rv-chip-size);
+  font-weight: var(--rv-chip-weight);
+  line-height: var(--rv-chip-leading);
+  color: var(--rv-white-a50);
+  text-decoration: none;
+  cursor: pointer;
+  transition: color var(--rv-transition);
+}
+
+.rv-sub-dialog__tag:hover {
+  color: var(--rv-icon-hover);
+}
+
+.rv-sub-dialog__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-2);
+}
+
+.rv-sub-dialog__field {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--rv-space-nest-3);
+}
+
+.rv-sub-dialog__label {
+  font-size: var(--rv-regular-size);
+  font-weight: var(--rv-regular-weight);
+  line-height: var(--rv-regular-leading);
+  color: var(--rv-white-a50);
+}
+
+/* Кнопка кита меряется по подписи, а «Сохранить» лежит во всю ширину окна. */
+.rv-sub-dialog__save {
+  width: 100%;
+}
+
+/* Ряд интервалов прокручивается внутри окна, поэтому он должен доезжать до
+   его края и гаснуть в его же заливку. */
+.rv-sub-dialog__field .rv-scroll-row {
+  width: 100%;
+}

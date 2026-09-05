@@ -1,0 +1,120 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * AddPage — Figma "ResultV" -> страница App Design, ряд фреймов `Add page`
+ * (6533:1897, 6557:2105, 6557:2208, 6557:2304, 6557:2497, 6557:2596).
+ *
+ * Окно 1000x740, слева сайдбар 74. Содержимое — колонка с отступом 32 по
+ * краям и зазором 32 между заголовком и остальным:
+ *
+ *   Header      862x61
+ *   тело        862x583, внутри зазор 18:
+ *     плитки    862x143  (две по 423, между ними 16)
+ *     панель    862x422  (отступ 24, скругление 32, внутри зазор 16:
+ *                         протоколы 101, поле 168, кнопка 73)
+ *
+ * Страница ровно по высоте окна и не прокручивается: тянется только поле
+ * ввода. Всё, что видно, — компоненты кита.
+ */
+
+.rv-add-page {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  background: var(--rv-black);
+  font-family: var(--rv-font-family);
+}
+
+.rv-add-page > .rv-sidebar {
+  flex-shrink: 0;
+}
+
+.rv-add-page__content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  padding: var(--rv-space-page);
+  gap: var(--rv-space-page);
+}
+
+.rv-add-page__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: var(--rv-space-nest-1);
+}
+
+/* Две плитки поровну на всю ширину, между ними 16 — как в макете. */
+.rv-add-page__sources {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--rv-space-nest-2);
+}
+
+.rv-add-page__panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: var(--rv-space-nest-2);
+  padding: var(--rv-space-24);
+  border-radius: var(--rv-radius-32);
+  background: var(--rv-grey);
+  /* Ряд протоколов уходит за правый край и обрезается панелью, как в макете. */
+  overflow: hidden;
+}
+
+.rv-add-page__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-3);
+}
+
+.rv-add-page__field--grow {
+  flex: 1;
+  min-height: 0;
+}
+
+.rv-add-page__label {
+  font-size: var(--rv-regular-size);
+  font-weight: var(--rv-regular-weight);
+  line-height: var(--rv-regular-leading);
+  color: var(--rv-white-a50);
+}
+
+/* --- Ряд протоколов ----------------------------------------------------- */
+
+/* Прокрутка ряда и растяжки у краёв — общие, см. ScrollRow.css. */
+
+/* --- Поле и кнопка ------------------------------------------------------ */
+
+/*
+ * В ките у текстареа высота 156 — она снята с фрейма кита, где поле стоит
+ * само по себе. На странице поле занимает остаток панели (в макете 140).
+ */
+.rv-textarea.rv-add-page__textarea {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+
+.rv-btn.rv-add-page__submit {
+  width: 100%;
+}

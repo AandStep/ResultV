@@ -1,0 +1,158 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * Select — Figma "ResultV" -> App Design, страница «Дополнительные
+ * настройки»: закрытая кнопка (6799:4634) и раскрытое меню (6799:4963).
+ *
+ * Кнопка: заливка Dark Grey, скругление 16, отступы 16 со всех сторон и 24
+ * слева, зазор до шеврона 10, подпись стилем Btn белым. Высота 64 набегает
+ * сама: 16 + шеврон 32 + 16.
+ *
+ * Меню (135x108 у двух строк): та же заливка, то же скругление, обводка как
+ * у карточки. Своих отступов у него нет — строки идут от края до края, по 53
+ * (16 + подпись 21 + 16), и разделены линией белым 10 % во всю ширину, как
+ * строки настроек. Текущее значение залито Light Gray.
+ */
+
+.rv-select {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--rv-space-10);
+  padding: var(--rv-space-16);
+  padding-left: var(--rv-space-24);
+  border: 0;
+  border-radius: var(--rv-radius-16);
+  background: var(--rv-dark-grey);
+
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-btn-size);
+  font-weight: var(--rv-btn-weight);
+  line-height: var(--rv-btn-leading);
+  color: var(--rv-white);
+  white-space: nowrap;
+
+  cursor: pointer;
+  /* Рамка фокуса — та же, что у поля ввода: цвет задан заранее, растёт
+     только толщина, иначе первое появление тени пришлось бы анимировать от
+     прозрачного и она мигала бы. */
+  box-shadow: 0 0 0 0 var(--rv-main-a20);
+  transition: box-shadow var(--rv-transition);
+}
+
+.rv-select:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 var(--rv-border-width) var(--rv-main-a20);
+}
+
+.rv-select:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Шеврон идёт белым 50 %, как все иконки; наведение поднимает его до 100 % —
+   общее правило фрейма Icons. */
+.rv-select__icon {
+  color: var(--rv-icon-default);
+  transition: color var(--rv-transition);
+}
+
+.rv-select:hover:not(:disabled) .rv-select__icon {
+  color: var(--rv-icon-hover);
+}
+
+/* --- Меню ---------------------------------------------------------------- */
+
+.rv-select__menu {
+  position: fixed;
+  z-index: 30;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--rv-radius-16);
+  background: var(--rv-dark-grey);
+  font-family: var(--rv-font-family);
+
+  /* Меню раскрывается от кнопки: опорный угол — тот, что к ней ближе.
+     Движение вдвое короче общего, как у меню порядка серверов: это отклик на
+     нажатие, он должен успеть за курсором. */
+  transform-origin: top right;
+  animation: rv-select-in calc(var(--rv-duration) / 2) var(--rv-ease) both;
+}
+
+.rv-select__menu[data-flip="true"] {
+  transform-origin: bottom right;
+}
+
+@keyframes rv-select-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Заливка строки обрезается скруглением меню, а не своим: углов у самой
+   строки в макете нет. Радиус на толщину обводки меньше — она лежит внутрь. */
+.rv-select__list {
+  display: flex;
+  flex-direction: column;
+  border-radius: calc(var(--rv-radius-16) - var(--rv-border-width));
+  overflow: hidden;
+}
+
+.rv-select__option {
+  display: flex;
+  align-items: center;
+  padding: var(--rv-space-16);
+  border: 0;
+  /* Своих углов у строки нет — её обрезает скругление меню; здесь снимается
+     общее скругление кнопок из index.css. */
+  border-radius: 0;
+  background: none;
+
+  font-family: inherit;
+  font-size: var(--rv-btn-size);
+  font-weight: var(--rv-btn-weight);
+  line-height: var(--rv-btn-leading);
+  color: var(--rv-white);
+  text-align: left;
+  white-space: nowrap;
+
+  cursor: pointer;
+  transition: background var(--rv-transition);
+}
+
+.rv-select__option + .rv-select__option {
+  border-top: var(--rv-border-width) solid var(--rv-white-a10);
+}
+
+/*
+ * Текущее значение залито Light Gray — так оно нарисовано. Наведения в
+ * макете нет, и подсветка у него та же: строка под курсором читается как
+ * та, что станет текущей.
+ */
+.rv-select__option[data-current],
+.rv-select__option:hover,
+.rv-select__option:focus-visible {
+  outline: none;
+  background: var(--rv-light-gray);
+}

@@ -1,0 +1,243 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * Редактор профиля — Figma 6648:4140 (добавление) и 6636:4345 (правка).
+ *
+ * Окно 700, высота до 600 с прокруткой. Разделы с зазором 18, внутри
+ * раздела 8. Панели правил: заливка Light Gray, рамка белым 10 %, отступ 16,
+ * скругление 24; поле внутри со скруглением 14.
+ */
+
+/* Прокрутка на содержимом, а не на окне — причина та же, что у окна списка
+   профилей: псевдоэлемент обводки уезжает вместе с прокруткой. */
+.rv-dialog.rv-profile-editor {
+  width: 700px;
+  max-height: 600px;
+  overflow: visible;
+}
+
+.rv-profile-editor__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-1);
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* Полоса съедает часть ширины; вернём её отступом, чтобы поля не сужались
+     относительно шапки. */
+  padding-right: var(--rv-space-nest-3);
+  margin-right: calc(var(--rv-space-nest-3) * -1);
+}
+
+.rv-profile-editor__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-3);
+  width: 100%;
+}
+
+.rv-profile-editor__actions-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-2);
+  width: 100%;
+}
+
+.rv-profile-editor__label {
+  margin: 0;
+  font-size: var(--rv-regular-size);
+  font-weight: var(--rv-regular-weight);
+  line-height: var(--rv-regular-leading);
+  color: var(--rv-white-a50);
+}
+
+/* Подпись действия идёт цветом самого действия — так набрано в макете. */
+.rv-profile-editor__action {
+  margin: 0;
+  font-size: var(--rv-regular-size);
+  font-weight: var(--rv-regular-weight);
+  line-height: var(--rv-regular-leading);
+}
+
+.rv-profile-editor__action[data-action="direct"] {
+  color: var(--rv-main-color);
+}
+
+.rv-profile-editor__action[data-action="proxy"] {
+  color: var(--rv-second-color);
+}
+
+.rv-profile-editor__action[data-action="block"] {
+  color: var(--rv-errors);
+}
+
+/* --- Складные панели ------------------------------------------------------ */
+
+.rv-profile-editor__panels {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-3);
+}
+
+.rv-profile-editor__panel {
+  --rv-border: linear-gradient(var(--rv-white-a10), var(--rv-white-a10));
+
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-3);
+  padding: var(--rv-space-16);
+  border-radius: var(--rv-radius-24);
+  background: var(--rv-light-gray);
+}
+
+.rv-profile-editor__panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  color: var(--rv-icon-default);
+  transition: color var(--rv-transition);
+}
+
+.rv-profile-editor__panel-head:hover {
+  color: var(--rv-icon-hover);
+}
+
+.rv-profile-editor__panel-label {
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-regular-size);
+  font-weight: var(--rv-regular-weight);
+  line-height: var(--rv-regular-leading);
+  color: var(--rv-white-a50);
+}
+
+/* Поле внутри панели скруглено на 14, а не на 24, как отдельно стоящее. */
+.rv-textarea.rv-profile-editor__area {
+  border-radius: var(--rv-radius-14);
+}
+
+/* --- Стратегия ------------------------------------------------------------ */
+
+.rv-profile-editor__strategy {
+  --rv-border: linear-gradient(var(--rv-white-a10), var(--rv-white-a10));
+
+  /* Взятый бейдж уезжает за пределы блока вслед за курсором, и обрезать его
+     нельзя — он должен оставаться под мышью. */
+  position: relative;
+  display: flex;
+  gap: var(--rv-space-nest-3);
+  /* 17, а не 16: так набрано в макете (6648:4197). */
+  padding: 17px;
+  border-radius: var(--rv-radius-24);
+  background: var(--rv-light-gray);
+}
+
+.rv-profile-editor__badge {
+  padding: 6px var(--rv-space-10) 8px;
+  border: 0;
+  border-radius: var(--rv-radius-pill);
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-chip-size);
+  font-weight: var(--rv-chip-weight);
+  line-height: var(--rv-chip-leading);
+  text-align: center;
+  white-space: nowrap;
+  /* Курсор говорит, что бейдж можно взять, ещё до того как его взяли. */
+  cursor: grab;
+  -webkit-user-select: none;
+  user-select: none;
+  /* Указательные события должны доходить до бейджа целиком, иначе
+     перетаскивание рвётся на подписи. */
+  touch-action: none;
+  transition:
+    transform var(--rv-transition),
+    box-shadow var(--rv-transition);
+}
+
+/* Кадр применения порядка: сдвиги обнуляются вместе со сменой мест, и
+   доигранный переход выглядел бы прыжком. См. finish() в редакторе. */
+.rv-profile-editor__strategy[data-settling] .rv-profile-editor__badge {
+  transition: none;
+}
+
+.rv-profile-editor__badge[data-dragging] {
+  cursor: grabbing;
+  /* У взятого бейджа перехода нет: с ним он отставал бы от курсора, а нужно
+     «где мышь — там и объект». Приподнимаем тенью и слоем, а не масштабом —
+     масштаб сдвинул бы его центр относительно точки захвата. */
+  transition: none;
+  z-index: 2;
+  box-shadow: 0 4px 12px var(--rv-black-a25);
+}
+
+.rv-profile-editor__badge[data-action="direct"] {
+  background: var(--rv-main-a10);
+  color: var(--rv-main-color);
+}
+
+.rv-profile-editor__badge[data-action="proxy"] {
+  background: var(--rv-second-a10);
+  color: var(--rv-second-color);
+}
+
+.rv-profile-editor__badge[data-action="block"] {
+  background: var(--rv-errors-a10);
+  color: var(--rv-errors);
+}
+
+/* Подсказки под «Стратегией» в макете нет: порядок там просто нарисован, а
+   что его можно двигать, ничем не показано. См. docs/design/GAPS.md. */
+.rv-profile-editor__hint {
+  margin: 0;
+  font-size: var(--rv-chip-size);
+  font-weight: var(--rv-chip-weight);
+  line-height: var(--rv-chip-leading);
+  color: var(--rv-white-a20);
+}
+
+/* --- Geo данные ----------------------------------------------------------- */
+
+.rv-profile-editor__geo {
+  --rv-border: linear-gradient(var(--rv-white-a10), var(--rv-white-a10));
+
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-3);
+  padding: 17px;
+  border-radius: var(--rv-radius-24);
+  background: var(--rv-light-gray);
+}
+
+/* --- Кнопки --------------------------------------------------------------- */
+
+.rv-profile-editor__buttons {
+  display: flex;
+  gap: var(--rv-space-nest-3);
+  width: 100%;
+}
+
+.rv-btn.rv-profile-editor__btn {
+  flex: 1;
+  min-width: 0;
+  padding: 0 var(--rv-space-16);
+}

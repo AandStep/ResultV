@@ -229,6 +229,30 @@ func AutoNodeKey(e config.ProxyEntry) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// AutoNodeKeyOf derives a node's AutoNodeKey from the ProxyConfig that Connect
+// actually received, rather than from the config.ProxyEntry it came from.
+//
+// The two are the same node, but by the time an AUTO member reaches Connect its
+// ID and Name have been overwritten with the group head's (see
+// ResolveAutoCandidates) — so anything keyed off the ID at that point is keyed
+// off the GROUP, not the member. That is how every UDP-relay verdict ended up
+// unusable: startUDPRelayProbe recorded under resolveProxyID, so all 34
+// verdicts in a real node_stats.json sat under config ids, none of them
+// matching any key the scorer reads, and an AUTO group's members all collapsed
+// onto the head's id. AutoNodeKey hashes only fields ProxyConfig also carries,
+// so deriving the key here costs nothing and cannot drift from the probe's.
+func AutoNodeKeyOf(p ProxyConfig) string {
+	return AutoNodeKey(config.ProxyEntry{
+		SubscriptionURL: p.SubscriptionURL,
+		IP:              p.IP,
+		Port:            p.Port,
+		Type:            p.Type,
+		Username:        p.Username,
+		Password:        p.Password,
+		Extra:           p.Extra,
+	})
+}
+
 // canonicalizeExtra normalizes Extra's JSON encoding before it is hashed.
 //
 // Extra reaches the backend through two different encoders that disagree on
@@ -625,13 +649,30 @@ func probeOne(e config.ProxyEntry, depth AutoProbeDepth, dialHost string) AutoPr
 		return res
 	}
 
+	// A live TCP handshake with a dead TLS handshake is the DPI signature a
+	// bare SYN probe cannot see, so a failing TLS stage does fail the node —
+	// but only when the MAJORITY of samples fail, not the first one.
+	//
+	// Failing on the first loss was measurably wrong: these three handshakes
+	// go out back-to-back at one node, and losing one of them on a loaded
+	// uplink is ordinary. On 2026-09-05 that cost the user the entire group —
+	// phase 1 found 23 of 30 members alive, phase 2 killed all five
+	// shortlisted leaders on a single dropped handshake each, and AUTO
+	// reported "ни один из 30 узлов не доступен". Taking a median of three
+	// samples only makes sense if one outlier cannot decide the verdict.
+	//
+	// The loop stops as soon as the majority is out of reach (two losses), so
+	// a genuinely blocked node still costs at most two timeouts, not three.
 	samples := make([]int64, 0, autoProbeSamples)
+	var lost int
 	for i := 0; i < autoProbeSamples; i++ {
 		lat, tlsOK, tlsReason := autoTLSProbe(dialHost, e.Port, sni, alpn)
 		if !tlsOK {
-			// A live TCP handshake with a dead TLS handshake is the DPI
-			// signature a bare SYN probe cannot see. Treat it as a failure.
-			return AutoProbeResult{Key: res.Key, OK: false, Stage: "tls", Reason: tlsReason}
+			lost++
+			if lost > autoProbeSamples/2 {
+				return AutoProbeResult{Key: res.Key, OK: false, Stage: "tls", Reason: tlsReason}
+			}
+			continue
 		}
 		samples = append(samples, lat)
 	}

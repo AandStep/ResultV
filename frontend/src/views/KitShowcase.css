@@ -1,0 +1,160 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * Оформление витрины. К самому киту отношения не имеет: это строительные
+ * леса, чтобы разложить компоненты рядом и сверить с макетом.
+ */
+
+.kit {
+  min-height: 100vh;
+  padding: 32px 48px 96px;
+  background: var(--rv-black);
+  font-family: var(--rv-font-family);
+  color: var(--rv-white);
+}
+
+.kit__intro {
+  max-width: 900px;
+  margin-bottom: 48px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--rv-white-a50);
+}
+
+.kit__intro h1 {
+  margin: 0 0 8px;
+  font-size: 32px;
+  color: var(--rv-white);
+}
+
+.kit__intro code {
+  color: var(--rv-main-color);
+}
+
+.kit__section {
+  margin-bottom: 56px;
+}
+
+.kit__head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--rv-white-a10);
+}
+
+.kit__head h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.kit__node {
+  font-size: 13px;
+  color: var(--rv-white-a20);
+}
+
+.kit__grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 24px;
+}
+
+.kit__cell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kit__label {
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--rv-white-a50);
+}
+
+.kit__stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 800px;
+}
+
+/* Заглушка флага — тот же триколор, что нарисован в макете. */
+.kit__flag {
+  display: block;
+  width: 32px;
+  height: 24px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: linear-gradient(
+    to bottom,
+    #ffffff 0 33.33%,
+    blue 33.33% 66.67%,
+    red 66.67% 100%
+  );
+}
+
+.rv-flag[data-size="sm"] .kit__flag {
+  width: 26px;
+  height: 20px;
+}
+
+/* Заглушка логотипа провайдера. */
+.kit__logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--rv-main-a20);
+}
+
+.kit__sidebar-frame {
+  height: 740px;
+}
+
+/* Кадр страницы в размере окна из макета. */
+.kit__frame {
+  width: 1000px;
+  height: 740px;
+  overflow: hidden;
+  outline: 1px solid var(--rv-white-a10);
+}
+
+/* Переключатель разделов витрины. */
+.kit__nav {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 32px;
+}
+
+.kit__nav a {
+  padding: 8px 16px;
+  border-radius: var(--rv-radius-8);
+  background: var(--rv-grey);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--rv-white-a50);
+  text-decoration: none;
+}
+
+.kit__nav a[aria-current="page"] {
+  background: var(--rv-main-a10);
+  color: var(--rv-main-color);
+}

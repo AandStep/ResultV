@@ -1,0 +1,112 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * Тост — Figma "ResultV" -> App Design, фрейм MainPage 6725:4223, слой
+ * 6725:4321.
+ *
+ * Плашка 292x88 у правого края окна: скруглены только левые углы (24),
+ * правых нет вовсе — она приехала из-за края и им же обрезана. Отступы
+ * несимметричны: 16 слева и по вертикали, 32 справа. Внутри значок 24 и
+ * подпись шириной 204.
+ *
+ * Верх — 120 от верхнего края окна: в макете это ровно под шапкой, вровень
+ * с верхней третью кнопки питания.
+ */
+
+.rv-toast-stack {
+  position: fixed;
+  top: 120px;
+  right: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--rv-space-nest-2);
+  /*
+   * Заголовок окна лежит поверх страницы и объявлен областью перетаскивания;
+   * всё, что попадает в неё, наследует это свойство, и щелчок по тосту стал
+   * бы перетаскиванием окна. Отказ повторяет то, что TitleBar делает для
+   * собственных кнопок.
+   */
+  --wails-draggable: no-drag;
+  /* Пустое место рядом со стопкой мышь не ловит — под ней живая страница. */
+  pointer-events: none;
+}
+
+.rv-toast {
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--rv-space-nest-2);
+  padding: var(--rv-space-nest-2) var(--rv-space-32) var(--rv-space-nest-2)
+    var(--rv-space-nest-2);
+  border: 0;
+  border-radius: var(--rv-radius-24) 0 0 var(--rv-radius-24);
+  background: var(--rv-light-gray);
+  font-family: var(--rv-font-family);
+  text-align: left;
+  pointer-events: auto;
+  /* Закрытие щелчком — прежнее поведение приложения; в макете жеста нет,
+     крестика у плашки тоже, поэтому подсказкой служит только курсор. */
+  cursor: pointer;
+  /*
+   * Плашка выезжает из-за правого края и туда же уходит: правых углов у неё
+   * нет именно потому, что за краем окна их не видно. Движение общее для
+   * интерфейса — 300 мс с той же кривой.
+   */
+  transition: transform var(--rv-transition), opacity var(--rv-transition);
+}
+
+.rv-toast[data-offstage="true"] {
+  transform: translateX(100%);
+  opacity: 0;
+}
+
+.rv-toast__icon {
+  display: flex;
+  align-items: center;
+  /*
+   * Значок не по центру плашки и не по центру первой строки: в макете он
+   * опущен на 4 от верхнего отступа.
+   */
+  padding-top: var(--rv-space-4);
+  color: var(--rv-icon-default);
+}
+
+.rv-toast__text {
+  width: 204px;
+  margin: 0;
+  font-size: var(--rv-regular-size);
+  font-weight: var(--rv-regular-weight);
+  line-height: var(--rv-regular-leading);
+  color: var(--rv-white-a80);
+  overflow-wrap: break-word;
+}
+
+/*
+ * Кому движение мешает — тому плашка просто появляется и пропадает.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .rv-toast {
+    transition: opacity var(--rv-duration) var(--rv-ease);
+  }
+
+  .rv-toast[data-offstage="true"] {
+    transform: none;
+  }
+}

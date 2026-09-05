@@ -118,3 +118,42 @@ func TestNodeStatStore_RecordConnectSanitizesReasonItself(t *testing.T) {
 		t.Errorf("known-vocabulary reason should pass through, got %q", got)
 	}
 }
+
+// The UDP verdict is orthogonal to connect health: a node that cannot relay
+// UDP is still a perfectly good node for everything else, so recording the
+// verdict must not touch the connect counters that drive auto-selection.
+func TestRecordUDPRelay_DoesNotDisturbConnectCounters(t *testing.T) {
+	s := &NodeStatStore{stats: map[string]NodeStat{}}
+	s.RecordConnect("node-a", true, "")
+	s.RecordUDPRelay("node-a", false)
+
+	st := s.Get("node-a")
+	if st.UDPRelay != UDPRelayFail {
+		t.Fatalf("expected %q, got %q", UDPRelayFail, st.UDPRelay)
+	}
+	if st.UDPRelayCheckedAt.IsZero() {
+		t.Fatal("check timestamp not recorded")
+	}
+	if st.ConnectOK != 1 || st.ConnectFail != 0 || st.ConsecFails != 0 {
+		t.Fatalf("connect counters disturbed: %+v", st)
+	}
+}
+
+func TestRecordUDPRelay_OverwritesPreviousVerdict(t *testing.T) {
+	s := &NodeStatStore{stats: map[string]NodeStat{}}
+	s.RecordUDPRelay("node-a", false)
+	s.RecordUDPRelay("node-a", true)
+	if got := s.Get("node-a").UDPRelay; got != UDPRelayOK {
+		t.Fatalf("expected the latest verdict %q, got %q", UDPRelayOK, got)
+	}
+}
+
+// An unresolved proxy ID must not create a phantom entry keyed by "".
+func TestRecordUDPRelayOutcome_IgnoresEmptyKey(t *testing.T) {
+	SetNodeStatStore(&NodeStatStore{stats: map[string]NodeStat{}})
+	t.Cleanup(func() { SetNodeStatStore(nil) })
+	RecordUDPRelayOutcome("   ", true)
+	if got := LookupNodeStat("").UDPRelay; got != "" {
+		t.Fatalf("empty key recorded a verdict: %q", got)
+	}
+}

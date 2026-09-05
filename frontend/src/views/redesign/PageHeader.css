@@ -1,0 +1,108 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * PageHeader — фрейм `Header` внутренних страниц (Figma, App Design).
+ *
+ * Название стилем H1, под ним с зазором 8 строка стилем Chip белым 50 %.
+ * Высота блока 61: 38 + 8 + 15.
+ */
+
+.rv-page-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--rv-space-16);
+  width: 100%;
+}
+
+/* Название с подписью. Отдельной колонкой, потому что справа от них бывают
+   кнопки-иконки — подпись должна равняться по названию, а не по ним. */
+.rv-page-header__text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  gap: var(--rv-space-nest-3);
+}
+
+/*
+ * Ряд с названием. Кнопок в нём нет ни у кого, кроме страницы серверов, и
+ * ради них ряд подрастает с 38 до 42 (столько занимает кнопка 24 с полями),
+ * а зазор до подписи ужимается с 8 до 4 — сумма остаётся теми же 61, и
+ * расстояние между строками текста не меняется.
+ */
+.rv-page-header__row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--rv-space-16);
+  width: 100%;
+}
+
+.rv-page-header[data-actions="true"] .rv-page-header__text {
+  gap: var(--rv-space-4);
+}
+
+.rv-page-header__actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 42px;
+  gap: var(--rv-space-16);
+}
+
+/* Кнопка-иконка живёт по общему правилу фрейма Icons: белый 50 %, под
+   курсором 100 %. */
+.rv-page-header__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--rv-icon-default);
+  cursor: pointer;
+  transition: color var(--rv-transition);
+}
+
+.rv-page-header__btn:hover {
+  color: var(--rv-icon-hover);
+}
+
+/*
+ * Замер задержки идёт секунды и молча: строки списка меняются по одной, а сама
+ * кнопка выглядела так же, как до нажатия. Пока идёт замер, она мигает.
+ */
+.rv-page-header__btn[data-busy] {
+  animation: rv-blink 1.6s var(--rv-ease) infinite;
+}
+
+.rv-page-header__title {
+  margin: 0;
+  font-size: var(--rv-h1-size);
+  font-weight: var(--rv-h1-weight);
+  line-height: var(--rv-h1-leading);
+  color: var(--rv-white);
+}
+
+.rv-page-header__subtitle {
+  margin: 0;
+  font-size: var(--rv-chip-size);
+  font-weight: var(--rv-chip-weight);
+  line-height: var(--rv-chip-leading);
+  color: var(--rv-white-a50);
+}

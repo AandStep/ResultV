@@ -19,6 +19,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -26,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"resultproxy-wails/internal/system"
@@ -43,10 +45,31 @@ var (
 	tunIsAdmin              = system.IsAdmin
 )
 
+// tunCommandTimeout bounds every external command this file runs.
+//
+// pnputil's device removal can block indefinitely on a wedged network devnode,
+// and exec.Command + cmd.Run() carry no deadline — connectCtx is deliberately
+// NOT threaded into the engine-start path either, so a hang here stalled the
+// whole connect with no further log line and nothing the Cancel button could
+// reach. A var so tests can shorten it.
+var tunCommandTimeout = 30 * time.Second
+
 func runCommandHidden(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), tunCommandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	return cmd.Run()
+	return tunCommandError(ctx, name, cmd.Run())
+}
+
+// tunCommandError names the timeout that fired. CommandContext kills the child
+// on expiry, and the bare "exit status 1" / "signal: killed" that comes back
+// tells a reader nothing about why.
+func tunCommandError(ctx context.Context, name string, err error) error {
+	if err != nil && ctx.Err() != nil {
+		return fmt.Errorf("%s не завершилась за %s и была снята", name, tunCommandTimeout)
+	}
+	return err
 }
 
 // runCommandHiddenOut is runCommandHidden with stdout captured, for the one
@@ -54,12 +77,65 @@ func runCommandHidden(name string, args ...string) error {
 // whether it exited cleanly. Output is returned even on a non-zero exit, so a
 // partial run still reports the devices it managed to remove.
 func runCommandHiddenOut(name string, args ...string) ([]byte, error) {
-	cmd := exec.Command(name, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), tunCommandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	err := cmd.Run()
-	return stdout.Bytes(), err
+	return stdout.Bytes(), tunCommandError(ctx, name, err)
+}
+
+// Windows CONFIGRET / CM_LOCATE_DEVNODE constants (cfgmgr32.h).
+const (
+	crSuccess              = 0
+	cmLocateDevNodePhantom = 0x00000001
+)
+
+var (
+	modCfgmgr32          = windows.NewLazySystemDLL("cfgmgr32.dll")
+	procCMLocateDevNodeW = modCfgmgr32.NewProc("CM_Locate_DevNodeW")
+)
+
+// tunDevNodeExists reports whether a PnP device node is still in the device
+// tree. CM_LOCATE_DEVNODE_PHANTOM is the whole point of using cfgmgr32 here: a
+// non-present ("phantom") node is invisible to GetAdaptersAddresses and
+// Get-NetAdapter, and it is precisely what blocks the next CreateAdapter — a
+// readiness check that cannot see one would report "clear" while the node that
+// wedges the retry is still sitting there.
+//
+// Native rather than another PowerShell spawn because this runs in a poll loop.
+func tunDevNodeExists(instanceID string) bool {
+	if err := procCMLocateDevNodeW.Find(); err != nil {
+		// Without the probe we cannot tell. Report "gone" so the caller falls back
+		// to its plain settle delay instead of burning the entire wait budget on
+		// every retry.
+		return false
+	}
+	idPtr, err := windows.UTF16PtrFromString(instanceID)
+	if err != nil {
+		return false
+	}
+	var devInst uint32
+	ret, _, _ := procCMLocateDevNodeW.Call(
+		uintptr(unsafe.Pointer(&devInst)),
+		uintptr(unsafe.Pointer(idPtr)),
+		uintptr(cmLocateDevNodePhantom),
+	)
+	runtime.KeepAlive(idPtr)
+	return ret == crSuccess
+}
+
+// staleTunDevNodeGone reports whether OUR wedged Wintun node has actually left
+// the device tree after removeStaleTunAdapter handed it to pnputil.
+//
+// Only our own GUID is waited on. The legacy tun0 node can belong to another
+// vendor's running client — which ghostTunRemovalScript deliberately never
+// removes while it is healthy — so waiting for that one to vanish would burn the
+// full budget on every single retry.
+func staleTunDevNodeGone() bool {
+	return !tunDevNodeExists(tunPnpInstanceID(tunAdapterGUID))
 }
 
 // leftoverTunIfIndexes returns the interface indexes of any sing-tun adapter

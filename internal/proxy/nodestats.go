@@ -56,7 +56,28 @@ type NodeStat struct {
 	LastSuccessAt time.Time `json:"lastSuccessAt"`
 	LastFailAt    time.Time `json:"lastFailAt"`
 	LastReason    string    `json:"lastReason"`
+	// UDPRelay is the node's verdict from ProbeUDPRelay: "" (never probed),
+	// UDPRelayOK or UDPRelayFail. Kept separate from ConnectOK/ConnectFail
+	// because it is an orthogonal property — a node can pass every TCP/TLS
+	// check and still be unable to carry a call. No reason string is stored:
+	// this file is unencrypted on the promise that it holds no addresses, and
+	// a relay failure reason names hosts.
+	UDPRelay          string    `json:"udpRelay,omitempty"`
+	UDPRelayCheckedAt time.Time `json:"udpRelayCheckedAt,omitempty"`
+
+	// ThroughputKBps is the rate the node actually moved bytes at, measured
+	// once per connect through the live session (see ProbeThroughput). Zero
+	// means never measured — which is a distinct state from "measured slow"
+	// and must not be scored as one.
+	ThroughputKBps float64   `json:"throughputKbps,omitempty"`
+	ThroughputAt   time.Time `json:"throughputAt,omitempty"`
 }
+
+// Verdicts for NodeStat.UDPRelay.
+const (
+	UDPRelayOK   = "ok"
+	UDPRelayFail = "fail"
+)
 
 // NodeStatStore holds per-node stats in memory and persists them to a plain
 // JSON file on explicit Flush. Safe for concurrent use.
@@ -179,6 +200,43 @@ func (s *NodeStatStore) RecordConnect(key string, ok bool, reason string) {
 	s.dirty = true
 }
 
+// RecordUDPRelay stores the node's UDP-relay verdict. Separate from
+// RecordConnect on purpose: a failed relay probe must not count as a failed
+// connect, or a node that is perfectly good for browsing would be demoted out
+// of auto-selection for lacking a property most traffic never needs.
+func (s *NodeStatStore) RecordUDPRelay(key string, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	st := s.stats[key]
+	if ok {
+		st.UDPRelay = UDPRelayOK
+	} else {
+		st.UDPRelay = UDPRelayFail
+	}
+	st.UDPRelayCheckedAt = time.Now()
+	s.stats[key] = st
+	s.dirty = true
+}
+
+// RecordThroughput stores the node's measured transfer rate.
+//
+// Overwrites rather than averaging: throughput is time-of-day dependent (an
+// evening measurement says little about the same node at noon), so the most
+// recent reading paired with its timestamp is more honest than a rolling mean
+// that quietly blends two different network conditions. Scoring decides how
+// long a reading stays relevant.
+func (s *NodeStatStore) RecordThroughput(key string, kbps float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	st := s.stats[key]
+	st.ThroughputKBps = kbps
+	st.ThroughputAt = time.Now()
+	s.stats[key] = st
+	s.dirty = true
+}
+
 // Flush persists the store to disk if and only if something changed since
 // the last successful flush. RecordProbe/RecordConnect only mark the store
 // dirty in memory; a sweep of dozens of probes must cost exactly one
@@ -271,6 +329,28 @@ func sanitizeStatReason(reason string) string {
 // node that just failed to connect would keep dialing first out of the
 // cache for up to autoSweepCacheTTL instead of the failure penalty in
 // scoreNode ever getting a chance to move it down.
+// RecordUDPRelayOutcome is the package-level entry point for the UDP verdict,
+// mirroring RecordConnectOutcome. It deliberately does NOT reset the auto
+// sweep cache: an inability to relay UDP is not a connection failure.
+func RecordUDPRelayOutcome(key string, ok bool) {
+	if strings.TrimSpace(key) == "" {
+		return
+	}
+	nodeStats().RecordUDPRelay(key, ok)
+	_ = nodeStats().Flush()
+}
+
+// RecordThroughputOutcome stores a throughput measurement for key. A blank key
+// or a non-positive rate is dropped: an unmeasured node must stay unmeasured
+// rather than acquire a "0 KB/s" record that scoring would read as very slow.
+func RecordThroughputOutcome(key string, kbps float64) {
+	if strings.TrimSpace(key) == "" || kbps <= 0 {
+		return
+	}
+	nodeStats().RecordThroughput(key, kbps)
+	_ = nodeStats().Flush()
+}
+
 func RecordConnectOutcome(key string, ok bool, reason string) {
 	nodeStats().RecordConnect(key, ok, reason)
 	_ = nodeStats().Flush()

@@ -54,6 +54,7 @@ import {
   RefreshSubscription,
   AddSubscription,
   DeleteSubscription,
+  UpdateSubscription,
   DecodeDeepLink,
   StartUpdate,
   CancelUpdate,
@@ -301,12 +302,17 @@ export const wailsAPI = {
     }
   },
 
+  // Ошибку пробрасываем, а не отдаём `false`: «не смогли спросить» и «прав
+  // нет» — разные вещи, и подменять первое вторым значит блокировать запуск
+  // из-за сбоя собственной диагностики. Ровно об этом предупреждает
+  // комментарий у system.IsAdmin: принять администратора за обычного
+  // пользователя хуже, чем не знать ответа.
   isAdmin: async () => {
     try {
       return await IsAdmin();
     } catch (e) {
       console.error("wailsAPI.isAdmin error:", e);
-      return false;
+      throw e;
     }
   },
 
@@ -420,6 +426,21 @@ export const wailsAPI = {
     }
   },
 
+  // Ссылка, пришедшая до того, как фронт успел подписаться на события —
+  // холодный старт. Дёргаем метод напрямую, а не через сгенерированный
+  // модуль: биндинги обновляются только сборкой wails, и импорт отсутствующего
+  // имени уронил бы бандл целиком.
+  takePendingDeepLink: async () => {
+    try {
+      const take = window?.go?.main?.App?.TakePendingDeepLink;
+      if (!take) return { payload: "", source: "" };
+      return (await take()) || { payload: "", source: "" };
+    } catch (e) {
+      console.error("wailsAPI.takePendingDeepLink error:", e);
+      return { payload: "", source: "" };
+    }
+  },
+
   decodeDeepLink: async (url) => {
     try {
       return await DecodeDeepLink(url);
@@ -455,6 +476,18 @@ export const wailsAPI = {
       return await DeleteSubscription(subID);
     } catch (e) {
       console.error("wailsAPI.deleteSubscription error:", e);
+      throw e;
+    }
+  },
+
+  // Per-subscription settings from the servers page: display name, whether its
+  // servers show up on the home screen, and its own refresh interval in
+  // minutes (0 — never, negative — follow the global setting).
+  updateSubscription: async (subID, name, showOnHome, updateIntervalMinutes) => {
+    try {
+      return await UpdateSubscription(subID, name, !!showOnHome, updateIntervalMinutes);
+    } catch (e) {
+      console.error("wailsAPI.updateSubscription error:", e);
       throw e;
     }
   },
@@ -524,6 +557,40 @@ export const wailsAPI = {
       console.error("wailsAPI.ackChangelog error:", e);
     }
   },
+
+  /*
+   * Профили маршрутизации.
+   *
+   * Идут через мост напрямую, а не через сгенерированные обёртки: файлы в
+   * wailsjs/ пересобирает `wails build`, и до первой такой сборки импорт
+   * несуществующего имени уронил бы весь бандл, а не одну кнопку. Имена и
+   * порядок аргументов те же, что у методов App, так что после генерации
+   * можно перевести на импорт, ничего не меняя в вызовах.
+   */
+  getRoutingProfiles: () => callApp("GetRoutingProfiles", [], { profiles: [], activeId: "" }),
+  saveRoutingProfile: (profile) => callApp("SaveRoutingProfile", [profile]),
+  deleteRoutingProfile: (id) => callApp("DeleteRoutingProfile", [id]),
+  setActiveRoutingProfile: (id) => callApp("SetActiveRoutingProfile", [id]),
+  compileRoutingProfile: (id, refreshGeo) => callApp("CompileRoutingProfile", [id, !!refreshGeo]),
+  previewRoutingDeepLink: (url) => callApp("PreviewRoutingDeepLink", [url]),
+  importRoutingDeepLink: (url, makeActive) =>
+    callApp("ImportRoutingDeepLink", [url, !!makeActive]),
 };
+
+/*
+ * Вызов метода App через мост. `fallback` возвращается только когда моста нет
+ * вовсе (заглушка при проверке вида) — настоящую ошибку метода пробрасываем
+ * наверх: интерфейсу есть что показать, а молчаливый успех прячет отказ.
+ */
+async function callApp(method, args = [], fallback) {
+  const app = typeof window !== "undefined" ? window.go?.main?.App : undefined;
+  const fn = app?.[method];
+  if (typeof fn !== "function") {
+    console.warn(`wailsAPI: метод ${method} недоступен — пересоберите биндинги`);
+    if (fallback !== undefined) return fallback;
+    throw new Error(`${method} недоступен`);
+  }
+  return fn(...args);
+}
 
 export default wailsAPI;

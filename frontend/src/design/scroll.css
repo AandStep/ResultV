@@ -1,0 +1,95 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * Прокрутка страницы нового дизайна.
+ *
+ * Прокручивается страница целиком, а не что-то внутри неё: раскрытый список
+ * серверов встаёт во всю высоту и выдавливает остальное вниз, до него
+ * доезжают колесом. Полосы в макете нет ни на одном фрейме, поэтому она
+ * сделана как можно незаметнее: дорожки нет вовсе, ползунок — белый 8 %, под
+ * курсором 16 %. Обычная полоса на чёрной странице читается как посторонний
+ * элемент.
+ *
+ * Место под полосу занято всегда (`scrollbar-gutter`), иначе при раскрытии
+ * списка она появлялась бы и сдвигала всю страницу. Правый отступ страницы на
+ * её ширину меньше левого — вместе они по-прежнему дают 32 из макета.
+ */
+
+.rv-scroll {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.rv-scroll::-webkit-scrollbar {
+  width: var(--rv-scrollbar-width);
+}
+
+.rv-scroll::-webkit-scrollbar-track,
+.rv-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.rv-scroll::-webkit-scrollbar-thumb {
+  border-radius: var(--rv-radius-pill);
+  background: rgba(255, 255, 255, 0.08);
+  transition: background var(--rv-transition);
+}
+
+.rv-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/*
+ * Полоса внутри окна.
+ *
+ * Тонкая полоса страницы (`.rv-scroll`, белый 8 %) сделана как можно
+ * незаметнее — на чёрной странице она читалась бы как посторонний элемент.
+ * Внутри окна задача обратная: содержимое заметно длиннее видимой части, и
+ * пользователь должен понимать, что оно прокручивается, ещё не начав крутить.
+ * Поэтому ползунок здесь заметный — белый 20 %, под курсором 40 % — и шире
+ * на пиксель.
+ */
+.rv-scroll-dialog {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rv-white-a20) transparent;
+}
+
+.rv-scroll-dialog::-webkit-scrollbar {
+  width: 8px;
+}
+
+.rv-scroll-dialog::-webkit-scrollbar-track,
+.rv-scroll-dialog::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Стрелки на концах полосы — деталь системной темы, в макете их нет. */
+.rv-scroll-dialog::-webkit-scrollbar-button {
+  display: none;
+}
+
+.rv-scroll-dialog::-webkit-scrollbar-thumb {
+  border-radius: var(--rv-radius-pill);
+  background: var(--rv-white-a20);
+  transition: background var(--rv-transition);
+}
+
+.rv-scroll-dialog::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4);
+}

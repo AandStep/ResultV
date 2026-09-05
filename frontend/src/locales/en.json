@@ -2,7 +2,7 @@
   "sidebar": {
     "offline": "Daemon Offline",
     "home": "Home",
-    "buy": "impVPN Servers",
+    "buy": "Buy Servers",
     "add": "Add Proxy",
     "list": "Server List",
     "rules": "Smart Rules",
@@ -14,8 +14,8 @@
     "status": {
       "protected": "Protected",
       "lost": "Connection Lost",
-      "error": "Connection Error",
-      "unprotected": "Unprotected",
+      "error": "Something went wrong",
+      "unprotected": "Not connected",
       "connecting": "Connecting...",
       "disconnecting": "Disconnecting...",
       "resolving": "Finding a server"
@@ -33,13 +33,14 @@
     "buyDiscount": "Buy them with a 5% discount",
     "addServer": "Add Server",
     "addManual": "Click here to enter details manually",
+    "empty": "Add a server or subscription",
     "currentServer": "Current Server",
     "emptyServer": "No Servers",
     "openList": "Open full list",
     "editData": "Edit Details",
     "chooseOther": "Select Another",
     "download": "Download",
-    "upload": "Upload",
+    "upload": "Uploaded",
     "modeProxy": "PROXY",
     "modeTunnel": "TUNNEL",
     "favorites": "Favorites",
@@ -49,7 +50,29 @@
     "sortMenuTooltip": "Sort servers in this list",
     "websiteTooltip": "Official website",
     "telegramTooltip": "Telegram channel",
-    "proxyModeHint": "Some apps (Telegram, games) ignore the system proxy. If an app can't see the VPN — switch to TUNNEL mode."
+    "proxyModeHint": "Some apps (Telegram, games) ignore the system proxy. If an app can't see the VPN — switch to TUNNEL mode.",
+    "ms": "ms",
+    "mode": {
+      "proxy": "Proxy",
+      "tunnel": "Tunnel"
+    }
+  },
+  "addPage": {
+    "title": "Add server",
+    "subtitle": "Add a subscription or a server from a file, the clipboard or by hand.",
+    "fromFile": "From file",
+    "fromClipboard": "From clipboard",
+    "protocol": "Choose a protocol",
+    "link": "Paste a link",
+    "config": "Paste the contents of a JSON or .conf file",
+    "submit": "Add server",
+    "confirmTitle": "Adding servers",
+    "detected_one": "Found {{count}} VPN server",
+    "detected_other": "Found {{count}} VPN servers",
+    "confirmSubmit_one": "Add {{count}} server",
+    "confirmSubmit_other": "Add {{count}} servers",
+    "routingFromSubscription": "Routing from subscription",
+    "confirmTitleSubscription": "Adding subscription"
   },
   "add": {
     "titleAdd": "Add Configuration",
@@ -162,83 +185,89 @@
     "awgMaxHandshakes": "Max handshake attempts"
   },
   "settings": {
-    "title": "Application Settings",
+    "title": "Settings",
     "desc": "Manage security and system options",
-    "back": "Back to settings",
+    "back": "Back",
     "groups": {
       "advanced": {
         "title": "Advanced settings",
-        "desc": "Startup, TUN, and traffic filtering options."
+        "desc": "Startup, TUN, and traffic filtering options.",
+        "items": "• TUN mode  • Launch at system startup"
       },
       "subscriptions": {
         "title": "Subscriptions",
-        "desc": "Auto refresh and the data sent to subscription providers."
+        "desc": "Refresh schedule and data sent to providers.",
+        "items": "• Updates • HWID  • UA"
       },
       "security": {
         "title": "Security",
-        "desc": "Connection protection for failures and DNS leaks."
+        "desc": "Connection protection for failures and DNS leaks.",
+        "items": "• KillSwitch  • DNS leak protection"
       },
       "network": {
         "title": "Network",
-        "desc": "DNS, local access, and proxy port."
+        "desc": "DNS, local access, and proxy port.",
+        "items": "• DNS  • IPv6 • Local network"
       }
     },
     "tun_stack": {
       "title": "TUN mode",
-      "desc": "Choose the TUN network stack. The Windows system stack is used by default.",
+      "desc": "Tunnel network stack: system or gvisor.",
       "default": "Default",
       "system": "system",
       "gvisor": "gvisor"
     },
     "autostart": {
       "title": "Run at startup",
-      "desc": "Automatically open application when PC boots."
+      "desc": "Launch the app together with Windows."
     },
     "killswitch": {
       "title": "Enable Kill Switch",
-      "desc": "Instantly cut internet connection if proxy goes down."
+      "desc": "Cuts the internet if the proxy goes down."
     },
     "dns_leak_protection": {
       "title": "DNS leak protection",
-      "desc": "Blocks Windows' parallel DNS queries from escaping via the LAN adapter. Protects against ISP DNS hijacking (Rostelecom, MSK-IX, etc.). On Windows, changing system DNS requires administrator privileges. Disable only if it interferes with local-network workflows."
+      "desc": "Keeps DNS queries from leaving the tunnel."
     },
     "enable_ipv6": {
       "title": "IPv6 in the tunnel",
-      "desc": "By default the tunnel is IPv4-only and the resolver returns no AAAA records. Turn this on only if you actually have working IPv6: on networks where it is broken or unproxied it will make things worse. On machines without IPv6 the setting is ignored automatically."
+      "desc": "Enable only if your IPv6 actually works."
     },
     "subscription_auto_update": {
       "title": "Automatic refresh",
-      "desc": "Periodically refresh all added subscriptions."
+      "desc": "Refresh subscriptions on a schedule."
     },
     "subscription_interval": {
       "title": "Refresh interval",
-      "desc": "How often to refresh subscriptions, in hours."
+      "desc": "How often to refresh subscriptions.",
+      "hours": "{{hours}} h"
     },
     "subscription_hwid": {
       "title": "Send HWID",
-      "desc": "Send the device identifier to HTTPS subscriptions for device-limit checks."
+      "desc": "Device ID for provider device-limit checks."
     },
     "subscription_user_agent": {
       "title": "User agent",
-      "desc": "Clear the field to use the default ResultV/<version>/Windows/<OS version> value.",
-      "placeholder": "ResultV/3.3.2/Windows/11_10.0.26200"
+      "desc": "Empty — the default ResultV header.",
+      "placeholder": "ResultV/3.4.0/Windows/11_10.0.26200"
     },
     "dns": {
       "title": "DNS Servers",
-      "desc": "Choose a DNS provider or enter custom DNS servers separated by commas.",
+      "desc": "A DNS provider or your own addresses, separated by commas.",
       "preset_auto": "Auto (default)",
       "preset_google": "Google DNS",
       "preset_cloudflare": "Cloudflare DNS",
       "preset_quad9": "Quad9 DNS",
       "preset_yandex": "Yandex DNS",
-      "custom_placeholder": "Example: 8.8.8.8, 1.1.1.1",
+      "custom_label": "Or enter your own",
+    "custom_placeholder": "Example: 8.8.8.8, 1.1.1.1",
       "apply": "Apply"
     },
     "lan_listen": {
       "toggle_title": "Listen on local network",
-      "toggle_desc": "Allow other devices on your local network to connect to this proxy. Use only on trusted networks.",
+      "toggle_desc": "Let other devices on the network use the proxy.",
       "port_title": "Local port",
-      "port_desc": "Empty or 0 means auto. A fixed port is convenient for connecting other devices.",
+      "port_desc": "Empty or 0 — the port is chosen automatically.",
       "port_placeholder": "0 (auto)",
       "port_apply": "Apply",
       "addr_title": "Client address",
@@ -248,11 +277,11 @@
     },
     "quic": {
       "title": "QUIC (UDP/443)",
-      "desc": "On: better speed and compatibility for YouTube/Google. Off: compatibility mode for networks where QUIC is unstable."
+      "desc": "On — speed for YouTube and Google, off — compatibility."
     },
     "export_import": {
-      "title": "Export / Import Configurations",
-      "desc": "Save config to a secure file. It will be encrypted with your personal password.",
+      "title": "Export / import configurations",
+      "desc": "Move settings and servers to another device.",
       "export_btn": "Export",
       "import_btn": "Import"
     },
@@ -273,7 +302,71 @@
       "read_error": "File read error!",
       "decrypt_success": "Secure configuration successfully decrypted and applied!",
       "decrypt_error": "Error: Incorrect password or damaged file."
+    },
+    "language": {
+      "title": "Interface language",
+      "desc": "Language of the app's labels.",
+      "ru": "Русский",
+      "en": "English"
     }
+  },
+  "routingProfiles": {
+    "title": "Routing profiles",
+    "subtitle": "Manage traffic rules yourself",
+    "active": "Active profile",
+    "all": "All profiles",
+    "actions": "Actions",
+    "create": "Create profile",
+    "import": "Import profile",
+    "edit": "Edit profile",
+    "remove": "Delete profile",
+    "empty": "No profiles yet. Create one or import it from a link.",
+    "confirmDelete": "Delete the profile “{{name}}”?",
+    "importHint": "Copy a routing profile link to the clipboard and press again.",
+    "createTitle": "Add a profile",
+    "createSubtitle": "Creating a new routing profile",
+    "editTitle": "Edit profile",
+    "editSubtitle": "Editing profile",
+    "name": "Name",
+    "namePlaceholder": "My rules",
+    "direct": "Direct",
+    "proxy": "Proxy",
+    "block": "Block",
+    "domains": "Domains",
+    "ips": "IP addresses",
+    "domainsPlaceholder": "geosite:private\nexample.com\ndomain:nalog.ru",
+    "ipsPlaceholder": "geoip:private\n10.0.0.0/8",
+    "strategy": "Strategy",
+    "strategyHint": "Rule processing order — drag to change",
+    "geo": "Geo data",
+    "geoip": "GeoIP URL",
+    "geosite": "GeoSite URL",
+    "urlPlaceholder": "https://example.com",
+    "reset": "Cancel",
+    "save": "Save"
+  },
+  "smartRules": {
+    "title": "Smart Rules",
+    "subtitle": "With “Smart mode” routing sets itself up without third-party rules. The client does it all for you.",
+    "smart": "Smart mode",
+    "global": "Global mode",
+    "sitesVpn": "Sites through the VPN",
+    "sitesVpnDesc": "If a site turned out not to be on the smart-mode list, you can add it yourself.",
+    "sitesDirect": "Sites direct",
+    "sitesDirectDesc": "Sites added to this list will not go through the VPN.",
+    "sitesPlaceholder": "Enter an IP or host and press Enter to add",
+    "appsVpn": "Apps through the VPN",
+    "appsVpnDesc": "All traffic from these apps goes into the tunnel.",
+    "appsDirect": "Apps direct",
+    "appsDirectDesc": "All traffic from these apps will not go through the VPN.",
+    "appsPlaceholder": "For example {{example}}",
+    "pickFile": "Choose a file on the computer",
+    "clear": "Clear the list",
+    "remove": "Remove from the list",
+    "confirmClearSites": "Remove every site from the list?",
+    "confirmClearApps": "Remove every app from the list?",
+    "profilesTitle": "Routing profiles",
+    "profilesDesc": "Set up your own routing here, or use the one your provider ships"
   },
   "rules": {
     "title": "Smart Routing",
@@ -351,6 +444,8 @@
     "empty": "The server list is empty.",
     "pinging": "Pinging...",
     "pingTooltip": "Direct TCP latency to server (not through tunnel)",
+    "udpRelayOkTooltip": "This node relays UDP — Discord calls and screen shares work",
+    "udpRelayFailTooltip": "This node does not relay UDP — Discord calls and screen shares will not work on it",
     "searchPlaceholder": "Search by name or IP...",
     "sortBy": "Sort by",
     "sort": {
@@ -391,9 +486,37 @@
       "resolving": "Finding a server"
     }
   },
+  "serversPage": {
+    "title": "Server list",
+    "subtitle": "Manage your servers: {{servers}} | {{subscriptions}}",
+    "countServers_one": "{{count}} server",
+    "countServers_other": "{{count}} servers",
+    "countSubs_one": "{{count}} subscription",
+    "countSubs_other": "{{count}} subscriptions",
+    "search": "Search servers...",
+    "myServers": "My servers",
+    "subDate": "{{date}} at {{time}}",
+    "subMeta": "Until {{date}} | {{used}} / {{total}}",
+    "subMetaNoDate": "{{used}} / {{total}}",
+    "pingServers": "Measure latency to servers",
+    "sortServers": "List order",
+    "editSubscription": "Subscription settings",
+    "support": "Support",
+    "renameLabel": "Rename",
+    "showOnHome": "Show on the home screen",
+    "intervalLabel": "Custom refresh interval",
+    "interval": {
+      "0": "Never",
+      "30": "30 min",
+      "60": "1 hour",
+      "120": "2 hours",
+      "240": "4 hours",
+      "360": "6 hours"
+    }
+  },
   "logs": {
     "title": "Event Logs",
-    "desc": "System logs and connection information",
+    "desc": "System logs and connection information. If you found a bug, the logs will help us fix it.",
     "empty": "No logs available",
     "clear_btn": "Clear",
     "save_btn": "Save to file",
@@ -428,16 +551,11 @@
     }
   },
   "buy": {
-    "title": "impVPN Servers",
-    "desc": "Reliable IPv4 and IPv6 proxies for any tasks from our partners",
-    "vpn_section_title": "impVPN Servers",
-    "vpn_section_desc": "impVPN — Just making the internet freer🛸",
-    "proxy_section_title": "Buy Proxies",
-    "proxy_section_desc": "Reliable IPv4 and IPv6 proxies for any tasks from our partners",
+    "title": "Buy Servers",
+    "subtitle": "Here you can get the best subscriptions from our partners with a bonus for our promo code.",
     "imp_vpn": {
-      "discount": "20% off from impVPN",
-      "discount_desc": "Open the Telegram bot via the link below, enter the promo code and get a 20% top-up bonus on the best VPN servers",
-      "promo_title": "20% Promo Code"
+      "discount": "20% top-up bonus from impVPN",
+      "discount_desc": "Open the Telegram bot or the website via the links below, enter the promo code result and get a bonus on your balance top-up"
     },
     "proxy_seller": {
       "discount": "Discount from Proxy-Seller",
@@ -501,10 +619,12 @@
   "tunnel": {
     "adminTitle": "Administrator rights required",
     "adminMessage": "Tunnel mode needs administrator privileges for the virtual network adapter. Click the button below and approve the UAC prompt — the app will restart elevated.",
-    "restartAsAdmin": "Restart as administrator"
+    "restartAsAdmin": "Restart as administrator",
+    "endpointOnly": "WireGuard and AmneziaWG do not work in Proxy mode — Tunnel only."
   },
   "toast": {
-    "autoResolveHint": "Connecting to an auto server can take longer — we're picking the best node for you."
+    "autoResolveHint": "Connecting to an auto server can take longer — we're picking the best node for you.",
+    "autoNoNodes": "Auto group: no node responded. Connection cancelled — pick another server or try again later."
   },
   "changelog": {
     "title": "What's new",
@@ -513,5 +633,12 @@
     "typeImprove": "Improvement",
     "typeFix": "Fix",
     "typeOther": "Change"
+  },
+  "units": {
+    "kb": "KB",
+    "mb": "MB",
+    "gb": "GB",
+    "kbps": "KB/s",
+    "mbps": "MB/s"
   }
 }

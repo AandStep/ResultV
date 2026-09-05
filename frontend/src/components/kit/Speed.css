@@ -1,0 +1,118 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+
+/*
+ * Speed — Figma "App UI-kit" -> фрейм Speed (node 6528:714).
+ * Плитка со скоростью: 2 варианта (Default — приём, Second — отправка)
+ * x 2 режима (Default — трафика нет, Active — идёт).
+ *
+ * 423x158, заливка Grey, скругление 24, отступ 24. Сверху блок цифр,
+ * снизу график, между ними — свободное место.
+ *
+ * В режиме Default блок цифр приглушён до 50 %, а вместо кривой нарисована
+ * плоская линия. Цвет крупного числа: Main-color у Default, Second-color у
+ * Second.
+ */
+
+.rv-speed {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  width: 100%;
+  height: 158px;
+  padding: var(--rv-space-24);
+  border-radius: var(--rv-radius-24);
+  background: var(--rv-grey);
+  overflow: hidden;
+}
+
+.rv-speed__data {
+  transition: opacity var(--rv-transition);
+}
+
+.rv-speed__data {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: var(--rv-space-4);
+  width: 100%;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.rv-speed[data-mode="default"] .rv-speed__data {
+  opacity: 0.5;
+}
+
+.rv-speed__row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  width: 100%;
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-chip-size);
+  font-weight: var(--rv-chip-weight);
+  line-height: var(--rv-chip-leading);
+  color: var(--rv-white-a50);
+}
+
+.rv-speed__row p {
+  margin: 0;
+}
+
+.rv-speed__total {
+  margin: 0;
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-title-size);
+  font-weight: var(--rv-title-weight);
+  line-height: var(--rv-title-leading);
+  color: var(--rv-main-color);
+}
+
+.rv-speed[data-variant="second"] .rv-speed__total {
+  color: var(--rv-second-color);
+}
+
+/* --- График ------------------------------------------------------------- */
+
+.rv-speed__chart {
+  position: relative;
+  flex-shrink: 0;
+  width: 100%;
+  height: 39.5px;
+}
+
+/*
+ * Пустое состояние — отрезок 363x3 с прозрачностью 50 % в цвет варианта.
+ * Ширина 363 из макета: активная кривая при этом тянется на всю ширину
+ * содержимого (375). См. GAPS.md SP-3.
+ */
+.rv-speed__chart--empty {
+  height: 3px;
+  width: 363px;
+  background: var(--rv-main-color);
+  opacity: 0.5;
+  transition: background var(--rv-transition);
+}
+
+.rv-speed[data-variant="second"] .rv-speed__chart--empty {
+  background: var(--rv-second-color);
+}

@@ -37,7 +37,7 @@ const MobileNavItem = ({ icon, label, isActive, onClick }) => (
 
 export const MainLayout = ({ children }) => {
   const { t } = useTranslation();
-  const { activeTab, setActiveTab, setEditingProxy } = useConfigContext();
+  const { activeTab, setActiveTab, setEditingProxy, editingProxy } = useConfigContext();
   const mainScrollRef = useRef(null);
   const prevTabRef = useRef(activeTab);
 
@@ -52,9 +52,7 @@ export const MainLayout = ({ children }) => {
     prevTabRef.current = activeTab;
   }, [activeTab]);
 
-  return (
-    <div className="fixed inset-0 flex flex-col bg-zinc-950 text-zinc-200 font-sans overflow-hidden select-none">
-      <style>{`
+  const resetCss = `
         * {
           outline: none !important;
           -webkit-tap-highlight-color: transparent !important;
@@ -69,7 +67,38 @@ export const MainLayout = ({ children }) => {
         }
         :root { --bs-primary: transparent; }
         .scrollbar-hide::-webkit-scrollbar { display: none; }
-      `}</style>
+  `;
+
+  /*
+   * Страницы нового дизайна рисуют собственный сайдбар и свои отступы,
+   * поэтому старая обвязка им только мешает. Заголовок окна кладём поверх
+   * страницы — в макете его нет, а кнопки окна нужны.
+   *
+   * Правка сервера открывается на той же вкладке `add`, но старой формой —
+   * ей обвязка ещё нужна.
+   */
+  const redesigned =
+    activeTab === "home" ||
+    activeTab === "list" ||
+    activeTab === "rules" ||
+    activeTab === "buy" ||
+    activeTab === "logs" ||
+    activeTab === "settings" ||
+    (activeTab === "add" && !editingProxy);
+
+  if (redesigned) {
+    return (
+      <div className="fixed inset-0 overflow-hidden select-none">
+        <style>{resetCss}</style>
+        <TitleBar overlay />
+        {children}
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 flex flex-col bg-zinc-950 text-zinc-200 font-sans overflow-hidden select-none">
+      <style>{resetCss}</style>
 
       <TitleBar />
 

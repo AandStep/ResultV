@@ -1,0 +1,83 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+
+/*
+ * Flag — Figma "App UI-kit" -> фрейм Flag (node 6504:3256).
+ * Два размера (Flag 68, FlagSm 58) x 4 статуса.
+ *
+ * Это подложка под флаг страны, а не сам флаг: в макете внутри лежит
+ * прямоугольник-заглушка (российский триколор). Статус меняет только заливку
+ * подложки, размер флага внутри — 32x24 у большого и 26x20 у маленького,
+ * скругление 2.
+ */
+
+.rv-flag {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 68px;
+  height: 68px;
+  border-radius: var(--rv-radius-14);
+  background: var(--rv-light-gray);
+  overflow: hidden;
+  transition: background var(--rv-transition);
+}
+
+.rv-flag[data-size="sm"] {
+  width: 58px;
+  height: 58px;
+}
+
+.rv-flag[data-status="warning"] { background: var(--rv-warning-a10); }
+.rv-flag[data-status="success"] { background: var(--rv-main-a10); }
+.rv-flag[data-status="error"] { background: var(--rv-errors-a10); }
+
+.rv-flag__inner {
+  display: block;
+  flex-shrink: 0;
+  width: 32px;
+  height: 24px;
+  border-radius: var(--rv-radius-2);
+  overflow: hidden;
+  object-fit: cover;
+}
+
+.rv-flag[data-size="sm"] .rv-flag__inner {
+  width: 26px;
+  height: 20px;
+}
+
+/*
+ * Настоящий флаг вместо заглушки. Приложение отдаёт его картинкой с
+ * собственными инлайновыми размерами (`FlagIcon`), а инлайн перебивается
+ * только важностью — отсюда `!important`. Размер берётся от самой подложки,
+ * поэтому строкам списка ничего дополнительно указывать не нужно.
+ */
+.rv-flag__img {
+  width: 32px !important;
+  height: 24px !important;
+  border-radius: var(--rv-radius-2) !important;
+  object-fit: cover;
+}
+
+.rv-flag[data-size="sm"] .rv-flag__img {
+  width: 26px !important;
+  height: 20px !important;
+}

@@ -1,0 +1,178 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * Градиентная обводка интерактивных элементов.
+ *
+ * Обычной рамкой градиент не задать, поэтому он рисуется псевдоэлементом:
+ * подложка заливается градиентом, а маска вырезает из неё середину, оставляя
+ * ровно рамку по контуру. Скругление наследуется от элемента.
+ *
+ * Слоя два, и это не прихоть: градиент в CSS не интерполируется, `transition`
+ * на `background` с градиентом просто ничего не делает — состояние
+ * переключалось бы рывком. Поэтому нижний слой всегда держит обычную обводку,
+ * верхний — обводку наведения, и меняется у них только прозрачность.
+ *
+ * Важно: элемент с такой обводкой не должен обрезать содержимое
+ * (`overflow: hidden`) — обрезка идёт ровно по внешнему краю рамки и съедает
+ * её вместе со сглаживанием, отчего линия выглядит тоньше и бледнее. Если
+ * обрезка нужна, её вешают на внутреннюю обёртку (см. HomeServerList).
+ *
+ * Рамка ложится ВНУТРЬ элемента и габарит не увеличивает — в отличие от
+ * обычного `border`, поэтому размеры из макета переносятся один в один.
+ *
+ * ПРАВИЛО ДЛЯ КОМПОНЕНТОВ: свой цвет обводки (`--rv-border` и
+ * `--rv-border-hover`) объявляют в БАЗОВОМ правиле, а не внутри `:hover`,
+ * `:active` или другого состояния. Переменная не анимируется: как только
+ * состояние кончается, она возвращается к прежнему значению мгновенно — а
+ * слой, который её рисует, в этот момент ещё виден на полную. Отсюда была
+ * вспышка: у крупной кнопки зелёный ховер объявлялся внутри `:hover`, и при
+ * уводе курсора верхний слой разом становился белым 20 % и лишь потом гас.
+ * Объявленная в базовом правиле переменная не меняется вовсе, а состояние
+ * переключает только прозрачность двух слоёв — то есть плавно.
+ */
+
+.rv-border {
+  position: relative;
+}
+
+.rv-border::before,
+.rv-border::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  /*
+   * Рамка держится настоящим `border`, а не внутренним отступом. Разница
+   * видна на скруглениях: у padding-box скругление наследует внешний радиус,
+   * внутренний контур идёт тем же радиусом со сдвигом по диагонали, и в углах
+   * кольцо получается тоньше, чем на прямых. С border внутренний радиус
+   * уменьшается на толщину сам, и линия выходит одной ширины по всему контуру.
+   */
+  border: var(--rv-border-width) solid transparent;
+  /*
+   * Градиент отсчитывается от ВСЕГО элемента, а не от его нутра. По
+   * умолчанию `background-origin` = padding-box: картинка градиента ложится
+   * во внутренний прямоугольник, а полоса рамки за его пределами
+   * дорисовывается повтором той же картинки. Из-за этого левая грань
+   * показывала конец градиента (5 %), а правая — начало (10 %), и обводка
+   * была ярче справа, ровно наоборот макету. Замер headless-Chrome на
+   * контрасте 100 % -> 25 %: слева 64, справа 255; с border-box — 254 и 64.
+   *
+   * Ниже градиент задаётся `background-image`, а не сокращением `background`:
+   * сокращение сбрасывает `background-origin` к начальному padding-box, и
+   * правило отсюда переставало действовать.
+   */
+  background-origin: border-box;
+  -webkit-mask:
+    linear-gradient(#000 0 0) padding-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) padding-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.rv-border::before {
+  background-image: var(--rv-border);
+  opacity: 1;
+  transition: opacity var(--rv-transition);
+}
+
+.rv-border::after {
+  background-image: var(--rv-border-hover);
+  opacity: 0;
+  transition: opacity var(--rv-transition);
+}
+
+/*
+ * Наведение: нижний слой уходит, верхний приходит. Гасить нижний обязательно —
+ * два полупрозрачных слоя иначе складываются, и обводка становится ярче, чем
+ * задумано.
+ *
+ * Статичные элементы исключены прямо здесь, а не отдельным правилом ниже:
+ * у общего селектора три `:not(...)`, и по специфичности он перебивал бы
+ * любое исключение — нижний слой гас бы, а верхнего у статичных нет, и
+ * обводка пропадала бы совсем.
+ */
+.rv-border:hover:not(.rv-border--static):not([data-state]):not([data-mode]):not([data-status])::before,
+.rv-border[data-state="hover"]:not(.rv-border--static)::before,
+.rv-border[data-mode="hover"]:not(.rv-border--static)::before,
+.rv-border[data-status="hover"]:not(.rv-border--static)::before {
+  opacity: 0;
+}
+
+.rv-border:hover:not(.rv-border--static):not([data-state]):not([data-mode]):not([data-status])::after,
+.rv-border[data-state="hover"]:not(.rv-border--static)::after,
+.rv-border[data-mode="hover"]:not(.rv-border--static)::after,
+.rv-border[data-status="hover"]:not(.rv-border--static)::after {
+  opacity: 1;
+}
+
+/*
+ * Элементам с этим классом обводка на наведение не отзывается: верхнего слоя
+ * у них нет, нижний горит всегда.
+ */
+.rv-border--static::after {
+  content: none;
+}
+
+
+/*
+ * Нажатие: кнопка садится внутрь, но места в раскладке не меняет.
+ *
+ * В макете нажатая кнопка меньше на 1-2 px по каждой стороне. Делать это
+ * настоящими размерами нельзя: соседи в ряду разъезжаются на каждый клик, а
+ * окно с кнопкой во всю ширину дёргается по высоте. Поэтому габарит остаётся
+ * прежним, а внутрь садится картинка — содержимое обрезается рамкой,
+ * вставленной на нужную глубину, и обводка уезжает туда же. Со всех сторон
+ * поровну, в том числе у кнопки во всю ширину.
+ *
+ * Компонент берёт класс `rv-press` и задаёт себе `--rv-press-radius` (своё
+ * скругление) и, если нужно, `--rv-press-inset` — глубину посадки.
+ */
+.rv-press {
+  --rv-press-inset: 1px;
+  --rv-press-radius: 0px;
+  clip-path: inset(0 round var(--rv-press-radius));
+}
+
+/*
+ * Состояние приходит либо от мыши, либо от атрибута витрины — как и у
+ * наведения выше. У элемента с выставленным атрибутом `:active` не считается,
+ * иначе принудительное состояние спорило бы с настоящим нажатием.
+ */
+.rv-press:active:not(:disabled):not([data-mode]):not([data-state]),
+.rv-press[data-mode="active"],
+.rv-press[data-state="active"] {
+  clip-path: inset(
+    var(--rv-press-inset) round calc(var(--rv-press-radius) - var(--rv-press-inset))
+  );
+}
+
+.rv-press:active:not(:disabled):not([data-mode]):not([data-state])::before,
+.rv-press:active:not(:disabled):not([data-mode]):not([data-state])::after,
+.rv-press[data-mode="active"]::before,
+.rv-press[data-mode="active"]::after,
+.rv-press[data-state="active"]::before,
+.rv-press[data-state="active"]::after {
+  inset: var(--rv-press-inset);
+  border-radius: calc(var(--rv-press-radius) - var(--rv-press-inset));
+}

@@ -163,9 +163,15 @@ func TestProbeHTTPThroughProxy_RacesTargetsAndReturnsOnFirstSuccess(t *testing.T
 	}))
 	defer fast.Close()
 
-	oldURLs := probeTargetURLs
-	defer func() { probeTargetURLs = oldURLs }()
-	probeTargetURLs = func() []string { return []string{slow.URL, slow.URL, fast.URL} }
+	oldTargets := probeTargets
+	defer func() { probeTargets = oldTargets }()
+	probeTargets = func() []probeTarget {
+		return []probeTarget{
+			{url: slow.URL, wantStatus: http.StatusNoContent},
+			{url: slow.URL, wantStatus: http.StatusNoContent},
+			{url: fast.URL, wantStatus: http.StatusNoContent},
+		}
+	}
 
 	start := time.Now()
 	ok, reason := probeHTTPThroughProxy("")
@@ -188,9 +194,14 @@ func TestProbeHTTPThroughProxy_ReturnsReasonWhenAllTargetsFail(t *testing.T) {
 	deadURL := dead.URL
 	dead.Close() // порт закрыт — соединение будет отвергнуто
 
-	oldURLs := probeTargetURLs
-	defer func() { probeTargetURLs = oldURLs }()
-	probeTargetURLs = func() []string { return []string{deadURL, deadURL} }
+	oldTargets := probeTargets
+	defer func() { probeTargets = oldTargets }()
+	probeTargets = func() []probeTarget {
+		return []probeTarget{
+			{url: deadURL, wantStatus: http.StatusNoContent},
+			{url: deadURL, wantStatus: http.StatusNoContent},
+		}
+	}
 
 	ok, reason := probeHTTPThroughProxy("")
 	if ok {
@@ -198,5 +209,39 @@ func TestProbeHTTPThroughProxy_ReturnsReasonWhenAllTargetsFail(t *testing.T) {
 	}
 	if reason == "" {
 		t.Fatal("ожидали непустую причину")
+	}
+}
+
+// 502 от локального инбаунда — не доказательство рабочего туннеля.
+//
+// Регрессия по логам 2026-09-05. Пробы ходят по обычному http, а sing на
+// таком запросе не пробрасывает соединение, а сам отвечает клиенту: любая
+// ошибка аутбаунда превращается в «502 Bad Gateway», написанный нашим же
+// локальным инбаундом (sing/protocol/http/handshake.go, handleHTTPConnection).
+// Правило «любой HTTP-ответ через прокси означает, что туннель работает»
+// принимало этот ответ за успех — оттого проба и укладывалась в 2 мс на
+// полностью мёртвом аутбаунде, подключение объявлялось успешным, а сторож
+// здоровья потом молчал всю сессию.
+func TestProbeHTTPThroughProxy_RejectsGatewayErrorFromLocalInbound(t *testing.T) {
+	badGateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer badGateway.Close()
+
+	oldTargets := probeTargets
+	defer func() { probeTargets = oldTargets }()
+	probeTargets = func() []probeTarget {
+		return []probeTarget{
+			{url: badGateway.URL, wantStatus: http.StatusNoContent},
+			{url: badGateway.URL, wantStatus: http.StatusNoContent},
+		}
+	}
+
+	ok, reason := probeHTTPThroughProxy("")
+	if ok {
+		t.Fatal("502 не доказывает, что туннель несёт трафик — его пишет наш собственный инбаунд")
+	}
+	if reason == "" {
+		t.Fatal("ожидали непустую причину отказа")
 	}
 }

@@ -1,0 +1,88 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * Временное меню порядка серверов — своего в макете пока нет. Значения взяты
+ * у ближайшей родни в ките: поверхность Grey с обводкой, как у сайдбара и
+ * тумблера; строка набрана как подпись пункта меню; выбранный порядок
+ * подсвечен фирменным цветом, как активный пункт в сайдбаре.
+ */
+
+.rv-sort-menu {
+  position: fixed;
+  z-index: 30;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-width: 176px;
+  padding: var(--rv-space-4);
+  border-radius: var(--rv-radius-14);
+  background: var(--rv-grey);
+  font-family: var(--rv-font-family);
+
+  /*
+   * Меню не возникает целиком, а раскрывается от кнопки: опорный угол —
+   * тот, что к ней ближе. Движение вдвое короче общего, 150 мс: это отклик
+   * на нажатие, он должен успеть за курсором.
+   */
+  transform-origin: top right;
+  animation: rv-sort-menu-in calc(var(--rv-duration) / 2) var(--rv-ease) both;
+}
+
+.rv-sort-menu[data-flip="true"] {
+  transform-origin: bottom right;
+}
+
+@keyframes rv-sort-menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.rv-sort-menu__item {
+  display: flex;
+  align-items: center;
+  padding: var(--rv-space-10) var(--rv-space-12);
+  border: 0;
+  border-radius: var(--rv-radius-8);
+  background: none;
+  font-family: inherit;
+  font-size: var(--rv-chip-size);
+  font-weight: var(--rv-chip-weight);
+  line-height: var(--rv-chip-leading);
+  text-align: left;
+  white-space: nowrap;
+  color: var(--rv-white-a50);
+  cursor: pointer;
+  transition:
+    background var(--rv-transition),
+    color var(--rv-transition);
+}
+
+.rv-sort-menu__item:hover {
+  color: var(--rv-white-a80);
+}
+
+.rv-sort-menu__item[data-current="true"] {
+  background: var(--rv-main-a10);
+  color: var(--rv-main-color);
+}

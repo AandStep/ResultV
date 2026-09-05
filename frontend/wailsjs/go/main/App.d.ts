@@ -9,6 +9,8 @@ import {updater} from '../models';
 
 export function AckChangelog():Promise<void>;
 
+export function ActiveRoutingProfile():Promise<config.RoutingProfile|boolean>;
+
 export function AddRoutingList(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<config.RoutingList>;
 
 export function AddSubscription(arg1:string,arg2:string,arg3:boolean,arg4:string,arg5:Array<string>):Promise<Array<config.ProxyEntry>>;
@@ -19,6 +21,8 @@ export function CancelConnect():Promise<void>;
 
 export function CancelUpdate():Promise<void>;
 
+export function CompileRoutingProfile(arg1:string,arg2:boolean):Promise<Record<string, any>>;
+
 export function Connect(arg1:proxy.ProxyConfig,arg2:config.RoutingRules,arg3:boolean):Promise<proxy.ConnectResultDTO>;
 
 export function DebugFrontendLog(arg1:string):Promise<void>;
@@ -26,6 +30,8 @@ export function DebugFrontendLog(arg1:string):Promise<void>;
 export function DecodeDeepLink(arg1:string):Promise<string>;
 
 export function DeleteRoutingList(arg1:string):Promise<void>;
+
+export function DeleteRoutingProfile(arg1:string):Promise<void>;
 
 export function DeleteSubscription(arg1:string):Promise<void>;
 
@@ -57,6 +63,8 @@ export function GetNetworkTraffic():Promise<system.TrafficStats>;
 
 export function GetPlatform():Promise<string>;
 
+export function GetRoutingProfiles():Promise<Record<string, any>>;
+
 export function GetStatus():Promise<proxy.StatusDTO>;
 
 export function GetUpdateManifest():Promise<updater.Manifest>;
@@ -67,6 +75,8 @@ export function HandleDeepLink(arg1:string):Promise<void>;
 
 export function ImportConfig(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
+export function ImportRoutingDeepLink(arg1:string,arg2:boolean):Promise<config.RoutingProfile>;
+
 export function IsAdmin():Promise<boolean>;
 
 export function IsAutostartEnabled():Promise<boolean>;
@@ -76,6 +86,8 @@ export function ParseSubscriptionText(arg1:string):Promise<main.SubscriptionPrev
 export function PickAppForWhitelist():Promise<string>;
 
 export function PingProxy(arg1:string,arg2:number,arg3:string):Promise<proxy.PingResultDTO>;
+
+export function PreviewRoutingDeepLink(arg1:string):Promise<config.RoutingProfile>;
 
 export function QueueDeepLink(arg1:string):Promise<void>;
 
@@ -93,6 +105,10 @@ export function RestartAsAdmin():Promise<void>;
 
 export function SaveConfig(arg1:config.AppConfig):Promise<void>;
 
+export function SaveRoutingProfile(arg1:config.RoutingProfile):Promise<config.RoutingProfile>;
+
+export function SetActiveRoutingProfile(arg1:string):Promise<void>;
+
 export function SetAutostart(arg1:boolean):Promise<void>;
 
 export function SetMode(arg1:string):Promise<void>;
@@ -107,8 +123,12 @@ export function StartUpdate():Promise<void>;
 
 export function SyncProxies(arg1:Array<config.ProxyEntry>):Promise<void>;
 
+export function TakePendingDeepLink():Promise<Record<string, string>>;
+
 export function ToggleKillSwitch(arg1:boolean):Promise<void>;
 
 export function UpdateRoutingList(arg1:config.RoutingList):Promise<void>;
 
 export function UpdateRules(arg1:config.RoutingRules):Promise<void>;
+
+export function UpdateSubscription(arg1:string,arg2:string,arg3:boolean,arg4:number):Promise<void>;

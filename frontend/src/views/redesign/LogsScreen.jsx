@@ -15,12 +15,25 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import React, { useRef, useLayoutEffect, useCallback } from "react";
-import { Save, Trash2 } from "lucide-react";
-import { useLogContext } from "../context/LogContext";
-import { useTranslation } from "react-i18next";
+/*
+ * Страница «Журнал логов», подключённая к приложению.
+ *
+ * Вид держит LogsPage, здесь всё остальное: слияние двух источников записей,
+ * перевод сообщений ядра, сохранение журнала в файл и очистка. Всё это
+ * перенесено с прежней страницы как есть: менялся только вид.
+ */
 
+import { useCallback, useLayoutEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
+import { useLogContext } from "../../context/LogContext";
+import LogsPage from "./LogsPage";
+import AppSidebar from "./AppSidebar";
+
+/* Насколько близко к началу списка нужно быть, чтобы он продолжал держаться
+   за него при новых записях. */
 const SCROLL_TOP_THRESHOLD = 40;
+/* Больше этого числа записей на странице не показываем: журнал длинный, а
+   строки рисуются все разом. */
 const DISPLAY_LIMIT = 150;
 
 const translateLog = (msg, t) => {
@@ -101,26 +114,17 @@ const formatLogLine = (log, t) => {
   return `${time}${source} ${msg}`.trim();
 };
 
-const logRowClass = (type) =>
-  type === "error"
-    ? "text-rose-400"
-    : type === "success"
-      ? "text-[#007E3A]"
-      : type === "warning"
-        ? "text-[#00A819]"
-        : "text-zinc-300";
-
-export const LogsView = () => {
+export default function LogsScreen() {
   const { t } = useTranslation();
   const { logs, backendLogs, clearLogs } = useLogContext();
-  const logContainerRef = useRef(null);
+  const listRef = useRef(null);
   const pinnedToTopRef = useRef(true);
   const scrollMetricsRef = useRef({ scrollHeight: 0, scrollTop: 0 });
 
   const allLogs = mergeLogs(logs, backendLogs).slice(0, DISPLAY_LIMIT);
 
   const handleScroll = useCallback(() => {
-    const el = logContainerRef.current;
+    const el = listRef.current;
     if (!el) return;
     pinnedToTopRef.current = el.scrollTop <= SCROLL_TOP_THRESHOLD;
     scrollMetricsRef.current = {
@@ -129,18 +133,21 @@ export const LogsView = () => {
     };
   }, []);
 
+  /*
+   * Новые записи приходят сверху. Пока список стоит у начала, он там и
+   * остаётся; если его отмотали вниз — сдвигаем на столько же, на сколько
+   * подрос, чтобы читаемое место не уезжало из-под глаз.
+   */
   useLayoutEffect(() => {
-    const el = logContainerRef.current;
+    const el = listRef.current;
     if (!el) return;
 
-    const { scrollHeight: prevHeight, scrollTop: prevTop } =
-      scrollMetricsRef.current;
+    const { scrollHeight: prevHeight, scrollTop: prevTop } = scrollMetricsRef.current;
 
     if (pinnedToTopRef.current) {
       el.scrollTop = 0;
     } else {
-      const delta = el.scrollHeight - prevHeight;
-      el.scrollTop = prevTop + delta;
+      el.scrollTop = prevTop + (el.scrollHeight - prevHeight);
     }
 
     scrollMetricsRef.current = {
@@ -150,6 +157,7 @@ export const LogsView = () => {
   }, [allLogs]);
 
   const handleSave = useCallback(() => {
+    /* В файл журнал уходит в обычном порядке — от старых записей к новым. */
     const exportLogs = mergeLogs(logs, backendLogs)
       .slice()
       .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
@@ -173,67 +181,36 @@ export const LogsView = () => {
   const handleClear = useCallback(() => {
     clearLogs();
     pinnedToTopRef.current = true;
-    const el = logContainerRef.current;
+    const el = listRef.current;
     if (el) {
       el.scrollTop = 0;
       scrollMetricsRef.current = { scrollHeight: el.scrollHeight, scrollTop: 0 };
     }
   }, [clearLogs]);
 
+  const rows = allLogs.map((log, i) => ({
+    key: `${log.timestamp ?? 0}-${log.msg?.slice(0, 32) ?? ""}-${i}`,
+    time: log.time,
+    source: log.source,
+    text: translateLog(log.msg, t),
+    type: log.type,
+  }));
+
   return (
-    <div className="space-y-6 animate-in fade-in duration-300 h-full flex flex-col">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-3xl font-bold text-white">{t("logs.title")}</h2>
-          <p className="text-zinc-400 mt-2">{t("logs.desc")}</p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={handleSave}
-            title={t("logs.save_tooltip")}
-            aria-label={t("logs.save_btn")}
-            className="p-2 bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 rounded-xl transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none"
-          >
-            <Save className="w-5 h-5" />
-          </button>
-          <button
-            type="button"
-            onClick={handleClear}
-            title={t("logs.clear_tooltip")}
-            aria-label={t("logs.clear_btn")}
-            className="p-2 bg-zinc-800 text-zinc-400 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-colors border-transparent outline-none focus:outline-none focus:ring-0 focus-visible:outline-none"
-          >
-            <Trash2 className="w-5 h-5" />
-          </button>
-        </div>
-      </div>
-      <div
-        ref={logContainerRef}
-        onScroll={handleScroll}
-        className="bg-zinc-950 border border-zinc-800 rounded-3xl p-6 flex-1 overflow-y-auto font-mono text-sm scrollbar-hide select-text"
-      >
-        {allLogs.length === 0 ? (
-          <p className="text-zinc-500">{t("logs.empty")}</p>
-        ) : (
-          allLogs.map((log, i) => (
-            <div
-              key={`${log.timestamp ?? 0}-${log.msg?.slice(0, 32) ?? ""}-${i}`}
-              className={`flex items-start space-x-4 border-b border-zinc-800/50 py-3 last:border-0 ${logRowClass(log.type)}`}
-            >
-              <span className="text-zinc-600 shrink-0">[{log.time}]</span>
-              <div className="break-words w-full">
-                {log.source && (
-                  <span className="text-zinc-500 text-xs mr-2 font-semibold">
-                    {log.source}
-                  </span>
-                )}
-                <span>{translateLog(log.msg, t)}</span>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
+    <LogsPage
+      title={t("logs.title")}
+      subtitle={t("logs.desc")}
+      rows={rows}
+      onSave={handleSave}
+      onClear={handleClear}
+      listRef={listRef}
+      onListScroll={handleScroll}
+      text={{
+        save: t("logs.save_tooltip"),
+        clear: t("logs.clear_tooltip"),
+        empty: t("logs.empty"),
+      }}
+      sidebar={<AppSidebar />}
+    />
   );
-};
+}

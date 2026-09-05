@@ -64,6 +64,43 @@ const (
 	// letting the multiplier climb further would make a recovered node need
 	// an implausibly long clean streak to ever climb back.
 	autoConsecFailCap = 3
+	// autoUDPRelayFailPenalty demotes a node known not to carry UDP.
+	//
+	// Sized between the two extremes on purpose. Large enough to lose to any
+	// node within a few hundred milliseconds — a node that cannot hold a
+	// Discord call is genuinely worse, and the app already tells the user so
+	// in words ("выберите другой узел"), which is absurd advice when the
+	// machine is the one choosing. Far below autoConsecFailPenalty, because a
+	// node that will not connect at all is worse still, and well below a
+	// disqualification: most traffic never needs UDP, so a markedly faster
+	// UDP-less node is allowed to win anyway.
+	autoUDPRelayFailPenalty = 750.0
+	// autoUDPRelayVerdictTTL bounds how long one UDP verdict keeps counting.
+	//
+	// A server's UDP policy is configuration, not weather, so the verdict
+	// stays valid for days rather than minutes. It still has to expire: a
+	// demoted node is a node we stop connecting to, and the verdict is only
+	// ever refreshed BY connecting (startUDPRelayProbe runs post-connect), so
+	// a permanent penalty would be self-sealing — the node could never prove
+	// it had been fixed.
+	autoUDPRelayVerdictTTL = 72 * time.Hour
+	// autoThroughputRefKBps is the rate at which the throughput term stops
+	// costing anything. Roughly 32 Mbit/s — fast enough for anything the app
+	// is used for, so nodes above it are treated as equally good rather than
+	// endlessly rewarded for headroom nobody will use.
+	autoThroughputRefKBps = 4000.0
+	// autoThroughputWeight is the most a slow node can be charged. Deliberately
+	// smaller than the UDP penalty and far smaller than a connect failure: this
+	// is a tie-breaker between nodes of similar latency, not a veto. At the
+	// weight below, a node measured at 1 MB/s gives up 300 points to one at
+	// 4 MB/s — enough to lose to a rival within a few hundred ms, not enough
+	// to lose to one that is seconds away or failing.
+	autoThroughputWeight = 400.0
+	// autoThroughputTTL bounds how long one measurement counts. Shorter than
+	// the UDP verdict by an order of magnitude, because throughput is weather,
+	// not configuration: the same node measured at 6 PM and at noon is a
+	// different node as far as this number is concerned.
+	autoThroughputTTL = 24 * time.Hour
 )
 
 // autoSweepCacheTTL is how long a completed ranking stays reusable. Long enough
@@ -218,6 +255,12 @@ func cloneDiag(in AutoProbeDiagnostics) AutoProbeDiagnostics {
 	out := in
 	out.Phase1 = append([]AutoProbeResult(nil), in.Phase1...)
 	out.Phase2 = append([]AutoProbeResult(nil), in.Phase2...)
+	if in.Scores != nil {
+		out.Scores = make(map[string]float64, len(in.Scores))
+		for k, v := range in.Scores {
+			out.Scores[k] = v
+		}
+	}
 	return out
 }
 
@@ -255,6 +298,12 @@ func storeAutoSweepCache(key string, candidates []config.ProxyEntry, diag AutoPr
 // amount of speed makes a node that will not connect a good pick. classWeight
 // comes from detectClassWeights and is 1.0 unless the phase-1 sweep shows
 // plain-protocol nodes dying while obfuscated ones stay healthy.
+//
+// Beyond latency the score folds in the two properties a probe cannot see but
+// the app has already measured on this node before: whether it relays UDP
+// (Discord calls) and how fast it actually moved bytes. Both are recorded
+// post-connect, so they only exist for nodes we have really used — which is
+// exactly the history a "fastest handshake wins" ranking used to throw away.
 func scoreNode(r AutoProbeResult, st NodeStat, isCurrent bool, classWeight float64, now time.Time) float64 {
 	base := float64(r.RTTms) + 2*float64(r.JitterMs)
 	score := base * classWeight
@@ -267,6 +316,26 @@ func scoreNode(r AutoProbeResult, st NodeStat, isCurrent bool, classWeight float
 
 	if !st.LastFailAt.IsZero() && now.Sub(st.LastFailAt) < autoRecentFailWindow {
 		score += autoRecentFailPenalty
+	}
+	// Only a FAIL verdict moves the score. An "ok" verdict earns no credit and
+	// an absent one costs nothing, so a node nobody has measured competes on
+	// equal terms with a node known to be fine — which is the honest default,
+	// since the property is the exception rather than the rule.
+	if st.UDPRelay == UDPRelayFail && !st.UDPRelayCheckedAt.IsZero() &&
+		now.Sub(st.UDPRelayCheckedAt) < autoUDPRelayVerdictTTL {
+		score += autoUDPRelayFailPenalty
+	}
+	// Throughput enters as a continuous term rather than a threshold: there is
+	// no honest cut-off between "fast" and "slow", and a step would make two
+	// nodes either side of it look far more different than they are. Nodes with
+	// no measurement pay nothing, which keeps a never-used node competing on
+	// equal terms instead of being locked out of ever being measured.
+	if st.ThroughputKBps > 0 && !st.ThroughputAt.IsZero() &&
+		now.Sub(st.ThroughputAt) < autoThroughputTTL {
+		shortfall := 1 - st.ThroughputKBps/autoThroughputRefKBps
+		if shortfall > 0 {
+			score += autoThroughputWeight * shortfall
+		}
 	}
 	if isCurrent {
 		score -= autoTolerance
@@ -382,6 +451,24 @@ type AutoProbeDiagnostics struct {
 	// itself.
 	Phase1Dur time.Duration
 	Phase2Dur time.Duration
+
+	// DegradedToPhase1 marks a ranking built from phase-1 data because phase 2
+	// came back with nothing usable. The candidates are real and connectable —
+	// they answered at the transport level — but they were never checked for
+	// SNI blocking, so the caller must say so in the log instead of reporting
+	// an ordinary successful pick.
+	DegradedToPhase1 bool
+
+	// Scores is the final score of every node that reached scoring, by node
+	// key. Lower is better, and the numbers are only comparable within one
+	// call — they carry the tolerance credit and class weights of that call.
+	//
+	// Exposed because the ordered candidate list answers "who is best" but not
+	// "by how much", and the mid-session recheck needs the margin: switching an
+	// AUTO group away from a live node tears down every open connection, so it
+	// must happen on a decisive gap, not on the one-millisecond difference that
+	// is enough to reorder a list.
+	Scores map[string]float64
 }
 
 // dropEmptyKeyResults removes probe slots ProbeAutoNodes left at their zero
@@ -502,7 +589,52 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 	if len(alive) == 0 {
 		return nil, diag
 	}
-	sort.SliceStable(alive, func(i, j int) bool { return alive[i].RTTms < alive[j].RTTms })
+	// Class weights and the node-class map are needed one phase earlier than
+	// they used to be: the shortlist is now picked by score, and a score is not
+	// a score without them.
+	now := time.Now()
+	weights := detectClassWeights(members, fast)
+	classByKey := make(map[string]string, len(members))
+	for _, m := range members {
+		classByKey[AutoNodeKey(m)] = nodeClass(m)
+	}
+
+	// Snapshot the store before phase 2 writes its own verdicts into it.
+	//
+	// Two consumers. The shortlist scoring just below wants one consistent read
+	// of a store other goroutines mutate, rather than O(n log n) re-reads from
+	// inside a comparator (see the note on precomputed scores further down).
+	//
+	// And the degraded path at the end needs the pre-phase-2 values
+	// specifically: RecordProbe stamps LastFailAt on a failed probe, and
+	// scoreNode charges autoRecentFailPenalty (1500) for a fail inside the last
+	// five minutes. So once phase 2 has failed the shortlist, scoring those
+	// same nodes against the live store charges them for the very measurement
+	// the degraded path exists to discount — and the ranking inverts, promoting
+	// exactly the members that were too slow to be shortlisted in the first
+	// place.
+	statsBeforePhase2 := make(map[string]NodeStat, len(alive))
+	for _, r := range alive {
+		statsBeforePhase2[r.Key] = nodeStats().Get(r.Key)
+	}
+
+	// The shortlist is ranked by score, not by raw RTT.
+	//
+	// Sorting on latency alone meant a node's history — consecutive connect
+	// failures, a failure minutes ago, no UDP relay — was consulted only at the
+	// very end, on the five survivors. A node that reliably fails to connect
+	// but answered one SYN in 10ms therefore took a shortlist seat away from a
+	// dependable 100ms node, and the dependable one never even reached the
+	// expensive check. Scoring here spends the five seats on the five nodes
+	// most likely to actually work.
+	phase1Score := make(map[string]float64, len(alive))
+	for _, r := range alive {
+		phase1Score[r.Key] = scoreNode(r, statsBeforePhase2[r.Key], r.Key == previousKey,
+			weights[classByKey[r.Key]], now)
+	}
+	sort.SliceStable(alive, func(i, j int) bool {
+		return phase1Score[alive[i].Key] < phase1Score[alive[j].Key]
+	})
 
 	shortlist := make([]config.ProxyEntry, 0, autoShortlistSize+1)
 	seen := make(map[string]bool, autoShortlistSize+1)
@@ -536,6 +668,29 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 			scored = append(scored, r)
 		}
 	}
+	// Phase 2 is a refinement, not a veto. When it clears the whole shortlist
+	// the ranking falls back to the phase-1 survivors rather than reporting an
+	// empty group.
+	//
+	// This is the 2026-09-05 failure: phase 1 found 23 of 30 members alive,
+	// phase 2 timed out on all five leaders, RankAutoCandidates returned nil,
+	// and the caller fell back to the AUTO head — an entry with no address at
+	// all, which the engine happily started as an http outbound with an empty
+	// server. The user got "Подключено (AUTO)", a green button and a dead
+	// tunnel. Five simultaneous TLS deaths behind twenty-three live sockets
+	// says far more about the measurement than about the nodes, and even if
+	// they really were SNI-blocked, handing the connect loop five reachable
+	// candidates to try beats handing it nothing: a real connect either works
+	// or fails honestly and gets recorded, which is a signal a probe cannot
+	// produce.
+	//
+	// alive is already sorted by phase-1 RTT (above), and scoring below applies
+	// the same failure-history and class weights to these rows as to phase-2
+	// ones, so the fallback order is the best this call can know.
+	if len(scored) == 0 {
+		diag.DegradedToPhase1 = true
+		scored = append(scored, alive...)
+	}
 	if len(scored) == 0 {
 		return nil, diag
 	}
@@ -551,28 +706,27 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 	// self-inconsistent order for one ranking cycle. Scoring once up front
 	// against a single now snapshot removes that inconsistency and does N
 	// mutex-guarded store lookups instead of N*logN.
-	now := time.Now()
 	// Class weights come from the phase-1 sweep (the wide, cheap one) so a
 	// handful of shortlist members never gets mistaken for the whole group's
-	// health signal. Looked up once per candidate here, in the same pass that
-	// computes score — not inside the comparator, which must stay a pure read
-	// of precomputed values (see the comment above on why scores are
-	// precomputed at all).
-	weights := detectClassWeights(members, fast)
-	classByKey := make(map[string]string, len(members))
-	for _, m := range members {
-		classByKey[AutoNodeKey(m)] = nodeClass(m)
-	}
+	// health signal. Computed above, before the shortlist, and reused here —
+	// never inside the comparator, which must stay a pure read of precomputed
+	// values (see the comment above on why scores are precomputed at all).
 	type rankedCandidate struct {
 		result AutoProbeResult
 		score  float64
 	}
 	ranked := make([]rankedCandidate, len(scored))
+	diag.Scores = make(map[string]float64, len(scored))
 	for i, r := range scored {
-		ranked[i] = rankedCandidate{
-			result: r,
-			score:  scoreNode(r, nodeStats().Get(r.Key), r.Key == previousKey, weights[classByKey[r.Key]], now),
+		st := nodeStats().Get(r.Key)
+		if diag.DegradedToPhase1 {
+			if before, ok := statsBeforePhase2[r.Key]; ok {
+				st = before
+			}
 		}
+		score := scoreNode(r, st, r.Key == previousKey, weights[classByKey[r.Key]], now)
+		ranked[i] = rankedCandidate{result: r, score: score}
+		diag.Scores[r.Key] = score
 	}
 	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].score < ranked[j].score })
 
@@ -583,6 +737,12 @@ func RankAutoCandidates(ctx context.Context, members []config.ProxyEntry, previo
 		}
 		out = append(out, byKey[r.result.Key])
 	}
-	storeAutoSweepCache(cacheKey, out, diag)
+	// A degraded ranking is deliberately not cached. It is the lower-confidence
+	// answer — phase 2 never confirmed these nodes — and the same rule that
+	// keeps an empty sweep out of the cache applies: "phase 2 told us nothing"
+	// is a state the next attempt must re-check, not inherit for 90 seconds.
+	if !diag.DegradedToPhase1 {
+		storeAutoSweepCache(cacheKey, out, diag)
+	}
 	return out, diag
 }

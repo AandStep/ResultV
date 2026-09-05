@@ -809,3 +809,194 @@ func TestRankAutoCandidates_JoinerGetsIndependentSlices(t *testing.T) {
 		t.Fatal("вызывающие делят один массив диагностики фазы 1")
 	}
 }
+
+// Фаза 2 — уточнение, а не право вето.
+//
+// Регрессия по логам 2026-09-05: фаза 1 нашла 23 живых узла из 30, фаза 2
+// срезала всю пятёрку лидеров, и группа вернулась пустой — «ни один из 30
+// узлов не доступен». Пятеро разом не умирают: куда вероятнее, что промахнулся
+// сам замер. Отсутствие результата у фазы 2 обязано понижать точность выбора,
+// а не оставлять пользователя без серверов вовсе.
+func TestRankAutoCandidates_KeepsPhase1SurvivorsWhenPhase2WipesShortlist(t *testing.T) {
+	isolateNodeStats(t)
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
+	stubProbeResolver(t)
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
+	oldTCP, oldTLS := pingTCPProbe, autoTLSProbe
+	defer func() { pingTCPProbe, autoTLSProbe = oldTCP, oldTLS }()
+
+	rtt := map[string]int64{"a": 90, "b": 10, "c": 50, "d": 20, "e": 70, "f": 30, "g": 40}
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) { return rtt[ip], true, "" }
+	autoTLSProbe = func(_ string, _ int, _ string, _ []string) (int64, bool, string) {
+		return 0, false, "timeout"
+	}
+
+	got, diag := RankAutoCandidates(context.Background(),
+		mkNodes("a", "b", "c", "d", "e", "f", "g"), "")
+
+	if len(got) == 0 {
+		t.Fatal("фаза 1 нашла живые узлы — выбор не должен схлопываться в пустоту из-за фазы 2")
+	}
+	if got[0].IP != "b" {
+		t.Errorf("при откате порядок задаёт фаза 1: ожидали быстрейший b, получили %q", got[0].IP)
+	}
+	if len(got) > AutoMaxCandidates {
+		t.Errorf("откат не отменяет предел в %d кандидатов, получили %d", AutoMaxCandidates, len(got))
+	}
+	if !diag.DegradedToPhase1 {
+		t.Error("откат должен быть виден вызывающему — иначе лог отрапортует обычный успешный подбор")
+	}
+}
+
+// А вот когда мёртв сам транспорт, отката нет: фаза 1 и есть тот самый
+// «дозвонились ли вообще», и подменить её нечем.
+func TestRankAutoCandidates_NoPhase1SurvivorsStillReturnsNothing(t *testing.T) {
+	isolateNodeStats(t)
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
+	stubProbeResolver(t)
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
+	oldTCP := pingTCPProbe
+	defer func() { pingTCPProbe = oldTCP }()
+	pingTCPProbe = func(_ string, _ int) (int64, bool, string) { return 0, false, "timeout" }
+
+	got, diag := RankAutoCandidates(context.Background(), mkNodes("a", "b"), "")
+	if got != nil {
+		t.Fatalf("ожидали nil когда не дозвонились ни до одного узла, получили %+v", got)
+	}
+	if diag.DegradedToPhase1 {
+		t.Error("откатываться было не к чему — флаг деградации не должен подниматься")
+	}
+}
+
+// Узел, который не пропускает UDP, обязан проигрывать равному по скорости.
+//
+// Вердикт собирался и раньше (NodeStat.UDPRelay), но scoreNode его не читал:
+// авто-подбор дважды подряд выбрал узел без UDP, и в логе 05.09.2026 человеку
+// предложили «выберите другой узел» — при том что выбирала машина. Штраф
+// умышленно не дисквалифицирующий: большинству трафика UDP не нужен, и
+// заметно более быстрый узел без UDP всё ещё может выиграть.
+func TestScoreNode_DemotesNodesThatDoNotRelayUDP(t *testing.T) {
+	now := time.Now()
+	r := AutoProbeResult{RTTms: 100}
+
+	clean := scoreNode(r, NodeStat{}, false, 1.0, now)
+	noUDP := scoreNode(r, NodeStat{UDPRelay: UDPRelayFail, UDPRelayCheckedAt: now.Add(-time.Hour)}, false, 1.0, now)
+	if noUDP <= clean {
+		t.Fatalf("узел без UDP должен получать штраф: %.0f против %.0f", noUDP, clean)
+	}
+
+	okUDP := scoreNode(r, NodeStat{UDPRelay: UDPRelayOK, UDPRelayCheckedAt: now.Add(-time.Hour)}, false, 1.0, now)
+	if okUDP != clean {
+		t.Errorf("подтверждённый UDP не должен давать премию сверх обычного счёта: %.0f против %.0f", okUDP, clean)
+	}
+
+	stale := scoreNode(r, NodeStat{UDPRelay: UDPRelayFail, UDPRelayCheckedAt: now.Add(-autoUDPRelayVerdictTTL - time.Minute)}, false, 1.0, now)
+	if stale != clean {
+		t.Errorf("протухший вердикт не должен наказывать вечно: %.0f против %.0f", stale, clean)
+	}
+
+	// Отказ подключения — сигнал сильнее: узел, который не поднимается, хуже
+	// узла, который просто не носит UDP.
+	failed := scoreNode(r, NodeStat{ConsecFails: 1}, false, 1.0, now)
+	if noUDP >= failed {
+		t.Errorf("штраф за UDP не должен перевешивать штраф за отказ подключения: %.0f против %.0f", noUDP, failed)
+	}
+}
+
+// В фазу 2 идёт лучшая пятёрка по счёту, а не по голому RTT.
+//
+// История узла (ConsecFails, недавний отказ, UDP-вердикт) применялась только
+// на финальном скоринге — когда выбор уже сужен до пяти. Узел, который
+// стабильно не поднимается, но однажды ответил за 10 мс, вытеснял из
+// рассмотрения надёжный стомиллисекундный, и до дорогой проверки тот просто
+// не доезжал.
+func TestRankAutoCandidates_ShortlistWeighsHistoryNotJustLatency(t *testing.T) {
+	store := isolateNodeStats(t)
+	ResetAutoSweepCache()
+	defer ResetAutoSweepCache()
+	stubProbeResolver(t)
+	oldBind := autoProbeBindsToLAN
+	defer func() { autoProbeBindsToLAN = oldBind }()
+	autoProbeBindsToLAN = func() bool { return false }
+
+	oldTCP, oldTLS := pingTCPProbe, autoTLSProbe
+	defer func() { pingTCPProbe, autoTLSProbe = oldTCP, oldTLS }()
+
+	// Шесть узлов на пять мест. Быстрейшие пятеро — «bad» и a..d; «good»
+	// медленнее всех, но у «bad» за плечами три подряд неудачных подключения.
+	rtt := map[string]int64{"bad": 10, "a": 20, "b": 30, "c": 40, "d": 50, "good": 60}
+	nodes := mkNodes("bad", "a", "b", "c", "d", "good")
+	for _, n := range nodes {
+		if n.IP == "bad" {
+			for i := 0; i < 3; i++ {
+				store.RecordConnect(AutoNodeKey(n), false, "error")
+			}
+		}
+	}
+
+	pingTCPProbe = func(ip string, _ int) (int64, bool, string) { return rtt[ip], true, "" }
+	var mu sync.Mutex
+	probed := map[string]bool{}
+	autoTLSProbe = func(ip string, _ int, _ string, _ []string) (int64, bool, string) {
+		mu.Lock()
+		probed[ip] = true
+		mu.Unlock()
+		return rtt[ip], true, ""
+	}
+
+	RankAutoCandidates(context.Background(), nodes, "")
+
+	mu.Lock()
+	defer mu.Unlock()
+	if probed["bad"] {
+		t.Error("узел с тремя отказами подряд не должен занимать место в шорт-листе за счёт одного быстрого ответа")
+	}
+	if !probed["good"] {
+		t.Error("надёжный, но более медленный узел обязан доехать до фазы 2")
+	}
+}
+
+// Пропускная способность решает там, где задержки почти равны.
+//
+// Скор считался как RTT + 2×jitter, и перегруженный узел с коротким путём
+// стабильно выигрывал у свободного чуть подальше: загруженность в
+// рукопожатии почти не видна, а в реальной загрузке видна вся.
+func TestScoreNode_PrefersTheNodeThatActuallyMovesBytes(t *testing.T) {
+	now := time.Now()
+	r := AutoProbeResult{RTTms: 100}
+	fresh := now.Add(-time.Hour)
+
+	fast := scoreNode(r, NodeStat{ThroughputKBps: autoThroughputRefKBps, ThroughputAt: fresh}, false, 1.0, now)
+	slow := scoreNode(r, NodeStat{ThroughputKBps: autoThroughputRefKBps / 4, ThroughputAt: fresh}, false, 1.0, now)
+	unmeasured := scoreNode(r, NodeStat{}, false, 1.0, now)
+
+	if slow <= fast {
+		t.Fatalf("медленный узел при равной задержке должен проигрывать: %.0f против %.0f", slow, fast)
+	}
+	if fast != unmeasured {
+		t.Errorf("узел на опорной скорости не должен ни доплачивать, ни получать премию: %.0f против %.0f", fast, unmeasured)
+	}
+	if unmeasured != fast {
+		t.Errorf("неизмеренный узел обязан соревноваться на равных, иначе его никогда не измерят")
+	}
+
+	// Быстрый, но заведомо ломающийся узел всё равно проигрывает медленному
+	// исправному: скорость не покупает право не подключаться.
+	broken := scoreNode(r, NodeStat{ThroughputKBps: autoThroughputRefKBps * 2, ThroughputAt: fresh, ConsecFails: 1}, false, 1.0, now)
+	if broken <= slow {
+		t.Errorf("отказы подключения должны перевешивать любую скорость: %.0f против %.0f", broken, slow)
+	}
+
+	stale := scoreNode(r, NodeStat{ThroughputKBps: 1, ThroughputAt: now.Add(-autoThroughputTTL - time.Minute)}, false, 1.0, now)
+	if stale != unmeasured {
+		t.Errorf("вчерашний замер скорости не должен решать сегодняшний выбор: %.0f против %.0f", stale, unmeasured)
+	}
+}

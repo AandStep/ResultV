@@ -144,3 +144,35 @@ func TestValidateEngineConfig_WireGuardValidConfig(t *testing.T) {
 		t.Fatalf("unexpected code: %s", code)
 	}
 }
+
+// Заголовок авто-группы — не сервер, и подключаться к нему нечем.
+//
+// Регрессия по логам 2026-09-05: подбор не нашёл ни одного узла, вызывающий
+// откатился на саму AUTO-запись, у неё нет ни адреса, ни порта, ни протокола —
+// и buildProxyOutbound собрал из неё http-аутбаунд с пустым сервером. Ядро
+// поднялось, приложение отрапортовало «Подключено (AUTO)», кнопка загорелась
+// зелёным, а каждое соединение падало с «invalid address». Отказ обязан быть
+// отказом, а не зелёной кнопкой поверх мёртвого туннеля.
+func TestValidateEngineConfig_RejectsGroupHeadAndAddresslessEntry(t *testing.T) {
+	cases := []struct {
+		name  string
+		proxy ProxyConfig
+	}{
+		{"заголовок авто-группы", ProxyConfig{Type: "AUTO", IP: "", Port: 0}},
+		{"заголовок авто-группы с адресом", ProxyConfig{Type: "AUTO", IP: "1.2.3.4", Port: 443}},
+		{"разделитель подписки", ProxyConfig{Type: "SECTION", IP: "", Port: 0}},
+		{"узел без адреса", ProxyConfig{Type: "VLESS", IP: "", Port: 443}},
+		{"узел без порта", ProxyConfig{Type: "VLESS", IP: "1.2.3.4", Port: 0}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			code, err := validateEngineConfig(EngineConfig{Mode: ProxyModeProxy, Proxy: tc.proxy})
+			if err == nil {
+				t.Fatal("ожидали отказ валидации, а не рабочую конфигурацию")
+			}
+			if code != ConnectErrorInvalidConfig {
+				t.Fatalf("ожидали код %s, получили %s", ConnectErrorInvalidConfig, code)
+			}
+		})
+	}
+}

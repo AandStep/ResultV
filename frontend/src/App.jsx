@@ -18,13 +18,13 @@
 import React from "react";
 import { AppProvider } from "./context/AppContext";
 import { MainLayout } from "./components/layout/MainLayout";
-import { HomeView } from "./views/HomeView";
-import { ProxyListView } from "./views/ProxyListView";
-import { RulesView } from "./views/RulesView";
-import { AddProxyView } from "./views/AddProxyView";
-import { BuyProxyView } from "./views/BuyProxyView";
-import { LogsView } from "./views/LogsView";
-import { SettingsView } from "./views/SettingsView";
+import HomeScreen from "./views/redesign/HomeScreen";
+import SmartRulesScreen from "./views/redesign/SmartRulesScreen";
+import AddScreen from "./views/redesign/AddScreen";
+import ServersScreen from "./views/redesign/ServersScreen";
+import BuyScreen from "./views/redesign/BuyScreen";
+import LogsScreen from "./views/redesign/LogsScreen";
+import SettingsScreen from "./views/redesign/SettingsScreen";
 import { formatBytes, formatSpeed } from "./utils/formatters";
 import { useConfigContext } from "./context/ConfigContext";
 import wailsAPI from "./utils/wailsAPI";
@@ -138,15 +138,13 @@ const AppContent = () => {
 
     return (
         <MainLayout>
-            {activeTab === "home" && <HomeView />}
-            <div className={activeTab === "list" ? "" : "hidden"}>
-                <ProxyListView />
-            </div>
-            {activeTab === "rules" && <RulesView />}
-            {activeTab === "add" && <AddProxyView />}
-            {activeTab === "buy" && <BuyProxyView />}
-            {activeTab === "logs" && <LogsView />}
-            {activeTab === "settings" && <SettingsView />}
+            {activeTab === "home" && <HomeScreen />}
+            {activeTab === "list" && <ServersScreen />}
+            {activeTab === "rules" && <SmartRulesScreen />}
+            {activeTab === "add" && <AddScreen />}
+            {activeTab === "buy" && <BuyScreen />}
+            {activeTab === "logs" && <LogsScreen />}
+            {activeTab === "settings" && <SettingsScreen />}
 
             <ChangelogModal changelog={changelog} onClose={dismissChangelog} />
 

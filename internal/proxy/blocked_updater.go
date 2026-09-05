@@ -126,18 +126,20 @@ func LoadCachedBlockedDomains(cachePath string, localPaths ...string) BlockedDom
 
 // LoadCachedBlockedCIDRs is the network-free counterpart for the IP-subnet
 // block-list (Telegram MTProto + Discord voice): cache → builtin. The static
-// defaultBlockedCIDRs() fallback is Telegram-only, but it always guarantees a
-// usable set so MTProto works offline and at first launch; Discord ranges
-// arrive with the first successful remote refresh.
+// defaultBlockedCIDRs() fallback is Telegram-only and always guarantees a
+// usable set so MTProto works offline and at first launch; Discord's scattered
+// per-host ranges still arrive with the first successful remote refresh, but
+// its main voice allocation is pinned by blockedCIDRFloor and is therefore
+// present from the very first start, cache or no cache.
 func LoadCachedBlockedCIDRs(cachePath string) BlockedCIDRsResolveResult {
 	if cachePath != "" {
 		cache, err := LoadBlockedCIDRsCache(cachePath)
 		if err == nil && len(cache.CIDRs) > 0 {
-			return BlockedCIDRsResolveResult{CIDRs: cache.CIDRs, Source: "cache"}
+			return BlockedCIDRsResolveResult{CIDRs: withBlockedCIDRFloor(cache.CIDRs), Source: "cache"}
 		}
 	}
 	return BlockedCIDRsResolveResult{
-		CIDRs:  normalizeBlockedCIDRs(defaultBlockedCIDRs()),
+		CIDRs:  withBlockedCIDRFloor(defaultBlockedCIDRs()),
 		Source: "builtin",
 	}
 }
@@ -173,7 +175,7 @@ func ResolveBlockedCIDRs(ctx context.Context, fetcher CIDRFetcher, cachePath str
 			if saveErr := SaveBlockedCIDRsCache(cachePath, cache); saveErr != nil {
 				lastErr = fmt.Errorf("save cidr cache: %w", saveErr)
 			}
-			return BlockedCIDRsResolveResult{CIDRs: normalizeBlockedCIDRs(cidrs), Source: "remote", Err: lastErr}
+			return BlockedCIDRsResolveResult{CIDRs: withBlockedCIDRFloor(cidrs), Source: "remote", Err: lastErr}
 		}
 		lastErr = err
 	}
@@ -181,7 +183,7 @@ func ResolveBlockedCIDRs(ctx context.Context, fetcher CIDRFetcher, cachePath str
 	if cachePath != "" {
 		cache, err := LoadBlockedCIDRsCache(cachePath)
 		if err == nil && len(cache.CIDRs) > 0 {
-			return BlockedCIDRsResolveResult{CIDRs: cache.CIDRs, Source: "cache", Err: lastErr}
+			return BlockedCIDRsResolveResult{CIDRs: withBlockedCIDRFloor(cache.CIDRs), Source: "cache", Err: lastErr}
 		}
 		if err != nil {
 			lastErr = err
@@ -189,7 +191,7 @@ func ResolveBlockedCIDRs(ctx context.Context, fetcher CIDRFetcher, cachePath str
 	}
 
 	return BlockedCIDRsResolveResult{
-		CIDRs:  normalizeBlockedCIDRs(defaultBlockedCIDRs()),
+		CIDRs:  withBlockedCIDRFloor(defaultBlockedCIDRs()),
 		Source: "builtin",
 		Err:    lastErr,
 	}

@@ -1,0 +1,177 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * ProfileItem — Figma "ResultV" -> App Design, окно «Профили маршрутизации»
+ * (6600:3444). Активная строка 6600:3593, обычная 6600:3618.
+ *
+ * Отступы 16 слева и по вертикали, 24 справа; скругление 24, зазор 16.
+ * Плашка значка: отступ 16, скругление 14, значок 28. Название стилем
+ * TitleSm (18/1.4), под ним счётчики стилем Chip (14/1.1) с зазором 4.
+ */
+
+.rv-profile-item {
+  --rv-border: linear-gradient(var(--rv-white-a10), var(--rv-white-a10));
+
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--rv-space-nest-2);
+  width: 100%;
+  padding: var(--rv-space-16) var(--rv-space-24) var(--rv-space-16) var(--rv-space-16);
+  border-radius: var(--rv-radius-24);
+  background: var(--rv-grey);
+  transition: background var(--rv-transition);
+}
+
+/* Активный профиль: заливка и обводка фирменного цвета, как в макете. */
+.rv-profile-item[data-active] {
+  background: var(--rv-main-a10);
+  --rv-border: linear-gradient(var(--rv-main-a10), var(--rv-main-a10));
+}
+
+/*
+ * Ожидание: правила применяются, движок перезапускается — это пара секунд.
+ *
+ * Кадра на эту фазу в макете нет, но без него нажатие выглядит непрошедшим:
+ * строка оставалась серой всё время перезапуска и зеленела внезапно. Взят цвет
+ * предупреждения — тот же, которым ждёт кнопка питания на главной, — и то же
+ * дыхание, что у значка окна импорта. Правило идёт ПОСЛЕ активного, чтобы
+ * перебивать его: применяться может и уже активный профиль.
+ */
+.rv-profile-item[data-pending],
+.rv-profile-item[data-active][data-pending] {
+  background: var(--rv-warning-a10);
+  --rv-border: linear-gradient(var(--rv-warning-a20), var(--rv-warning-a20));
+}
+
+.rv-profile-item[data-pending] .rv-profile-item__badge,
+.rv-profile-item[data-active][data-pending] .rv-profile-item__badge {
+  background: var(--rv-warning-a10);
+  color: var(--rv-warning);
+  animation: rv-blink 1.6s var(--rv-ease) infinite;
+}
+
+/* --- Выбор ---------------------------------------------------------------- */
+
+/* Пока идёт применение, строка не нажимается — и курсор об этом говорит. */
+.rv-profile-item__pick:disabled {
+  cursor: default;
+}
+
+.rv-profile-item__pick {
+  display: flex;
+  align-items: center;
+  gap: var(--rv-space-nest-2);
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--rv-font-family);
+}
+
+.rv-profile-item__badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: var(--rv-space-16);
+  border-radius: var(--rv-radius-14);
+  background: var(--rv-light-gray);
+  color: var(--rv-white-a50);
+  transition:
+    background var(--rv-transition),
+    color var(--rv-transition);
+}
+
+.rv-profile-item[data-active] .rv-profile-item__badge {
+  background: var(--rv-main-a10);
+  color: var(--rv-main-color);
+}
+
+.rv-profile-item__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-4);
+  min-width: 0;
+}
+
+.rv-profile-item__name {
+  font-size: var(--rv-title-sm-size);
+  font-weight: var(--rv-title-sm-weight);
+  line-height: var(--rv-title-sm-leading);
+  color: var(--rv-white);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Счётчики ------------------------------------------------------------- */
+
+.rv-profile-item__counts {
+  display: flex;
+  gap: var(--rv-space-4);
+  font-size: var(--rv-chip-size);
+  font-weight: var(--rv-chip-weight);
+  line-height: var(--rv-chip-leading);
+}
+
+/* Каждое действие своим цветом на половине непрозрачности — так в макете. */
+.rv-profile-item__count[data-action="direct"] {
+  color: var(--rv-main-a50);
+}
+
+/* Счётчика proxy в макете нет — у нарисованных профилей это действие пустое.
+   Цвет взят по правилу соседей: цвет действия на половине непрозрачности,
+   как Proxy набран в редакторе профиля. См. docs/design/GAPS.md. */
+.rv-profile-item__count[data-action="proxy"] {
+  color: var(--rv-second-a50);
+}
+
+.rv-profile-item__count[data-action="block"] {
+  color: var(--rv-errors-a50);
+}
+
+/* --- Кнопки справа -------------------------------------------------------- */
+
+.rv-profile-item__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--rv-space-nest-2);
+  flex-shrink: 0;
+}
+
+.rv-profile-item__action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  /* Правило дизайнера для иконок: покой 50 %, наведение 100 %. */
+  color: var(--rv-icon-default);
+  transition: color var(--rv-transition);
+}
+
+.rv-profile-item__action:hover {
+  color: var(--rv-icon-hover);
+}

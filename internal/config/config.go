@@ -40,6 +40,86 @@ type RoutingRules struct {
 	CustomBlockedDomains []string `json:"customBlockedDomains"`
 	// RoutingLists are user-managed routing subscriptions (URL + action).
 	RoutingLists []RoutingList `json:"routingLists"`
+	// Profiles are whole routing rule sets — the shape panels and deep links
+	// deliver. Only one is in effect at a time (ActiveProfileID), and only in
+	// Global mode: in Smart the client decides routing itself, so a profile
+	// there would be fighting the very thing Smart exists to do.
+	Profiles []RoutingProfile `json:"routingProfiles"`
+	// ActiveProfileID names the profile in effect, "" for none.
+	ActiveProfileID string `json:"activeRoutingProfileId"`
+}
+
+// RoutingProfile is one complete routing rule set: what goes direct, what goes
+// through the proxy and what is blocked, plus where the geo databases those
+// rules reference are fetched from.
+//
+// It is the same object however it arrives — typed in by hand, delivered inside
+// a node subscription, or opened from a routing deep link. That is deliberate:
+// the three are the same thing from the user's side, and keeping three models
+// for them would mean three code paths to keep in step.
+type RoutingProfile struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+
+	// Rule tokens exactly as authored — "geosite:private", "domain:example.com",
+	// "10.0.0.0/8". Kept raw rather than pre-expanded so the editor shows the
+	// author's own text back, and so a geo database update changes what a
+	// profile matches without a re-import.
+	DirectSites []string `json:"directSites,omitempty"`
+	DirectIPs   []string `json:"directIp,omitempty"`
+	ProxySites  []string `json:"proxySites,omitempty"`
+	ProxyIPs    []string `json:"proxyIp,omitempty"`
+	BlockSites  []string `json:"blockSites,omitempty"`
+	BlockIPs    []string `json:"blockIp,omitempty"`
+
+	// RouteOrder is the order actions are evaluated in, e.g. "block-proxy-direct".
+	RouteOrder string `json:"routeOrder,omitempty"`
+	// DomainStrategy mirrors the xray option of the same name (IPIfNonMatch…).
+	DomainStrategy string `json:"domainStrategy,omitempty"`
+
+	GeoIPURL   string `json:"geoipUrl,omitempty"`
+	GeoSiteURL string `json:"geositeUrl,omitempty"`
+
+	// ListURLs are remote rule lists this profile pulls in, keyed by action
+	// ("direct"/"proxy"/"block"). A provider may hand out its routing as links
+	// to fetchable lists rather than as inline rules; inlining a 74k-entry list
+	// into the config would bloat it past usefulness, so the profile keeps the
+	// link and the compile step fetches it.
+	ListURLs map[string][]string `json:"listUrls,omitempty"`
+	// AllowInsecure carries the subscription's plaintext consent down to those
+	// fetches: a provider list inherits the choice the user already made about
+	// that provider, and never grants itself one.
+	AllowInsecure bool `json:"allowInsecure,omitempty"`
+
+	// Source records where the profile came from: "manual", "deeplink" or
+	// "subscription". SubscriptionID is set for the last one.
+	Source         string `json:"source,omitempty"`
+	SubscriptionID string `json:"subscriptionId,omitempty"`
+	// OriginName is the name the publisher gave this profile, kept as it first
+	// arrived. Name is the user's to change; this is not, because it is the
+	// only handle a re-published payload can be matched against — the JSON
+	// carries no id of its own. Matching on Name instead would fork a renamed
+	// profile into two the next time its link was opened.
+	OriginName string `json:"originName,omitempty"`
+
+	UpdatedAt int64  `json:"updatedAt,omitempty"`
+	LastError string `json:"lastError,omitempty"`
+}
+
+// RuleCount totals the tokens of one action, for the "• 4 direct • 3 block"
+// line in the profile list. Remote lists count as one entry each: how many
+// rules hide behind a link is unknown until it is fetched.
+func (p RoutingProfile) RuleCount(action string) int {
+	n := len(p.ListURLs[action])
+	switch action {
+	case "direct":
+		return n + len(p.DirectSites) + len(p.DirectIPs)
+	case "proxy":
+		return n + len(p.ProxySites) + len(p.ProxyIPs)
+	case "block":
+		return n + len(p.BlockSites) + len(p.BlockIPs)
+	}
+	return 0
 }
 
 // RoutingList is a user-managed routing subscription: a remote list of
@@ -106,6 +186,12 @@ type Subscription struct {
 	ExpireUnix      int64 `json:"expireUnix,omitempty"`
 
 	IconURL string `json:"iconUrl,omitempty"`
+
+	// SupportURL is the provider's own support address, taken from the
+	// subscription answer (a Support-Url / Profile-Web-Page-Url header, or any
+	// header whose name mentions support). Providers that send nothing leave
+	// it empty, and the UI then has no support link to show.
+	SupportURL string `json:"supportUrl,omitempty"`
 	// Source is an optional provenance marker (e.g. "rvsub" for resultv://rvsub/… deeplinks).
 	Source string `json:"source,omitempty"`
 
@@ -119,6 +205,30 @@ type Subscription struct {
 	// deleted; subscription sync must not re-add them. Cleared only by deleting
 	// the subscription itself.
 	RemovedRoutingListURLs []string `json:"removedRoutingListUrls,omitempty"`
+
+	// NameOverridden records that the user renamed this subscription by hand.
+	// A refresh normally adopts the profile title the provider sends; once the
+	// user has picked a name, that title must not overwrite it again.
+	NameOverridden bool `json:"nameOverridden,omitempty"`
+
+	// ShowOnHome controls whether this subscription's servers appear in the
+	// server list on the home screen. Nil means "shown": a subscription added
+	// before this flag existed must not silently disappear.
+	ShowOnHome *bool `json:"showOnHome,omitempty"`
+
+	// UpdateIntervalMinutes overrides the global subscription auto-refresh
+	// interval for this subscription alone. Nil means "follow the global
+	// setting", 0 means "never refresh on a timer".
+	UpdateIntervalMinutes *int `json:"updateIntervalMinutes,omitempty"`
+}
+
+// EffectiveShowOnHome reports whether this subscription's servers belong in
+// the home-screen list. See ShowOnHome for why the absent value means yes.
+func (s Subscription) EffectiveShowOnHome() bool {
+	if s.ShowOnHome == nil {
+		return true
+	}
+	return *s.ShowOnHome
 }
 
 type AppSettings struct {
@@ -161,6 +271,18 @@ type AppSettings struct {
 	// user routing lists. 0/absent → 24h via EffectiveRoutingListUpdateHours.
 	RoutingListUpdateHours int `json:"routingListUpdateHours,omitempty"`
 
+	// AutoNodeRecheck lets an AUTO group re-evaluate its pick while the session
+	// is running and move to a better node when the one in use has clearly
+	// degraded. Pointer with an "on unless explicitly disabled" default, like
+	// DNSLeakProtection: the whole point of an auto group is that the choice is
+	// not the user's problem, and a group that picks once and then rides a
+	// dying node for hours is not doing its job.
+	//
+	// It is a setting at all because the switch is not free — reconnecting
+	// tears down every open connection — so someone who would rather keep a
+	// mediocre-but-stable session needs a way to say so.
+	AutoNodeRecheck *bool `json:"autoNodeRecheck,omitempty"`
+
 	// LastChangelogVersion is the product version whose release notes the user
 	// has already seen. Empty in a config written before this field existed —
 	// which is exactly how an upgraded install is told apart from a brand-new
@@ -177,6 +299,16 @@ func (s AppSettings) EffectiveDNSLeakProtection() bool {
 		return true
 	}
 	return *s.DNSLeakProtection
+}
+
+// EffectiveAutoNodeRecheck returns true unless the user has explicitly turned
+// the mid-session AUTO recheck off. Configs written before the field existed
+// have nil here and get the feature.
+func (s AppSettings) EffectiveAutoNodeRecheck() bool {
+	if s.AutoNodeRecheck == nil {
+		return true
+	}
+	return *s.AutoNodeRecheck
 }
 
 func (s AppSettings) EffectiveTunStack() string {
@@ -219,10 +351,14 @@ func (s AppSettings) EffectiveSubscriptionSendHWID() bool {
 }
 
 type AppConfig struct {
-	RoutingRules  RoutingRules   `json:"routingRules"`
-	Proxies       []ProxyEntry   `json:"proxies"`
-	Settings      AppSettings    `json:"settings"`
-	Subscriptions []Subscription `json:"subscriptions,omitempty"`
+	RoutingRules RoutingRules `json:"routingRules"`
+	Proxies      []ProxyEntry `json:"proxies"`
+	Settings     AppSettings  `json:"settings"`
+	// Без `omitempty`: пустой список должен доезжать до фронта именно пустым
+	// списком. С `omitempty` последняя удалённая подписка выпадала из ответа
+	// целиком, фронт видел «поля нет» и оставлял в состоянии прежний список —
+	// на странице серверов оставался заголовок только что удалённой подписки.
+	Subscriptions []Subscription `json:"subscriptions"`
 }
 
 func DefaultConfig() AppConfig {
@@ -231,12 +367,13 @@ func DefaultConfig() AppConfig {
 	subscriptionSendHWID := true
 	return AppConfig{
 		RoutingRules: RoutingRules{
-			Mode:                 "global",
+			Mode:                 "smart",
 			Whitelist:            []string{"localhost", "127.0.0.1"},
 			AppWhitelist:         []string{},
 			AppForceVPN:          []string{},
 			CustomBlockedDomains: []string{},
 			RoutingLists:         []RoutingList{},
+			Profiles:             []RoutingProfile{},
 		},
 		Proxies: []ProxyEntry{},
 		Settings: AppSettings{
@@ -472,7 +609,10 @@ func (m *Manager) loadLocked() error {
 
 func ensureDefaults(cfg AppConfig) AppConfig {
 	if cfg.RoutingRules.Mode == "" {
-		cfg.RoutingRules.Mode = "global"
+		/* Умный режим — стандартный: конфиг без режима означает «пользователь
+		   не выбирал», а не «выбрал глобальный». Явно записанный "global"
+		   этой веткой не затрагивается и остаётся как был. */
+		cfg.RoutingRules.Mode = "smart"
 	}
 	if cfg.RoutingRules.Whitelist == nil {
 		cfg.RoutingRules.Whitelist = []string{"localhost", "127.0.0.1"}
@@ -486,11 +626,17 @@ func ensureDefaults(cfg AppConfig) AppConfig {
 	if cfg.RoutingRules.CustomBlockedDomains == nil {
 		cfg.RoutingRules.CustomBlockedDomains = []string{}
 	}
+	if cfg.RoutingRules.Profiles == nil {
+		cfg.RoutingRules.Profiles = []RoutingProfile{}
+	}
 	if cfg.RoutingRules.RoutingLists == nil {
 		cfg.RoutingRules.RoutingLists = []RoutingList{}
 	}
 	if cfg.Proxies == nil {
 		cfg.Proxies = []ProxyEntry{}
+	}
+	if cfg.Subscriptions == nil {
+		cfg.Subscriptions = []Subscription{}
 	}
 	if cfg.Settings.Mode == "" {
 		cfg.Settings.Mode = "proxy"

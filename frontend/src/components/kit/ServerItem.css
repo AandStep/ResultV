@@ -1,0 +1,335 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+
+/*
+ * ServerItem — Figma "App UI-kit" -> фрейм ServerItem (node 6500:2700).
+ * Пять вариантов строки списка серверов:
+ *   Header     — заголовок группы с флагом (116 высоты)
+ *   Row        — сервер внутри группы (106)
+ *   SubItem    — группа из подписки, с логотипом провайдера (116)
+ *   MyItem     — группа «Мои сервера» (116)
+ *   AutoServer — строка автовыбора (106)
+ *
+ * Общее: отступы 24 слева, 32 справа, 24 сверху и снизу; содержимое
+ * разнесено по краям; справа блок действий с зазором 24.
+ *
+ * Заливки: Header, SubItem и MyItem — Grey; AutoServer — Dark Grey;
+ * Row в покое — Black с прозрачностью 70 %, а при наведении Dark Grey уже
+ * без прозрачности.
+ */
+
+.rv-server-item {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  width: 100%;
+  height: 116px;
+  padding: var(--rv-space-24) var(--rv-space-32) var(--rv-space-24)
+    var(--rv-space-24);
+  border: 0;
+  background: var(--rv-grey);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--rv-transition),
+    opacity var(--rv-transition);
+}
+
+.rv-server-item[data-variant="row"],
+.rv-server-item[data-variant="autoserver"] {
+  height: 106px;
+}
+
+.rv-server-item[data-variant="row"] {
+  background: var(--rv-black);
+  opacity: 0.7;
+}
+
+/*
+ * В макете у AutoServer заливка Dark Grey, у соседних строк списка — Black:
+ * это ошибка макета, строка одного списка не может выбиваться фоном. Здесь
+ * авто-строка живёт по правилам Row. См. docs/design/GAPS.md.
+ */
+.rv-server-item[data-variant="autoserver"] {
+  background: var(--rv-black);
+  opacity: 0.7;
+}
+
+.rv-server-item[data-variant="autoserver"]:hover:not([data-mode]),
+.rv-server-item[data-variant="autoserver"][data-mode="hover"] {
+  background: var(--rv-dark-grey);
+  opacity: 1;
+}
+
+.rv-server-item[data-variant="row"]:hover:not([data-mode]),
+.rv-server-item[data-variant="row"][data-mode="hover"] {
+  background: var(--rv-dark-grey);
+  opacity: 1;
+}
+
+/*
+ * Подключённый сервер в списке (Figma 6744:4162, страница серверов): строка
+ * выходит из прозрачности на ту же подложку Dark Grey, что и при наведении,
+ * — по ней его и находят глазами среди остальных.
+ */
+.rv-server-item[data-variant="row"][data-active="true"],
+.rv-server-item[data-variant="autoserver"][data-active="true"] {
+  background: var(--rv-dark-grey);
+  opacity: 1;
+}
+
+/* --- Левая часть -------------------------------------------------------- */
+
+.rv-server-item__main {
+  display: flex;
+  align-items: center;
+  gap: var(--rv-space-16);
+}
+
+/* У компактных строк зазор меньше. */
+.rv-server-item[data-variant="row"] .rv-server-item__main,
+.rv-server-item[data-variant="autoserver"] .rv-server-item__main {
+  gap: var(--rv-space-12);
+}
+
+/* Подложка под логотип провайдера и под значок автовыбора: те же 68 и 58,
+   что у компонента Flag, но с другим содержимым. */
+.rv-server-item__badge {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 68px;
+  height: 68px;
+  border-radius: var(--rv-radius-14);
+  background: var(--rv-light-gray);
+  overflow: hidden;
+  /* Значок автовыбора наследует этот цвет; логотип провайдера — картинка,
+     ему он безразличен. */
+  color: var(--rv-main-color);
+  transition:
+    background var(--rv-transition),
+    color var(--rv-transition);
+}
+
+/*
+ * Подложка берёт те же оттенки состояния, что подложка флага, а значок внутри
+ * — тот же цвет в полную силу.
+ */
+.rv-server-item__badge[data-status="warning"] {
+  background: var(--rv-warning-a10);
+  color: var(--rv-warning);
+}
+
+.rv-server-item__badge[data-status="success"] {
+  background: var(--rv-main-a10);
+  color: var(--rv-main-color);
+}
+
+.rv-server-item__badge[data-status="error"] {
+  background: var(--rv-errors-a10);
+  color: var(--rv-errors);
+}
+
+.rv-server-item[data-variant="autoserver"] .rv-server-item__badge {
+  width: 58px;
+  height: 58px;
+}
+
+.rv-server-item__logo {
+  display: block;
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+}
+
+.rv-server-item__details {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: var(--rv-space-4);
+}
+
+.rv-server-item[data-variant="subitem"] .rv-server-item__details {
+  gap: var(--rv-space-8);
+}
+
+.rv-server-item__tags {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--rv-space-4);
+}
+
+/* Заголовок в макете сдвинут на 5 px вправо относительно бейджей. */
+.rv-server-item__title {
+  margin: 0;
+  padding-left: 5px;
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-title-size);
+  font-weight: var(--rv-title-weight);
+  line-height: var(--rv-title-leading);
+  text-align: center;
+  white-space: nowrap;
+  color: var(--rv-white);
+}
+
+.rv-server-item[data-variant="row"] .rv-server-item__title,
+.rv-server-item[data-variant="autoserver"] .rv-server-item__title {
+  font-size: var(--rv-title-sm-size);
+}
+
+/* У SubItem и MyItem заголовок стоит в одну строку со счётчиком и без
+   сдвига на 5 px. */
+.rv-server-item__title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--rv-space-8);
+}
+
+.rv-server-item__title-row .rv-server-item__title {
+  padding-left: 0;
+}
+
+.rv-server-item__count {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--rv-space-4);
+  padding: 6px var(--rv-space-10);
+  border-radius: var(--rv-radius-pill);
+  background: var(--rv-light-gray);
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-chip-size);
+  font-weight: var(--rv-chip-weight);
+  line-height: var(--rv-chip-leading);
+  text-align: center;
+  white-space: nowrap;
+  color: var(--rv-white-a50);
+}
+
+.rv-server-item__subtitle {
+  margin: 0;
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-chip-size);
+  font-weight: var(--rv-chip-weight);
+  line-height: var(--rv-chip-leading);
+  text-align: center;
+  white-space: nowrap;
+  color: var(--rv-white-a20);
+}
+
+/* --- Правая часть ------------------------------------------------------- */
+
+.rv-server-item__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--rv-space-24);
+}
+
+/* Пинг набирается стилем Chip. */
+.rv-server-item__ping {
+  margin: 0;
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-chip-size);
+  font-weight: var(--rv-chip-weight);
+  line-height: var(--rv-chip-leading);
+  text-align: center;
+  white-space: nowrap;
+  color: var(--rv-white-a50);
+}
+
+/*
+ * Кнопки-иконки строки (пинг, сортировка, правка, обновление, удаление).
+ * Наведение поднимает иконку с 50 % до 80 % — как у шеврона рядом; звёздочка
+ * избранного сюда не входит, у неё свой фирменный цвет.
+ */
+.rv-server-item__icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--rv-icon-default);
+  cursor: pointer;
+  transition: color var(--rv-transition);
+}
+
+.rv-server-item__icon-btn:hover {
+  color: var(--rv-white-a80);
+}
+
+/*
+ * Удаление — единственное необратимое действие в строке, и под курсором оно
+ * краснеет: цвет предупреждает раньше, чем откроется окно подтверждения.
+ */
+.rv-server-item__icon-btn[data-action="delete"]:hover {
+  color: var(--rv-errors);
+}
+
+/*
+ * Запущенное действие мигает, пока идёт работа. Замер задержки по группе и
+ * обновление подписки занимают секунды, и без этого нажатие проваливалось в
+ * тишину — кнопка выглядела так же, как до нажатия.
+ */
+.rv-server-item__icon-btn[data-busy] {
+  animation: rv-blink 1.6s var(--rv-ease) infinite;
+}
+
+/*
+ * У обновления сверх мигания крутится сама иконка — это его собственный жест.
+ * Крутится против часовой: стрелки значка нарисованы в эту сторону, и по
+ * часовой он ехал против собственного рисунка.
+ */
+.rv-server-item__icon-btn[data-action="sync"][data-busy] .rv-icon {
+  animation: rv-spin 1.1s linear infinite reverse;
+}
+
+/*
+ * Задержка этой строки ещё меряется. Спиннер стоит ровно на месте числа и
+ * держит его ширину, чтобы строка не дёргалась, когда замер придёт.
+ */
+.rv-server-item__ping-spinner {
+  box-sizing: border-box;
+  display: block;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--rv-white-a10);
+  border-top-color: var(--rv-white-a50);
+  border-radius: var(--rv-radius-circle);
+  animation: rv-spin 800ms linear infinite;
+}
+
+/* Шеврон: в покое белый 50 %, при наведении на строку — 80 %. Поворот при
+   раскрытии карточки задаёт HomeServerList, здесь только его плавность. */
+.rv-server-item__chevron {
+  color: var(--rv-icon-default);
+  transition:
+    color var(--rv-transition),
+    transform var(--rv-transition);
+}
+
+.rv-server-item:hover:not([data-mode]) .rv-server-item__chevron,
+.rv-server-item[data-mode="hover"] .rv-server-item__chevron {
+  color: var(--rv-white-a80);
+}

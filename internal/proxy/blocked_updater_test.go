@@ -83,8 +83,11 @@ func TestResolveBlockedCIDRs_FallbackToCache(t *testing.T) {
 	if res.Source != "cache" {
 		t.Fatalf("expected cache source, got %s", res.Source)
 	}
-	if len(res.CIDRs) != 1 || res.CIDRs[0] != "91.108.4.0/22" {
-		t.Fatalf("unexpected cached cidrs: %v", res.CIDRs)
+	// Not an exact-list assertion: blockedCIDRFloor is unioned into every
+	// source, so the contract is "the cache's own entries survive", not
+	// "the cache is the whole answer".
+	if !hasCIDR(res.CIDRs, "91.108.4.0/22") {
+		t.Fatalf("cached cidr dropped: %v", res.CIDRs)
 	}
 }
 
@@ -190,8 +193,8 @@ func TestLoadCachedBlockedCIDRs_PrefersCacheThenBuiltin(t *testing.T) {
 	if res.Source != "cache" {
 		t.Fatalf("expected cache source, got %s", res.Source)
 	}
-	if len(res.CIDRs) != 1 || res.CIDRs[0] != "91.108.4.0/22" {
-		t.Fatalf("unexpected cidrs: %v", res.CIDRs)
+	if !hasCIDR(res.CIDRs, "91.108.4.0/22") {
+		t.Fatalf("cached cidr dropped: %v", res.CIDRs)
 	}
 
 	resBuiltin := LoadCachedBlockedCIDRs(filepath.Join(t.TempDir(), "missing.json"))

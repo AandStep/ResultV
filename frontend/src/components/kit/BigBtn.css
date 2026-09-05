@@ -1,0 +1,100 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+
+/*
+ * BigBtn — Figma "App UI-kit" -> фрейм BigBtn (node 6551:2825).
+ * Крупная кнопка-плитка, четыре состояния: Default, Hover, Active, idle.
+ *
+ * 421x143, скругление 24, рамка 1 px, отступы по вертикали 32, внутри
+ * колонка с зазором 8: иконка 48 и подпись Bold 16.
+ *
+ * Default — заливка Grey, рамка белым 10 %, иконка и подпись белым 50 %.
+ * Hover — та же заливка, но рамка Main-color 20 %, иконка и подпись
+ * фирменного цвета. idle — заливка Main-color 10 %. Active — заливка
+ * Main-color 10 % и внутренняя тень, плитка при этом садится на 2 px по
+ * каждой стороне (в макете 417 против 421) — посадка визуальная, размеры
+ * плитки не меняются, см. `.rv-press` в design/borders.css.
+ */
+
+.rv-big-btn {
+  --rv-press-inset: 2px;
+  --rv-press-radius: var(--rv-radius-24);
+  /* Зелёная обводка наведения объявлена здесь, а не в `:hover`: переменная
+     не анимируется, и объявленная в состоянии она при уводе курсора разом
+     возвращалась к белой, пока слой ещё виден — это и была вспышка. Правило
+     целиком описано в design/borders.css. */
+  --rv-border-hover: linear-gradient(var(--rv-main-a20), var(--rv-main-a20));
+
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--rv-space-8);
+  width: 100%;
+  height: 143px;
+  padding: 32px 0;
+  border: 0;
+  border-radius: var(--rv-radius-24);
+  background: var(--rv-grey);
+  cursor: pointer;
+  transition:
+    clip-path var(--rv-transition),
+    background var(--rv-transition),
+    box-shadow var(--rv-transition),
+    color var(--rv-transition),
+    opacity var(--rv-transition);
+
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-btn-size);
+  font-weight: var(--rv-btn-weight);
+  line-height: normal;
+  white-space: nowrap;
+  color: var(--rv-white-a50);
+}
+
+.rv-big-btn:hover:not([data-state]),
+.rv-big-btn[data-state="hover"] {
+  color: var(--rv-main-color);
+}
+
+/* idle — залитое состояние, отдельного CSS-триггера у него нет. */
+.rv-big-btn[data-state="idle"] {
+  background: var(--rv-main-a10);
+  --rv-border: linear-gradient(var(--rv-main-a10), var(--rv-main-a10));
+  color: var(--rv-main-color);
+}
+
+.rv-big-btn:active:not([data-state]),
+.rv-big-btn[data-state="active"] {
+  background: var(--rv-main-a10);
+  --rv-border: linear-gradient(var(--rv-main-a10), var(--rv-main-a10));
+  color: var(--rv-main-color);
+  box-shadow: inset var(--rv-press-offset) var(--rv-press-offset)
+    var(--rv-press-blur) 0 var(--rv-main-a08);
+}
+
+/*
+ * «Выключено» в макете у крупной кнопки не нарисовано, хотя у обычной есть.
+ * Сделано по тому же правилу: заливка покоя и половина непрозрачности.
+ */
+.rv-big-btn:disabled,
+.rv-big-btn[data-state="disable"] {
+  opacity: 0.5;
+  cursor: default;
+}

@@ -27,6 +27,13 @@ export const ConfigProvider = ({ children }) => {
     const { addLog } = useLogContext();
     const config = useAppConfig(addLog);
     const [activeTab, setActiveTab] = useState("home");
+    /*
+     * Раскрытость бокового меню живёт здесь, а не в самом меню: каждая
+     * страница нового дизайна рисует свой экземпляр AppSidebar, и при
+     * переходе меню размонтировалось вместе со страницей — а с ним и его
+     * состояние, из-за чего раскрытое меню схлопывалось на каждом переходе.
+     */
+    const [sidebarOpen, setSidebarOpen] = useState(false);
     const [editingProxy, setEditingProxy] = useState(null);
     const [pendingDeepLink, setPendingDeepLink] = useState("");
     const [pendingDeepLinkSource, setPendingDeepLinkSource] = useState("");
@@ -47,14 +54,20 @@ export const ConfigProvider = ({ children }) => {
                 config.setSubscriptions(cfg.subscriptions);
             }
         };
-        EventsOn("deeplink:received", (payload) => {
-            const text = String(payload?.payload || "").trim();
+        // Ссылка всегда лежит в очереди на стороне Go, а событие — только
+        // звонок «приходи за ней». Так она не теряется, если события ещё
+        // некому слушать (холодный старт), и не задваивается: очередь
+        // забирается разом.
+        const takeDeepLink = async (event) => {
+            const queued = await wailsAPI.takePendingDeepLink();
+            const text = String(queued?.payload || event?.payload || "").trim();
             if (!text) return;
+            const source = queued?.payload ? queued?.source : event?.source;
             setPendingDeepLink(text);
-            setPendingDeepLinkSource(
-                typeof payload?.source === "string" ? payload.source : "",
-            );
-        });
+            setPendingDeepLinkSource(typeof source === "string" ? source : "");
+        };
+
+        EventsOn("deeplink:received", takeDeepLink);
         EventsOn("deeplink:error", (msg) => {
             const text = typeof msg === "string" ? msg : JSON.stringify(msg);
             addLog(`Ошибка ссылки resultv://: ${text}`, "error");
@@ -62,10 +75,27 @@ export const ConfigProvider = ({ children }) => {
         EventsOn("config:updated", (cfg) => {
             applyConfig(cfg);
         });
+
+        // Ссылка, с которой приложение запустили, ждёт в очереди с самого
+        // старта: события тогда слушать было некому.
+        takeDeepLink();
+
+        // И ещё раз — когда окно возвращается на экран. Пока оно свёрнуто или
+        // спрятано в трей, WebView2 усыпляет страницу, и событие до неё может
+        // не доехать вовсе; очередь на стороне Go в этот момент уже полна, и
+        // забрать её надо самим. Пусто — вернётся пусто, лишним не будет.
+        const onWake = () => {
+            if (document.visibilityState === "visible") takeDeepLink();
+        };
+        window.addEventListener("focus", onWake);
+        document.addEventListener("visibilitychange", onWake);
+
         return () => {
             EventsOff("deeplink:received");
             EventsOff("deeplink:error");
             EventsOff("config:updated");
+            window.removeEventListener("focus", onWake);
+            document.removeEventListener("visibilitychange", onWake);
         };
 
     }, [addLog, config.setProxies, config.setSubscriptions]);
@@ -74,6 +104,8 @@ export const ConfigProvider = ({ children }) => {
         ...config,
         activeTab,
         setActiveTab,
+        sidebarOpen,
+        setSidebarOpen,
         editingProxy,
         setEditingProxy,
         pendingDeepLink,

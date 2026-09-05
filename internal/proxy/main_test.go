@@ -56,9 +56,13 @@ func TestMain(m *testing.M) {
 // because the tests that record failures happen to be declared after it in the
 // file — and it duly failed under `-count=2`, where the second run starts with
 // the first run's failures already recorded.
-func isolateNodeStats(t *testing.T) {
+// Returns the fresh store so a test can seed history into it; callers that
+// only need the isolation can ignore the result.
+func isolateNodeStats(t *testing.T) *NodeStatStore {
 	t.Helper()
 	old := nodeStats()
 	t.Cleanup(func() { SetNodeStatStore(old) })
-	SetNodeStatStore(NewNodeStatStore(t.TempDir()))
+	store := NewNodeStatStore(t.TempDir())
+	SetNodeStatStore(store)
+	return store
 }

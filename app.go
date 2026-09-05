@@ -123,6 +123,12 @@ type App struct {
 	autoCandidatesMu sync.Mutex
 	autoCandidates   map[string][]config.ProxyEntry
 
+	// How many consecutive mid-session evaluations have agreed that a rival
+	// beats the node in use (see autoRecheckOnce). No mutex: the only writer
+	// and reader is runAutoRecheckLoop's single goroutine, ticking every
+	// autoRecheckInterval.
+	autoRecheckStreak int
+
 	startInTray bool
 
 	deepLinkMu      sync.Mutex
@@ -266,6 +272,48 @@ func (a *App) DecodeDeepLink(url string) (string, error) {
 	return proxy.DecodeDeepLink(url)
 }
 
+// TakePendingDeepLink hands the frontend the queued resultv:// link and clears
+// the queue. This is the ONLY way a link reaches the UI: every arrival — argv
+// at cold start, a second instance while we run — is queued here, and the
+// "deeplink:received" event is just a nudge telling the frontend to come and
+// take it. An event carrying the payload was lost whenever the frontend was
+// not listening yet (cold start), and there is no way for Go to know that it
+// is; a queue plus a drain has no such window. Draining is atomic, so an
+// arrival racing a mount is imported once, not twice.
+//
+// Returns an empty payload when nothing is queued.
+func (a *App) TakePendingDeepLink() map[string]string {
+	empty := map[string]string{"payload": "", "source": "", "kind": ""}
+	if a == nil {
+		return empty
+	}
+	a.deepLinkMu.Lock()
+	url := a.pendingDeepLink
+	a.pendingDeepLink = ""
+	a.deepLinkMu.Unlock()
+	if url == "" {
+		return empty
+	}
+	// A routing link carries a public profile, not an encrypted subscription
+	// body: sending it through DecodeDeepLink would only fail to decrypt it.
+	// The link itself goes to the UI, which previews it before importing.
+	if proxy.DeepLinkKind(url) == proxy.DeepLinkKindRouting {
+		a.log.Info("[ССЫЛКА] интерфейс забрал ссылку маршрутизации из очереди")
+		return map[string]string{"payload": url, "source": "", "kind": proxy.DeepLinkKindRouting}
+	}
+	payload, err := proxy.DecodeDeepLink(url)
+	if err != nil {
+		a.log.Error(fmt.Sprintf("Не удалось обработать ссылку resultv://: %v", err))
+		return empty
+	}
+	source := ""
+	if proxy.DeepLinkUsesRvsubPath(url) {
+		source = "rvsub"
+	}
+	a.log.Info("[ССЫЛКА] интерфейс забрал ссылку из очереди")
+	return map[string]string{"payload": payload, "source": source, "kind": proxy.DeepLinkKindSubscription}
+}
+
 // HandleDeepLink decrypts a resultv:// URL and forwards the decoded payload
 // to the frontend, which routes it through the regular "Add subscription"
 // flow (preview modal → user confirms → import). Called both from main() at
@@ -279,6 +327,32 @@ func (a *App) HandleDeepLink(url string) {
 	if !proxy.IsDeepLink(url) {
 		return
 	}
+	a.log.Info("[ССЫЛКА] пришла ссылка resultv://")
+
+	// Routing links skip the subscription decoder entirely — see
+	// TakePendingDeepLink for why. Queue, raise the window, nudge the UI.
+	if proxy.DeepLinkKind(url) == proxy.DeepLinkKindRouting {
+		if _, perr := proxy.DecodeRoutingDeepLink(url); perr != nil {
+			a.log.Error(fmt.Sprintf("Не удалось разобрать ссылку маршрутизации: %v", perr))
+			if a.ctx != nil {
+				wailsRuntime.EventsEmit(a.ctx, "deeplink:error", perr.Error())
+			}
+			return
+		}
+		a.QueueDeepLink(url)
+		a.restoreMainWindow()
+		if a.ctx == nil {
+			return
+		}
+		wailsRuntime.EventsEmit(a.ctx, "deeplink:received", map[string]interface{}{
+			"payload": url,
+			"source":  "",
+			"kind":    proxy.DeepLinkKindRouting,
+		})
+		a.log.Info("[ССЫЛКА] маршрутизация раскрыта, интерфейс позван")
+		return
+	}
+
 	payload, err := proxy.DecodeDeepLink(url)
 	if err != nil {
 		a.log.Error(fmt.Sprintf("Не удалось обработать ссылку resultv://: %v", err))
@@ -288,20 +362,28 @@ func (a *App) HandleDeepLink(url string) {
 		return
 	}
 
+	// Сначала в очередь, потом окно и звонок интерфейсу: к моменту, когда он
+	// придёт за ссылкой, она уже должна там лежать.
+	a.QueueDeepLink(url)
+
 	a.restoreMainWindow()
 
 	if a.ctx == nil {
-		a.QueueDeepLink(url)
 		return
 	}
+
 	source := ""
 	if proxy.DeepLinkUsesRvsubPath(url) {
 		source = "rvsub"
 	}
+	// Полезная нагрузка идёт и событием — на случай, если у интерфейса старые
+	// биндинги и метода очереди он не знает.
 	wailsRuntime.EventsEmit(a.ctx, "deeplink:received", map[string]interface{}{
 		"payload": payload,
 		"source":  source,
+		"kind":    proxy.DeepLinkKindSubscription,
 	})
+	a.log.Info("[ССЫЛКА] раскрыта, интерфейс позван")
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -375,9 +457,14 @@ func (a *App) startup(ctx context.Context) {
 	a.leftoverDone = make(chan struct{})
 	go a.recoverLeftovers()
 
+	// Re-evaluate a live AUTO group's pick for as long as the app runs. Started
+	// unconditionally and gated per tick (connected, on an AUTO member, setting
+	// on) — see runAutoRecheckLoop for why one always-on loop beats starting
+	// and stopping one per connection.
+	go a.runAutoRecheckLoop()
+
 	rootDir := a.getAppRootDir()
 	a.initSmartBlockedDomains(userDataPath, rootDir)
-
 
 	// Leftover kill-switch firewall rules from a crashed / force-killed prior
 	// run are NOT silently cleared here (the old Disable() call was a no-op on a
@@ -542,13 +629,9 @@ func (a *App) startup(ctx context.Context) {
 
 	a.log.Success("ResultV готов к работе")
 
-	a.deepLinkMu.Lock()
-	queued := a.pendingDeepLink
-	a.pendingDeepLink = ""
-	a.deepLinkMu.Unlock()
-	if queued != "" {
-		go a.HandleDeepLink(queued)
-	}
+	// A link queued from argv stays queued: the frontend picks it up with
+	// TakePendingDeepLink once it is mounted. Emitting it here raced the
+	// bundle load — startup regularly won, and the cold-start link vanished.
 }
 
 func (a *App) shutdown(ctx context.Context) {
@@ -689,9 +772,132 @@ func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
 		}
 		a.setWindowTitleConnected(proxyDTO)
 		wailsRuntime.EventsEmit(a.ctx, "proxy:connected", proxyDTO)
+		a.startUDPRelayProbe(proxyDTO, mode)
+		a.startThroughputProbe(proxyDTO)
 	}
 
 	return result, nil
+}
+
+// udpRelayProbeDelay lets routing and DNS settle after connect before the
+// probe fires. Connect already waited for the post-start health probe, so the
+// tunnel is up; this only avoids racing the first seconds of rule indexing.
+const udpRelayProbeDelay = 2 * time.Second
+
+// udpRelayProbeBudget bounds the whole check. Two STUN targets at 4s each is
+// the worst case for a node that black-holes UDP, and nothing downstream waits
+// on this, so a generous ceiling costs the user nothing.
+const udpRelayProbeBudget = 12 * time.Second
+
+// startUDPRelayProbe answers, in the background, whether the node just
+// connected can carry UDP at all.
+//
+// This is a property no other check in the app measures: a VLESS server on
+// flow=xtls-rprx-vision refuses plain UDP outright, and some servers firewall
+// it, so a node can pass every TCP/TLS/QUIC probe and still be unable to hold
+// a Discord call. Deliberately advisory — the verdict is logged, remembered
+// and pushed to the UI, but never fails a connect: most traffic never needs
+// UDP, and demoting an otherwise healthy node over it would be worse than the
+// symptom.
+func (a *App) startUDPRelayProbe(proxyDTO proxy.ProxyConfig, mode proxy.ProxyMode) {
+	if a.proxy == nil || mode != proxy.ProxyModeTunnel {
+		return
+	}
+	id := a.resolveProxyID(proxyDTO)
+	label := a.resolveProxyDisplayName(proxyDTO)
+
+	go func() {
+		select {
+		case <-time.After(udpRelayProbeDelay):
+		case <-a.ctx.Done():
+			return
+		}
+		ctx, cancel := context.WithTimeout(a.ctx, udpRelayProbeBudget)
+		defer cancel()
+
+		res := a.proxy.ProbeUDPRelayNow(ctx)
+		if res.Reason == "not connected" || strings.HasPrefix(res.Reason, "probe cancelled") {
+			return
+		}
+		// AutoNodeKeyOf, not the config id: NodeStat is keyed by AutoNodeKey
+		// everywhere else, and for an AUTO member `id` is the GROUP head's id
+		// (ResolveAutoCandidates stamps it), so recording under it filed every
+		// member's verdict under one key that no scorer ever reads. `id` stays
+		// the identifier for the UI event below — the frontend keys rows by
+		// config id and knows nothing about node keys.
+		proxy.RecordUDPRelayOutcome(proxy.AutoNodeKeyOf(proxyDTO), res.OK)
+
+		if a.log != nil {
+			if res.OK {
+				a.log.Info(fmt.Sprintf("[UDP] %s: UDP проходит через узел (%s, %d мс) — голос Discord будет работать", label, res.Target, res.LatencyMs))
+			} else {
+				a.log.Warning(fmt.Sprintf("[UDP] %s: узел не пропускает UDP (%s). Звонки и демонстрации Discord на этом сервере работать не будут — выберите другой узел", label, res.Reason))
+			}
+		}
+		wailsRuntime.EventsEmit(a.ctx, "proxy:udp-relay", map[string]interface{}{
+			"proxyId":   id,
+			"ok":        res.OK,
+			"latencyMs": res.LatencyMs,
+		})
+	}()
+}
+
+// throughputProbeDelay starts the download after the UDP probe's own budget
+// has expired. Both measure the same session through the same inbound, and a
+// STUN exchange racing a half-megabyte transfer would give each of them the
+// other's interference to report.
+const throughputProbeDelay = udpRelayProbeDelay + udpRelayProbeBudget
+
+// throughputProbeBudget bounds the whole measurement. Generous on purpose: on
+// a genuinely slow node the transfer taking a while IS the result, and cutting
+// it short would record the deadline instead of the link.
+const throughputProbeBudget = 20 * time.Second
+
+// startThroughputProbe measures, in the background, how fast the node just
+// connected actually moves bytes, and remembers it against that node.
+//
+// This is the one input to selection that cannot come from a sweep: measuring
+// a candidate's throughput would mean speaking its full protocol, i.e. running
+// an engine per candidate. Measuring the node in use costs one small download
+// and turns "we have used this node before" into a number the next ranking can
+// weigh — which is how a congested node with a short path stops beating a free
+// one slightly further away.
+//
+// Advisory, exactly like the UDP probe: a failed measurement is simply not
+// recorded. RecordThroughputOutcome drops non-positive rates, so a node that
+// could not be measured stays unmeasured rather than acquiring a "0 KB/s"
+// record that scoring would read as the slowest node in the group.
+func (a *App) startThroughputProbe(proxyDTO proxy.ProxyConfig) {
+	if a.proxy == nil {
+		return
+	}
+	key := proxy.AutoNodeKeyOf(proxyDTO)
+	label := a.resolveProxyDisplayName(proxyDTO)
+
+	go func() {
+		select {
+		case <-time.After(throughputProbeDelay):
+		case <-a.ctx.Done():
+			return
+		}
+		ctx, cancel := context.WithTimeout(a.ctx, throughputProbeBudget)
+		defer cancel()
+
+		res := a.proxy.ProbeThroughputNow(ctx)
+		if !res.OK {
+			// Not a warning: the user has no action to take, and a node we
+			// failed to measure is treated as unmeasured, not as slow.
+			if a.log != nil && res.Reason != "not connected" {
+				a.log.Info(fmt.Sprintf("[СКОРОСТЬ] %s: замер не удался (%s) — на подбор не влияет", label, res.Reason))
+			}
+			return
+		}
+		proxy.RecordThroughputOutcome(key, res.KBps)
+		if a.log != nil {
+			a.log.Info(fmt.Sprintf("[СКОРОСТЬ] %s: %.1f Мбит/с через узел — учтено в подборе",
+				label, res.KBps*8/1024))
+		}
+	}()
 }
 
 func dnsServersFromProxyExtra(proxyDTO proxy.ProxyConfig) []string {
@@ -960,7 +1166,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 			cfg.Settings.TunIPv4,
 			"",
 			cfg.Settings.EffectiveDNSLeakProtection(),
-		cfg.Settings.EnableIPv6,
+			cfg.Settings.EnableIPv6,
 		)
 		if result.Success {
 			serverName := fmt.Sprintf("%s:%d", status.CurrentProxy.IP, status.CurrentProxy.Port)
@@ -1001,7 +1207,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 				cfg.Settings.TunIPv4,
 				"",
 				cfg.Settings.EffectiveDNSLeakProtection(),
-		cfg.Settings.EnableIPv6,
+				cfg.Settings.EnableIPv6,
 			)
 			if rollback.Success {
 				if a.tray != nil {
@@ -1432,7 +1638,7 @@ func headerIsTruthy(h http.Header, key string) bool {
 func subscriptionEmptyBodyError(h http.Header) error {
 	title := parseSubscriptionHeaderText(h.Get("Profile-Title"))
 	announce := parseSubscriptionHeaderText(h.Get("Announce"))
-	supportURL := strings.TrimSpace(h.Get("Support-Url"))
+	supportURL := subscriptionSupportURL("", h)
 	hwidLimit := headerIsTruthy(h, "X-Hwid-Limit") || headerIsTruthy(h, "X-Hwid-Max-Devices-Reached")
 	hwidNotSupported := headerIsTruthy(h, "X-Hwid-Not-Supported")
 
@@ -1494,6 +1700,63 @@ func subscriptionHostFromURL(subURL string) string {
 	}
 	host := strings.ToLower(u.Hostname())
 	return host
+}
+
+// subscriptionSupportHeaders lists the header names panels use for the
+// provider's own address — a support page or the subscription's user page.
+// Names are checked in this order; the first http(s) value wins.
+var subscriptionSupportHeaders = []string{
+	"Support-Url",
+	"Subscription-Support-Url",
+	"Support",
+	"Profile-Web-Page-Url",
+}
+
+// subscriptionSupportURL picks the provider's support address out of the
+// subscription answer. Nothing sent — nothing returned: the UI hides its
+// support link rather than inventing one.
+//
+// Besides the known names, any header whose name mentions "support" is taken
+// as long as its value is an http(s) URL. Panels differ in spelling, and a
+// header we do not know by name still says plainly what it is.
+func subscriptionSupportURL(subURL string, h http.Header) string {
+	parsed, err := url.Parse(subURL)
+	if err != nil {
+		parsed = nil
+	}
+	absolute := func(v string) string {
+		v = parseSubscriptionHeaderText(v)
+		if v == "" {
+			return ""
+		}
+		low := strings.ToLower(v)
+		if strings.HasPrefix(low, "http://") || strings.HasPrefix(low, "https://") {
+			return v
+		}
+		// Providers also send bare hosts and site-relative paths.
+		if strings.HasPrefix(v, "/") && parsed != nil && parsed.Scheme != "" && parsed.Host != "" {
+			return parsed.Scheme + "://" + parsed.Host + v
+		}
+		if strings.HasPrefix(low, "t.me/") || strings.HasPrefix(low, "www.") {
+			return "https://" + v
+		}
+		return ""
+	}
+
+	for _, key := range subscriptionSupportHeaders {
+		if v := absolute(h.Get(key)); v != "" {
+			return v
+		}
+	}
+	for key, vals := range h {
+		if len(vals) == 0 || !strings.Contains(strings.ToLower(key), "support") {
+			continue
+		}
+		if v := absolute(vals[0]); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func subscriptionIconCandidates(subURL string, h http.Header) []string {
@@ -1887,24 +2150,42 @@ func isInsecureSubURL(subURL string) bool {
 // must be true to accept http:// URLs; when set, we also suppress the
 // x-hwid header because sending a stable device identifier in plaintext is
 // exactly the leak the warning is opted into.
-func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]config.ProxyEntry, int64, int64, int64, int64, string, string, []config.RoutingList, map[string]proxy.ParsedRoutingList, error) {
+// subscriptionFetch is everything one subscription answer carries: the servers
+// themselves plus the metadata the provider ships alongside them in headers.
+// It used to be ten positional return values, and every field the panels
+// started sending made the next call site harder to read.
+type subscriptionFetch struct {
+	Entries      []config.ProxyEntry
+	Upload       int64
+	Download     int64
+	Total        int64
+	ExpireUnix   int64
+	IconURL      string
+	ProfileTitle string
+	SupportURL   string
+	RoutingLists []config.RoutingList
+	Embedded     map[string]proxy.ParsedRoutingList
+}
+
+func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) (subscriptionFetch, error) {
 	if resolved, err := resolveEncryptedSubscriptionURL(subURL); err != nil {
-		return nil, 0, 0, 0, 0, "", "", nil, nil, err
+		return subscriptionFetch{}, err
 	} else if resolved != "" {
 		subURL = resolved
 	}
 	insecure := isInsecureSubURL(subURL)
 	if insecure && !allowInsecure {
-		return nil, 0, 0, 0, 0, "", "", nil, nil, ErrInsecureSubscription
+		return subscriptionFetch{}, ErrInsecureSubscription
 	}
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Timeout: 15 * time.Second, Jar: jar}
 	metadata := a.subscriptionRequestMetadata()
 
-	doFetch := func(userAgent string) ([]config.ProxyEntry, int64, int64, int64, int64, string, string, []config.RoutingList, map[string]proxy.ParsedRoutingList, bool, error) {
+	doFetch := func(userAgent string) (subscriptionFetch, bool, error) {
+		var out subscriptionFetch
 		req, err := http.NewRequest(http.MethodGet, subURL, nil)
 		if err != nil {
-			return nil, 0, 0, 0, 0, "", "", nil, nil, false, fmt.Errorf("creating subscription request: %w", err)
+			return out, false, fmt.Errorf("creating subscription request: %w", err)
 		}
 		req.Header.Set("User-Agent", userAgent)
 		// Remnawave HWID device identification headers.
@@ -1923,69 +2204,71 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 
 		resp, err := client.Do(req)
 		if err != nil {
-			return nil, 0, 0, 0, 0, "", "", nil, nil, false, fmt.Errorf("fetching subscription: %w", err)
+			return out, false, fmt.Errorf("fetching subscription: %w", err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return nil, 0, 0, 0, 0, "", "", nil, nil, false, fmt.Errorf("subscription returned HTTP %d", resp.StatusCode)
+			return out, false, fmt.Errorf("subscription returned HTTP %d", resp.StatusCode)
 		}
 
-		profileTitle := parseSubscriptionHeaderText(resp.Header.Get("Profile-Title"))
-		up, down, tot, exp := parseSubscriptionUserInfoHeader(resp.Header.Get("Subscription-Userinfo"))
-		iconURL := resolveSubscriptionIcon(client, subURL, resp.Header)
+		out.ProfileTitle = parseSubscriptionHeaderText(resp.Header.Get("Profile-Title"))
+		out.Upload, out.Download, out.Total, out.ExpireUnix = parseSubscriptionUserInfoHeader(resp.Header.Get("Subscription-Userinfo"))
+		out.IconURL = resolveSubscriptionIcon(client, subURL, resp.Header)
+		out.SupportURL = subscriptionSupportURL(subURL, resp.Header)
 		routingListsHeader := resp.Header.Get("Routing-Lists")
 
 		bodyBytes, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return nil, up, down, tot, exp, iconURL, profileTitle, nil, nil, false, fmt.Errorf("reading subscription body: %w", err)
+			return out, false, fmt.Errorf("reading subscription body: %w", err)
 		}
 		bodyStr := string(bodyBytes)
-		routingLists := proxy.ExtractSubscriptionRoutingLists(routingListsHeader, bodyStr)
-		embedded := proxy.ExtractEmbeddedRoutingLists(bodyStr)
+		out.RoutingLists = proxy.ExtractSubscriptionRoutingLists(routingListsHeader, bodyStr)
+		out.Embedded = proxy.ExtractEmbeddedRoutingLists(bodyStr)
 
-		if iconURL == "" && strings.Contains(bodyStr, "<link") {
+		if out.IconURL == "" && strings.Contains(bodyStr, "<link") {
 			if fromBody := pickIconFromSubscriptionHTML(client, subURL, bodyStr); fromBody != "" {
-				iconURL = fromBody
+				out.IconURL = fromBody
 			}
 		}
 
 		trimmed := strings.TrimSpace(strings.TrimPrefix(bodyStr, "\uFEFF"))
 		if trimmed == "" {
-			return nil, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, false, subscriptionEmptyBodyError(resp.Header)
+			return out, false, subscriptionEmptyBodyError(resp.Header)
 		}
 
 		isJSON := strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")
 
-		entries, err := proxy.ParseSubscriptionBody(bodyStr)
+		out.Entries, err = proxy.ParseSubscriptionBody(bodyStr)
 		if err != nil {
-			return nil, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, isJSON, err
+			return out, isJSON, err
 		}
 
-		return entries, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, isJSON, nil
+		return out, isJSON, nil
 	}
 
-	entries, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, _, err := doFetch(metadata.UserAgent)
+	res, _, err := doFetch(metadata.UserAgent)
 	if err != nil {
 		// impio moved its subscription endpoint between ".../json" and the
 		// raw path over time; retry the other form once before giving up.
 		alt := impioAlternateSubscriptionURL(subURL)
 		if alt == "" {
-			return nil, 0, 0, 0, 0, "", "", nil, nil, err
+			return subscriptionFetch{}, err
 		}
 		subURL = alt
 		var altErr error
-		entries, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, _, altErr = doFetch(metadata.UserAgent)
+		res, _, altErr = doFetch(metadata.UserAgent)
 		if altErr != nil {
 			// Report the original failure — it corresponds to the URL the
 			// caller actually asked for.
-			return nil, 0, 0, 0, 0, "", "", nil, nil, err
+			return subscriptionFetch{}, err
 		}
 	}
 
+	entries := res.Entries
 	providerName := extractProviderName(subURL)
-	if profileTitle != "" {
-		providerName = profileTitle
+	if res.ProfileTitle != "" {
+		providerName = res.ProfileTitle
 	}
 	baseID := time.Now().UnixMilli()
 	for i := range entries {
@@ -2076,7 +2359,8 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 	visibleCount := visibleSubscriptionCount(entries)
 
 	a.log.Success(fmt.Sprintf("Подписка загружена: %d серверов", visibleCount))
-	return entries, up, down, tot, exp, iconURL, profileTitle, routingLists, embedded, nil
+	res.Entries = entries
+	return res, nil
 }
 
 // FetchSubscription performs a one-off subscription fetch (no persistence).
@@ -2084,9 +2368,9 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) ([]con
 // ErrInsecureSubscription. The frontend should call this with false first
 // and re-call with true only after surfacing the warning to the user.
 func (a *App) FetchSubscription(subURL string, allowInsecure bool) (SubscriptionPreview, error) {
-	entries, _, _, _, _, _, _, lists, embedded, err := a.fetchSubscriptionFromURL(subURL, allowInsecure)
-	lists = append(lists, embeddedRoutingListDeclarations(embedded)...)
-	return SubscriptionPreview{Proxies: entries, RoutingLists: lists}, err
+	res, err := a.fetchSubscriptionFromURL(subURL, allowInsecure)
+	lists := append(res.RoutingLists, embeddedRoutingListDeclarations(res.Embedded)...)
+	return SubscriptionPreview{Proxies: res.Entries, RoutingLists: lists}, err
 }
 
 // ParseSubscriptionText accepts pasted content. When the paste resolves to
@@ -2104,15 +2388,15 @@ func (a *App) ParseSubscriptionText(text string) (SubscriptionPreview, error) {
 	text = strings.TrimSpace(text)
 	lower := strings.ToLower(text)
 	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
-		entries, _, _, _, _, _, _, lists, embedded, ferr := a.fetchSubscriptionFromURL(text, false)
-		lists = append(lists, embeddedRoutingListDeclarations(embedded)...)
-		return SubscriptionPreview{Proxies: entries, RoutingLists: lists}, ferr
+		res, ferr := a.fetchSubscriptionFromURL(text, false)
+		lists := append(res.RoutingLists, embeddedRoutingListDeclarations(res.Embedded)...)
+		return SubscriptionPreview{Proxies: res.Entries, RoutingLists: lists}, ferr
 	}
 	if proxy.IsEncryptedSubscription(text) {
 		if resolved, err := resolveEncryptedSubscriptionURL(text); err == nil && resolved != "" {
-			entries, _, _, _, _, _, _, lists, embedded, ferr := a.fetchSubscriptionFromURL(resolved, false)
-			lists = append(lists, embeddedRoutingListDeclarations(embedded)...)
-			return SubscriptionPreview{Proxies: entries, RoutingLists: lists}, ferr
+			res, ferr := a.fetchSubscriptionFromURL(resolved, false)
+			lists := append(res.RoutingLists, embeddedRoutingListDeclarations(res.Embedded)...)
+			return SubscriptionPreview{Proxies: res.Entries, RoutingLists: lists}, ferr
 		}
 	}
 	entries, err := proxy.ParseSubscriptionBody(text)
@@ -2148,14 +2432,18 @@ func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
 	// they accepted plaintext at AddSubscription time, refresh keeps using
 	// http; if not, an http URL refresh will fail with ErrInsecureSubscription
 	// and the UI must re-prompt before retrying.
-	entries, up, down, tot, exp, iconURL, profileTitle, lists, embedded, err := a.fetchSubscriptionFromURL(sub.URL, sub.AllowInsecure)
+	res, err := a.fetchSubscriptionFromURL(sub.URL, sub.AllowInsecure)
 	if err != nil {
 		return nil, fmt.Errorf("refreshing subscription %s: %w", sub.Name, err)
 	}
+	entries := res.Entries
 
+	// A hand-picked name wins over the profile title: the user renamed this
+	// subscription precisely because the provider's own title was not what
+	// they wanted to see in the list.
 	displayName := sub.Name
-	if profileTitle != "" {
-		displayName = profileTitle
+	if res.ProfileTitle != "" && !sub.NameOverridden {
+		displayName = res.ProfileTitle
 	}
 	for i := range entries {
 		entries[i].Provider = displayName
@@ -2165,24 +2453,27 @@ func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
 	for i := range cfg.Subscriptions {
 		if cfg.Subscriptions[i].ID == subID {
 			cfg.Subscriptions[i].UpdatedAt = time.Now().Format(time.RFC3339)
-			cfg.Subscriptions[i].TrafficUpload = up
-			cfg.Subscriptions[i].TrafficDownload = down
-			cfg.Subscriptions[i].TrafficTotal = tot
-			cfg.Subscriptions[i].ExpireUnix = exp
-			if profileTitle != "" {
-				cfg.Subscriptions[i].Name = profileTitle
+			cfg.Subscriptions[i].TrafficUpload = res.Upload
+			cfg.Subscriptions[i].TrafficDownload = res.Download
+			cfg.Subscriptions[i].TrafficTotal = res.Total
+			cfg.Subscriptions[i].ExpireUnix = res.ExpireUnix
+			if res.ProfileTitle != "" && !cfg.Subscriptions[i].NameOverridden {
+				cfg.Subscriptions[i].Name = res.ProfileTitle
 			}
-			if iconURL != "" {
-				cfg.Subscriptions[i].IconURL = iconURL
+			if res.IconURL != "" {
+				cfg.Subscriptions[i].IconURL = res.IconURL
 			}
+			// Адрес поддержки может и появиться, и пропасть: провайдер волен
+			// убрать заголовок, и тогда тег в окне настроек должен исчезнуть.
+			cfg.Subscriptions[i].SupportURL = res.SupportURL
 			break
 		}
 	}
 	if err := a.config.SaveConfig(cfg); err != nil {
 		a.log.Error(fmt.Sprintf("Ошибка сохранения после обновления подписки: %v", err))
 	}
-	provided := append(append([]config.RoutingList(nil), lists...), embeddedRoutingListDeclarations(embedded)...)
-	if err := a.syncSubscriptionRoutingLists(subID, provided, nil, embedded); err != nil {
+	provided := append(append([]config.RoutingList(nil), res.RoutingLists...), embeddedRoutingListDeclarations(res.Embedded)...)
+	if err := a.syncSubscriptionRoutingProfile(subID, provided, nil, res.Embedded, false); err != nil {
 		a.log.Warning(fmt.Sprintf("Ошибка синхронизации списков маршрутизации подписки: %v", err))
 	}
 
@@ -2253,14 +2544,15 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 		}
 	}
 
-	entries, up, down, tot, exp, iconURL, profileTitle, lists, embedded, err := a.fetchSubscriptionFromURL(subURL, allowInsecure)
+	res, err := a.fetchSubscriptionFromURL(subURL, allowInsecure)
 	if err != nil {
 		return nil, err
 	}
+	entries := res.Entries
 
 	displayName := name
-	if profileTitle != "" {
-		displayName = profileTitle
+	if res.ProfileTitle != "" {
+		displayName = res.ProfileTitle
 	}
 
 	sub := config.Subscription{
@@ -2268,11 +2560,12 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 		Name:            displayName,
 		URL:             subURL,
 		UpdatedAt:       time.Now().Format(time.RFC3339),
-		TrafficUpload:   up,
-		TrafficDownload: down,
-		TrafficTotal:    tot,
-		ExpireUnix:      exp,
-		IconURL:         iconURL,
+		TrafficUpload:   res.Upload,
+		TrafficDownload: res.Download,
+		TrafficTotal:    res.Total,
+		ExpireUnix:      res.ExpireUnix,
+		IconURL:         res.IconURL,
+		SupportURL:      res.SupportURL,
 		Source:          strings.TrimSpace(source),
 		// Only mark as allow-insecure when the URL actually is plaintext —
 		// no need to flag https:// subscriptions, which would be misleading.
@@ -2287,8 +2580,11 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 	if err := a.config.SaveConfig(cfg); err != nil {
 		return nil, fmt.Errorf("saving subscription: %w", err)
 	}
-	provided := append(append([]config.RoutingList(nil), lists...), embeddedRoutingListDeclarations(embedded)...)
-	if err := a.syncSubscriptionRoutingLists(sub.ID, provided, disabledListURLs, embedded); err != nil {
+	provided := append(append([]config.RoutingList(nil), res.RoutingLists...), embeddedRoutingListDeclarations(res.Embedded)...)
+	// The user answered the routing question in the import dialog just now, so
+	// what they accepted takes effect immediately rather than on some later
+	// connect.
+	if err := a.syncSubscriptionRoutingProfile(sub.ID, provided, disabledListURLs, res.Embedded, true); err != nil {
 		a.log.Warning(fmt.Sprintf("[ROUTING] Не удалось применить списки подписки %q: %v", displayName, err))
 	}
 
@@ -2319,6 +2615,62 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 	return entries, nil
 }
 
+// UpdateSubscription stores the per-subscription settings the servers page
+// offers: display name, whether its servers show up on the home screen, and
+// its own auto-refresh interval.
+//
+// updateIntervalMinutes is the interval in minutes; 0 means "never refresh on
+// a timer" and a negative value means "follow the global setting".
+//
+// The name is also written onto every entry of this subscription: Provider is
+// what the tray menu and the "sort by provider" order read, and leaving the
+// old title there would show two different names for one subscription.
+func (a *App) UpdateSubscription(subID, name string, showOnHome bool, updateIntervalMinutes int) error {
+	if a.config == nil {
+		return fmt.Errorf("config manager not initialized")
+	}
+
+	cfg := a.config.GetConfig()
+	idx := -1
+	for i := range cfg.Subscriptions {
+		if cfg.Subscriptions[i].ID == subID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return fmt.Errorf("subscription %s not found", subID)
+	}
+
+	sub := &cfg.Subscriptions[idx]
+	trimmed := strings.TrimSpace(name)
+	if trimmed != "" && trimmed != sub.Name {
+		sub.Name = trimmed
+		sub.NameOverridden = true
+		for i := range cfg.Proxies {
+			if cfg.Proxies[i].SubscriptionURL == sub.URL {
+				cfg.Proxies[i].Provider = trimmed
+			}
+		}
+	}
+
+	show := showOnHome
+	sub.ShowOnHome = &show
+
+	if updateIntervalMinutes < 0 {
+		sub.UpdateIntervalMinutes = nil
+	} else {
+		minutes := updateIntervalMinutes
+		sub.UpdateIntervalMinutes = &minutes
+	}
+
+	if err := a.config.SaveConfig(cfg); err != nil {
+		return err
+	}
+	a.refreshTrayProxyList()
+	return nil
+}
+
 func (a *App) DeleteSubscription(subID string) error {
 	if a.config == nil {
 		return fmt.Errorf("config manager not initialized")
@@ -2326,10 +2678,12 @@ func (a *App) DeleteSubscription(subID string) error {
 
 	cfg := a.config.GetConfig()
 	found := false
+	subURL := ""
 	newSubs := make([]config.Subscription, 0, len(cfg.Subscriptions))
 	for _, s := range cfg.Subscriptions {
 		if s.ID == subID {
 			found = true
+			subURL = s.URL
 			continue
 		}
 		newSubs = append(newSubs, s)
@@ -2338,11 +2692,33 @@ func (a *App) DeleteSubscription(subID string) error {
 		return fmt.Errorf("subscription %s not found", subID)
 	}
 	cfg.Subscriptions = newSubs
+	// Серверы подписки уходят вместе с ней, и уходят здесь: раньше их вычищал
+	// только фронт своим списком, а на диск это попадало отдельным SyncProxies.
+	// Стоило ему не доехать — на странице оставалась подписка без серверов либо
+	// серверы без подписки. Удаление должно быть одним сохранением.
+	//
+	// Свежий слайс обязателен: GetConfig отдаёт слайсы, алиасящие живой кэш.
+	if subURL != "" {
+		kept := make([]config.ProxyEntry, 0, len(cfg.Proxies))
+		for _, p := range cfg.Proxies {
+			if p.SubscriptionURL == subURL {
+				continue
+			}
+			kept = append(kept, p)
+		}
+		cfg.Proxies = kept
+	}
 	a.removeSubscriptionRoutingLists(&cfg, subID)
+	defer func() {
+		if err := a.removeSubscriptionRoutingProfile(subID); err != nil {
+			a.log.Warning(fmt.Sprintf("Не удалось убрать профиль маршрутизации подписки: %v", err))
+		}
+	}()
 	if err := a.config.SaveConfig(cfg); err != nil {
 		return err
 	}
 	a.syncRoutingListSpecs()
+	a.refreshTrayProxyList()
 	return nil
 }
 
@@ -2705,9 +3081,68 @@ func formatAutoSweepTimingLine(groupName string, probed int, diag proxy.AutoProb
 	if len(diag.Phase2) == 0 {
 		phase2 = "не запускалась"
 	}
-	return fmt.Sprintf("[PROXY] AUTO «%s»: опрошено %d узлов — фаза 1 %dms, фаза 2 %s",
+	// Survivor counts, not just durations. When AUTO misbehaves the one thing
+	// a log reader needs is which phase lost the nodes — the 2026-09-05 report
+	// had to be reconstructed from node_stats.json timestamps because these
+	// two numbers were not written down anywhere. Counts and milliseconds
+	// only: this line lands in an exportable log, so no node may be named.
+	line := fmt.Sprintf("[PROXY] AUTO «%s»: опрошено %d узлов — фаза 1 %dms (живых %d), фаза 2 %s (прошли %d)",
 		strings.TrimSpace(groupName), probed,
-		diag.Phase1Dur.Milliseconds(), phase2)
+		diag.Phase1Dur.Milliseconds(), countProbeOK(diag.Phase1),
+		phase2, countProbeOK(diag.Phase2))
+	if diag.DegradedToPhase1 {
+		line += " — фаза 2 не подтвердила ни одного узла, выбор сделан по фазе 1"
+		if reasons := summarizeProbeFailures(diag.Phase2); reasons != "" {
+			line += " [" + reasons + "]"
+		}
+	}
+	return line
+}
+
+// countProbeOK counts the rows a probe phase marked reachable.
+func countProbeOK(rows []proxy.AutoProbeResult) int {
+	n := 0
+	for _, r := range rows {
+		if r.OK {
+			n++
+		}
+	}
+	return n
+}
+
+// summarizeProbeFailures renders a phase's failure reasons as "stage/reason×N",
+// ordered so the log line is identical for identical input. The vocabulary is
+// the fixed one sanitizeStatReason enforces (timeout, connection_refused, …),
+// never an interpolated address — that is what makes it safe to print here.
+func summarizeProbeFailures(rows []proxy.AutoProbeResult) string {
+	counts := map[string]int{}
+	for _, r := range rows {
+		if r.OK {
+			continue
+		}
+		reason := strings.TrimSpace(r.Reason)
+		if reason == "" {
+			reason = "неизвестно"
+		}
+		stage := strings.TrimSpace(r.Stage)
+		if stage == "" {
+			stage = "?"
+		}
+		counts[stage+"/"+reason]++
+	}
+	if len(counts) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(counts))
+	for k := range counts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s×%d", k, counts[k]))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // extractAutoMembers reads the member ID list out of an AUTO head's Extra.
@@ -2902,10 +3337,25 @@ func (a *App) GetAutoGroupStatus(proxyID string) AutoGroupStatus {
 // to selection had to be made twice or it silently missed one of them.
 //
 // Non-AUTO entries resolve to themselves. An AUTO head with no reachable
-// member resolves to the head itself, preserving the previous fallback.
+// member resolves to NOTHING — see the empty-ranked branch below for why the
+// head itself is not a usable answer.
 func (a *App) ResolveAutoCandidates(proxyID string) []config.ProxyEntry {
+	out, _, _ := a.resolveAutoCandidatesWithDiag(proxyID)
+	return out
+}
+
+// resolveAutoCandidatesWithDiag is ResolveAutoCandidates plus the sweep's own
+// diagnostics and the group head it resolved.
+//
+// The exported form deliberately returns only the list: it is bound to the
+// frontend, and a probe table is not something the UI should be handed. The
+// mid-session recheck (autoRecheckOnce) is the one caller that needs more than
+// the order — it needs the margin between the node in use and the winner, and
+// that lives in diag.Scores.
+func (a *App) resolveAutoCandidatesWithDiag(proxyID string) ([]config.ProxyEntry, proxy.AutoProbeDiagnostics, *config.ProxyEntry) {
+	var noDiag proxy.AutoProbeDiagnostics
 	if a.config == nil {
-		return nil
+		return nil, noDiag, nil
 	}
 	cfg := a.config.GetConfig()
 
@@ -2917,10 +3367,10 @@ func (a *App) ResolveAutoCandidates(proxyID string) []config.ProxyEntry {
 		}
 	}
 	if head == nil {
-		return nil
+		return nil, noDiag, nil
 	}
 	if !strings.EqualFold(head.Type, "AUTO") {
-		return []config.ProxyEntry{*head}
+		return []config.ProxyEntry{*head}, noDiag, head
 	}
 
 	memberIDs := extractAutoMembers(head.Extra)
@@ -2968,10 +3418,19 @@ func (a *App) ResolveAutoCandidates(proxyID string) []config.ProxyEntry {
 			// line above: an unresolvable member ID or a SECTION label was
 			// never dialed, so counting it here would overstate how many nodes
 			// actually failed.
-			a.log.Warning(fmt.Sprintf("[PROXY] AUTO «%s»: ни один из %d узлов не доступен — попытка по AUTO-записи",
+			a.log.Error(fmt.Sprintf("[PROXY] AUTO «%s»: ни один из %d узлов не доступен — подключаться не к чему",
 				strings.TrimSpace(head.Name), probeable))
 		}
-		return []config.ProxyEntry{*head}
+		// Deliberately NOT falling back to the head itself, which is what this
+		// used to do. The head is a group marker: no address, no port, no
+		// protocol. buildProxyOutbound has no case for type AUTO, so it built
+		// an http outbound with an empty server; sing-box started on that
+		// config without complaint and the app announced "Подключено (AUTO)"
+		// over a tunnel where every connection failed with "invalid address"
+		// (2026-09-05 logs). An empty result is the honest answer — the tray
+		// and the frontend both already have a path for "nothing to connect
+		// to", and a named failure beats a green button that lies.
+		return nil, diag, head
 	}
 
 	// Keep the AUTO head's identity on every candidate: manager.Connect
@@ -2996,7 +3455,163 @@ func (a *App) ResolveAutoCandidates(proxyID string) []config.ProxyEntry {
 		// country while leaving its address out.
 		a.log.Info(formatAutoPickLine(head.Name, len(out), ranked[0]))
 	}
-	return out
+	return out, diag, head
+}
+
+// autoRecheckInterval is how often a live AUTO session re-measures its group.
+//
+// Fifteen minutes is a compromise between two real costs. Too often and the
+// app hammers the provider with full sweeps — a probe storm is how a source
+// gets rate-limited or banned, which is a failure mode this project has
+// already paid for once. Too rarely and "the auto group picks the best node"
+// quietly means "picked the best node at the moment you clicked, hours ago".
+const autoRecheckInterval = 15 * time.Minute
+
+// autoRecheckSwitchMargin is how much better a rival must score before the
+// session moves to it.
+//
+// The current node already carries autoTolerance (50) as a head start, which
+// is enough to stop two near-identical nodes trading places on every
+// evaluation. This is a much larger bar on top of that, because the two
+// decisions are not comparable: reordering a list costs nothing, while acting
+// on the reorder drops every open connection — a download, a call, a game.
+// At 400 the rival has to be better by more than the entire throughput term
+// can express, i.e. visibly better rather than measurably better.
+const autoRecheckSwitchMargin = 400.0
+
+// autoRecheckConfirmations is how many consecutive evaluations must agree
+// before a merely-slower node is replaced. Two, at the interval above, means
+// half an hour of consistent evidence — a lone bad sweep (congestion, a
+// probe storm, a Wi-Fi hiccup) cannot move the session on its own.
+//
+// A node that has stopped answering entirely does not go through this: there
+// is nothing to confirm about a node that is gone, and making the user wait
+// out a confirmation window on a dead session would be the opposite of the
+// point.
+const autoRecheckConfirmations = 2
+
+// autoRecheckVerdict decides whether a live session should move to bestKey,
+// and returns the updated confirmation streak.
+//
+// A non-empty reason means switch, and the streak is reset with it. Split out
+// as a pure function because this is the whole risk of the feature in four
+// lines: everything around it is plumbing, while getting this wrong means
+// either a session that reconnects on noise or one that never moves at all.
+func autoRecheckVerdict(currentKey, bestKey string, scores map[string]float64, streak int) (reason string, newStreak int) {
+	currentScore, scored := scores[currentKey]
+	if !scored {
+		// The node in use did not survive its own group's sweep — it is not in
+		// the ranking at all. There is nothing to confirm about a node that has
+		// stopped answering, and making the user sit out a confirmation window
+		// on it would defeat the point.
+		return "узел перестал отвечать на пробы", 0
+	}
+	if currentScore-scores[bestKey] < autoRecheckSwitchMargin {
+		// Includes the ordinary case where the current node simply lost its
+		// first place by a hair. Reordering is free; acting on it is not.
+		return "", 0
+	}
+	streak++
+	if streak < autoRecheckConfirmations {
+		return "", streak
+	}
+	return "текущий узел стабильно проигрывает", 0
+}
+
+// runAutoRecheckLoop re-evaluates a live AUTO group's choice for as long as the
+// app runs.
+//
+// One long-lived goroutine that checks the preconditions on every tick, rather
+// than a loop started and stopped around each connection: there is no state to
+// keep in sync, nothing to leak, and no way for a missed stop to leave a timer
+// probing a group the user has since left.
+func (a *App) runAutoRecheckLoop() {
+	ticker := time.NewTicker(autoRecheckInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-a.ctx.Done():
+			return
+		case <-ticker.C:
+			a.autoRecheckOnce()
+		}
+	}
+}
+
+// autoRecheckOnce runs one evaluation of the AUTO group currently in use and
+// switches node if the evidence is decisive. A no-op unless every precondition
+// holds, which is the common case.
+func (a *App) autoRecheckOnce() {
+	if a.proxy == nil || a.config == nil {
+		return
+	}
+	cfg := a.config.GetConfig()
+	if !cfg.Settings.EffectiveAutoNodeRecheck() {
+		return
+	}
+	// SessionState, not GetStatus: GetStatus advances the traffic-speed
+	// sampling window, so polling it here would quietly corrupt the speed the
+	// UI shows. `establishing` means a connect is already in flight — the
+	// user's or a previous recheck's — and sweeping then would measure a
+	// network mid-teardown before queueing a second connect behind the first.
+	connected, establishing := a.proxy.SessionState()
+	if !connected || establishing {
+		return
+	}
+	currentKey := a.getLastAutoNodeKey()
+	if currentKey == "" {
+		return // not on an AUTO member
+	}
+
+	headID := strings.TrimSpace(cfg.Settings.LastSelectedProxyID)
+	if headID == "" {
+		return
+	}
+	var head *config.ProxyEntry
+	for i := range cfg.Proxies {
+		if cfg.Proxies[i].ID == headID && strings.EqualFold(cfg.Proxies[i].Type, "AUTO") {
+			head = &cfg.Proxies[i]
+			break
+		}
+	}
+	if head == nil {
+		return // the selected entry is a plain server, or has gone away
+	}
+
+	candidates, diag, _ := a.resolveAutoCandidatesWithDiag(headID)
+	if len(candidates) == 0 {
+		// The whole group is unreachable. Switching is not an option and
+		// tearing the session down would replace a working-ish node with
+		// nothing; the health watchdog owns genuinely dead sessions.
+		return
+	}
+	// Keys come from the unstamped cache, never from the returned candidates:
+	// the stamping fills in an empty SubscriptionURL from the head, and that
+	// field is hashed into the key. See autoOutcomeKey.
+	bestKey := a.autoOutcomeKey(headID, true, 0)
+	if bestKey == "" || bestKey == currentKey {
+		a.autoRecheckStreak = 0
+		return
+	}
+
+	reason, streak := autoRecheckVerdict(currentKey, bestKey, diag.Scores, a.autoRecheckStreak)
+	a.autoRecheckStreak = streak
+	if reason == "" {
+		if streak > 0 && a.log != nil {
+			a.log.Info(fmt.Sprintf("[PROXY] AUTO «%s»: есть узел заметно лучше текущего (%d/%d подтверждений)",
+				strings.TrimSpace(head.Name), streak, autoRecheckConfirmations))
+		}
+		return
+	}
+
+	if a.log != nil {
+		a.log.Info(fmt.Sprintf("[PROXY] AUTO «%s»: %s — переключаюсь на лучший узел группы",
+			strings.TrimSpace(head.Name), reason))
+	}
+	if err := a.connectCandidates(headID, true, candidates, cfg, "AUTO"); err != nil && a.log != nil {
+		a.log.Warning(fmt.Sprintf("[PROXY] AUTO «%s»: переключение не удалось (%v)",
+			strings.TrimSpace(head.Name), err))
+	}
 }
 
 func (a *App) connectFromTray(proxyID string) error {
@@ -3053,6 +3668,13 @@ func (a *App) connectFromTray(proxyID string) error {
 	// gives the tray the same failover the frontend already had.
 	candidates := a.ResolveAutoCandidates(proxyID)
 	if len(candidates) == 0 {
+		// For an AUTO group this is now reachable in production (the sweep
+		// found no usable member and no longer falls back to the head), so the
+		// message has to say what actually happened instead of naming an
+		// internal id the user has never seen.
+		if isAuto {
+			return fmt.Errorf("авто-группа «%s»: ни один узел не отвечает — подключаться не к чему", clickedLabel)
+		}
 		return fmt.Errorf("proxy %s not resolvable", proxyID)
 	}
 
@@ -3061,6 +3683,23 @@ func (a *App) connectFromTray(proxyID string) error {
 		return err
 	}
 
+	return a.connectCandidates(proxyID, isAuto, candidates, cfg, "TRAY")
+}
+
+// connectCandidates walks a ranked candidate list, connecting to the first one
+// that comes up and recording every outcome against the node it belongs to.
+//
+// Shared by the tray click and the mid-session AUTO recheck. The recheck must
+// not get a weaker path than a click: it tears down a working session to make
+// the switch, so "the replacement did not come up" has to fall through to the
+// next candidate rather than strand the user, and the kill switch has to stay
+// armed across the gap. That is all here, and duplicating it for one caller is
+// how the two would drift.
+//
+// origin only labels the log lines. cfg supplies routing rules and the kill
+// switch flag; it is passed in rather than re-read so a caller that already
+// wrote to the config acts on the same snapshot it saved.
+func (a *App) connectCandidates(proxyID string, isAuto bool, candidates []config.ProxyEntry, cfg config.AppConfig, origin string) error {
 	// SubscriptionURL/Provider MUST be propagated: manager.Connect branches
 	// log output on SubscriptionURL != "" — without this the user sees the
 	// raw member IP in logs whenever they connect via the tray (which is
@@ -3069,7 +3708,7 @@ func (a *App) connectFromTray(proxyID string) error {
 	for i, candidate := range candidates {
 		if i > 0 {
 			if a.log != nil {
-				a.log.Info(fmt.Sprintf("[TRAY] AUTO: узел не поднялся, пробуем следующий — %s", proxyLogLabel(candidate)))
+				a.log.Info(fmt.Sprintf("[%s] AUTO: узел не поднялся, пробуем следующий — %s", origin, proxyLogLabel(candidate)))
 			}
 			// Tear down only the engine here, NOT a.Disconnect(): that also
 			// disables the kill switch (app.go's Disconnect, ~line 733-736),

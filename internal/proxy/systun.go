@@ -26,6 +26,12 @@ var (
 	clearLeftoverTunFn      = clearLeftoverTun
 	removeStaleTunAdapterFn = removeStaleTunAdapter
 
+	// tunDevNodeGoneFn indirects the "has the wedged Wintun device node actually
+	// left the device tree" probe, so the retry path can be exercised without
+	// real PnP devices. pnputil returns as soon as the removal is QUEUED, which
+	// is why the retry needs a readiness condition rather than a fixed pause.
+	tunDevNodeGoneFn = staleTunDevNodeGone
+
 	// hasRoutableIPv6Fn indirects the host-IPv6 probe so config tests can decide
 	// whether IPv6 would leak instead of depending on the machine they run on.
 	hasRoutableIPv6Fn = hasRoutableIPv6

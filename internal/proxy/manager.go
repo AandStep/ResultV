@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -110,6 +111,7 @@ type Manager struct {
 	appWhitelist []string
 	appForceVPN  []string
 	routingLists []RoutingListSpec
+	routingOrder []string
 	connectedAt  time.Time
 
 	prevUp   int64
@@ -126,7 +128,7 @@ type Manager struct {
 	// enableIPv6 mirrors the user's setting for the LIVE session so the internal
 	// reconnect paths (mode switch, routing-rule change) rebuild the same config
 	// instead of silently reverting to the default.
-	enableIPv6        bool
+	enableIPv6 bool
 
 	// connect cancellation — guarded by connectCancelMu (separate from mu
 	// so Disconnect/GetStatus can call CancelConnect without deadlock)
@@ -159,7 +161,6 @@ type Manager struct {
 	// upstream dead while kill switch is armed — not on routine Connect.
 	KillSwitchFirewallEngage    func(ProxyConfig, []string)
 	KillSwitchFirewallDisengage func()
-
 
 	// secrets encrypts the persistent server-IP pin cache (server_pins.json)
 	// with the app's hardware-keyed CryptoService — those hostname→backend-IP
@@ -200,21 +201,76 @@ var tunnelProbeDomains = []string{
 	"cp.cloudflare.com",
 }
 
-func tunnelProbeURLs() []string {
-	out := make([]string, 0, len(tunnelProbeDomains))
+// probeTarget is one connectivity-check endpoint together with the answer only
+// that endpoint can give.
+//
+// The expectation is the whole point. A probe that accepts "some HTTP response
+// came back" cannot tell the tunnel working from the tunnel broken, because a
+// broken tunnel produces an HTTP response too: the probes go out as plain
+// http://, sing does not tunnel those the way it tunnels CONNECT, and
+// handleHTTPConnection answers any upstream failure with a locally forged
+// "502 Bad Gateway" (sing/protocol/http/handshake.go). Requiring 204 — or 200
+// carrying Microsoft's fixed body — makes a forged answer, a captive portal
+// and an injected block page all fail the same way: they cannot produce it.
+type probeTarget struct {
+	url string
+	// wantStatus is the only status that counts as success.
+	wantStatus int
+	// wantBody, when set, must appear in the (bounded) response body.
+	wantBody string
+}
+
+// probeBodyLimit bounds how much of a response body the matcher reads. The
+// only body we check is Microsoft's 22-byte connecttest.txt; anything larger
+// arriving in its place is already the wrong answer, and a captive portal
+// happily serving a megabyte must not make the probe pay for it.
+const probeBodyLimit = 4096
+
+func tunnelProbeTargets() []probeTarget {
+	out := make([]probeTarget, 0, len(tunnelProbeDomains))
 	for _, d := range tunnelProbeDomains {
-		path := "/generate_204"
 		if d == "www.msftconnecttest.com" {
-			path = "/connecttest.txt"
+			out = append(out, probeTarget{
+				url:        "http://" + d + "/connecttest.txt",
+				wantStatus: http.StatusOK,
+				wantBody:   "Microsoft Connect Test",
+			})
+			continue
 		}
-		out = append(out, "http://"+d+path)
+		out = append(out, probeTarget{
+			url:        "http://" + d + "/generate_204",
+			wantStatus: http.StatusNoContent,
+		})
 	}
 	return out
 }
 
-// probeTargetURLs is tunnelProbeURLs behind a var so tests can point the probe
+// probeTargets is tunnelProbeTargets behind a var so tests can point the probe
 // at local servers instead of the real connectivity-check endpoints.
-var probeTargetURLs = tunnelProbeURLs
+var probeTargets = tunnelProbeTargets
+
+// probeResponseMatches reports whether resp is the answer target promised.
+// It consumes (a bounded prefix of) the body and never closes it — that stays
+// the caller's job, as with any http.Response.
+func probeResponseMatches(target probeTarget, resp *http.Response) (bool, string) {
+	if resp.StatusCode == http.StatusProxyAuthRequired {
+		return false, "proxy auth required"
+	}
+	if target.wantStatus != 0 && resp.StatusCode != target.wantStatus {
+		return false, fmt.Sprintf("unexpected status %d", resp.StatusCode)
+	}
+	if target.wantBody == "" {
+		return true, ""
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, probeBodyLimit))
+	if err != nil {
+		return false, "probe body read failed"
+	}
+	if !strings.Contains(string(body), target.wantBody) {
+		return false, "unexpected body"
+	}
+	return true, ""
+}
 
 func NewManager(log *logger.Logger) *Manager {
 	router := NewRouter()
@@ -424,7 +480,6 @@ func (m *Manager) LoadBlockedLists(paths ...string) {
 	m.router.LoadBlockedLists(paths...)
 }
 
-
 // setConnectCancel stores the cancel func for the active Connect operation.
 func (m *Manager) setConnectCancel(cancel context.CancelFunc) {
 	m.connectCancelMu.Lock()
@@ -448,13 +503,43 @@ func (m *Manager) CancelConnect() {
 	_ = m.engine.Stop()
 }
 
-// tunRetryDelay is the settle pause between a failed tunnel-mode engine start and
-// the single automatic retry. Between the two we delete the wedged Wintun adapter
-// device (removeStaleTunAdapterFn) on top of the failed start releasing its
-// partially-created adapter / WFP filters (see SingBoxEngine.bootLocked); this
-// brief pause lets Windows finish tearing the device down before the retry
-// recreates a fresh adapter. A var, not a const, so tests can zero it out.
+// tunRetryDelay is the final settle pause once the wedged Wintun device node is
+// confirmed gone, letting the network stack finish before the retry recreates a
+// fresh adapter. A var, not a const, so tests can zero it out.
 var tunRetryDelay = 700 * time.Millisecond
+
+// tunRemovalPoll / tunRemovalPolls bound the wait for the removed device node to
+// actually leave the device tree: at most tunRemovalPolls checks, tunRemovalPoll
+// apart (~10s).
+//
+// This exists because pnputil returns as soon as the removal is QUEUED — the
+// node lives on for a while afterwards, and a CreateAdapter that lands mid
+// teardown fails with a bare ERROR_FILE_NOT_FOUND. That is how the old fixed
+// 700ms settle turned one recoverable failure into a second, differently-worded
+// one, and left the field report reading as two unrelated bugs.
+var (
+	tunRemovalPoll  = 250 * time.Millisecond
+	tunRemovalPolls = 40
+)
+
+// waitStaleTunGone blocks until the wedged Wintun device node has left the
+// device tree, then lets the stack settle. Bounded on purpose: a node that never
+// disappears must not wedge the connect, so the retry proceeds either way — and
+// the log says which of the two happened, because they mean different things.
+func (m *Manager) waitStaleTunGone() {
+	for i := 0; ; i++ {
+		if tunDevNodeGoneFn() {
+			time.Sleep(tunRetryDelay)
+			return
+		}
+		if i >= tunRemovalPolls {
+			m.log.Warning(fmt.Sprintf("[PROXY] Залипшее TUN-устройство не исчезло за %s — повторяем всё равно",
+				time.Duration(tunRemovalPolls)*tunRemovalPoll))
+			return
+		}
+		time.Sleep(tunRemovalPoll)
+	}
+}
 
 // isTransientTunError reports whether a tunnel-mode engine-start failure is the
 // recoverable kind — a stale Wintun adapter or leftover WFP filters from an
@@ -528,7 +613,7 @@ func (m *Manager) startEngine(ctx context.Context, cfg EngineConfig) (err error,
 			default:
 				m.log.Info("[PROXY] Залипших TUN-устройств не найдено — причина отказа TUN в другом")
 			}
-			time.Sleep(tunRetryDelay)
+			m.waitStaleTunGone()
 			continue
 		}
 		if attempt > 1 {
@@ -542,6 +627,12 @@ func (m *Manager) startEngine(ctx context.Context, cfg EngineConfig) (err error,
 	tunnelFailed, reason, errorCode = ClassifyEngineStartError(cfg.Mode, err)
 	if errorCode == ConnectErrorTunPrivileges && isAdminCheck() {
 		errorCode = ConnectErrorEngineStart
+	}
+	// Say plainly what happened. The engine's own line right after this one
+	// carries Windows' raw errno, which on its own named neither the component
+	// that failed nor anything the user could check.
+	if errorCode == ConnectErrorTunAdapter {
+		m.log.Error("[PROXY] " + tunAdapterUnavailableReason)
 	}
 	return err, tunnelFailed, reason, errorCode
 }
@@ -760,6 +851,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		DataDir:           resultProxyDataDir(),
 	}
 	engineCfg.RoutingLists = m.routingListSpecsLocked()
+	engineCfg.RoutingOrder = m.routingOrderLocked()
 	// Smart mode needs the censored block-list in the engine config so
 	// buildRoute can tunnel those domains/ranges while everything else goes
 	// direct. Only populated for Smart — Global/Whitelist ignore it.
@@ -1363,6 +1455,7 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 		DataDir:           resultProxyDataDir(),
 	}
 	engineCfg.RoutingLists = m.routingListSpecsLocked()
+	engineCfg.RoutingOrder = m.routingOrderLocked()
 	// Smart mode needs the censored block-list in the engine config so
 	// buildRoute can tunnel those domains/ranges while everything else goes
 	// direct. Only populated for Smart — Global/Whitelist ignore it.
@@ -1818,7 +1911,7 @@ func probeHTTPThroughProxy(proxyAddr string) (bool, string) {
 	}
 	client := &http.Client{Timeout: 3 * time.Second, Transport: transport}
 
-	targets := probeTargetURLs()
+	targets := probeTargets()
 	if len(targets) == 0 {
 		return false, "no probe targets"
 	}
@@ -1832,8 +1925,8 @@ func probeHTTPThroughProxy(proxyAddr string) (bool, string) {
 	defer cancel()
 
 	for _, target := range targets {
-		go func(target string) {
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+		go func(target probeTarget) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.url, nil)
 			if err != nil {
 				results <- probeOutcome{false, "bad probe url"}
 				return
@@ -1843,15 +1936,9 @@ func probeHTTPThroughProxy(proxyAddr string) (bool, string) {
 				results <- probeOutcome{false, pingReasonFromError(err)}
 				return
 			}
+			ok, reason := probeResponseMatches(target, resp)
 			_ = resp.Body.Close()
-			// Любой HTTP-ответ (включая 5xx) через прокси означает что туннель работает.
-			// 502/503/504 от connectivity-check endpoint'ов — норма при работе через прокси.
-			// Только 407 (Proxy Auth Required) означает что прокси сам не принял запрос.
-			if isProxyProbeResponseAcceptable(resp.StatusCode) {
-				results <- probeOutcome{true, ""}
-				return
-			}
-			results <- probeOutcome{false, fmt.Sprintf("unexpected status %d", resp.StatusCode)}
+			results <- probeOutcome{ok, reason}
 		}(target)
 	}
 
@@ -1906,19 +1993,18 @@ func probeProxyHealth(localPort int) (bool, string) {
 		},
 	}
 	lastReason := ""
-	for _, target := range tunnelProbeURLs() {
-		resp, err := client.Get(target)
+	for _, target := range probeTargets() {
+		resp, err := client.Get(target.url)
 		if err != nil {
 			lastReason = probeFailureReason(err)
 			continue
 		}
+		ok, reason := probeResponseMatches(target, resp)
 		_ = resp.Body.Close()
-		// Any HTTP response (even 5xx) means the tunnel carried the request.
-		// Only 407 means the local proxy itself rejected it.
-		if isProxyProbeResponseAcceptable(resp.StatusCode) {
+		if ok {
 			return true, ""
 		}
-		lastReason = fmt.Sprintf("unexpected status %d from %s", resp.StatusCode, target)
+		lastReason = fmt.Sprintf("%s from %s", reason, target.url)
 	}
 	if lastReason == "" {
 		lastReason = "http probe failed"
@@ -1945,17 +2031,18 @@ func probeTunnelHealth() (bool, string) {
 		},
 	}
 	lastReason := ""
-	for _, target := range tunnelProbeURLs() {
-		resp, err := client.Get(target)
+	for _, target := range probeTargets() {
+		resp, err := client.Get(target.url)
 		if err != nil {
 			lastReason = probeFailureReason(err)
 			continue
 		}
+		ok, reason := probeResponseMatches(target, resp)
 		_ = resp.Body.Close()
-		if isProbeHTTPStatusAcceptable(resp.StatusCode) {
+		if ok {
 			return true, ""
 		}
-		lastReason = fmt.Sprintf("unexpected status %d from %s", resp.StatusCode, target)
+		lastReason = fmt.Sprintf("%s from %s", reason, target.url)
 	}
 	if lastReason == "" {
 		lastReason = "http probe failed"
@@ -1998,25 +2085,6 @@ func isLocalDNSProbeFailure(reason string) bool {
 	return strings.HasPrefix(reason, "local_dns:")
 }
 
-func isProbeHTTPStatusAcceptable(statusCode int) bool {
-	if statusCode == http.StatusProxyAuthRequired {
-		return false
-	}
-	return statusCode >= 200 && statusCode < 500
-}
-
-// isProxyProbeResponseAcceptable используется при проверке соединения ЧЕРЕЗ прокси.
-// Любой HTTP-ответ (включая 5xx) означает что туннель работает — сервер ответил.
-// Connectivity-check endpoint'ы (generate_204, connecttest.txt) могут вернуть 502/503/504
-// когда к ним обращаются через прокси — это нормально и не означает неисправность туннеля.
-func isProxyProbeResponseAcceptable(statusCode int) bool {
-	// 407 = прокси требует авторизацию — это означает что сам прокси не принял запрос
-	if statusCode == http.StatusProxyAuthRequired {
-		return false
-	}
-	// Любой другой HTTP-статус означает что соединение прошло через туннель
-	return statusCode >= 100
-}
 
 func (m *Manager) Disconnect() error {
 	disconnectStart := time.Now()
@@ -2216,6 +2284,24 @@ func (m *Manager) SetRoutingLists(specs []RoutingListSpec) {
 	m.mu.Unlock()
 }
 
+// SetRoutingOrder replaces the action order used by the next engine start. An
+// empty slice restores DefaultRoutingOrder.
+func (m *Manager) SetRoutingOrder(order []string) {
+	cp := make([]string, len(order))
+	copy(cp, order)
+	m.mu.Lock()
+	m.routingOrder = cp
+	m.mu.Unlock()
+}
+
+// routingOrderLocked returns a copy of the current order. Callers must hold
+// m.mu, like routingListSpecsLocked.
+func (m *Manager) routingOrderLocked() []string {
+	cp := make([]string, len(m.routingOrder))
+	copy(cp, m.routingOrder)
+	return cp
+}
+
 // routingListSpecsLocked returns a copy of the current specs. Callers must
 // hold m.mu — both EngineConfig build sites in Connect/connectLocked already
 // do.
@@ -2252,6 +2338,21 @@ func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode Rou
 	return m.connectLocked(ctx, p, mode, routingMode, whitelist, appWhitelist, appForceVPN, killSwitch, lPort, listenLAN, dServers, tIPv4, tIPv6, dnsLeak, enIPv6)
 }
 
+// SessionState reports whether a session is up and whether one is currently
+// being established, and — unlike GetStatus — changes nothing.
+//
+// GetStatus is not a read: it samples traffic counters and advances
+// prevUp/prevDown/lastTick, so the download and upload speeds it reports are
+// the delta since whoever called it last. A second, unrelated caller (the
+// mid-session AUTO recheck) therefore steals a sample and hands the UI's speed
+// graph a near-zero interval to divide by. Callers that only need the two
+// booleans use this instead.
+func (m *Manager) SessionState() (connected, establishing bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.connected, m.engine != nil && m.engine.IsRunning() && !m.connected
+}
+
 func (m *Manager) GetStatus() StatusDTO {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -2282,6 +2383,54 @@ func (m *Manager) GetStatus() StatusDTO {
 	}
 
 	return m.buildStatusLocked(uptime, bytesDown, bytesUp, speedDown, speedUp)
+}
+
+// ProbeUDPRelayNow answers "can the node currently in use carry UDP" by
+// driving a real STUN exchange through the live engine (see ProbeUDPRelay).
+//
+// Tunnel mode only. The route rule that keeps the probe on the proxy outbound
+// is scoped to the loopback probe inbound, which exists only in tunnel mode;
+// in proxy mode the same inbound carries the user's own traffic and Smart
+// routing would send the STUN packets out directly, turning every node into a
+// false pass.
+func (m *Manager) ProbeUDPRelayNow(ctx context.Context) UDPRelayResult {
+	m.mu.Lock()
+	connected := m.connected
+	mode := m.mode
+	port := m.localPort
+	m.mu.Unlock()
+
+	if !connected {
+		return UDPRelayResult{Reason: "not connected"}
+	}
+	if mode != ProxyModeTunnel {
+		return UDPRelayResult{Reason: "udp relay probe runs in tunnel mode only"}
+	}
+	if port == 0 {
+		return UDPRelayResult{Reason: "local inbound port unknown"}
+	}
+	return ProbeUDPRelay(ctx, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+// ProbeThroughputNow measures how fast the live session moves data, through
+// the same loopback inbound the other post-connect probes use.
+//
+// Unlike the UDP probe this runs in both modes: the inbound carries the
+// measurement either way, and in proxy mode there is no Final=direct rule to
+// divert it — the request is addressed to the local listener explicitly.
+func (m *Manager) ProbeThroughputNow(ctx context.Context) ThroughputResult {
+	m.mu.Lock()
+	connected := m.connected
+	port := m.localPort
+	m.mu.Unlock()
+
+	if !connected {
+		return ThroughputResult{Reason: "not connected"}
+	}
+	if port == 0 {
+		return ThroughputResult{Reason: "local inbound port unknown"}
+	}
+	return ProbeThroughput(ctx, fmt.Sprintf("127.0.0.1:%d", port))
 }
 
 func (m *Manager) GetMode() ProxyMode {
@@ -2744,7 +2893,6 @@ func (m *Manager) Shutdown() {
 		m.engine.Stop()
 	}
 }
-
 
 func (m *Manager) GetRouter() *Router {
 	return m.router

@@ -23,6 +23,16 @@ const packageJson = JSON.parse(fs.readFileSync("./package.json", "utf-8"));
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      // Вторая точка входа — витрина UI-kit (kit.html). Приложение её не
+      // импортирует, поэтому в основной бандл её код не попадает.
+      input: {
+        main: 'index.html',
+        kit: 'kit.html',
+      },
+    },
+  },
   define: {
     __APP_VERSION__: JSON.stringify(packageJson.version || "3.1.0"),
   },

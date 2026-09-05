@@ -18,7 +18,9 @@ package proxy
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -792,38 +794,40 @@ func TestConnect_FailedSwitchClearsCurrentProxyInStatus(t *testing.T) {
 	}
 }
 
-func TestIsProbeHTTPStatusAcceptable(t *testing.T) {
-	if !isProbeHTTPStatusAcceptable(204) {
-		t.Fatal("expected 204 to be acceptable")
-	}
-	if !isProbeHTTPStatusAcceptable(400) {
-		t.Fatal("expected 400 to be acceptable")
-	}
-	if isProbeHTTPStatusAcceptable(407) {
-		t.Fatal("expected 407 to be rejected")
-	}
-	if isProbeHTTPStatusAcceptable(502) {
-		t.Fatal("expected 502 to be rejected by direct probe")
-	}
-}
+// Проба принимает только тот ответ, который может дать настоящий эндпоинт.
+//
+// Прежнее правило («любой HTTP-ответ через прокси означает, что туннель
+// работает, 5xx от CDN — норма») было дырой в форме проверки: пробы ходят
+// обычным http, sing такие запросы не пробрасывает, а на любой ошибке
+// аутбаунда сам пишет клиенту «502 Bad Gateway» без заголовков и тела
+// (sing/protocol/http/handshake.go). Мёртвый аутбаунд отвечал валидным HTTP —
+// мгновенно и изнутри этой же машины, — и подключение объявлялось успешным
+// (probe=2ms в логах 05.09.2026). Ожидаемый статус ловит и подделку, и
+// captive portal, и подменную страницу: ни одна из них не выдаст 204.
+func TestProbeResponseMatches(t *testing.T) {
+	gen204 := probeTarget{url: "http://example.test/generate_204", wantStatus: http.StatusNoContent}
+	withBody := probeTarget{url: "http://example.test/connecttest.txt", wantStatus: http.StatusOK, wantBody: "Microsoft Connect Test"}
 
-func TestIsProxyProbeResponseAcceptable(t *testing.T) {
-	// Через прокси: 502/503/504 от CDN — нормально, туннель работает
-	if !isProxyProbeResponseAcceptable(204) {
-		t.Fatal("expected 204 to be acceptable via proxy")
+	resp := func(code int, body string) *http.Response {
+		return &http.Response{StatusCode: code, Body: io.NopCloser(strings.NewReader(body))}
 	}
-	if !isProxyProbeResponseAcceptable(502) {
-		t.Fatal("expected 502 to be acceptable via proxy (CDN returned error, tunnel works)")
+
+	if ok, reason := probeResponseMatches(gen204, resp(204, "")); !ok {
+		t.Fatalf("204 от generate_204 — ровно то, что нужно, получили отказ: %s", reason)
 	}
-	if !isProxyProbeResponseAcceptable(503) {
-		t.Fatal("expected 503 to be acceptable via proxy")
+	for _, code := range []int{200, 302, 403, 500, 502, 503} {
+		if ok, _ := probeResponseMatches(gen204, resp(code, "")); ok {
+			t.Errorf("статус %d вместо 204 не доказывает, что запрос дошёл до эндпоинта", code)
+		}
 	}
-	if !isProxyProbeResponseAcceptable(200) {
-		t.Fatal("expected 200 to be acceptable via proxy")
+	if ok, _ := probeResponseMatches(gen204, resp(407, "")); ok {
+		t.Error("407 означает, что запрос отверг сам локальный прокси")
 	}
-	// 407 = прокси сам не принял запрос
-	if isProxyProbeResponseAcceptable(407) {
-		t.Fatal("expected 407 to be rejected (proxy auth required)")
+	if ok, reason := probeResponseMatches(withBody, resp(200, "Microsoft Connect Test")); !ok {
+		t.Fatalf("правильный ответ connecttest.txt отвергнут: %s", reason)
+	}
+	if ok, _ := probeResponseMatches(withBody, resp(200, "<html>Вход в сеть отеля</html>")); ok {
+		t.Error("200 с чужим телом — это подмена, а не рабочий туннель")
 	}
 }
 

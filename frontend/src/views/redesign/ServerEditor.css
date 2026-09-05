@@ -1,0 +1,182 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * Окно правки своего сервера. В макете его нет, см. docs/design/GAPS.md.
+ *
+ * Ширина 760 — под ряд из четырёх полей: у обфускации AmneziaWG их шестнадцать,
+ * и в 700, как у соседних окон, они сжимались бы до нечитаемых. Окно приложения
+ * минимум 1000x740, подложка съедает по 32 с каждой стороны — 760x620
+ * помещается с запасом.
+ *
+ * Прокрутка отдана телу, а не самому окну: список полей длинный, а шапка с
+ * именем сервера должна оставаться на месте.
+ */
+
+.rv-dialog.rv-server-editor {
+  width: 760px;
+  max-height: 620px;
+  overflow: visible;
+}
+
+.rv-server-editor__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-1);
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* Полоса съедает часть ширины; вернём её отступом, чтобы поля не сужались
+     относительно шапки и не упирались в саму полосу. */
+  padding-right: var(--rv-space-nest-3);
+  margin-right: calc(var(--rv-space-nest-3) * -1);
+}
+
+/*
+ * Тело — колонка flex, и она прокручивается. Прокрутка начинается только тогда,
+ * когда содержимому уже некуда сжиматься, а сжимается всё, чей минимальный
+ * размер меньше собственного. Сетки полей держит их же высота (64 у каждого
+ * поля), а вот текстовое поле обфускации схлопывалось до одной строки, стоило
+ * окну перерасти свои 620. Поэтому не сжимается ничего — окно прокручивается
+ * вместо этого.
+ */
+.rv-server-editor__body > * {
+  flex-shrink: 0;
+}
+
+/*
+ * Сетка. Внутри группы зазор мелкий (8): поля одного протокола — это один
+ * блок, и разводить их на 16 значило бы рассыпать его на отдельные строки.
+ * Между группами разводит зазор тела.
+ */
+.rv-server-editor__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--rv-space-8);
+  width: 100%;
+}
+
+.rv-server-editor__grid[data-cols="4"] {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+/* Поля, которым половины ряда мало: ключи, UUID, длинные пароли. */
+.rv-server-editor__wide {
+  grid-column: 1 / -1;
+}
+
+/* --- Коробка под список и тумблер ---------------------------------------- */
+
+/*
+ * Ростом и заливкой повторяет Field: в одном ряду с полем она обязана быть
+ * тем же прямоугольником, иначе сетка ломается на первой же строке со
+ * списком.
+ */
+.rv-server-editor__row {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--rv-space-10);
+  height: 64px;
+  padding: 0 var(--rv-space-16);
+  border-radius: var(--rv-radius-16);
+  background: var(--rv-dark-grey);
+}
+
+.rv-server-editor__row-label {
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-regular-size);
+  font-weight: var(--rv-regular-weight);
+  line-height: var(--rv-regular-leading);
+  color: var(--rv-white-a50);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Собственные заливка и отступы списка здесь лишние — их держит коробка. */
+.rv-server-editor__row .rv-select {
+  padding: 0;
+  background: none;
+}
+
+/* --- Подписи разделов ----------------------------------------------------- */
+
+/*
+ * Подписей у полей нет — их носят сами поля. Раздел подписан только там, где
+ * без этого не обойтись: у обфускации, где рядом стоит переключатель вида, и
+ * у ручек AWG 3.0, которые к обычному WireGuard отношения не имеют.
+ */
+.rv-server-editor__caption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--rv-space-16);
+  margin: 0;
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-regular-size);
+  font-weight: var(--rv-regular-weight);
+  line-height: var(--rv-regular-leading);
+  color: var(--rv-white-a50);
+}
+
+/* Переключатель «Поля / JSON» — не кнопка кита, а надпись: он меняет вид
+   раздела, а не выполняет действие, и залитая кнопка перетягивала бы на себя
+   внимание с самих полей. */
+.rv-server-editor__switch {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--rv-main-color);
+  cursor: pointer;
+  transition: color var(--rv-transition);
+}
+
+.rv-server-editor__switch:hover {
+  color: var(--rv-white);
+}
+
+/* --- Обфускация текстом --------------------------------------------------- */
+
+/*
+ * Рост — кита, 156. Своего здесь только моноширинный набор, и он ради самого
+ * JSON: в пропорциональном шрифте столбец значений разъезжается, и ошибку в нём
+ * не видно.
+ */
+.rv-textarea.rv-server-editor__json {
+  font-family: "Cascadia Mono", Consolas, "Segoe UI Mono", ui-monospace, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* --- Кнопки --------------------------------------------------------------- */
+
+.rv-server-editor__buttons {
+  display: flex;
+  gap: var(--rv-space-nest-3);
+  width: 100%;
+}
+
+.rv-btn.rv-server-editor__btn {
+  flex: 1;
+  min-width: 0;
+  padding: 0 var(--rv-space-16);
+}

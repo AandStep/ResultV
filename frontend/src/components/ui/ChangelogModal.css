@@ -1,0 +1,165 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * «Что нового?» — Figma "ResultV" -> App Design, окно 6816:4780 на фрейме
+ * 6814:4676.
+ *
+ * Само окно — обычный Dialog кита: 440 в ширину, отступ 24, колонка с
+ * зазором 24, скругление 32. Здесь только то, чем оно от остальных окон
+ * отличается: зелёный ореол сверху, бейдж версии под заголовком и список
+ * изменений.
+ */
+
+/*
+ * Шапка светится ярким зелёным, а не основным: подложка значка `Second-color`
+ * 10 %, сам огонёк в полную силу.
+ */
+/* Оба свойства ниже перебивают базовое правило `.rv-dialog`, поэтому селектор
+   составной: на равной силе спор решал бы порядок файлов в сборке. */
+.rv-dialog.rv-changelog {
+  --dialog-accent: var(--rv-second-color);
+  --dialog-tint: var(--rv-second-a10);
+
+  /*
+   * Ореол — эллипс 518x492 из макета (6816:4884), заведённый градиентом, а не
+   * слоем: слой пришлось бы класть под содержимое и разбираться со слоями, а
+   * заливка окна и так лежит ниже всего. Радиусы у CSS половинные, поэтому
+   * 259 x 246; центр эллипса в макете стоит на -40 + 259 по горизонтали и
+   * -326.5 + 246 по вертикали от угла окна — то есть выше него, и внутрь
+   * попадает только нижний край свечения.
+   */
+  background:
+    radial-gradient(
+      259px 246px at 219px -80.5px,
+      var(--rv-second-a25) 0%,
+      /* Не `transparent`: это чёрный с нулевой альфой, и на краю ореола
+         пришлось бы полагаться на то, что браузер смешивает цвета с учётом
+         альфы. Тот же зелёный в ноль — как и задан в макете. */
+        rgba(0, 168, 25, 0) 100%
+    ),
+    var(--rv-grey);
+}
+
+/*
+ * У остальных окон под заголовком идёт строка текста, здесь — бейдж, и зазор
+ * в макете вдвое меньше.
+ */
+.rv-changelog .rv-dialog__titles {
+  gap: var(--rv-space-4);
+}
+
+/* Бейдж рисует себя сам; `flex` убирает у обёртки `p` строчный отступ под
+   базовой линией, иначе зазор до заголовка вырос бы против макета. */
+.rv-changelog .rv-dialog__subtitle {
+  display: flex;
+}
+
+/* --- Тело ---------------------------------------------------------------- */
+
+.rv-changelog__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-2);
+  min-width: 0;
+}
+
+/* Название выпуска — TitleSm, единственное место окна с этим стилем. */
+.rv-changelog__release {
+  margin: 0;
+  font-size: var(--rv-title-sm-size);
+  font-weight: var(--rv-title-sm-weight);
+  line-height: var(--rv-title-sm-leading);
+  color: var(--rv-white);
+}
+
+.rv-changelog__items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-12);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rv-changelog__item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--rv-space-12);
+}
+
+/*
+ * Плитка со значком: 44 в квадрате (отступ 12 вокруг значка 20), скругление 8,
+ * цвет — по роду изменения.
+ */
+.rv-changelog__item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--rv-radius-8);
+  background: var(--item-tint);
+  color: var(--item-accent);
+}
+
+.rv-changelog__item[data-type="feature"] {
+  --item-accent: var(--rv-main-color);
+  --item-tint: var(--rv-main-a10);
+}
+
+.rv-changelog__item[data-type="improve"] {
+  --item-accent: var(--rv-second-color);
+  --item-tint: var(--rv-second-a10);
+}
+
+.rv-changelog__item[data-type="fix"] {
+  --item-accent: var(--rv-warning);
+  --item-tint: var(--rv-warning-a10);
+}
+
+/*
+ * Строка без известного рода изменения (или с тем, что добавили в манифест
+ * после этой сборки) остаётся читаемой — просто без цвета.
+ */
+.rv-changelog__item[data-type="other"] {
+  --item-accent: var(--rv-white-a50);
+  --item-tint: var(--rv-white-a10);
+}
+
+/*
+ * В макете короткая строка выровнена по середине плитки, а длинная — по её
+ * верху. Это не два разных правила, а одно: подпись занимает всю высоту
+ * строки (а строка не ниже плитки) и держит текст по своей середине. Пока
+ * текст в одну строку, середина подписи совпадает с серединой плитки; как
+ * только он перерос её, подпись становится выше плитки и текст встаёт с
+ * самого верха.
+ */
+.rv-changelog__item-text {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  margin: 0;
+  font-size: var(--rv-regular-size);
+  font-weight: var(--rv-regular-weight);
+  line-height: var(--rv-regular-leading);
+  color: var(--rv-white-a80);
+  overflow-wrap: break-word;
+}

@@ -1,0 +1,148 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * ServersPage — Figma "ResultV" -> App Design, ряд фреймов ServersPage
+ * (6557:3436, 6569:6095, 6557:4306, 6557:4113, 6557:4421, 6744:4006,
+ * 6744:4162 и 6566:4737 с окном настроек подписки).
+ *
+ * Восемь фреймов — не восемь раскладок. Раскладка одна:
+ *
+ *   Header    862x61   название, под ним строка о числе серверов и подписок,
+ *                      справа кнопки замера задержки и порядка
+ *   поиск     862x58
+ *   карточки  862      группа из подписки (SubItem) и «Мои сервера» (MyItem)
+ *
+ * Отступ страницы 32, между шапкой и телом 32, внутри тела 18. Отличаются
+ * фреймы только состоянием: три показывают карточку под курсором (обводка с
+ * 10 % на 20 %), два — раскрытую группу, один — подсвеченный подключённый
+ * сервер, последний — окно настроек подписки поверх страницы.
+ *
+ * Здесь заданы только раскладка и поле поиска: всё остальное — компоненты
+ * кита.
+ */
+
+.rv-servers-page {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  background: var(--rv-black);
+  font-family: var(--rv-font-family);
+}
+
+.rv-servers-page > .rv-sidebar {
+  flex-shrink: 0;
+}
+
+.rv-servers-page__content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  padding: var(--rv-space-page);
+  /* Прокрутка общая для страниц нового дизайна, см. design/scroll.css:
+     раскрытая группа удлиняет страницу, и едет вся страница целиком. */
+  padding-right: calc(var(--rv-space-page) - var(--rv-scrollbar-width));
+  gap: var(--rv-space-page);
+}
+
+/* Блоки держат свою высоту: раскрытая группа должна удлинять страницу, а не
+   ужимать соседей. */
+.rv-servers-page__content > * {
+  flex-shrink: 0;
+}
+
+.rv-servers-page__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-1);
+}
+
+.rv-servers-page__body > * {
+  flex-shrink: 0;
+}
+
+/* --- Поиск --------------------------------------------------------------- */
+
+/*
+ * Поле поиска — не компонент кита: у него своя заливка (Grey), скругление 24 и
+ * высота 58 (16 + 24 + 16 плюс обводка), тогда как у `Input` заливка Dark Grey
+ * и скругление 16. Обводка белая, поэтому берётся общая градиентная (10 % в
+ * покое, 20 % под курсором).
+ */
+.rv-servers-page__search {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--rv-space-16);
+  width: 100%;
+  height: 58px;
+  padding: var(--rv-space-16);
+  border-radius: var(--rv-radius-24);
+  background: var(--rv-grey);
+  cursor: text;
+}
+
+.rv-servers-page__search-input {
+  flex: 1;
+  min-width: 0;
+  /* Отступ — только под каретку, наружу он не выходит: отрицательное поле
+     той же ширины возвращает текст на место. См. --rv-caret-room. */
+  padding: 0 var(--rv-caret-room);
+  margin: 0 calc(-1 * var(--rv-caret-room));
+  border: 0;
+  background: none;
+
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-regular-size);
+  font-weight: var(--rv-regular-weight);
+  line-height: var(--rv-regular-leading);
+  color: var(--rv-white);
+
+  /* Каретка того же цвета, что и у полей кита. */
+  caret-color: var(--rv-white-a50);
+  outline: none;
+}
+
+.rv-servers-page__search-input::placeholder {
+  color: var(--rv-white-a20);
+}
+
+/* Значок поиска набран белым 20 %, как и подсказка рядом, — не общим для
+   иконок 50 %. */
+.rv-servers-page__search-icon {
+  flex-shrink: 0;
+  color: var(--rv-white-a20);
+}
+
+/* --- Пусто --------------------------------------------------------------- */
+
+/*
+ * Кадра «ничего не нашлось» в макете нет, а поиск без него молча показывает
+ * пустую страницу. Строка набрана стилем Regular белым 50 % — тем же, что и
+ * подпись под названием страницы.
+ */
+.rv-servers-page__empty {
+  margin: 0;
+  padding: var(--rv-space-32) 0;
+  font-size: var(--rv-regular-size);
+  font-weight: var(--rv-regular-weight);
+  line-height: var(--rv-regular-leading);
+  text-align: center;
+  color: var(--rv-white-a50);
+}

@@ -46,12 +46,18 @@ func (e *seqEngine) GetTrafficStats() (up, down int64)      { return 0, 0 }
 func (e *seqEngine) GetProxyTrafficStats() (up, down int64) { return 0, 0 }
 func (e *seqEngine) ApplyAppWhitelist([]string) error       { return nil }
 
-// fastTunRetry removes the inter-attempt settle delay so retry tests don't sleep.
+// fastTunRetry removes the inter-attempt settle delay so retry tests don't
+// sleep, and reports the wedged device node as already gone. Without the latter
+// every retry test would poll the real device tree — where this machine's own
+// live tunnel is a present node — and burn the whole removal budget.
 func fastTunRetry(t *testing.T) {
 	t.Helper()
-	prev := tunRetryDelay
-	tunRetryDelay = 0
-	t.Cleanup(func() { tunRetryDelay = prev })
+	prevDelay, prevPoll, prevGone := tunRetryDelay, tunRemovalPoll, tunDevNodeGoneFn
+	tunRetryDelay, tunRemovalPoll = 0, 0
+	tunDevNodeGoneFn = func() bool { return true }
+	t.Cleanup(func() {
+		tunRetryDelay, tunRemovalPoll, tunDevNodeGoneFn = prevDelay, prevPoll, prevGone
+	})
 }
 
 func fakeAdmin(t *testing.T, admin bool) {

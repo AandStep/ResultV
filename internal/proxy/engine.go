@@ -102,7 +102,7 @@ type EngineConfig struct {
 	KillSwitch   bool
 	LocalPort    int
 	DNSServers   []string
-	TunIPv4 string
+	TunIPv4      string
 	// EnableIPv6 is the user-facing "Сеть → IPv6" toggle, default off. It moves
 	// BOTH halves at once: the IPv6 address on the TUN and buildDNS's strategy.
 	// Attaching the address while DNS stayed ipv4_only would make the setting a
@@ -126,13 +126,16 @@ type EngineConfig struct {
 	// It overrides the explicit TunIPv6 opt-in: a tunnel that will not start is
 	// worse than a tunnel without IPv6.
 	TunDisableIPv6 bool
-	DataDir      string
+	DataDir        string
 
 	// RoutingLists are user routing subscriptions resolved to local
 	// source-format rule_set caches. Applied in ALL modes as explicit rules
 	// ahead of the built-in Smart/whitelist/ad-block rules, ordered
 	// restrictive-first (block > proxy > direct). See buildRoute.
 	RoutingLists []RoutingListSpec
+	// RoutingOrder is the order the list actions are emitted in. Empty means
+	// DefaultRoutingOrder. An active routing profile may ask for another one.
+	RoutingOrder []string
 
 	// DNSLeakProtection toggles sing-box `strict_route` on the TUN inbound.
 	// When true (the default for new installs), sing-box installs Windows
@@ -180,11 +183,11 @@ type SingBoxConfig struct {
 }
 
 type SBRuleSet struct {
-	Type          string           `json:"type,omitempty"`
-	Tag           string           `json:"tag"`
-	Format        string           `json:"format,omitempty"`
-	RemoteOptions SBRemoteRuleSet  `json:"-"`
-	LocalOptions  SBLocalRuleSet   `json:"-"`
+	Type          string          `json:"type,omitempty"`
+	Tag           string          `json:"tag"`
+	Format        string          `json:"format,omitempty"`
+	RemoteOptions SBRemoteRuleSet `json:"-"`
+	LocalOptions  SBLocalRuleSet  `json:"-"`
 }
 
 type SBRemoteRuleSet struct {
@@ -270,8 +273,8 @@ type SBDNSRule struct {
 }
 
 type SBInbound struct {
-	Type                string   `json:"type"`
-	Tag                 string   `json:"tag"`
+	Type string `json:"type"`
+	Tag  string `json:"tag"`
 	// InterfaceName pins the Windows TUN adapter name. Left empty, sing-box
 	// falls back to "tun0" (protocol/tun/inbound.go: CalculateInterfaceName)
 	// and sing-tun derives the Wintun GUID from that name — so we would share a
@@ -406,10 +409,10 @@ type SBWireGuardAmnezia struct {
 	// upstream sing-box-extended (>= v1.13.11-extended-2.0.0) can
 	// parse them into *Xbadoption.Range and randomize per packet
 	// for AmneziaWG 2.0 H-range support.
-	H1    string `json:"h1,omitempty"`
-	H2    string `json:"h2,omitempty"`
-	H3    string `json:"h3,omitempty"`
-	H4    string `json:"h4,omitempty"`
+	H1 string `json:"h1,omitempty"`
+	H2 string `json:"h2,omitempty"`
+	H3 string `json:"h3,omitempty"`
+	H4 string `json:"h4,omitempty"`
 	I1 string `json:"i1,omitempty"`
 	I2 string `json:"i2,omitempty"`
 	I3 string `json:"i3,omitempty"`
@@ -526,6 +529,10 @@ type SBRoute struct {
 }
 
 type SBRouteRule struct {
+	// Inbound scopes a rule to specific listeners by tag. Used to keep probe
+	// traffic ("probe-in", loopback-only in tunnel mode) on a path of its own
+	// without touching what the user's apps do with the same destination.
+	Inbound          []string `json:"inbound,omitempty"`
 	Protocol         []string `json:"protocol,omitempty"`
 	Network          []string `json:"network,omitempty"`
 	Port             []int    `json:"port,omitempty"`
@@ -543,6 +550,11 @@ type SBRouteRule struct {
 	Method string `json:"method,omitempty"`
 }
 
+// probeInboundTag names the loopback-only inbound the app's own health probes
+// use in tunnel mode. Route rules key off it to give probe traffic a path the
+// user's traffic does not inherit.
+const probeInboundTag = "probe-in"
+
 // quicRejectRule builds the UDP/443 reject that forces a QUIC client back onto
 // TCP. Callers pass the same selector as the route-to-proxy rule it shadows, so
 // the reject covers exactly the traffic we tunnel and nothing else.
@@ -555,6 +567,43 @@ type SBRouteRule struct {
 // "Discord attachments sometimes open, sometimes don't". A silent black hole
 // leaves Chromium (Discord is Electron) retrying QUIC for seconds; an ICMP
 // unreachable makes it mark h3 broken and switch to HTTP/2 immediately.
+// smartTunneledApps are the processes Smart mode always sends through the
+// tunnel, whatever the domain/CIDR block-lists say. Membership is earned by
+// one property: the app carries traffic that no domain or ip_cidr rule can
+// classify, so leaving it to the block-lists means leaving it censored.
+//
+// Discord (measured 2026-08-26 over 64 voice sessions from Discord's own
+// renderer log): the client opens its voice gateway to *.discord.media:443 —
+// a domain, already covered by the block-list — and is then handed a bare
+// media IP:port to send UDP to. Two backends are in rotation:
+//
+//	104.29.x.x:19294-19335   (Cloudflare)     8 direct / 19 tunnelled / 1 dead
+//	 35.217.x.x:50003-50008  (Google Cloud)   0 direct / 19 tunnelled / 17 dead
+//
+// The GCP backend on the classic 50000+ voice ports never once completed a
+// UDP handshake over the direct path — RU DPI kills it outright — while the
+// same server connects every time through the tunnel. Neither backend can be
+// added to blockedCIDRs: both are shared provider space (PTR
+// googleusercontent.com, AS15169; Cloudflare 104.29.0.0/16), and Discord
+// rotates the addresses per call, so any static list is stale by design.
+// find_process is the only classifier that holds.
+var smartTunneledApps = []string{
+	"Discord.exe",
+	"DiscordPTB.exe",
+	"DiscordCanary.exe",
+	"DiscordDevelopment.exe",
+}
+
+// smartTunneledAppRegexes compiles smartTunneledApps into the process-path
+// regexes buildRoute emits. Split out so route building and the find_process
+// decision can never disagree about whether the built-in is active.
+func smartTunneledAppRegexes(cfg EngineConfig) []string {
+	if cfg.Mode != ProxyModeTunnel || cfg.RoutingMode != ModeSmart {
+		return nil
+	}
+	return appWhitelistPathRegexes(smartTunneledApps)
+}
+
 func quicRejectRule(sel SBRouteRule) SBRouteRule {
 	sel.Action = "reject"
 	sel.Method = "default"
@@ -885,7 +934,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	}
 	probeIn := SBInbound{
 		Type:       "mixed",
-		Tag:        "probe-in",
+		Tag:        probeInboundTag,
 		Listen:     "127.0.0.1",
 		ListenPort: probePort,
 	}
@@ -1203,8 +1252,10 @@ func splitDNSServer(raw string) (string, int) {
 }
 
 func buildRoute(cfg EngineConfig) *SBRoute {
+	builtinAppRegexes := smartTunneledAppRegexes(cfg)
 	findProcess := len(cfg.AppWhitelist) > 0 ||
-		(cfg.Mode == ProxyModeTunnel && len(cfg.AppForceVPN) > 0)
+		(cfg.Mode == ProxyModeTunnel && len(cfg.AppForceVPN) > 0) ||
+		len(builtinAppRegexes) > 0
 	// Smart mode inverts the default: everything goes direct and only the
 	// censored block-list is tunneled (see the blocked-domain rule below).
 	// Global/Whitelist keep proxy as the catch-all.
@@ -1267,8 +1318,7 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 
 	// User routing lists win over the built-in Smart/whitelist/ad-block rules:
 	// inserted here, after the DNS/server infra rules but before every built-in.
-	rules = appendRoutingListRouteRules(cfg.RoutingLists, rules)
-
+	rules = appendRoutingListRouteRules(cfg.RoutingLists, rules, cfg.RoutingOrder)
 
 	if cfg.Mode == ProxyModeTunnel {
 		// Probe domains must go through the proxy/endpoint outbound, even when
@@ -1281,6 +1331,33 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 			rules = append(rules, SBRouteRule{
 				Action:   "route",
 				Domain:   append([]string(nil), tunnelProbeDomains...),
+				Outbound: "proxy",
+			})
+		}
+		// The UDP relay probe (ProbeUDPRelay) must measure the node, not the
+		// local uplink: in Smart mode Final=direct would otherwise send its
+		// STUN packets straight out and report every node as UDP-capable.
+		// Scoped to the probe inbound by tag so the same STUN hosts keep
+		// whatever routing the user's own WebRTC traffic would have had.
+		if len(udpRelayProbeDomains) > 0 {
+			rules = append(rules, SBRouteRule{
+				Action:   "route",
+				Inbound:  []string{probeInboundTag},
+				Network:  []string{"udp"},
+				Domain:   append([]string(nil), udpRelayProbeDomains...),
+				Outbound: "proxy",
+			})
+		}
+		// The throughput probe has the same exposure as the UDP one: in Smart
+		// mode Final=direct would send its download out of the local uplink
+		// and record the user's own broadband as the node's speed. Scoped to
+		// the probe inbound so a user visiting the same host gets whatever
+		// routing they would have had.
+		if len(throughputProbeDomains) > 0 {
+			rules = append(rules, SBRouteRule{
+				Action:   "route",
+				Inbound:  []string{probeInboundTag},
+				Domain:   append([]string(nil), throughputProbeDomains...),
 				Outbound: "proxy",
 			})
 		}
@@ -1333,6 +1410,25 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 			Action:           "route",
 			ProcessPathRegex: rx,
 			Outbound:         "direct",
+		})
+	}
+
+	// Built-in Smart coverage for apps the block-lists structurally cannot
+	// reach (see smartTunneledApps). Deliberately placed AFTER the
+	// app-whitelist direct rule: a user who puts Discord in
+	// "Приложения-исключения" means it, and their exclusion keeps winning.
+	// Placed BEFORE the blocked-domain/CIDR rules so the process decision is
+	// taken once for the whole app instead of being split between a tunnelled
+	// signalling half and a direct media half — that split is the bug.
+	if len(builtinAppRegexes) > 0 {
+		// Same reasoning as the force-VPN list: sending an app wholesale
+		// through the tunnel must not hand back the QUIC hang. Safe for voice
+		// — Discord media runs on 19294-19335 and 50003-50008, never 443.
+		rules = append(rules, quicRejectRule(SBRouteRule{ProcessPathRegex: builtinAppRegexes}))
+		rules = append(rules, SBRouteRule{
+			Action:           "route",
+			ProcessPathRegex: builtinAppRegexes,
+			Outbound:         "proxy",
 		})
 	}
 
@@ -1446,10 +1542,47 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		}
 	}
 
+	// Smart-mode QUIC backstop. Everything above classifies UDP/443 by the
+	// sniffed SNI; this catches what the sniffer could not name, which in Smart
+	// mode would otherwise fall through to Final="direct" and leave the tunnel.
+	//
+	// That is not hypothetical. Captured on the user's Ethernet adapter
+	// (2026-09-02) while Smart was connected: HTTP/3 flows to claude.ai,
+	// a-api.anthropic.com, a-cdn.anthropic.com, www.anthropic.com,
+	// assets.claude.ai, a.claude.ai and claude.com all left direct, from the
+	// real address, while the same hosts over TCP went through the node. All
+	// seven are in the block-list, so the rules above should have caught them.
+	// Replaying the captured client Initials through sing-box's own sniffer
+	// shows why they did not:
+	//
+	//	packet 1  DCID 528f6c7b…  -> "need more data: length check 2 failed"
+	//	packet 2  DCID 01063525…  -> "cipher: message authentication failed"
+	//
+	// Chrome's ClientHello spans more than one Initial datagram. The first is
+	// forwarded while the sniffer waits for the rest; the server answers it and
+	// hands the client its own connection ID, so the client's next Initial
+	// carries the SERVER's DCID. sing-box re-derives the Initial keys from each
+	// packet's own DCID, but RFC 9000 keys the whole Initial space off the
+	// ORIGINAL one — so the AEAD check fails. That is a hard error rather than
+	// ErrNeedMoreData, so the sniff loop gives up and the connection is routed
+	// with no domain at all.
+	//
+	// Rejecting here rather than routing to "proxy" for the same reason the
+	// per-domain rule above rejects: UDP through the node is unreliable, and a
+	// rejected QUIC attempt makes the client fall back to TCP at once, where
+	// the domain rules do work. Placed last on purpose — every earlier rule,
+	// including the user's own app exclusions and whitelist, still wins, so
+	// this only ever fires on traffic that had no classification to lose. The
+	// cost is HTTP/3 for direct destinations, which drop to TCP; Global mode
+	// already loses h3 the same way (Final="proxy" sends it into the node's
+	// dead UDP path), so this only brings Smart in line.
+	if cfg.RoutingMode == ModeSmart {
+		rules = append(rules, quicRejectRule(SBRouteRule{}))
+	}
+
 	route.Rules = rules
 	return route
 }
-
 
 // OverlappingProbeDomains returns user-whitelist entries that match (exactly
 // or as a parent suffix) one of the tunnelProbeDomains. These are forced

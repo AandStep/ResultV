@@ -16,9 +16,7 @@
  */
 
 import React, { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Link2 } from "lucide-react";
 import wailsAPI from "../../utils/wailsAPI";
 import { isInsecureSubscriptionError } from "../../utils/subscriptionSecurity";
 import {
@@ -27,56 +25,8 @@ import {
   subscriptionLabelFromURL,
 } from "../../utils/proxyParser";
 import { useConfigContext } from "../../context/ConfigContext";
-import ProtocolSelectionModal from "./ProtocolSelectionModal";
-
-const LoadingPanel = ({ t, label }) => (
-  <div className="relative bg-zinc-900 border border-zinc-800 w-full max-w-md p-6 rounded-3xl shadow-2xl flex flex-col items-center text-center space-y-5 animate-in zoom-in-95 duration-300">
-    <div className="w-16 h-16 bg-[#007E3A]/10 rounded-full flex items-center justify-center">
-      <Link2 className="w-8 h-8 text-[#007E3A] animate-pulse" />
-    </div>
-    <div className="space-y-2">
-      <h3 className="text-xl font-bold text-white">
-        {t("deeplink.loadingTitle") || "Импорт по ссылке"}
-      </h3>
-      <p className="text-zinc-400 text-sm leading-relaxed">
-        {label || t("deeplink.loadingDesc") || "Получаем данные подписки..."}
-      </p>
-    </div>
-    <div className="w-full space-y-2">
-      <div className="h-3 bg-zinc-800 rounded-md overflow-hidden">
-        <div className="h-full w-2/3 bg-[#007E3A]/40 animate-pulse rounded-md" />
-      </div>
-      <div className="h-3 bg-zinc-800 rounded-md overflow-hidden">
-        <div className="h-full w-1/2 bg-[#007E3A]/30 animate-pulse rounded-md" />
-      </div>
-      <div className="h-3 bg-zinc-800 rounded-md overflow-hidden">
-        <div className="h-full w-3/4 bg-[#007E3A]/20 animate-pulse rounded-md" />
-      </div>
-    </div>
-  </div>
-);
-
-const ErrorPanel = ({ t, message, onClose }) => (
-  <div className="relative bg-zinc-900 border border-zinc-800 w-full max-w-md p-6 rounded-3xl shadow-2xl flex flex-col items-center text-center space-y-5 animate-in zoom-in-95 duration-300">
-    <div className="w-16 h-16 bg-rose-500/10 rounded-full flex items-center justify-center">
-      <Link2 className="w-8 h-8 text-rose-500" />
-    </div>
-    <div className="space-y-2">
-      <h3 className="text-xl font-bold text-white">
-        {t("deeplink.errorTitle") || "Не удалось импортировать"}
-      </h3>
-      <p className="text-zinc-400 text-sm leading-relaxed break-words">
-        {message}
-      </p>
-    </div>
-    <button
-      onClick={onClose}
-      className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-3 rounded-2xl transition-all"
-    >
-      {t("common.close") || "Закрыть"}
-    </button>
-  </div>
-);
+import { Button, Dialog } from "../kit";
+import AddConfirmDialog from "../../views/redesign/AddConfirmDialog";
 
 const DeepLinkImportModal = () => {
   const { t } = useTranslation();
@@ -95,7 +45,8 @@ const DeepLinkImportModal = () => {
   const [stage, setStage] = useState("idle");
   const [pendingProxies, setPendingProxies] = useState([]);
   const [pendingRoutingLists, setPendingRoutingLists] = useState([]);
-  const [disabledListUrls, setDisabledListUrls] = useState(new Set());
+  /* Списки маршрутизации из подписки по умолчанию не берём — как в макете. */
+  const [routing, setRouting] = useState(false);
   const [error, setError] = useState("");
   const reqId = useRef(0);
 
@@ -159,7 +110,7 @@ const DeepLinkImportModal = () => {
         }
         setPendingProxies(entries);
         setPendingRoutingLists(lists);
-        setDisabledListUrls(new Set());
+        setRouting(false);
         setStage("preview");
       } catch (e) {
         if (myReq !== reqId.current) return;
@@ -174,7 +125,7 @@ const DeepLinkImportModal = () => {
     setStage("idle");
     setPendingProxies([]);
     setPendingRoutingLists([]);
-    setDisabledListUrls(new Set());
+    setRouting(false);
     setError("");
     setPendingDeepLink("");
     setPendingDeepLinkSource("");
@@ -206,7 +157,7 @@ const DeepLinkImportModal = () => {
               subURL,
               allowInsecure,
               pendingDeepLinkSource,
-              Array.from(disabledListUrls),
+              routing ? [] : pendingRoutingLists.map((rl) => rl.url),
             );
             break;
           } catch (err) {
@@ -260,48 +211,61 @@ const DeepLinkImportModal = () => {
 
   if (stage === "idle") return null;
 
+  /*
+   * Найденное показывает то же окно, что и страница добавления: своего вида у
+   * ссылки в макете нет, ход один и тот же.
+   */
   if (stage === "preview") {
     return (
-      <ProtocolSelectionModal
-        isOpen
+      <AddConfirmDialog
         proxies={pendingProxies}
-        count={pendingProxies.length}
         routingLists={pendingRoutingLists}
-        disabledListUrls={disabledListUrls}
-        onToggleListDisabled={(url, disabled) => {
-          setDisabledListUrls((prev) => {
-            const next = new Set(prev);
-            if (disabled) next.add(url);
-            else next.delete(url);
-            return next;
-          });
-        }}
-        onClose={close}
-        onConfirm={handleConfirm}
+        routing={routing}
+        onRoutingChange={setRouting}
+        onCancel={close}
+        /* Протокол ссылки несут в себе, подставлять нечего. */
+        onConfirm={() => handleConfirm(null)}
       />
     );
   }
 
-  return createPortal(
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
-      <div
-        className="absolute inset-0 bg-black/70 backdrop-blur-md"
-        onClick={stage === "saving" ? undefined : close}
-      />
-      {stage === "error" ? (
-        <ErrorPanel t={t} message={error} onClose={close} />
-      ) : (
-        <LoadingPanel
-          t={t}
-          label={
-            stage === "saving"
-              ? t("deeplink.savingDesc") || "Сохраняем серверы..."
-              : undefined
-          }
-        />
-      )}
-    </div>,
-    document.body,
+  if (stage === "error") {
+    return (
+      <Dialog
+        variant="error"
+        icon="alert"
+        title={t("deeplink.errorTitle")}
+        onClose={close}
+        actions={
+          <Button variant="red" onClick={close}>
+            {t("common.close")}
+          </Button>
+        }
+      >
+        <p className="rv-dialog__text">{error}</p>
+      </Dialog>
+    );
+  }
+
+  /*
+   * Ожидание. Кадра на него в макете нет, поэтому взято то же окно с щитом:
+   * заголовок и строка о том, что происходит. Значок при этом дышит — так же
+   * ждала прежняя версия окна, и без движения непонятно, живо ли приложение.
+   *
+   * Пока идёт запись, закрывать нечего: ход уже не отменить.
+   */
+  return (
+    <Dialog
+      icon="shield"
+      title={t("deeplink.loadingTitle")}
+      onClose={stage === "saving" ? undefined : close}
+      showClose={false}
+      className="rv-dialog--busy"
+    >
+      <p className="rv-dialog__text">
+        {stage === "saving" ? t("deeplink.savingDesc") : t("deeplink.loadingDesc")}
+      </p>
+    </Dialog>
   );
 };
 

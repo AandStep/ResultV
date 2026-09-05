@@ -27,6 +27,13 @@ const (
 	ConnectErrorInvalidConfig = "invalid_config"
 	ConnectErrorTunPrivileges = "tun_privileges"
 	ConnectErrorEngineStart   = "engine_start_failed"
+	// ConnectErrorTunAdapter is returned when Windows registers the Wintun device
+	// node but never binds a driver to it, so the adapter never becomes usable.
+	// Distinct from tun_privileges on purpose: no amount of elevation helps, and
+	// distinct from engine_start_failed so the UI can stop iterating AUTO
+	// candidates — the adapter is node-independent, every candidate would fail
+	// identically. See isTunAdapterUnavailableError for the two error shapes.
+	ConnectErrorTunAdapter = "tun_adapter_unavailable"
 	// ConnectErrorDNSCensored is returned when a domain-addressed server can't be
 	// resolved to an IP before a TUN connect — the route-exclude/server-pin can't
 	// be built, so dialing the server would loop into the TUN or hit a poisoned IP.
@@ -221,6 +228,34 @@ func validateDNSConfig(engineCfg EngineConfig, cfg SingBoxConfig) error {
 func validateProtocolRequiredFields(proxyCfg ProxyConfig) error {
 	pt := strings.ToUpper(strings.TrimSpace(proxyCfg.Type))
 	extra := parseExtra(proxyCfg)
+
+	// AUTO and SECTION are list markers, not servers: an AUTO head names a
+	// group of members and a SECTION is a subscription label whose address was
+	// blanked on purpose. Neither has an outbound, so buildProxyOutbound falls
+	// through to its default branch and emits an http outbound with an empty
+	// server. sing-box accepts that config and starts — the engine reports
+	// success, the app logs "Подключено", the power button goes green, and
+	// every single connection dies with "invalid address". That is exactly
+	// what the 2026-09-05 logs show, and it is the worst failure shape there
+	// is: a broken tunnel wearing a working one's face. Refuse it here, where
+	// the refusal still becomes an honest error the caller can act on.
+	switch pt {
+	case "AUTO":
+		return fmt.Errorf("auto group head is not a server: resolve it to a member first")
+	case "SECTION":
+		return fmt.Errorf("section label is not a server")
+	}
+
+	// Same reasoning one level down: an entry with no host or no port cannot
+	// dial anything, whatever its protocol says. Catching it here turns a
+	// silently dead engine into a named configuration error.
+	if strings.TrimSpace(proxyCfg.IP) == "" {
+		return fmt.Errorf("%s requires a server address", strings.ToLower(pt))
+	}
+	if proxyCfg.Port <= 0 {
+		return fmt.Errorf("%s requires a server port", strings.ToLower(pt))
+	}
+
 	switch pt {
 	case "WIREGUARD", "AMNEZIAWG":
 		if strings.TrimSpace(getStringField(extra, "private_key", getStringField(extra, "privateKey", ""))) == "" {
