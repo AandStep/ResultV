@@ -1,5 +1,5 @@
 {
-  "version": "",
+  "version": "3.4.0",
   "releaseTitle": {
     "ru": "Редизайн и багфиксы",
     "en": "Redesign and bug fixes"
@@ -22,5 +22,31 @@
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",
-  "platforms": {}
+  "platforms": {
+    "windows-amd64-portable": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.4.0/ResultV.exe",
+      "sha256": "47ad4df3c5c0b92c62e9006114ec5897ed9dcbec20491f27a58e61e7b623f98f",
+      "size": 55008256
+    },
+    "windows-amd64-installer": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.4.0/ResultV-amd64-installer.exe",
+      "sha256": "4b29ebe91b38689411b8fe9aae784ccb19dae383ae29aa7938336724b6dde707",
+      "size": 26826549
+    },
+    "darwin-universal": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.4.0/ResultV.dmg",
+      "sha256": "0fa3fdca40ce23a63d9d372d5c06805e72fa9c76a744a794789f4264cb3d4be0",
+      "size": 60540280
+    },
+    "linux-amd64-appimage": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.4.0/ResultV-3.4.0-x86_64.AppImage",
+      "sha256": "a9606647027717bdeb77db6e73c9773e10da654f42b321a16bd23da1147c235c",
+      "size": 93944312
+    },
+    "linux-amd64-deb": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.4.0/resultv_3.4.0_amd64.deb",
+      "sha256": "87173cbcec0ea2e7749cb8a553695888fd8a0b5837128e33d06446dc442dcfab",
+      "size": 25803992
+    }
+  }
 }
