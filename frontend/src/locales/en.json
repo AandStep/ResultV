@@ -249,7 +249,7 @@
     "subscription_user_agent": {
       "title": "User agent",
       "desc": "Empty — the default ResultV header.",
-      "placeholder": "ResultV/3.3.2/Windows/11_10.0.26200"
+      "placeholder": "ResultV/3.4.0/Windows/11_10.0.26200"
     },
     "dns": {
       "title": "DNS Servers",

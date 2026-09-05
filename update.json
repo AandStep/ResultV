@@ -14,6 +14,11 @@
       "type": "fix",
       "ru": "Фикс утечки HTTP/3 некоторые сайты могли проверять реальный IP и блокировать доступ, улучшено покрытие",
       "en": "Fixed HTTP/3 leak issue where some websites could check the real IP and block access, improved coverage"
+    },
+    {
+      "type": "fix",
+      "ru": "Улучшен подбор авто-сервера",
+      "en": "Improved auto-server selection"
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",

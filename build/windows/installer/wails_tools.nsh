@@ -14,7 +14,7 @@
     !define INFO_PRODUCTNAME "ResultV"
 !endif
 !ifndef INFO_PRODUCTVERSION
-    !define INFO_PRODUCTVERSION "3.3.2"
+    !define INFO_PRODUCTVERSION "3.4.0"
 !endif
 !ifndef INFO_COPYRIGHT
     !define INFO_COPYRIGHT "Copyright........."
