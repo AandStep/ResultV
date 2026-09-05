@@ -16,13 +16,14 @@
  */
 
 /*
- * Страница «Настройки». Figma "ResultV" -> App Design, фрейм Settings
- * (6628:3208).
+ * Страница «Настройки». Figma "ResultV" -> App Design.
  *
- * В макете нарисован только список: четыре карточки SettingsItem и панель
- * экспорта/импорта под ними. Карточка — кнопка, и уводит она на свою
- * страницу; сами настройки в макете не нарисованы и собраны из кита, см.
- * docs/design/GAPS.md.
+ * Список пунктов — фрейм Settings (6628:3208): четыре карточки SettingsItem
+ * и панель экспорта/импорта. Страницы самих пунктов нарисованы отдельно:
+ * «Дополнительные настройки» (6793:6688), «Подписки» (6799:4682) и «Сеть»
+ * (6799:4770). Из них взяты и раскладка страницы пункта, и вид строки
+ * настройки; «Безопасность» и часть строк не нарисованы и собраны по тем же
+ * правилам, см. docs/design/GAPS.md.
  */
 
 import { useEffect, useState } from "react";
@@ -30,6 +31,7 @@ import {
   Button,
   Icon,
   Input,
+  Select,
   SettingsItem,
   Tumbler,
 } from "../../components/kit";
@@ -84,21 +86,21 @@ export const DNS_PRESETS = [
 export const SETTINGS_PAGE_TEXT = {
   title: "Настройки",
   subtitle: "Управление безопасностью и системой",
-  back: "Назад к настройкам",
+  back: "Назад",
   /*
-   * `items` — строка под названием карточки, как в макете. `desc` в макете
-   * нет: это подпись под названием на самой странице пункта.
+   * `items` — строка под названием карточки в списке пунктов, `desc` —
+   * подпись под названием на самой странице пункта.
    */
   groups: {
     advanced: {
       title: "Дополнительные настройки",
       items: "• Режим TUN  • Запуск при старте системы",
-      desc: "Параметры запуска, TUN и фильтрации трафика.",
+      desc: "Параметры запуска, TUN, язык приложения",
     },
     subscriptions: {
       title: "Подписки",
       items: "• Обновление • HWID  • UA",
-      desc: "Автообновление и данные, которые приложение отправляет провайдеру подписки.",
+      desc: "Обновление подписок и данные для провайдера.",
     },
     security: {
       title: "Безопасность",
@@ -113,22 +115,38 @@ export const SETTINGS_PAGE_TEXT = {
   },
   exportImport: {
     title: "Экспорт / импорт конфигураций",
-    desc: "Сохраняйте все настройки и сервера приложения, для переноса на другое устройство.",
+    desc: "Перенос настроек и серверов на другое устройство.",
     exportBtn: "Экспорт",
     importBtn: "Импорт",
   },
-  /* Строк настроек в макете нет — набор повторяет прежние настройки. */
   rows: {
-    tunStack: { title: "Режим TUN", desc: "" },
-    autostart: { title: "Запуск при старте системы", desc: "" },
-    language: { title: "Язык интерфейса", desc: "" },
-    subAutoUpdate: { title: "Автоматическое обновление", desc: "" },
-    subInterval: { title: "Интервал обновления", desc: "" },
-    subHwid: { title: "Передавать HWID", desc: "" },
+    tunStack: { title: "Режим TUN", desc: "Сетевой стек туннеля." },
+    autostart: {
+      title: "Запуск при старте системы",
+      desc: "Запускать приложение вместе с Windows.",
+    },
+    language: { title: "Язык интерфейса", desc: "Язык подписей в приложении." },
+    subAutoUpdate: {
+      title: "Автоматическое обновление",
+      desc: "Обновлять подписки по расписанию.",
+    },
+    subInterval: {
+      title: "Интервал обновлений",
+      desc: "Как часто обновлять подписки.",
+    },
+    subHwid: {
+      title: "Передавать HWID",
+      desc: "Идентификатор устройства для проверки лимита.",
+    },
     subUserAgent: { title: "User agent", desc: "", placeholder: "" },
     killSwitch: { title: "Включить Kill Switch", desc: "" },
     dnsLeak: { title: "Защита от утечки DNS", desc: "" },
-    dns: { title: "DNS-серверы", desc: "", placeholder: "" },
+    dns: {
+      title: "DNS-серверы",
+      desc: "Выберите DNS-провайдера",
+      customLabel: "Или укажите свои",
+      placeholder: "",
+    },
     ipv6: { title: "IPv6 в туннеле", desc: "" },
     listenLan: { title: "Слушать в локальной сети", desc: "" },
     port: { title: "Локальный порт", desc: "", placeholder: "", addrTitle: "" },
@@ -136,9 +154,13 @@ export const SETTINGS_PAGE_TEXT = {
 };
 
 /*
- * Строка настройки: слева название с пояснением, справа элемент. Широкому
- * элементу справа не встать — ряд кнопок и поле уходят под текст, как поля в
- * окне настроек подписки.
+ * Строка настройки (Figma 6793:6695 и соседние): слева название с
+ * пояснением, справа элемент. Высота 112 набегает от самого высокого
+ * элемента — выбора значения: 24 + 64 + 24; строкам с тумблером она задана
+ * тем же числом, чтобы ряд не сбивался.
+ *
+ * `stacked` — элемент во всю ширину под текстом (поле User agent, набор
+ * DNS): справа ему не встать, и в макете он стоит именно так.
  */
 function Row({ title, description, stacked = false, children }) {
   return (
@@ -151,25 +173,6 @@ function Row({ title, description, stacked = false, children }) {
       </div>
       <div className="rv-settings-page__row-control">{children}</div>
     </div>
-  );
-}
-
-/* Ряд кнопок-вариантов: выбранный отмечен залитым состоянием кнопки — так же,
-   как выбранный протокол на странице добавления. */
-function Choice({ options, value, onSelect }) {
-  return (
-    <ScrollRow>
-      {options.map((option) => (
-        <Button
-          key={option.value}
-          mode={option.value === value ? "idle" : undefined}
-          aria-pressed={option.value === value}
-          onClick={() => onSelect(option.value)}
-        >
-          {option.label}
-        </Button>
-      ))}
-    </ScrollRow>
   );
 }
 
@@ -236,29 +239,23 @@ export default function SettingsPage({
   const groupBody = {
     advanced: (
       <>
-        <Row
-          title={rows.tunStack.title}
-          description={rows.tunStack.desc}
-          stacked
-        >
-          <Choice
+        <Row title={rows.tunStack.title} description={rows.tunStack.desc}>
+          <Select
             options={tunStacks}
             value={values.tunStack || "default"}
-            onSelect={set("tunStack")}
+            onChange={set("tunStack")}
+            aria-label={rows.tunStack.title}
           />
         </Row>
         <Row title={rows.autostart.title} description={rows.autostart.desc}>
           <Tumbler checked={!!values.autostart} onChange={set("autostart")} />
         </Row>
-        <Row
-          title={rows.language.title}
-          description={rows.language.desc}
-          stacked
-        >
-          <Choice
+        <Row title={rows.language.title} description={rows.language.desc}>
+          <Select
             options={languages}
             value={values.language}
-            onSelect={set("language")}
+            onChange={set("language")}
+            aria-label={rows.language.title}
           />
         </Row>
       </>
@@ -275,25 +272,16 @@ export default function SettingsPage({
             onChange={set("subAutoUpdate")}
           />
         </Row>
-        <Row
-          title={rows.subInterval.title}
-          description={rows.subInterval.desc}
-          stacked
-        >
-          <ScrollRow>
-            {intervals.map((item) => (
-              <Button
-                key={item.hours}
-                mode={
-                  item.hours === values.subIntervalHours ? "idle" : undefined
-                }
-                aria-pressed={item.hours === values.subIntervalHours}
-                onClick={() => onChange?.("subIntervalHours", item.hours)}
-              >
-                {item.label}
-              </Button>
-            ))}
-          </ScrollRow>
+        <Row title={rows.subInterval.title} description={rows.subInterval.desc}>
+          <Select
+            options={intervals.map((item) => ({
+              value: item.hours,
+              label: item.label,
+            }))}
+            value={values.subIntervalHours}
+            onChange={set("subIntervalHours")}
+            aria-label={rows.subInterval.title}
+          />
         </Row>
         <Row title={rows.subHwid.title} description={rows.subHwid.desc}>
           <Tumbler checked={values.subHwid !== false} onChange={set("subHwid")} />
@@ -326,11 +314,12 @@ export default function SettingsPage({
     network: (
       <>
         <Row title={rows.dns.title} description={rows.dns.desc} stacked>
+          {/* Набор DNS выбирается рядом кнопок, выбранная — зелёная. */}
           <ScrollRow>
             {dnsPresets.map((preset) => (
               <Button
                 key={preset.id}
-                mode={preset.id === activePreset ? "idle" : undefined}
+                variant={preset.id === activePreset ? "green" : "default"}
                 aria-pressed={preset.id === activePreset}
                 onClick={() => onChange?.("dnsServers", preset.servers)}
               >
@@ -338,11 +327,16 @@ export default function SettingsPage({
               </Button>
             ))}
           </ScrollRow>
-          <CommitInput
-            value={dnsServers.join(", ")}
-            onCommit={(next) => onChange?.("dnsServers", next)}
-            placeholder={rows.dns.placeholder}
-          />
+          <label className="rv-settings-page__custom">
+            <span className="rv-settings-page__label">
+              {rows.dns.customLabel}
+            </span>
+            <CommitInput
+              value={dnsServers.join(", ")}
+              onCommit={(next) => onChange?.("dnsServers", next)}
+              placeholder={rows.dns.placeholder}
+            />
+          </label>
         </Row>
         <Row title={rows.ipv6.title} description={rows.ipv6.desc}>
           <Tumbler checked={!!values.ipv6} onChange={set("ipv6")} />
@@ -378,15 +372,18 @@ export default function SettingsPage({
       <div className="rv-settings-page__content rv-scroll">
         {group ? (
           <>
-            <PageHeader
-              title={group.title}
-              subtitle={group.desc}
-              onBack={onBack}
-              backLabel={text.back}
-            />
-            <section className="rv-settings-page__panel rv-border">
-              {groupBody[section]}
-            </section>
+            <PageHeader title={group.title} subtitle={group.desc} />
+
+            {/* Страница пункта: кнопка возврата и одна карточка со строками
+                (Figma 6799:4689). */}
+            <div className="rv-settings-page__section">
+              <Button variant="green" onClick={onBack}>
+                {text.back}
+              </Button>
+              <section className="rv-settings-page__card rv-border rv-border--static">
+                {groupBody[section]}
+              </section>
+            </div>
           </>
         ) : (
           <>

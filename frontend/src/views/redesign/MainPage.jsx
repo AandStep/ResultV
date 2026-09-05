@@ -122,9 +122,10 @@ export const MAIN_PAGE_TEXT = {
 export default function MainPage({
   status = "idle",
   /*
-   * Авто-группа перед подключением сама выбирает узел. Фаза короткая и
-   * поверх любого состояния: страница остаётся какой была (в том числе
-   * зелёной, если соединение уже живо), а жёлтым отзывается только заголовок.
+   * Авто-группа перед подключением сама выбирает узел. Фаза идёт поверх
+   * любого состояния: заголовок и кнопка питания уходят в «идёт работа»,
+   * остальная страница остаётся какой была — в том числе зелёной, если
+   * соединение уже живо.
    */
   resolving = false,
   powerState,
@@ -163,6 +164,22 @@ export default function MainPage({
 }) {
   const look = BY_STATUS[status] ?? BY_STATUS.idle;
   const showResolving = resolving && status !== "disconnecting";
+  /*
+   * Кнопка питания идёт в ногу с заголовком, а не со статусом.
+   *
+   * Раньше «Подбор сервера» отзывался только в шапке, а кнопка брала вид от
+   * `status` — и подбор поверх живого соединения оставлял её зелёной. Окно
+   * спорило само с собой: жёлтый заголовок «Подбор сервера» над зелёной
+   * кнопкой «защищено», которая в этот момент работает на отмену. Хуже того,
+   * вид зависел от того, было ли соединение до клика: подбор с нуля красил
+   * кнопку жёлтым, подбор поверх соединения — зелёным, отчего одно и то же
+   * действие выглядело двумя разными.
+   *
+   * Остальная страница (подложка флага, бейдж, графики скорости) намеренно
+   * остаётся зелёной: подбор идёт поверх живого туннеля, трафик через него
+   * по-прежнему идёт, и гасить это значило бы врать в другую сторону.
+   */
+  const powerLook = showResolving ? BY_STATUS.connecting : look;
 
   return (
     <div className={`rv-main-page ${className}`} data-status={status} {...rest}>
@@ -181,9 +198,9 @@ export default function MainPage({
 
         <div className="rv-main-page__power">
           <PowerButton
-            variant={look.power}
+            variant={powerLook.power}
             /* Витрина может задать состояние силой; иначе его диктует статус. */
-            state={powerState ?? (look.powerPressed ? "active" : undefined)}
+            state={powerState ?? (powerLook.powerPressed ? "active" : undefined)}
             disabled={powerDisabled}
             onClick={onPower}
           />

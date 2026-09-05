@@ -37,7 +37,6 @@
 import {
   mdiAlertCircleOutline,
   mdiArrowDecision,
-  mdiArrowLeft,
   mdiBrain,
   mdiCallSplit,
   mdiCart,
@@ -46,6 +45,7 @@ import {
   mdiClipboardTextMultiple,
   mdiClose,
   mdiCog,
+  mdiCommentText,
   mdiContentCopy,
   mdiContentSave,
   mdiEarth,
@@ -55,6 +55,10 @@ import {
   mdiDelete,
   mdiCreation,
   mdiFileUpload,
+  mdiFire,
+  mdiHammerWrench,
+  mdiStarCircleOutline,
+  mdiTrendingUp,
   mdiFormatListBulleted,
   mdiHome,
   mdiLightningBolt,
@@ -233,18 +237,6 @@ export const ICONS = {
     states: ['default'],
   },
   /*
-   * Во фрейме Icons этой иконки тоже нет, и в макете её негде взять: страниц
-   * внутри пунктов настроек не нарисовано, а возвращаться с них надо.
-   * См. docs/design/GAPS.md.
-   */
-  back: {
-    path: mdiArrowLeft,
-    size: 24,
-    states: ['default', 'hover'],
-    // Сверять не с чем: в макете этой иконки нет вовсе.
-    reference: 'absent',
-  },
-  /*
    * Во фрейме Icons этой иконки нет — она встречается внутри SettingsItem
    * (слой «mdi:external-link», белый 50 %). Заведена здесь, чтобы компонент
    * не рисовал свой SVG. См. docs/design/GAPS.md I-6.
@@ -366,6 +358,47 @@ export const ICONS = {
     size: 14,
     states: ['default'],
     reference: 'pending',
+  },
+  /*
+   * Значок всплывающей подсказки — слой «mdi:comment-text» в тосте на главной
+   * (6725:4321). Во фрейме Icons его нет, но сырой экспорт снят и лежит в
+   * assets/icons/comment-default.svg, поэтому эталон в icons.figma.js есть и
+   * соответствие сверяет `npm run verify:icons`.
+   */
+  comment: {
+    path: mdiCommentText,
+    size: 24,
+    states: ['default'],
+  },
+  /*
+   * Окно «Что нового?» (6816:4780): огонёк в шапке и по значку на каждый род
+   * изменения. Во фрейме Icons их нет, сырой экспорт снят с самого окна и
+   * лежит в assets/icons.
+   *
+   * Имена здесь по назначению, а не по глифу: другого применения у них нет,
+   * а в списке изменений читается ровно то, что нарисовано. Значок `feature`
+   * подписан в макете «mdi:feature-highlight», но такого пути в @mdi/js нет —
+   * геометрия совпала с `mdiStarCircleOutline` (0.00008). См. GAPS.md.
+   */
+  fire: {
+    path: mdiFire,
+    size: 32,
+    states: ['default'],
+  },
+  feature: {
+    path: mdiStarCircleOutline,
+    size: 20,
+    states: ['default'],
+  },
+  improve: {
+    path: mdiTrendingUp,
+    size: 20,
+    states: ['default'],
+  },
+  fix: {
+    path: mdiHammerWrench,
+    size: 20,
+    states: ['default'],
   },
 };
 

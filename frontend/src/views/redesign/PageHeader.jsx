@@ -24,22 +24,16 @@
  * экрана с состоянием подключения.
  */
 
-import Icon from "../../components/kit/Icon";
 import "./PageHeader.css";
 
 /**
  * `actions` — кнопки-иконки справа от названия. Они есть только у страницы
  * серверов (6557:3439): замер задержки и порядок списка.
- *
- * `onBack` — стрелка слева от названия. Её в макете нет: страницы внутри
- * пунктов настроек не нарисованы, а уходить с них надо. См. GAPS.md.
  */
 export default function PageHeader({
   title,
   subtitle,
   actions,
-  onBack,
-  backLabel,
   className = "",
   ...rest
 }) {
@@ -49,19 +43,8 @@ export default function PageHeader({
       data-actions={actions ? "true" : undefined}
       {...rest}
     >
-      {onBack && (
-        <button
-          type="button"
-          className="rv-page-header__back"
-          title={backLabel}
-          aria-label={backLabel}
-          onClick={onBack}
-        >
-          <Icon name="back" color="currentColor" />
-        </button>
-      )}
-      {/* Название с подписью — одна колонка, чтобы подпись равнялась по
-          названию, а не по стрелке. */}
+      {/* Название с подписью — своя колонка: справа от них бывают
+          кнопки-иконки, и подпись должна равняться по названию. */}
       <div className="rv-page-header__text">
         <div className="rv-page-header__row">
           <h1 className="rv-page-header__title">{title}</h1>

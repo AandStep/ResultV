@@ -217,6 +217,11 @@ export default function ServerItem({
           showPingBtn &&
           iconBtn("ping", onPing, "ping", pingTitle, pingBtnBusy)}
         {variant === "header" && showSortBtn && iconBtn("sort", onSort, "sort", sortTitle)}
+        {/* Правка и удаление у самой строки — только там, где обработчик
+            передали. Это серверы из «Моих»: узел подписки править бессмысленно,
+            ближайшее её обновление вернёт всё как было. */}
+        {showsFavorite && onEdit && iconBtn("edit", onEdit, "edit", editTitle)}
+        {showsFavorite && onDelete && iconBtn("delete", onDelete, "delete", deleteTitle)}
         {variant === "subitem" && iconBtn("edit", onEdit, "edit", editTitle)}
         {(variant === "subitem" || variant === "myitem") &&
           iconBtn("sync", onSync, "sync", syncTitle, syncBusy)}

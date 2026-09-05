@@ -32,6 +32,7 @@ import { useTranslation } from "react-i18next";
 import { BrowserOpenURL, EventsOff, EventsOn } from "../../../wailsjs/runtime/runtime";
 import { useConfigContext } from "../../context/ConfigContext";
 import { useConnectionContext } from "../../context/ConnectionContext";
+import { useToast } from "../../context/ToastContext";
 import { FlagIcon } from "../../components/ui/FlagIcon";
 import {
   formatProxyDisplayName,
@@ -44,6 +45,7 @@ import {
   sortProxiesByOption,
 } from "../../utils/pingSort";
 import wailsAPI from "../../utils/wailsAPI";
+import ServerEditor, { SERVER_EDITOR_TEXT } from "./ServerEditor";
 import ServersPage from "./ServersPage";
 import SortMenu from "./SortMenu";
 import SubscriptionDialog, { SUBSCRIPTION_INTERVALS } from "./SubscriptionDialog";
@@ -52,6 +54,15 @@ import AppSidebar from "./AppSidebar";
 import { formatTraffic, protocolLabel } from "./format";
 
 const isAuto = (proxy) => proxy?.type?.toUpperCase() === "AUTO";
+
+/*
+ * Подтверждение на удаление своего сервера спрашиваем один раз за запуск:
+ * дальше корзина срабатывает сразу, а о смене поведения говорит тост. Флаг
+ * живёт вне компонента — страница перемонтируется на каждом переходе по
+ * меню, и в состоянии он обнулялся бы вместе с ней. Подписку и группу «Мои
+ * сервера» это не касается: там за одно нажатие уходит весь список.
+ */
+let deleteConfirmShown = false;
 
 /* Те же правила, что на главной: «90ms» -> «90мс», отказ показываем как есть. */
 function pingLabel(value, t) {
@@ -92,9 +103,15 @@ export default function ServersScreen() {
     settings,
     toggleFavorite,
     showConfirmDialog,
+    handleSaveProxy,
+    setActiveTab,
+    setEditingProxy,
   } = useConfigContext();
   const {
     activeProxy,
+    setActiveProxy,
+    failedProxy,
+    setFailedProxy,
     isConnected,
     isConnecting,
     isResolving,
@@ -108,11 +125,16 @@ export default function ServersScreen() {
     deleteProxy,
   } = useConnectionContext();
 
+  const { showToast } = useToast();
+
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState("default");
   const [sortAnchor, setSortAnchor] = useState(null);
   const [openGroups, setOpenGroups] = useState({});
   const [editingSub, setEditingSub] = useState(null);
+  /* Сервер, открытый в окне правки. Только свой: узел подписки править
+     бессмысленно — ближайшее её обновление вернёт всё как было. */
+  const [editingServer, setEditingServer] = useState(null);
   /* Подписки, которые сейчас перечитываются: у них крутится значок обновления.
      Набор, а не флаг, — обновлять можно каждую по отдельности. */
   const [refreshingSubs, setRefreshingSubs] = useState(() => new Set());
@@ -188,8 +210,36 @@ export default function ServersScreen() {
   /* Запуск идёт — те же флаги, из которых главная собирает свой жёлтый этап. */
   const busy = isConnecting || isResolving || isDisconnecting;
 
+  const removeServer = useCallback(
+    async (proxy) => {
+      const first = !deleteConfirmShown;
+      if (first) {
+        const ok = await showConfirmDialog({
+          title: t("common.confirmAction"),
+          message: t("proxyList.confirmDelete", { name: proxy.name }),
+          variant: "danger",
+          confirmText: t("common.delete"),
+          cancelText: t("common.cancel"),
+        });
+        if (!ok) return;
+      }
+      await deleteProxy(proxy.id, setProxies);
+      if (first) {
+        deleteConfirmShown = true;
+        showToast({
+          variant: "info",
+          message: t("toast.deleteWithoutConfirm"),
+          /* Длиннее обычного: фразу такой длины за четыре секунды не прочесть. */
+          duration: 6000,
+        });
+      }
+    },
+    [showConfirmDialog, showToast, t, deleteProxy, setProxies],
+  );
+
+  /* `own` — строка своего сервера: только у неё есть карандаш и корзина. */
   const toRow = useCallback(
-    (p) => {
+    (p, own = false) => {
       /*
        * Подключённый сервер подсвечен зелёным — фрейм 6744:4162. Пока к
        * выбранному только идёт подключение, флаг и бейджи держат жёлтый, как
@@ -221,6 +271,10 @@ export default function ServersScreen() {
         active: current,
         accent,
         onFavorite: () => toggleFavorite(p.id),
+        /* Состав авто-группы задаёт провайдер, а не пользователь: править в
+           ней нечего, поэтому карандаша у неё нет. Удалить её можно. */
+        onEdit: own && !isAuto(p) ? () => setEditingServer(p) : undefined,
+        onDelete: own ? () => removeServer(p) : undefined,
         onSelect: () => selectAndConnect(p),
       };
     },
@@ -234,6 +288,7 @@ export default function ServersScreen() {
       activeProxy,
       toggleFavorite,
       selectAndConnect,
+      removeServer,
       udpRelay,
     ],
   );
@@ -373,7 +428,7 @@ export default function ServersScreen() {
         onSync: () => refreshSubscription(sub),
         syncBusy: refreshingSubs.has(sub.id),
         onDelete: () => removeSubscription(sub),
-        servers: sortRows(found).map(toRow),
+        servers: sortRows(found).map((p) => toRow(p)),
       });
     }
 
@@ -399,7 +454,8 @@ export default function ServersScreen() {
            поводу: пока идёт запрошенный отсюда замер. */
         syncBusy: manual.some(isManualPingPending),
         onDelete: () => removeManual(manual),
-        servers: sortRows(manualFound).map(toRow),
+        /* Свои серверы: у каждой строки своя правка и своё удаление. */
+        servers: sortRows(manualFound).map((p) => toRow(p, true)),
       });
     }
 
@@ -439,8 +495,36 @@ export default function ServersScreen() {
     deleteSubscription: t("proxyList.deleteSubscriptionAria"),
     pingGroup: t("proxyList.manualPingMyServersAria"),
     deleteGroup: t("proxyList.deleteManualGroupAria"),
+    editServer: t("serversPage.editServer"),
+    deleteServer: t("serversPage.deleteServer"),
     favorite: t("proxyList.favoriteAria"),
     empty: t("proxyList.noResults"),
+  };
+
+  /* Подписи окна правки. Ключи те же, что имена полей формы, — так видно,
+     какая подпись какому полю принадлежит, без сверки по порядку. */
+  const editorText = Object.fromEntries(
+    Object.keys(SERVER_EDITOR_TEXT).map((key) => [key, t(`serverEditor.${key}`)]),
+  );
+
+  /*
+   * Сохранение идёт тем же путём, что и прежняя форма правки: подключённый в
+   * этот момент узел переподнимается с новыми настройками, а не остаётся жить
+   * со старыми до следующего переключения.
+   */
+  const saveServer = (data) => {
+    setEditingServer(null);
+    handleSaveProxy(
+      data,
+      activeProxy,
+      failedProxy,
+      setFailedProxy,
+      setActiveProxy,
+      isConnected,
+      selectAndConnect,
+      setActiveTab,
+      setEditingProxy,
+    );
   };
 
   const saveSubscription = async ({ name, showOnHome, intervalMinutes }) => {
@@ -503,6 +587,18 @@ export default function ServersScreen() {
         }}
         onClose={() => setSortAnchor(null)}
       />
+
+      {editingServer && (
+        <ServerEditor
+          /* Поля набираются из сервера при появлении окна, поэтому у каждого
+             сервера оно должно быть своим. */
+          key={editingServer.id}
+          proxy={editingServer}
+          text={editorText}
+          onClose={() => setEditingServer(null)}
+          onSave={saveServer}
+        />
+      )}
 
       {editingSub && (
         <SubscriptionDialog

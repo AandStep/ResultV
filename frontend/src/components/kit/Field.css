@@ -110,3 +110,109 @@
   opacity: 0.5;
   cursor: default;
 }
+
+/* --- Поле с плавающей подписью -------------------------------------------- */
+
+/*
+ * Коробка одна на оба состояния, поэтому высота задана числом, а не отступами:
+ * 64, как у Select. Подпись лежит поверх ввода, отсюда `position: relative`.
+ */
+.rv-field {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.rv-field__input {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  height: 64px;
+  padding: 0 var(--rv-space-16);
+  border: 0;
+  border-radius: var(--rv-radius-16);
+  background: var(--rv-dark-grey);
+
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-regular-size);
+  font-weight: var(--rv-regular-weight);
+  line-height: var(--rv-regular-leading);
+  color: var(--rv-white);
+
+  caret-color: var(--rv-white-a50);
+  outline: none;
+  text-overflow: ellipsis;
+  box-shadow: 0 0 0 0 var(--rv-main-a20);
+  transition:
+    box-shadow var(--rv-transition),
+    padding-top var(--rv-transition);
+}
+
+.rv-field__input::placeholder {
+  color: var(--rv-white-a20);
+}
+
+.rv-field__input:focus {
+  box-shadow: 0 0 0 var(--rv-border-width) var(--rv-main-a20);
+}
+
+.rv-field__input[aria-invalid="true"] {
+  box-shadow: 0 0 0 var(--rv-border-width) var(--rv-errors-a20);
+}
+
+.rv-field__input[aria-invalid="true"]:focus {
+  box-shadow: 0 0 0 var(--rv-border-width) var(--rv-errors);
+}
+
+.rv-field__input:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/*
+ * Подпись в покое спрятана и сдвинута вниз — туда, где стоит подсказка. Она не
+ * появляется, а всплывает оттуда: так видно, что подсказка и подпись — одно и
+ * то же слово, а не два разных.
+ */
+.rv-field__label {
+  position: absolute;
+  top: 11px;
+  left: var(--rv-space-16);
+  right: var(--rv-space-16);
+
+  /* 11 — ступень ниже самой мелкой в ките (Regular, 14). Взята намеренно:
+     в одной коробке со значением подпись того же кегля читается как второе
+     значение, а не как имя поля. См. docs/design/GAPS.md. */
+  font-size: 11px;
+  font-weight: var(--rv-regular-weight);
+  line-height: 13px;
+  color: var(--rv-white-a50);
+
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+
+  opacity: 0;
+  transform: translateY(9px);
+  transition:
+    opacity var(--rv-transition),
+    transform var(--rv-transition);
+}
+
+/*
+ * Заполненное поле держит подпись всегда; пустое — пока в нём курсор. Второе
+ * нужно ради ввода: подсказка в фокусе никуда не девается, и без подписи было
+ * бы непонятно, во что именно сейчас печатают.
+ */
+.rv-field__input:not(:placeholder-shown) ~ .rv-field__label,
+.rv-field__input:focus ~ .rv-field__label {
+  opacity: 1;
+  transform: none;
+}
+
+/* Значение уступает подписи место сверху и едет вниз вместе с ней. */
+.rv-field__input:not(:placeholder-shown),
+.rv-field__input:focus {
+  padding-top: 20px;
+}

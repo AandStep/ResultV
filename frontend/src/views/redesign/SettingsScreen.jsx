@@ -415,6 +415,7 @@ export default function SettingsScreen() {
             killSwitch: row("killswitch"),
             dnsLeak: row("dns_leak_protection"),
             dns: row("dns", {
+              customLabel: t("settings.dns.custom_label"),
               placeholder: t("settings.dns.custom_placeholder"),
             }),
             ipv6: row("enable_ipv6"),

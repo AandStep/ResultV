@@ -41,6 +41,8 @@ export const SERVERS_PAGE_TEXT = {
   deleteSubscription: "Удалить подписку",
   pingGroup: "Измерить задержку до серверов группы",
   deleteGroup: "Удалить все серверы группы",
+  editServer: "Изменить сервер",
+  deleteServer: "Удалить сервер",
   favorite: "В избранное",
   empty: "Серверы не найдены",
 };
@@ -153,6 +155,12 @@ export default function ServersPage({
                   favoriteTitle={text.favorite}
                   active={item.active}
                   onFavorite={item.onFavorite}
+                  /* Правка и удаление приходят только у своих серверов:
+                     у остальных строк этих обработчиков нет, и кнопок тоже. */
+                  onEdit={item.onEdit}
+                  onDelete={item.onDelete}
+                  editTitle={text.editServer}
+                  deleteTitle={text.deleteServer}
                   onClick={item.onSelect}
                 />
               ))}

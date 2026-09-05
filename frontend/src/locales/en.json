@@ -187,7 +187,7 @@
   "settings": {
     "title": "Settings",
     "desc": "Manage security and system options",
-    "back": "Back to settings",
+    "back": "Back",
     "groups": {
       "advanced": {
         "title": "Advanced settings",
@@ -196,7 +196,7 @@
       },
       "subscriptions": {
         "title": "Subscriptions",
-        "desc": "Auto refresh and the data sent to subscription providers.",
+        "desc": "Refresh schedule and data sent to providers.",
         "items": "• Updates • HWID  • UA"
       },
       "security": {
@@ -212,61 +212,62 @@
     },
     "tun_stack": {
       "title": "TUN mode",
-      "desc": "Choose the TUN network stack. The Windows system stack is used by default.",
+      "desc": "Tunnel network stack: system or gvisor.",
       "default": "Default",
       "system": "system",
       "gvisor": "gvisor"
     },
     "autostart": {
       "title": "Run at startup",
-      "desc": "Automatically open application when PC boots."
+      "desc": "Launch the app together with Windows."
     },
     "killswitch": {
       "title": "Enable Kill Switch",
-      "desc": "Instantly cut internet connection if proxy goes down."
+      "desc": "Cuts the internet if the proxy goes down."
     },
     "dns_leak_protection": {
       "title": "DNS leak protection",
-      "desc": "Blocks Windows' parallel DNS queries from escaping via the LAN adapter. Protects against ISP DNS hijacking (Rostelecom, MSK-IX, etc.). On Windows, changing system DNS requires administrator privileges. Disable only if it interferes with local-network workflows."
+      "desc": "Keeps DNS queries from leaving the tunnel."
     },
     "enable_ipv6": {
       "title": "IPv6 in the tunnel",
-      "desc": "By default the tunnel is IPv4-only and the resolver returns no AAAA records. Turn this on only if you actually have working IPv6: on networks where it is broken or unproxied it will make things worse. On machines without IPv6 the setting is ignored automatically."
+      "desc": "Enable only if your IPv6 actually works."
     },
     "subscription_auto_update": {
       "title": "Automatic refresh",
-      "desc": "Periodically refresh all added subscriptions."
+      "desc": "Refresh subscriptions on a schedule."
     },
     "subscription_interval": {
       "title": "Refresh interval",
-      "desc": "How often to refresh subscriptions, in hours.",
+      "desc": "How often to refresh subscriptions.",
       "hours": "{{hours}} h"
     },
     "subscription_hwid": {
       "title": "Send HWID",
-      "desc": "Send the device identifier to HTTPS subscriptions for device-limit checks."
+      "desc": "Device ID for provider device-limit checks."
     },
     "subscription_user_agent": {
       "title": "User agent",
-      "desc": "Clear the field to use the default ResultV/<version>/Windows/<OS version> value.",
+      "desc": "Empty — the default ResultV header.",
       "placeholder": "ResultV/3.3.2/Windows/11_10.0.26200"
     },
     "dns": {
       "title": "DNS Servers",
-      "desc": "Choose a DNS provider or enter custom DNS servers separated by commas.",
+      "desc": "A DNS provider or your own addresses, separated by commas.",
       "preset_auto": "Auto (default)",
       "preset_google": "Google DNS",
       "preset_cloudflare": "Cloudflare DNS",
       "preset_quad9": "Quad9 DNS",
       "preset_yandex": "Yandex DNS",
-      "custom_placeholder": "Example: 8.8.8.8, 1.1.1.1",
+      "custom_label": "Or enter your own",
+    "custom_placeholder": "Example: 8.8.8.8, 1.1.1.1",
       "apply": "Apply"
     },
     "lan_listen": {
       "toggle_title": "Listen on local network",
-      "toggle_desc": "Allow other devices on your local network to connect to this proxy. Use only on trusted networks.",
+      "toggle_desc": "Let other devices on the network use the proxy.",
       "port_title": "Local port",
-      "port_desc": "Empty or 0 means auto. A fixed port is convenient for connecting other devices.",
+      "port_desc": "Empty or 0 — the port is chosen automatically.",
       "port_placeholder": "0 (auto)",
       "port_apply": "Apply",
       "addr_title": "Client address",
@@ -276,11 +277,11 @@
     },
     "quic": {
       "title": "QUIC (UDP/443)",
-      "desc": "On: better speed and compatibility for YouTube/Google. Off: compatibility mode for networks where QUIC is unstable."
+      "desc": "On — speed for YouTube and Google, off — compatibility."
     },
     "export_import": {
       "title": "Export / import configurations",
-      "desc": "Save all app settings and servers to move them to another device.",
+      "desc": "Move settings and servers to another device.",
       "export_btn": "Export",
       "import_btn": "Import"
     },
@@ -622,7 +623,8 @@
     "endpointOnly": "WireGuard and AmneziaWG do not work in Proxy mode — Tunnel only."
   },
   "toast": {
-    "autoResolveHint": "Connecting to an auto server can take longer — we're picking the best node for you."
+    "autoResolveHint": "Connecting to an auto server can take longer — we're picking the best node for you.",
+    "autoNoNodes": "Auto group: no node responded. Connection cancelled — pick another server or try again later."
   },
   "changelog": {
     "title": "What's new",

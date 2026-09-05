@@ -20,7 +20,6 @@ import { AppProvider } from "./context/AppContext";
 import { MainLayout } from "./components/layout/MainLayout";
 import HomeScreen from "./views/redesign/HomeScreen";
 import SmartRulesScreen from "./views/redesign/SmartRulesScreen";
-import { AddProxyView } from "./views/AddProxyView";
 import AddScreen from "./views/redesign/AddScreen";
 import ServersScreen from "./views/redesign/ServersScreen";
 import BuyScreen from "./views/redesign/BuyScreen";
@@ -46,7 +45,6 @@ const AppContent = () => {
     const {
         isConfigLoaded,
         activeTab,
-        editingProxy,
         showProtocolModal,
         setShowProtocolModal,
         appDialog,
@@ -143,10 +141,7 @@ const AppContent = () => {
             {activeTab === "home" && <HomeScreen />}
             {activeTab === "list" && <ServersScreen />}
             {activeTab === "rules" && <SmartRulesScreen />}
-            {/* Добавление переехало на новый дизайн; правка сервера пока
-                идёт по старой форме — её в макете нет. */}
-            {activeTab === "add" &&
-                (editingProxy ? <AddProxyView /> : <AddScreen />)}
+            {activeTab === "add" && <AddScreen />}
             {activeTab === "buy" && <BuyScreen />}
             {activeTab === "logs" && <LogsScreen />}
             {activeTab === "settings" && <SettingsScreen />}

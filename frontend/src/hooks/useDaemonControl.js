@@ -92,8 +92,35 @@ export const useDaemonControl = (
             return [proxyToResolve];
         }
         const ranked = await wailsAPI.resolveAutoCandidates(proxyToResolve.id);
-        return ranked.length > 0 ? ranked : [proxyToResolve];
+        /* Пусто — значит пусто. Раньше здесь стоял откат на саму AUTO-запись, и
+           это был худший из возможных исходов: у заголовка группы нет ни
+           адреса, ни протокола, ядро собирало из него http-аутбаунд с пустым
+           сервером, поднималось без единой ошибки и рапортовало «Подключено».
+           Кнопка загоралась зелёным, а каждое соединение падало с «invalid
+           address» (логи 05.09.2026). Пустой список честнее: у него есть свой
+           обработчик, а у зелёной кнопки поверх мёртвого туннеля — нет. */
+        return ranked;
     }, []);
+
+    /* Общий выход для «подбор не нашёл ни одного узла».
+       Живое соединение не рвём: у авто-группы подбор идёт ДО отключения, и
+       уронить рабочий туннель из-за того, что не нашлась замена, — худшее, что
+       можно сделать. */
+    const reportEmptyAutoGroup = useCallback(
+        (group) => {
+            addLog(
+                `Авто-группа «${group?.name || ""}»: ни один узел не отвечает. ` +
+                    `Подключение отменено, текущее соединение не тронуто.`,
+                "error",
+            );
+            showToast({
+                variant: "error",
+                message: t("toast.autoNoNodes"),
+                duration: 6000,
+            });
+        },
+        [addLog, showToast, t],
+    );
 
     // tun_adapter_unavailable — Windows не запустила Wintun-адаптер. Он один на
     // всё приложение и от выбранного узла не зависит, так что перебор остальных
@@ -279,6 +306,15 @@ export const useDaemonControl = (
                     return;
                 }
 
+                if (candidates.length === 0) {
+                    setIsConnecting(false);
+                    setActiveProxy(null);
+                    reportEmptyAutoGroup(targetProxy);
+                    bumpGen();
+                    isSwitchingRef.current = false;
+                    return;
+                }
+
                 let res = null;
                 for (let i = 0; i < candidates.length; i++) {
                     /* Перебор узлов авто-группы тоже занимает секунды, и всё
@@ -399,6 +435,7 @@ export const useDaemonControl = (
         showToast,
         t,
         getConnectCandidates,
+        reportEmptyAutoGroup,
         ensureElevated,
     ]);
 
@@ -441,6 +478,7 @@ export const useDaemonControl = (
                 // every member and takes seconds; doing it first left the
                 // screen completely unchanged for that whole time, which reads
                 // as "the click didn't register".
+                const previousActive = activeProxy;
                 setActiveProxy(proxy);
                 if (String(settings?.lastSelectedProxyId) !== String(proxy.id)) {
                     updateSetting("lastSelectedProxyId", proxy.id);
@@ -476,6 +514,18 @@ export const useDaemonControl = (
                 // общие флаги остаются тому, кто нас обогнал.
                 if (isStale(epoch)) {
                     addLog("Запуск остановлен.", "info");
+                    return;
+                }
+
+                if (candidates.length === 0) {
+                    /* Строку сервера возвращаем на тот узел, что и правда
+                       поднят: подбор шёл поверх живого соединения, и оставить
+                       в шапке несостоявшуюся группу значило бы показывать не
+                       то, к чему подключён пользователь. */
+                    setActiveProxy(isConnected ? previousActive ?? null : null);
+                    reportEmptyAutoGroup(proxy);
+                    bumpGen();
+                    isSwitchingRef.current = false;
                     return;
                 }
                 addLog(`Переключение на: ${proxy.name}...`, "info");
@@ -603,6 +653,7 @@ export const useDaemonControl = (
             showToast,
             t,
             getConnectCandidates,
+            reportEmptyAutoGroup,
             ensureElevated,
         ],
     );

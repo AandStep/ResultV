@@ -35,6 +35,7 @@ import {
   Tumbler,
   ModeTumbler,
   Input,
+  Select,
   Textarea,
   SettingsItem,
   Header,
@@ -238,6 +239,20 @@ export default function KitShowcase() {
           </Cell>
           <Cell label="textarea / txt">
             <Textarea defaultValue="https://example.com" />
+          </Cell>
+        </div>
+      </Section>
+
+      <Section title="Select" node="6799:4634 · 6799:4963">
+        <div className="kit__grid">
+          <Cell label="default">
+            <Select
+              value="system"
+              options={[
+                { value: "system", label: "system" },
+                { value: "gvisor", label: "gvisor" },
+              ]}
+            />
           </Cell>
         </div>
       </Section>
