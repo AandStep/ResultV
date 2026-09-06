@@ -270,6 +270,7 @@
     <string name="sub_subtitle">%1$d сервер(ов)</string>
     <string name="sub_traffic_used_unlimited">%1$s / ∞</string>
     <string name="sub_refresh_cd">Обновить подписку</string>
+    <string name="sub_refresh_failed">Не удалось обновить подписку — подробности в логах</string>
     <string name="sub_delete_cd">Удалить подписку</string>
     <string name="sub_delete_title">Удалить подписку?</string>
     <string name="sub_delete_message">«%1$s» и %2$d привязанных профилей будут удалены.</string>

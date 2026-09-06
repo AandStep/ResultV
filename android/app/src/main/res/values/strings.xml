@@ -299,6 +299,7 @@
     <!-- Subscriptions -->
     <string name="sub_subtitle">%1$d server(s)</string>
     <string name="sub_refresh_cd">Refresh subscription</string>
+    <string name="sub_refresh_failed">Couldn’t update the subscription — details in Logs</string>
     <string name="sub_delete_cd">Delete subscription</string>
     <string name="sub_delete_title">Delete subscription?</string>
     <string name="sub_delete_message">"%1$s" and its %2$d profile(s) will be removed.</string>

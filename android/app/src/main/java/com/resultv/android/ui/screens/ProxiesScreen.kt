@@ -48,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import android.widget.Toast
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -75,6 +76,7 @@ import com.resultv.android.vpn.PingRepository
 import com.resultv.android.vpn.Profile
 import com.resultv.android.vpn.ProfileRepository
 import com.resultv.android.vpn.Subscription
+import com.resultv.android.vpn.AppLog
 import com.resultv.android.vpn.SubscriptionRefresher
 import com.resultv.android.vpn.SubscriptionRepository
 import com.resultv.android.vpn.SubscriptionUsage
@@ -249,8 +251,29 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
                             if (refreshingSubId != null) return@onRefresh
                             refreshingSubId = sub.id
                             scope.launch {
-                                runCatching { SubscriptionRefresher.refreshOne(sub, dataDir) }
+                                val result = runCatching {
+                                    SubscriptionRefresher.refreshOne(sub, dataDir)
+                                }
                                 refreshingSubId = null
+                                // A failed manual refresh used to end here silently:
+                                // the spinner stopped, nothing else changed, and the
+                                // reason was logged only on the auto-refresh path
+                                // (SubscriptionRefresher.refreshDue). From the screen
+                                // the button looked dead - which is exactly how it was
+                                // reported. Log it like the timer does, and say so on
+                                // screen.
+                                result.onFailure { t ->
+                                    AppLog.warning(
+                                        R.string.log_sub_refresh_failed,
+                                        sub.name,
+                                        t.message ?: t.javaClass.simpleName,
+                                    )
+                                    Toast.makeText(
+                                        ctx,
+                                        ctx.getString(R.string.sub_refresh_failed),
+                                        Toast.LENGTH_LONG,
+                                    ).show()
+                                }
                             }
                         },
                         onEdit = { editingSubId = sub.id },
