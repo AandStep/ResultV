@@ -220,18 +220,21 @@ fun RulesScreen() {
 /** Common section wrapper — keeps header + body together with consistent spacing. */
 @Composable
 private fun Section(content: @Composable () -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { content() }
+    // Заголовок отделён от содержимого только этим зазором — отступа слева у
+    // содержимого больше нет, поэтому зазор чуть больше прежних 12.
+    Column(verticalArrangement = Arrangement.spacedBy(18.dp)) { content() }
 }
 
 /**
- * Section content, indented so it lines up under the header title rather than
- * the screen edge — mirrors the DNS block in Settings. The 50dp inset is the
- * 36dp [SettingIcon] plus the 14dp header gap.
+ * Section content. Runs the full width rather than lining up under the header
+ * title: the controls here are wide ones — segmented rows, the tag field, the
+ * app list — and a 50dp inset under the icon cost them that width on every row
+ * while buying only an alignment nobody was reading. The header is separated by
+ * the gap in [Section] instead.
  */
 @Composable
 private fun SectionBody(content: @Composable ColumnScope.() -> Unit) {
     Column(
-        modifier = Modifier.padding(start = 50.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
         content = content,
     )
