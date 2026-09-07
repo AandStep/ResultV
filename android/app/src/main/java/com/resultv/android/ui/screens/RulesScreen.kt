@@ -17,15 +17,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -34,12 +31,10 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AltRoute
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.CallSplit
-import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Language
@@ -48,10 +43,8 @@ import androidx.compose.material.icons.outlined.VpnLock
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
@@ -84,6 +77,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
 import com.resultv.android.theme.Brand
 import com.resultv.android.ui.components.SettingIcon
+import com.resultv.android.ui.components.TagField
 import com.resultv.android.vpn.AppInventory
 import com.resultv.android.vpn.AppRoutingRepository
 import com.resultv.android.vpn.AppTunnelMembership
@@ -197,53 +191,17 @@ fun RulesScreen() {
                     )
                 }
 
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    OutlinedTextField(
-                        value = domainInput,
-                        onValueChange = { domainInput = it },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true,
-                        shape = RoundedCornerShape(16.dp),
-                        placeholder = { Text(stringResource(R.string.rules_domain_placeholder)) },
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = {
-                            RoutingRulesRepository.addDomain(domainInput, domainTab)
-                            domainInput = ""
-                            keyboard?.hide(); focusManager.clearFocus()
-                        }),
-                    )
-                    FilledTonalButton(
-                        onClick = {
-                            RoutingRulesRepository.addDomain(domainInput, domainTab)
-                            domainInput = ""
-                            keyboard?.hide(); focusManager.clearFocus()
-                        },
-                        shape = RoundedCornerShape(16.dp),
-                        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp),
-                    ) {
-                        Icon(Icons.Outlined.Add, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text(stringResource(R.string.action_add))
-                    }
-                }
-
-
-                if (active.isNotEmpty()) {
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        active.forEach { domain ->
-                            DomainChip(
-                                label = domain,
-                                onRemove = { RoutingRulesRepository.removeDomain(domain, domainTab) },
-                            )
-                        }
-                    }
-                }
+                // One field for typing and for what has already been added:
+                // space commits, Enter commits and drops the keyboard. See
+                // TagField for the rest of the behaviour.
+                TagField(
+                    values = active,
+                    draft = domainInput,
+                    onDraftChange = { domainInput = it },
+                    onCommit = { RoutingRulesRepository.addDomain(it, domainTab) },
+                    onRemove = { RoutingRulesRepository.removeDomain(it, domainTab) },
+                    placeholder = stringResource(R.string.rules_domain_placeholder),
+                )
 
                 val recentSuggestions = remember(rules.domains.history, active) {
                     rules.domains.history.asSequence()
@@ -461,29 +419,6 @@ private fun RuleTabs(
 }
 
 private val ChipShape = RoundedCornerShape(50)
-
-@Composable
-private fun DomainChip(label: String, onRemove: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .clip(ChipShape)
-            .background(Color.White.copy(alpha = 0.07f))
-            .border(1.dp, Color.White.copy(alpha = 0.09f), ChipShape)
-            .padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium)
-        IconButton(onClick = onRemove, modifier = Modifier.size(28.dp)) {
-            Icon(
-                Icons.Outlined.Close,
-                contentDescription = stringResource(R.string.action_remove),
-                tint = Brand.MutedText,
-                modifier = Modifier.size(16.dp),
-            )
-        }
-    }
-}
 
 @Composable
 private fun QuickAddChip(label: String, already: Boolean, onAdd: () -> Unit) {
