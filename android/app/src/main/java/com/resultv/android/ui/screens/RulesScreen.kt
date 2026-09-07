@@ -31,7 +31,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.AltRoute
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.CallSplit
@@ -67,6 +66,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -322,7 +322,9 @@ private fun RoutingModeSelector(
     mode: RoutingMode,
     onSelect: (RoutingMode) -> Unit,
 ) {
-    val modes = listOf(RoutingMode.Global, RoutingMode.Smart)
+    // Smart первым, как на ПК (SmartRulesPage.jsx): он же режим по умолчанию,
+    // и стоять он должен там, куда смотрят первым.
+    val modes = listOf(RoutingMode.Smart, RoutingMode.Global)
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
             modes.forEachIndexed { i, m ->
@@ -331,14 +333,20 @@ private fun RoutingModeSelector(
                     onClick = { onSelect(m) },
                     shape = SegmentedButtonDefaults.itemShape(i, modes.size),
                     icon = {
-                        Icon(
-                            imageVector = when (m) {
-                                RoutingMode.Global -> Icons.Outlined.Language
-                                RoutingMode.Smart -> Icons.Outlined.AltRoute
-                            },
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                        )
+                        // Smart несёт ту же иконку, что на ПК (smart-default.svg
+                        // из кита); Global остаётся глобусом.
+                        when (m) {
+                            RoutingMode.Smart -> Icon(
+                                painter = painterResource(R.drawable.ic_smart),
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            RoutingMode.Global -> Icon(
+                                imageVector = Icons.Outlined.Language,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
                     },
                 ) {
                     Text(
