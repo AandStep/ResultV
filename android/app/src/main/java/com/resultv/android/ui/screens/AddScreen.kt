@@ -25,8 +25,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
@@ -34,7 +32,6 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.FileOpen
-import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -66,7 +63,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.resultv.android.R
@@ -133,7 +129,7 @@ fun AddScreen(
                     }
                 }
                 else -> {
-                    val added = importLines(text, defaultName)
+                    val added = importBlob(text)
                     if (added > 0) {
                         importMessage = null
                         Toast.makeText(
@@ -343,6 +339,9 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
         if (trimmed.isEmpty()) { error = errEmpty; return@submit }
         keyboard?.hide(); focusManager.clearFocus()
         val lower = trimmed.lowercase()
+        // A subscription URL is one line. Several lines that merely start with
+        // http:// are a pasted list of links, not a URL to fetch.
+        val singleLine = trimmed.lineSequence().count { it.isNotBlank() } == 1
 
         when {
             // resultv://… — RVSUB1 ciphertext or opaque deep-link. The
@@ -356,7 +355,7 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
             }
             // http(s):// — subscription URL. Fetch and surface the selection
             // list so the user can untick anything they don't want.
-            lower.startsWith("http://") || lower.startsWith("https://") -> {
+            singleLine && (lower.startsWith("http://") || lower.startsWith("https://")) -> {
                 error = null
                 doFetch(
                     scope = scope,
@@ -367,16 +366,24 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
                     onResult = { fetched = it; fetchedUrl = trimmed; error = null },
                 )
             }
-            // Bare proxy share-link.
-            else -> {
-                val name = try {
-                    Mobile.parseProxyURI(trimmed)
-                    nameFromUri(trimmed) ?: defaultName
-                } catch (t: Throwable) {
-                    error = t.message ?: errInvalid
+            // WireGuard / AmneziaWG .conf — an INI file, so it has to be
+            // recognised before the parser, which speaks links and JSON.
+            WireGuardConfParser.isWireGuardConf(trimmed) -> {
+                if (importWireGuardConf(trimmed, defaultName) == null) {
+                    error = errInvalid
                     return@submit
                 }
-                ProfileRepository.add(Profile.fromUri(name, trimmed))
+                input = ""; error = null
+                onDone()
+            }
+            // Everything else goes to the same parser a subscription body
+            // does: share-links one per line, base64, an xray or sing-box
+            // outbound, a whole config with an `outbounds` array.
+            else -> {
+                if (importBlob(trimmed) == 0) {
+                    error = errInvalid
+                    return@submit
+                }
                 input = ""; error = null
                 onDone()
             }
@@ -411,10 +418,11 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
                 placeholder = { Text(stringResource(R.string.add_link_placeholder)) },
                 isError = error != null,
                 supportingText = error?.let { { Text(it) } },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { submit() }),
-                leadingIcon = { Icon(Icons.Outlined.Link, contentDescription = null) },
+                // Multi-line: a .conf or a JSON config is pasted whole, and a
+                // list of links comes several rows at a time. Enter therefore
+                // inserts a newline — the Add button below submits.
+                minLines = 3,
+                maxLines = 8,
             )
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -593,21 +601,33 @@ private fun importWireGuardConf(text: String, defaultName: String): String? {
 }
 
 /**
- * Parse a chunk of text (clipboard or file) as a list of share-links, one
- * per line, importing each as a profile. Returns the count of successful
- * imports.
+ * Parse a pasted chunk of text and add a profile per entry it yields.
+ * Returns how many landed.
+ *
+ * The format is decided by the content, not by the user: share-links one per
+ * line, a base64 subscription body, an RVSUB1 ciphertext, an xray or sing-box
+ * outbound, a whole config with an `outbounds` array — the same parser a
+ * downloaded subscription goes through.
+ *
+ * This replaces a per-line loop over ParseProxyURI, which is why a pasted JSON
+ * config used to import nothing at all: the parser's JSON branch was reachable
+ * only behind a network fetch.
  */
-private fun importLines(text: String, defaultName: String): Int {
+private fun importBlob(text: String): Int {
+    val json = runCatching { Mobile.parseProxyBlob(text) }.getOrNull() ?: return 0
+    val arr = runCatching { JSONArray(json) }.getOrNull() ?: return 0
     var added = 0
-    text.lineSequence().forEach { raw ->
-        val trimmed = raw.trim()
-        if (trimmed.isEmpty()) return@forEach
-        runCatching {
-            Mobile.parseProxyURI(trimmed)
-            val name = nameFromUri(trimmed) ?: defaultName
-            ProfileRepository.add(Profile.fromUri(name, trimmed))
-            added++
-        }
+    for (i in 0 until arr.length()) {
+        val o = arr.optJSONObject(i) ?: continue
+        val entry = parseEntry(o, i)
+        // SECTION rows are a subscription's visual structure; pasted text has
+        // no list for them to structure.
+        if (entry.isSection) continue
+        ProfileRepository.add(
+            if (entry.uri.isNotBlank()) Profile.fromUri(entry.name, entry.uri)
+            else Profile.fromEntryJson(entry.name, entry.entryJson)
+        )
+        added++
     }
     return added
 }
@@ -715,16 +735,14 @@ private fun defaultSubscriptionName(url: String): String {
     }.getOrDefault("Subscription")
 }
 
-private fun nameFromUri(uri: String): String? = runCatching {
-    val parsed = JSONObject(Mobile.parseProxyURI(uri))
-    parsed.optString("name").ifBlank { parsed.optString("ip").ifBlank { null } }
-}.getOrNull()
-
 /**
  * Clipboard quick-add dispatcher. Detects deep-links / subscription URLs /
- * bare share-links and runs the right import path. For http(s):// URLs we
+ * WireGuard .conf / everything else the parser reads (links, base64, xray and
+ * sing-box configs) and runs the right import path. For http(s):// URLs we
  * auto-import every entry rather than surfacing the selection UI — the
  * selection flow lives in the Link tab itself for users who want it.
+ *
+ * Same ladder as the Link pane's own submit, in the same order.
  */
 private fun smartClipboardImport(
     ctx: Context,
@@ -787,7 +805,7 @@ private fun smartClipboardImport(
         return
     }
 
-    val added = importLines(trimmed, defaultName)
+    val added = importBlob(trimmed)
     onMessage(if (added > 0) msgImportedClipboard(added) else msgNoUrisClipboard)
 }
 
@@ -828,7 +846,7 @@ private fun launchQrScan(
                     onResult(msgImported)
                 }
                 else -> {
-                    val added = importLines(raw, defaultName)
+                    val added = importBlob(raw)
                     onResult(if (added > 0) msgImported else msgInvalid)
                 }
             }

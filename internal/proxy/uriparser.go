@@ -269,6 +269,10 @@ func parseJSONOutbound(outbound map[string]interface{}, name string) (config.Pro
 		return config.ProxyEntry{}, false
 	}
 
+	// A sing-box-shaped outbound is rewritten into the xray shape the branches
+	// below read; an xray-shaped one passes through untouched.
+	outbound = normalizeSingBoxOutbound(protocol, outbound)
+
 	settings, _ := asMap(outbound["settings"])
 	stream, _ := asMap(outbound["streamSettings"])
 

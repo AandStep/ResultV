@@ -185,10 +185,11 @@
     <string name="add_mode_manual">Manual</string>
 
     <!-- Add screen — unified Link pane -->
-    <string name="add_link_label">Paste link or subscription</string>
-    <string name="add_link_placeholder">resultv:// · https://… · vless:// vmess:// trojan:// hy2:// …</string>
+    <string name="add_link_label">Paste a link, a subscription or a config</string>
+    <string name="add_link_placeholder">resultv:// · https://… · vless:// vmess:// trojan:// hy2:// …
+[Interface] of a WireGuard .conf, or a JSON config</string>
     <string name="add_link_err_empty">Link is empty</string>
-    <string name="add_link_err_invalid">Could not recognize this link</string>
+    <string name="add_link_err_invalid">Could not recognize this link or config</string>
     <string name="add_paste_default_name">Profile</string>
 
     <!-- Add screen — subscription preview (shown when Link is an http(s):// URL) -->

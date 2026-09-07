@@ -356,6 +356,30 @@ func ParseProxyURI(uri string) (string, error) {
 	return string(data), nil
 }
 
+// ParseProxyBlob parses a chunk of pasted text into a JSON array of
+// ProxyEntry objects. It is the paste-field counterpart of FetchSubscription:
+// same parser, same formats — share-links one per line, a base64 subscription
+// body, an RVSUB1 ciphertext, an xray or sing-box outbound, a whole config
+// with an `outbounds` array — only without the download.
+//
+// The Link pane used to walk pasted text line by line calling ParseProxyURI,
+// which is why a JSON config pasted into it produced nothing at all: the JSON
+// branch of the parser was reachable only behind a network fetch.
+//
+// Returns an error rather than an empty array when nothing parses, so the
+// caller can tell "this is not a config" from "this config has no servers".
+func ParseProxyBlob(text string) (string, error) {
+	entries, err := proxy.ParseSubscriptionBody(text)
+	if err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(entries)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
 // FetchSubscription downloads a subscription URL and parses its body
 // into a JSON array of ProxyEntry objects. Handles base64-encoded,
 // line-separated, and JSON subscription formats (see

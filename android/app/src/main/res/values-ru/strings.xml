@@ -178,10 +178,11 @@
     <string name="add_mode_link">Ссылка</string>
     <string name="add_mode_manual">Вручную</string>
 
-    <string name="add_link_label">Вставьте ссылку или подписку</string>
-    <string name="add_link_placeholder">resultv:// · https://… · vless:// vmess:// trojan:// hy2:// …</string>
+    <string name="add_link_label">Вставьте ссылку, подписку или конфиг</string>
+    <string name="add_link_placeholder">resultv:// · https://… · vless:// vmess:// trojan:// hy2:// …
+[Interface] из .conf WireGuard или JSON-конфиг</string>
     <string name="add_link_err_empty">Ссылка пустая</string>
-    <string name="add_link_err_invalid">Не удалось распознать ссылку</string>
+    <string name="add_link_err_invalid">Не удалось распознать ссылку или конфиг</string>
     <string name="add_paste_default_name">Профиль</string>
 
     <string name="add_sub_fetch">Получить</string>
