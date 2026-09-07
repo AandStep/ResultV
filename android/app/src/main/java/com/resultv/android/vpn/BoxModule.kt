@@ -374,6 +374,16 @@ private class BoxPlatform(private val service: ResultVpnService) : PlatformInter
      * and keep going straight through the TUN as before — this call has no
      * effect on them, by design.
      *
+     * The host is NOT loopback. It is an address inside the TUN prefix
+     * (Mobile.browserAdBlockProxyHost), so the browser's CONNECT travels
+     * through the tunnel and arrives at the engine as an ordinary connection
+     * whose owner Android will resolve — which is what lets package_name rules
+     * match browser traffic. A loopback proxy address made the first hop
+     * invisible to the engine (getConnectionOwnerUid returns INVALID_UID for
+     * loopback), so a blocked app kept reaching the network whenever the
+     * browser ad-block was on. The engine rewrites the destination back to the
+     * MITM's real loopback listener; see buildBrowserAdBlockRedirect.
+     *
      * Deliberately checks `BoxModule.filterProxyRunning`, NOT the settings
      * toggle directly: openTun() runs synchronously inside BoxModule.start(),
      * so if we applied setHttpProxy whenever the toggle is on (regardless of
@@ -388,7 +398,10 @@ private class BoxPlatform(private val service: ResultVpnService) : PlatformInter
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) return
         if (!BoxModule.filterProxyRunning) return
         builder.setHttpProxy(
-            android.net.ProxyInfo.buildDirectProxy("127.0.0.1", BROWSER_ADBLOCK_PORT)
+            android.net.ProxyInfo.buildDirectProxy(
+                mobile.Mobile.browserAdBlockProxyHost(),
+                BROWSER_ADBLOCK_PORT,
+            )
         )
     }
 

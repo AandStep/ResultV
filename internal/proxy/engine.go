@@ -441,6 +441,14 @@ type SBRouteRule struct {
 	RuleSet     []string `json:"rule_set,omitempty"`
 	Outbound    string   `json:"outbound,omitempty"`
 	Action      string   `json:"action,omitempty"`
+	// OverrideAddress / OverridePort rewrite the destination of a matched
+	// connection before it is dialed (sing-box `route` action options). The
+	// stream itself is passed through untouched, which is what distinguishes
+	// this from routing to an `http` outbound: the latter would emit its own
+	// CONNECT for the matched destination instead of letting the client's
+	// bytes reach the target. Used by the mobile browser ad-block redirect.
+	OverrideAddress string `json:"override_address,omitempty"`
+	OverridePort    int    `json:"override_port,omitempty"`
 }
 
 func effectiveDataDir(cfg EngineConfig) string {

@@ -40,6 +40,37 @@ import (
 // BROWSER_ADBLOCK_PORT (8130, the MITM HTTP proxy the browser points at).
 const BrowserAdBlockSocksPort = 18130
 
+// mobileTunIPv4 is the TUN interface prefix every mobile config is built with.
+// A /30 leaves exactly one other host address, browserAdBlockProxyHost.
+const mobileTunIPv4 = "172.19.0.1/30"
+
+// browserAdBlockProxyHost is the address Kotlin points VpnService's system HTTP
+// proxy at (VpnService.Builder.setHttpProxy), and the destination the engine
+// rewrites to the MITM's real loopback listener.
+//
+// It deliberately is NOT 127.0.0.1. A loopback CONNECT never enters the TUN, so
+// sing-box sees the browser's traffic arrive on a loopback socket whose owner
+// Android refuses to resolve (getConnectionOwnerUid returns INVALID_UID for
+// loopback, and /proc/net/tcp is SELinux-denied to untrusted_app) — which is
+// why per-app rules could not match browser traffic while the MITM was on.
+//
+// Routed through the TUN instead, the first hop is an ordinary connection with
+// a resolvable owner: package_name rules match, and a blocked app is rejected
+// before its bytes ever reach the MITM. The address must stay inside
+// mobileTunIPv4 but must not be the TUN address itself — the kernel answers its
+// own address locally, which would put us straight back on loopback.
+const browserAdBlockProxyHost = "172.19.0.2"
+
+// defaultBrowserAdBlockPort mirrors Kotlin's BROWSER_ADBLOCK_PORT. Kotlin sends
+// the live value in BuildOptions.BrowserAdBlockPort; this is the fallback for a
+// caller that omits it (an APK built against an older wrapper), because a
+// redirect rule pointing at port 0 would silently swallow browser traffic.
+const defaultBrowserAdBlockPort = 8130
+
+// BrowserAdBlockProxyHost is the host Kotlin must hand to
+// ProxyInfo.buildDirectProxy. Exported as a function so the address stays owned
+// by the side that also owns the TUN prefix it has to live in.
+func BrowserAdBlockProxyHost() string { return browserAdBlockProxyHost }
 
 // Version returns the wrapper version. Bump on every breaking change to
 // the Kotlin-facing API.
@@ -724,6 +755,12 @@ type BuildOptions struct {
 	// sites in the browser. Kotlin sets this from the same SettingsRepository
 	// flag that gates StartFilterProxy / setHttpProxy.
 	BrowserAdBlock bool `json:"browserAdBlock,omitempty"`
+	// BrowserAdBlockPort is the port the MITM proxy listens on (Kotlin's
+	// BROWSER_ADBLOCK_PORT, the same value it passes to StartFilterProxy).
+	// The engine needs it to build the redirect rule that sends browser
+	// traffic from browserAdBlockProxyHost into the MITM. Zero means
+	// defaultBrowserAdBlockPort.
+	BrowserAdBlockPort int `json:"browserAdBlockPort,omitempty"`
 	// KillSwitchArmed wraps the proxy outbound in a single-member urltest
 	// group ("ks-test") and points route.final at it so the Android
 	// KillSwitchWatchdog can health-probe the proxy from inside the engine.
@@ -890,6 +927,24 @@ func buildUserRules(opts BuildOptions) []proxy.SBRouteRule {
 	if doms := splitDomainRuleCSV(opts.BlockedDomains); len(doms) > 0 {
 		rules = append(rules, proxy.SBRouteRule{Action: "reject", DomainSuffix: doms})
 	}
+	// Browser ad-block redirect. Sits here on purpose — behind the reject
+	// rules and ahead of everything else:
+	//
+	//   - behind the blocked lists, so a blocked app is rejected before its
+	//     traffic is handed to the MITM (the whole point of routing the first
+	//     hop through the TUN);
+	//   - ahead of the into-VPN and domain rules, because `sniff` reads the
+	//     browser's CONNECT and populates the hostname of the *target* site.
+	//     A rule like "domain X -> proxy" would then match this hop and ship a
+	//     connection addressed to browserAdBlockProxyHost off to the remote
+	//     server. The target's own routing is decided later anyway, on the
+	//     MITM's upstream hop through the browser-adblock-in SOCKS inbound.
+	//
+	// No loop: the MITM dials upstream at BrowserAdBlockSocksPort, which this
+	// rule does not match.
+	if r, ok := buildBrowserAdBlockRedirect(opts); ok {
+		rules = append(rules, r)
+	}
 	// "Into VPN" is Smart-only: in Global final=proxy already tunnels it.
 	if opts.SmartMode {
 		if apps := splitRuleCSV(opts.IntoVpnApps); len(apps) > 0 {
@@ -904,6 +959,37 @@ func buildUserRules(opts BuildOptions) []proxy.SBRouteRule {
 		}
 	}
 	return rules
+}
+
+// buildBrowserAdBlockRedirect returns the rule that hands browser traffic to
+// the in-process MITM, and whether the browser ad-block is on at all.
+//
+// The destination override is what makes this work: routing to an `http`
+// outbound would make sing-box send its own `CONNECT browserAdBlockProxyHost`
+// to the MITM — asking the proxy to connect to itself. Overriding the address
+// instead passes the stream through untouched, so the MITM reads the browser's
+// own CONNECT exactly as it does when reached over loopback today.
+//
+// The rule is inert unless Kotlin also applied setHttpProxy (it does so only
+// once StartFilterProxy has succeeded): with no system proxy configured,
+// nothing ever addresses browserAdBlockProxyHost.
+func buildBrowserAdBlockRedirect(opts BuildOptions) (proxy.SBRouteRule, bool) {
+	if !opts.BrowserAdBlock {
+		return proxy.SBRouteRule{}, false
+	}
+	port := opts.BrowserAdBlockPort
+	if port <= 0 {
+		port = defaultBrowserAdBlockPort
+	}
+	return proxy.SBRouteRule{
+		Network:         []string{"tcp"},
+		IPCidr:          []string{browserAdBlockProxyHost + "/32"},
+		Port:            []int{port},
+		Action:          "route",
+		Outbound:        "direct",
+		OverrideAddress: "127.0.0.1",
+		OverridePort:    port,
+	}, true
 }
 
 // userRuleInsertIndex returns the index just past the prologue that must stay
@@ -1296,12 +1382,22 @@ func applyKillSwitch(sb *proxy.SingBoxConfig, armed, panicMode bool) {
 		// Outbound) are untouched. final=block catches everything else.
 		for i := range sb.Route.Rules {
 			r := &sb.Route.Rules[i]
-			if r.Outbound == "direct" && len(r.IPCidr) > 0 {
+			// The browser ad-block redirect is direct + ip_cidr too, so it
+			// would fall into the bypass carve-out below by accident. It must
+			// not: with the redirect alive the browser still reaches the MITM
+			// and only fails once the MITM's upstream hits final=block —
+			// a slow failure where the kill switch promises an instant one.
+			if r.Outbound == "direct" && len(r.IPCidr) > 0 && r.OverrideAddress == "" {
 				continue // preserve LAN + server-IP bypass
 			}
 			if r.Outbound == "proxy" || r.Outbound == "direct" {
 				r.Outbound = ""
 				r.Action = "reject"
+				// The core does accept a leftover override on a reject rule —
+				// it just never dials, so the fields would be dead config that
+				// reads as if the redirect still happened.
+				r.OverrideAddress = ""
+				r.OverridePort = 0
 			}
 		}
 		sb.Route.Final = "block"
@@ -1331,7 +1427,7 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 		},
 		Mode:                proxy.ProxyModeTunnel,
 		DataDir:             dataDir,
-		TunIPv4:             "172.19.0.1/30",
+		TunIPv4:             mobileTunIPv4,
 		IsAndroid:           true,
 		IPv6:                opts.IPv6,
 		BypassLAN:           opts.BypassLAN,

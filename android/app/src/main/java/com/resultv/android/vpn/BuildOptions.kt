@@ -52,6 +52,10 @@ internal object BuildOptionsBuilder {
             // sites die in the browser. Must mirror the same flag that gates
             // StartFilterProxy / setHttpProxy in ResultVpnService.
             .put("browserAdBlock", settings.browserAdBlock)
+            // The engine also needs the MITM's port to build the rule that
+            // redirects browser traffic from the in-tunnel proxy address into
+            // the MITM. Same value we hand to StartFilterProxy.
+            .put("browserAdBlockPort", BROWSER_ADBLOCK_PORT)
             // Kill switch: armed whenever the user enabled it; panic only while
             // the watchdog has engaged (proxy down).
             .put("killSwitchArmed", settings.killSwitch)
