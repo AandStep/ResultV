@@ -81,7 +81,7 @@ internal fun tagDraftEdit(text: String): TagDraftEdit {
 // Коробка: заливка Dark Grey, скругление 24, отступ 16, зазор 10, рамка
 // фокуса Main-color 20 %. Рамки в покое нет — только заливка.
 // Тег: заливка Light Gray, скругление 100, отступы 6/10/8/10, зазор 4,
-// подпись Regular (14/500) белым 50 %, крестик 14.
+// подпись белым 50 % (кегль — см. TagTextStyle), крестик 14.
 private val FieldShape = RoundedCornerShape(24.dp)
 private val FieldPadding = 16.dp
 private val FieldGap = 10.dp
@@ -98,10 +98,15 @@ private val FieldMinHeight = 112.dp
 private val RemoveIconSize = 14.dp
 private val RemoveTouchSize = 22.dp
 
+// Единственное сознательное отступление от метрик ПК: там подпись 14, здесь 12.
+// На мониторе теги стоят в широком поле, на телефоне тот же кегль рядом с
+// остальным текстом секции читался крупно. Межстрочный оставлен в той же
+// пропорции 1.4. Стиль один на все три текста поля — подпись тега, плейсхолдер
+// и ввод, — чтобы они не разъезжались.
 private val TagTextStyle = TextStyle(
-    fontSize = 14.sp,
+    fontSize = 12.sp,
     fontWeight = FontWeight.Medium,
-    lineHeight = 19.6.sp,
+    lineHeight = 16.8.sp,
 )
 
 /**
