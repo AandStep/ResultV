@@ -8,16 +8,13 @@ import android.graphics.Canvas
 import android.graphics.drawable.Drawable
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -90,9 +87,7 @@ import com.resultv.android.vpn.domainPatternShadows
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-private val QuickDomains = listOf("*.ru", "*.рф", "*.su", "*.by", "*.kz")
-
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RulesScreen() {
     val rules by RoutingRulesRepository.state.collectAsStateWithLifecycle()
@@ -202,55 +197,6 @@ fun RulesScreen() {
                     onRemove = { RoutingRulesRepository.removeDomain(it, domainTab) },
                     placeholder = stringResource(R.string.rules_domain_placeholder),
                 )
-
-                val recentSuggestions = remember(rules.domains.history, active) {
-                    rules.domains.history.asSequence()
-                        .filter { it !in active }
-                        .filter { it !in QuickDomains }
-                        .take(6)
-                        .toList()
-                }
-                if (recentSuggestions.isNotEmpty()) {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(
-                            stringResource(R.string.rules_recent_title),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Brand.MutedText,
-                        )
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            recentSuggestions.forEach { d ->
-                                QuickAddChip(
-                                    label = d,
-                                    already = false,
-                                    onAdd = { RoutingRulesRepository.addDomain(d, domainTab) },
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        stringResource(R.string.rules_quick_add),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = Brand.MutedText,
-                    )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        QuickDomains.forEach { d ->
-                            QuickAddChip(
-                                label = d,
-                                already = d in active,
-                                onAdd = { RoutingRulesRepository.addDomain(d, domainTab) },
-                            )
-                        }
-                    }
-                }
             }
         }
 
@@ -428,27 +374,6 @@ private fun RuleTabs(
 
 private val ChipShape = RoundedCornerShape(50)
 
-@Composable
-private fun QuickAddChip(label: String, already: Boolean, onAdd: () -> Unit) {
-    val bg = if (already) Brand.Green.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.06f)
-    val fg = if (already) Brand.GreenLight else Brand.SecondaryText
-    val border = if (already) Brand.Green.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.09f)
-    Row(
-        modifier = Modifier
-            .clip(ChipShape)
-            .background(bg)
-            .border(1.dp, border, ChipShape)
-            .clickable(enabled = !already, onClick = onAdd)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            (if (already) "✓ " else "+ ") + label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = fg,
-        )
-    }
-}
 
 // ────────────────────────── Per-app routing section ─────────────────────────
 
@@ -459,7 +384,7 @@ private data class InstalledApp(
     val isSystem: Boolean,
 )
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PerAppRoutingSection(mode: RoutingMode) {
     // package_name rules can't match without ConnectivityManager

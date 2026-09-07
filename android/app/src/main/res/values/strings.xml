@@ -342,14 +342,12 @@
     <string name="rules_section_smart_subtitle">Pick how traffic is routed through the tunnel.</string>
     <string name="rules_mode_global">Global</string>
     <string name="rules_mode_global_subtitle">All system traffic goes through the selected proxy.</string>
-    <string name="rules_mode_smart">Smart (Antizapret)</string>
+    <string name="rules_mode_smart">Smart mode</string>
     <string name="rules_mode_smart_subtitle">Only blocked resources go through the proxy.</string>
     <string name="rules_section_domains_title">Domain exclusions</string>
     <string name="rules_section_domains_subtitle_global">These hosts always connect directly, bypassing the proxy.</string>
     <string name="rules_section_domains_subtitle_smart">These hosts are forced through the proxy.</string>
     <string name="rules_domain_placeholder">e.g. yandex.ru</string>
-    <string name="rules_quick_add">Quick add</string>
-    <string name="rules_recent_title">Recently used</string>
     <string name="rules_shadow_covered">Already covered by \"%1$s\"</string>
     <string name="rules_shadow_overrides">Will shadow existing entries: %1$s</string>
     <string name="rules_section_perapp_title">Per-app routing</string>

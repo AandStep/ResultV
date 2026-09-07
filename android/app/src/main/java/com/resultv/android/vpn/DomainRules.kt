@@ -3,7 +3,14 @@ package com.resultv.android.vpn
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** MRU cap for the "recently used" suggestion chips. */
+/**
+ * Cap on the recorded MRU of typed domains.
+ *
+ * Nothing surfaces it any more — the "recently used" chips it fed were cut
+ * from the Rules screen. The list is still recorded and persisted, so it can
+ * be dropped outright (model, JSON key `domainHistory`, tests) whenever that
+ * is worth a migration.
+ */
 const val DOMAIN_HISTORY_MAX = 24
 
 /**
@@ -11,8 +18,9 @@ const val DOMAIN_HISTORY_MAX = 24
  * see its docs. Lists (not sets): the chip order is user-visible, so insertion
  * order is part of the contract.
  *
- * [history] is the MRU list driving the "recently used" chips; it is shared
- * across tabs because it records what the user typed, not what it routes to.
+ * [history] records what the user typed, shared across tabs because it is about
+ * input, not routing. Nothing reads it since the "recently used" chips were
+ * cut — see [DOMAIN_HISTORY_MAX].
  */
 data class DomainRulesState(
     val outOfVpn: List<String> = emptyList(),

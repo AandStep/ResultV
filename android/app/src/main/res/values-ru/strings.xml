@@ -312,14 +312,12 @@
     <string name="rules_section_smart_subtitle">Выберите, как направлять трафик через туннель.</string>
     <string name="rules_mode_global">Глобальный</string>
     <string name="rules_mode_global_subtitle">Весь трафик системы идёт через выбранный прокси.</string>
-    <string name="rules_mode_smart">Smart (Antizapret)</string>
+    <string name="rules_mode_smart">Умный режим</string>
     <string name="rules_mode_smart_subtitle">Через прокси идут только заблокированные ресурсы.</string>
     <string name="rules_section_domains_title">Исключения по доменам</string>
     <string name="rules_section_domains_subtitle_global">Эти хосты идут напрямую в обход прокси.</string>
     <string name="rules_section_domains_subtitle_smart">Эти хосты идут принудительно через прокси.</string>
     <string name="rules_domain_placeholder">например, yandex.ru</string>
-    <string name="rules_quick_add">Быстрое добавление</string>
-    <string name="rules_recent_title">Недавно использованные</string>
     <string name="rules_shadow_covered">Уже покрыт «%1$s»</string>
     <string name="rules_shadow_overrides">Перекроет существующие: %1$s</string>
     <string name="rules_section_perapp_title">Маршрутизация по приложениям</string>
