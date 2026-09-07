@@ -17,11 +17,26 @@ private const val FILE_NAME = "routing_rules.json"
  *
  * - [Global]: every packet from the device is sent through the proxy.
  * - [Smart]: only known-blocked resources go through the proxy; everything
- *   else stays direct. Backed by an Antizapret-style domain ruleset on
- *   desktop. The mobile build accepts the toggle but currently behaves the
- *   same as [Global] until the geosite ruleset is wired in.
+ *   else stays direct, driven by the Antizapret-style rule-set compiled into
+ *   `smart/smart.srs` (see SmartListRepository).
+ *
+ * Smart is the default — same as the desktop's `DefaultConfig()`.
  */
 enum class RoutingMode { Global, Smart }
+
+/**
+ * Read the routing mode out of a persisted `routing_rules.json`.
+ *
+ * A file that names no mode we recognise migrates to [RoutingMode.Smart],
+ * mirroring the desktop's `ensureDefaults`: an absent mode means "the user
+ * never chose", not "the user chose Global". An explicitly stored mode is the
+ * user's decision and is returned untouched — which is why changing the
+ * default moves nobody who already has the app.
+ */
+fun decodeRoutingMode(json: String): RoutingMode {
+    val name = runCatching { JSONObject(json).optString("mode") }.getOrNull()
+    return RoutingMode.entries.firstOrNull { it.name == name } ?: RoutingMode.Smart
+}
 
 /**
  * Top-level routing state. The domain lists live in [DomainRulesState]; `mode`
@@ -29,10 +44,14 @@ enum class RoutingMode { Global, Smart }
  * `blocked` applies in both.
  */
 data class RoutingRulesState(
-    val mode: RoutingMode = RoutingMode.Global,
+    val mode: RoutingMode = RoutingMode.Smart,
     val domains: DomainRulesState = DomainRulesState(
-        // Same defaults as before the three-list split — fresh installs only.
-        outOfVpn = listOf("localhost", "127.0.0.1", "*.ru", "*.рф"),
+        // Fresh installs only, and the same list the desktop ships in
+        // `DefaultConfig().RoutingRules.Whitelist`. `*.ru` / `*.рф` used to be
+        // here from the Global-only days; in Smart the active tab is "into the
+        // tunnel", so shipping domain exclusions by default would hand a new
+        // user rules that cannot fire.
+        outOfVpn = listOf("localhost", "127.0.0.1"),
     ),
 )
 
@@ -113,16 +132,18 @@ object RoutingRulesRepository {
     private fun load(f: File): RoutingRulesState {
         if (!f.exists()) return RoutingRulesState()
         return try {
-            val mode = RoutingMode.entries.firstOrNull { it.name == JSONObject(f.readText()).optString("mode") }
-                ?: RoutingMode.Global
-            RoutingRulesState(mode = mode, domains = decodeDomainRules(f.readText()))
+            val text = f.readText()
+            RoutingRulesState(mode = decodeRoutingMode(text), domains = decodeDomainRules(text))
         } catch (t: Throwable) {
             Log.w(TAG, "failed to read $f, starting empty", t)
             AppLog.warning(R.string.log_read_failed, f.name,
                 source = AppLog.resolve(R.string.log_source_config))
-            // Empty, NOT the fresh-install defaults: a corrupt file must not
-            // silently re-add exclusions the user may have removed.
-            RoutingRulesState(domains = DomainRulesState())
+            // Empty lists, NOT the fresh-install defaults: a corrupt file must
+            // not silently re-add exclusions the user may have removed. The
+            // mode does fall back to the default (Smart), same as the desktop
+            // dropping to DefaultConfig() when the config fails to decrypt —
+            // an unreadable file tells us nothing about what was chosen.
+            RoutingRulesState(mode = RoutingMode.Smart, domains = DomainRulesState())
         }
     }
 

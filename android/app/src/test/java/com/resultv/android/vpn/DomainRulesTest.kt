@@ -68,4 +68,30 @@ class DomainRulesTest {
         assertTrue(s.intoVpn.isEmpty())
         assertTrue(s.blocked.isEmpty())
     }
+
+    // Смена дефолта на Smart копирует ПК (config.go DefaultConfig).
+    @Test fun freshInstallDefaultsToSmart() {
+        assertEquals(RoutingMode.Smart, RoutingRulesState().mode)
+    }
+
+    // Тот же список, что Whitelist в DefaultConfig() на ПК: без *.ru / *.рф.
+    // В Smart активна вкладка «в туннель», и доменные исключения там ни на что
+    // не влияют — держать их в дефолте значило бы показывать свежему
+    // пользователю правила, которые не работают.
+    @Test fun freshInstallExclusionsMatchDesktop() {
+        assertEquals(listOf("localhost", "127.0.0.1"), RoutingRulesState().domains.outOfVpn)
+        assertTrue(RoutingRulesState().domains.intoVpn.isEmpty())
+    }
+
+    // Миграция ПК (ensureDefaults): режим доставляется только тому конфигу,
+    // который его не записывал. Явно выбранный режим — решение пользователя.
+    @Test fun storedModeSurvivesTheNewDefault() {
+        assertEquals(RoutingMode.Global, decodeRoutingMode("""{"mode":"Global"}"""))
+        assertEquals(RoutingMode.Smart, decodeRoutingMode("""{"mode":"Smart"}"""))
+    }
+
+    @Test fun configWithoutModeMigratesToSmart() {
+        assertEquals(RoutingMode.Smart, decodeRoutingMode("""{"domainHistory":[]}"""))
+        assertEquals(RoutingMode.Smart, decodeRoutingMode("""{"mode":"Whatever"}"""))
+    }
 }
