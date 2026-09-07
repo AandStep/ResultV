@@ -1,8 +1,8 @@
 # Синхронизация Android с ПК + подготовка к Google Play
 
-Дата: 2026-09-04
+Создан: 2026-09-04 · Обновлён: 2026-09-07
 Ветка: `android`
-Статус: блок 1 специфицирован, блоки 2–4 описаны для следующих циклов
+Статус: блоки 1 и 2 закрыты, блоки 3 и 4 ждут своих спеков
 
 ---
 
@@ -18,10 +18,15 @@
 
 | Блок | Что | Статус |
 |---|---|---|
-| 1 | Ядро с ПК + выравнивание 16 КБ | специфицирован ниже, к исполнению |
-| 2 | Остальной Google Play комплаенс | описан, нужен свой спек |
-| 3 | Три решения из редизайна ПК | описан, нужен свой спек |
-| 4 | Профили маршрутизации | описан, нужен свой спек |
+| 1 | Ядро с ПК + выравнивание 16 КБ | **закрыт** 2026-09-04, запись в 3.1 |
+| 2 | Остальной Google Play комплаенс | **закрыт** 2026-09-06, запись в 3.2 |
+| 3 | Три решения из редизайна ПК | описан ниже, нужен свой спек |
+| 4 | Профили маршрутизации | описан ниже, нужен свой спек |
+
+Закрытые блоки свёрнуты до записи «что получилось и чем это доказано»: пошаговые
+списки работ из них вырезаны — работа сделана, держать её в голове больше не
+нужно. Всё живое — незакрытый дефект, ожидающие решения развилки, пункты под
+человека — собрано в разделе 4; следующий цикл начинать оттуда.
 
 ---
 
@@ -101,372 +106,218 @@ git-команды, запущенные из этой папки, отвеча�
 
 ---
 
-## 3. Блок 1 — ядро с ПК + выравнивание 16 КБ
+## 3. Сделано
 
-### 3.1 Зачем
+### 3.1 Блок 1 — ядро с ПК + выравнивание 16 КБ (закрыт 2026-09-04)
 
-На `android` отсутствует всё, что ПК получил в парсере ссылок за 230 коммитов.
-Проверено грепом по обоим деревьям — ни одного из этих маркеров на `android` нет:
+Перенесены `uriparser.go`, `outbound.go`, новый `autogroup.go` и вся директория
+`internal/config`. Android получил то, что ПК накопил за 230 коммитов: mKCP,
+port hopping Hysteria2 (`mport` → `server_ports` / `hop_interval`), SIP003
+`plugin` / `plugin_opts` у `ss://`, `Encryption` у VLESS, `multiplex`, обфускацию
+xhttp (`xPaddingObfs`, session/seq/uplink, фильтрация `xmux`), Host-заголовок на
+`ws` / `httpupgrade` / `http`, `?extra={...}` в vless/trojan, `congestion: off/no`
+и поле `AutoGroup` в `config.ProxyEntry`.
 
-| Возможность | Что происходит сейчас на телефоне |
-|---|---|
-| mKCP (`kcpSettings`, seed, headerType) | тихий откат на голый TCP, узел не работает |
-| Hysteria2 port hopping (`mport` → `server_ports` / `hop_interval`) | порт-хоппинг теряется |
-| Shadowsocks SIP003 (`plugin` / `plugin_opts`) | query у `ss://` срезается |
-| VLESS `Encryption` | теряется молча |
-| sing-box `multiplex` | не мапится |
-| xhttp: `xPaddingObfs`, session/seq/uplink, фильтрация `xmux` | обфускация не доезжает до ядра |
-| Host-заголовок на `ws` / `httpupgrade` / `http` | движок не стартует либо ловит 400 |
-| `?extra={...}` в vless/trojan | затирается дефолтами |
-| `congestion: off/no` | распознаётся только `true/yes/on` |
-| `AutoGroup` в `config.ProxyEntry` | группы AUTO угадываются по именам, а не по объявлению провайдера |
+Решения, принятые при исполнении и не подлежащие переоткрытию:
 
-Отдельно рассматривались `probe_udp_relay.go` (релеит ли узел UDP — голос и
-игры) и `doh.go` + `ping_resolve.go` (резолв через DoH, когда локальный
-резолвер убит VPN-сессией). **При исполнении они были отклонены:** файлы
-компилируются на `android` без единой правки, но вызывать их там некому — на
-ПК их дёргает `manager.go`, которого мы не переносим. Проверка «компилируется»
-не равна «подключено». Их место — в задаче, которая заодно их и подключит:
-для UDP-пробы это ещё и поле `SBRouteRule.Inbound` и выделенный probe-inbound
-в `engine.go`, которых на `android` нет.
+- **AUTO-группы — двухступенчатый откат.** Сначала структурная стратегия по
+  объявленному провайдером балансировщику, затем общее имя набора
+  (`ExtractAutoGroupName`), и только если его нет — раскладка по флаг-эмодзи.
+  Провайдеры раздают обе формы («один пул на несколько стран» и «пул на страну»),
+  и любая одноступенчатая схема ломает одну из них. Обе покрыты тестами.
+- **Неподдерживаемые AWG-ключи сохраняются, а не выбрасываются.** Версия с `dev`
+  срезала `j1`, `itime` при разборе URI; поведение `android` — сохранить в
+  `extra.amnezia` и предупредить через `UnsupportedAWGKnobs` — правильнее, оно и
+  было целью коммита `7b4b1c5`.
+- Имена ключей AWG 3.0 сведены к `awg3Keys`, добавлен `normalizeAWGKey`.
 
-Отдельно — блокер публикации: `jni/arm64-v8a/libgojni.so` в текущем
-`android/libs/libbox.aar` собран с `LOAD align = 0x1000` (4 КБ). Google Play с
-1 ноября 2025 отклоняет такие сборки. Правится флагом линковки, и раз при
-переносе ядра AAR всё равно пересобирается — обе задачи закрываются одной
-пересборкой.
+Выравнивание 16 КБ сделано флагом `-extldflags=-Wl,-z,max-page-size=16384` в
+`scripts/build-android-aar.sh`. Критерий приёмки — замер program headers готового
+`.so`, а не наличие флага в скрипте.
 
-### 3.2 Что проверено эмпирически
+Коммиты: `f041a14`, `cd842de` (зелёная база), `768b65f`, `f0035ee` (перенос),
+`93ea54c` (правка спека), `f9ce3fa` (16 КБ).
 
-Перенос проверен сборкой в отдельном git worktree от `android`, а не по чтению
-кода. Порядок был такой: собрать базу → скопировать файлы с `dev` → собирать,
-пока не станет зелено, записывая каждую правку.
+**Что сознательно не переносили.** `manager.go`, `sysproxy*`, `systun*`,
+`sysdns*`, `serverconn*`, `tray*`, `webview2*`, `processtree`, `killswitch_*`,
+`priority_*`, `deviceinfo*` и весь `internal/updater` — десктопное;
+самообновление APK в Google Play запрещено. `probe_udp_relay.go`, `doh.go`,
+`ping_resolve.go` компилируются на `android` без единой правки, но вызывать их
+там некому — на ПК их дёргает `manager.go`. Их место в задаче, которая заодно их
+и подключит: для UDP-пробы нужны ещё поле `SBRouteRule.Inbound` и выделенный
+probe-inbound в `engine.go`. `geodat.go`, `georesolve.go`, `routinglist.go`,
+`routingprofile.go`, `sublists.go` — это блок 4.
 
-Результат: **`go build -tags=mobile ./internal/... ./mobile/...` даёт exit 0**
-после шести правок, перечисленных в 3.4. Их список исчерпывающий — других
-ошибок компиляции нет.
+Из Smart-режима ПК отдельного разбора ждут: пин голосовой сети Discord
+`66.22.192.0/18`, Discord по процессу, path-qualified записи в app-списках,
+домены аккаунт-слоя и записи со знаком `^`. Часть Smart-фиксов на `android` уже
+своя (`2f48f61`, `534ed1c`) — дублировать не надо.
 
-### 3.3 Состояние тестов до переноса (проверено)
+### 3.2 Блок 2 — Google Play комплаенс (закрыт 2026-09-06)
 
-На чистом `android` HEAD `1bf5cfc` **две красные проверки, обе существовали до
-всякого переноса**:
+Разрез идёт через оба слоя, потому что ревью Google смотрит на содержимое
+бинаря, а не на то, что из него вызывается: build-тег `no_mitm` в Go убирает
+`internal/filter` из линковки, product flavors `play` / `full` в Kotlin прячут
+UI, а заглушки в `src/play` сохраняют сигнатуры, чтобы общий код собирался в
+обеих конфигурациях. Тем же способом позже вырезана DNS-фильтрация — тег
+`no_adblock` плюс `internal/proxy/adblock_stub.go`.
 
-```
---- FAIL: TestDefaultPublicSourceTemplatesRU (internal/proxy)
-    blocked_provider_test.go:192: ru sources missing "citizenlab/test-lists/master/lists/global.csv"
-    blocked_provider_test.go:192: ru sources missing "citizenlab/test-lists/master/lists/ru.csv"
---- FAIL: TestUserRuleOrder (mobile)
-    libbox_rules_test.go:153: no rule_set rule emitted despite AdBlock: true
-```
+Ключевая деталь `no_adblock`: ветки в `engine.go` гасит **константа**
+`adBlockSupported`, а не пустые списки. Правило `reject` без матчеров совпадает
+со всем трафиком, так что «отключение через пустые данные» положило бы сеть
+целиком. `validateSRS` вынесен в `srs_validate.go` — им пользуется и
+Smart-режим, который в play остаётся.
 
-Их надо разобрать **до** переноса, иначе после него будет не отличить своё от
-чужого. Ни одна из них переносом не вызвана — проверено запуском на нетронутом
-дереве.
+Чем доказано (замер на `arm64-v8a/libgojni.so`, full → play):
 
-### 3.4 Список работ
+| Маркер | full | play |
+|---|---|---|
+| `gomitmproxy` | 21 | 0 |
+| `adblock_reject.srs` / `category-ads-all` | 2 / 2 | 0 / 0 |
+| `pubserv.pro` / `foxstreetcore.com` / `adultmasters.pro` | 3 / 3 / 3 | 0 |
+| `googlesyndication.com` / `doubleclick.net` / `2mdn.net` | 2 / 3 / 1 | 0 |
+| `StaleCertBanner` (в dex APK) | 9 | 0 |
 
-**Шаг 0.** Привести базу к зелёному: разобраться с двумя провалами из 3.3.
-`TestDefaultPublicSourceTemplatesRU` — тест ждёт списки citizenlab, которых в
-шаблоне источников больше нет; решить, тест устарел или список урезали зря.
-`TestUserRuleOrder` — правило `rule_set` не эмитится при `AdBlock: true`;
-это либо реальная регрессия ad-block, либо тест опирается на кэш SRS.
+`internal/filter` отсутствует в `go list -deps` под play-тегами. Выравнивание
+`LOAD align = 0x4000` проверено во всех шести артефактах: оба AAR, оба
+debug-APK, релизный APK и AAB.
 
-**Шаг 1. Копировать целиком** (проверено, компилируется без правок):
+Остальное из блока:
 
-```
-internal/proxy/uriparser.go
-internal/proxy/outbound.go
-internal/proxy/autogroup.go        (новый)
-internal/config/*.go               (все, включая новый export_v2.go)
-```
+- **targetSdk 34 → 36.** Сам бамп не дал ни одного нового предупреждения
+  (сверено принудительной перекомпиляцией на 34). Зато вскрылось: обе системные
+  панели брали внешний вид у `auto()`, то есть у светлой/тёмной темы системы, а
+  не у своей всегда тёмной палитры — на устройстве в светлой теме часы были
+  нечитаемы, а панель из трёх кнопок белая. До API 35 это скрывали
+  `statusBarColor` и `navigationBarColor`; теперь панели закреплены за
+  `SystemBarStyle.dark`, а цвета в теме сплеша сведены к `transparent`, чтобы
+  картинка не разъезжалась между API 26–34 и 35+.
+- **`<queries>` вместо `QUERY_ALL_PACKAGES`.** Per-app маршрутизация VPN не
+  входит в перечень разрешённых применений Google, риск отказа был высоким.
+- **AAB для Play.** AGP отказывается собирать бандл при включённых ABI-сплитах
+  (issuetracker 402800800), поэтому сплиты стоят down на любой вызов `bundle*`,
+  а не удалены — раздаче с сайта они нужны. Заодно в `build-android.sh` починен
+  промах мимо флейворов: безфлейворный `assembleDebug` собирал обе сборки в
+  `apk/<dist>/debug`, а скрипт читал `apk/debug` — каталог с досплейворным APK
+  внутри, и `--install` молча ставил его на устройство.
+- **Отказ обновления подписки виден на экране.** Кнопка обновления отбрасывала
+  результат `runCatching`; причину писал только таймер авто-обновления, поэтому
+  ручное нажатие выглядело мёртвым. Теперь ручной путь логирует ту же строку и
+  показывает тост; полный текст ошибки остаётся в журнале, потому что в нём URL
+  подписки с токеном.
+- **Материалы для Play Console** собраны в `docs/play-console-submission.md`.
 
-Плюс тесты с `dev`, покрывающие перенесённое, — без них ~1500 строк новой
-логики разбора не покрыты на этой ветке ничем:
+Коммиты: `6a03211`, `f73b2b3`, `80bfa28`, `1c6c07b`, `15730f1`, `e7f7cb6`,
+`667e4aa`, `b2e2d77`, `01620bb`, `e7e5a53`.
 
-```
-autogroup_test.go  build_config_testhelpers_test.go  uriparser_mkcp_test.go
-outbound_{mkcp,multiplex,ss_plugin,vless_encryption,ws_host}_test.go
-outbound_{hysteria2_hop,transport_headers}_test.go
-outbound_{xhttp_obfs,xhttp_padding,xmux_guard}_test.go
-```
-
-Ценность именно этого набора в `assertCoreAcceptsConfig` из
-`build_config_testhelpers_test.go`: он отдаёт собранный конфиг настоящему
-закреплённому ядру sing-box, которое декодирует с `DisallowUnknownFields`.
-Незнакомое ядру поле — это не проигнорированная опция, а мёртвый движок.
-
-Две правки в перенесённых тестах: обёртки `mustBuild*ModeConfig` подогнать под
-мобильные сигнатуры (`BuildTunnelModeConfig` / `BuildProxyModeConfig` здесь
-возвращают одно значение, без ошибки), и убрать `ResolvedIPs` из литерала в
-`outbound_xhttp_padding_test.go` — это поле десктопного пининга серверов,
-к предмету теста отношения не имеющее.
-
-**Шаг 2. НЕ копировать.** `engine.go` и `singbox.go` разъехались слишком
-сильно и в мобильную сторону: на `android` там Smart через локальный SRS,
-ad-block, kill switch, правила `package_name`, маскировка адреса сервера в
-логе, валидация AWG. На `dev` — TUN IPv6-фолбэк, app whitelist, переделанный
-traffic tracker. Из них берутся **только определения структур** (шаг 3а).
-
-**Шаг 3. Точечные правки.**
-
-3а. `internal/proxy/engine.go`:
-
-- добавить тип `SBMultiplex` (6 полей, взять с `dev`, `engine.go:352`);
-- добавить в `SBOutbound` шесть полей: `Plugin`, `PluginOptions`, `Encryption`,
-  `ServerPorts`, `HopInterval`, `Multiplex`. Своих полей `android` в этой
-  структуре имеет три (`Outbounds`, `URL`, `Interval` — группа urltest для
-  kill switch), их сохранить;
-- заменить структуру `SBOutboundTransport` целиком версией с `dev`: у `android`
-  в ней **нет ни одного своего поля**, а на `dev` их на 26 больше (`Seed`,
-  `HeaderType`, `MTU`, `TTI`, `UplinkCapacity`, `DownlinkCapacity`,
-  `Congestion`, `ReadBufferSize`, `WriteBufferSize`, весь блок `XPadding*`,
-  `Session*`, `Seq*`, `UplinkData*`, `CongestionController`, `CWND`,
-  `ScMaxBufferedPosts`, `UplinkChunkSize`, `SessionIDTable`, `SessionIDLength`).
-
-3б. `internal/proxy/outbound.go` после копирования: убрать импорт
-`resultproxy-wails/internal/system` (директории нет на `android`) и заменить
-единственный вызов `system.WebViewFingerprint()` на `defaultUTLSFingerprint()`.
-Стаб положить в `internal/proxy/mobile_stubs.go` — файл уже существует ровно
-для этого, с `//go:build mobile`:
-
-```go
-// defaultUTLSFingerprint is "chrome" on mobile: there is no Edge WebView2 to
-// match against, and chrome is the safest mainstream fingerprint that still
-// passes Reality's masquerade check.
-func defaultUTLSFingerprint() string { return "chrome" }
-```
-
-Побочная выгода: версия с `dev` приносит `knownUTLSFingerprints` — неизвестный
-отпечаток теперь сводится к `chrome`, а не роняет старт движка.
-
-3в. `internal/proxy/endpoints.go`: `dev` называет список ключей AWG 3.0
-`awg3Keys`, `android` — `awg3DeviceKnobs`. Списки идентичны, сверено построчно.
-Привести к одному имени (предпочтительно переименовать на `android` в
-`awg3Keys`, тогда следующие переносы не потребуют правки). Переименование
-задевает шесть файлов, а не четыре: кроме `endpoints.go`,
-`config_validation.go`, `uriparser.go` и `ping_wg_handshake.go` — ещё
-`config_validation_awg3_test.go`, `endpoints_awg3_test.go` и
-`ping_wg_awg3_uapi_test.go`. Добавить с `dev`
-функцию `normalizeAWGKey` — она складывает написания провайдеров
-(`HeaderProtectionKey`, `header_protection_key`, `header-protection-key`)
-в одну форму. Этой функции на `android` нет, и она нужна перенесённому
-`uriparser.go`.
-
-3г. `internal/config/crypto.go`: у `android` есть свой `HashHWIDSource`
-(`crypto.go:105`), на `dev` его нет — при копировании директории он теряется, и
-`mobile/libbox.go:478` перестаёт собираться. Функцию вернуть. Это единственное
-расхождение `internal/config`, всё остальное берётся с `dev` как есть.
-
-3д. `mobile/libbox.go:563`: `proxy.SplitAutoEntriesMulti(entries)` →
-`proxy.SplitAutoEntries(entries)`. У версии с `dev` три возвращаемых значения
-вместо двух: `(groups []AutoGroup, individual []config.ProxyEntry, ok bool)`.
-Структура `AutoGroup` у обеих идентична (`Name string`, `Members []ProxyEntry`),
-переделывать вызывающий код не нужно.
-
-3е. `internal/proxy/lcp_test.go:135`: то же переименование в тесте.
-
-**Шаг 4. Регрессия, которую надо закрыть.** После переноса падают три
-проверки из двух корней (первоначально в спеке была названа одна — оценка была
-занижена):
-
-```
---- FAIL: TestSplitAutoEntriesMulti/two_flags_two_auto-groups   (корень: AUTO, шаг 5)
---- FAIL: TestSplitAutoEntriesMulti/auto_groups_plus_individuals (корень: AUTO, шаг 5)
---- FAIL: TestAmneziaWGURIRoundTripAWG2Fields                    (корень: AWG)
---- FAIL: TestUnsupportedAWGKnobsFromParsedURI                   (корень: AWG)
-```
-
-Про AWG:
-
-```
-knobs = "", want "j1,itime"
-```
-
-Причина: парсер с `dev` выбрасывает неподдерживаемые джанк-ключи (`j1`, `itime`)
-прямо при разборе URI, а `android` их сохраняет в `extra.amnezia`, чтобы
-`UnsupportedAWGKnobs` мог о них предупредить пользователя. Поведение `android`
-здесь правильнее — оно и было целью коммита `7b4b1c5`. При переносе сохранить
-подход «сохранить и сообщить». Соседний тест `TestUnsupportedAWGKnobs`
-(вариант с готовым entry-JSON) проходит — расходится только путь через URI.
-
-**Шаг 5. Решение по поведению AUTO-групп.** Версии расходятся не только именем:
-
-- `android`, `SplitAutoEntriesMulti` — делит AUTO-записи по ведущему
-  флаг-эмодзи, каждая группа от двух участников становится своим пулом.
-  Несколько пулов возможны.
-- `dev`, `SplitAutoEntries` — сначала структурная стратегия (поле `AutoGroup`,
-  проставленное парсером из объявленного провайдером xray-балансировщика),
-  и только при её неудаче — эвристика по именам, **ограниченная одним пулом**.
-
-Структурная стратегия строго лучше: она не ломается при переименовании группы
-и переживает кириллическое «Авто».
-
-А вот про откат первоначальная рекомендация («взять флаг-разбиение `android`»)
-**оказалась неверной, и это выяснилось только на тестах**. Провайдеры раздают
-авто-секции строками в двух разных формах, и обе настоящие:
-
-1. **Один пул на несколько стран** — `🇨🇦 impVPN Auto | VLESS`,
-   `🇩🇪 impVPN Auto | HYSTERIA2`. Флаг здесь свойство узла, а не граница
-   группы. Флаг-разбиение рвёт такой пул на одиночек.
-2. **Пул на страну** — `🇷🇺 RU Auto VLESS`, `🇺🇸 US Auto VLESS`. Разбиение на
-   один пул схлопывает секции и отбирает у пользователя выбор страны.
-
-Различает их `ExtractAutoGroupName`: у формы 1 общее имя набора есть
-(«impVPN Auto»), у формы 2 его нет (замерено). Отсюда принятое решение —
-**двухступенчатый откат**: сначала общее имя на всём наборе, и только когда его
-нет — раскладка по флагу. Реализовано в `splitAutoEntriesByName` +
-`splitAutoEntriesByFlag`, обе формы покрыты тестами.
-
-**Шаг 6. Выравнивание 16 КБ.** В `scripts/build-android-aar.sh` в строку
-`LDFLAGS` добавить `-extldflags=-Wl,-z,max-page-size=16384`, пересобрать AAR
-и проверить результат замером (3.5). Нужен NDK r27+; скрипт сам берёт
-новейший NDK из `$ANDROID_HOME/ndk`, версию стоит зафиксировать в логе сборки.
-
-**Шаг 7. Пересборка AAR обязательна.** `gradlew assembleDebug` упаковывает
-уже лежащий `android/libs/libbox.aar` и не пересобирает Go. Без запуска
-`scripts/build-android-aar.sh` все изменения этого блока не доедут до
-устройства и будут выглядеть как «ничего не поменялось».
-
-**Шаг 8. Проверка на стороне Kotlin.** Появление `AutoGroup` в `ProxyEntry`
-меняет разбиение AUTO-групп, которое видит UI. Проверить `AutoSelection.kt`,
-`ProfileSort.kt` и группировку в `ProxiesScreen.kt` на реальной подписке
-с балансировщиком.
-
-### 3.5 Как проверять
-
-```bash
-# сборка и тесты (без -tags=mobile internal/proxy и mobile не собираются)
-go build -tags=mobile ./internal/... ./mobile/...
-go test  -tags=mobile -count=1 ./internal/... ./mobile/...
-
-# пересборка AAR — иначе .so останется старым
-bash scripts/build-android-aar.sh
-
-# APK на реальное устройство (никогда не uninstall — сотрёт профили)
-cd android && ./gradlew assembleDebug -Pdebug.abi=arm64-v8a
-adb install -r -d app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
-```
-
-Замер выравнивания — критерий приёмки шага 6. Должно стать `0x4000`:
-
-```bash
-unzip -o -j android/libs/libbox.aar 'jni/arm64-v8a/libgojni.so' -d "$TMP"
-python - <<'PY'
-import struct
-f = open(r'<TMP>\libgojni.so', 'rb').read()
-off  = struct.unpack_from('<Q', f, 0x20)[0]
-size = struct.unpack_from('<H', f, 0x36)[0]
-num  = struct.unpack_from('<H', f, 0x38)[0]
-for i in range(num):
-    o = off + i * size
-    if struct.unpack_from('<I', f, o)[0] == 1:   # PT_LOAD
-        print('LOAD align =', hex(struct.unpack_from('<Q', f, o + 48)[0]))
-PY
-```
-
-### 3.6 Критерии готовности блока 1
-
-- [ ] База зелёная: две проверки из 3.3 разобраны
-- [ ] `go build -tags=mobile ./internal/... ./mobile/...` — exit 0
-- [ ] `go test -tags=mobile -count=1 ./internal/... ./mobile/...` — без провалов
-- [ ] `TestUnsupportedAWGKnobsFromParsedURI` зелёный (шаг 4)
-- [ ] Решение по AUTO-группам (шаг 5) зафиксировано и покрыто тестом
-- [ ] `LOAD align = 0x4000` в свежем AAR
-- [ ] На устройстве проверены: ссылка с mKCP, Hysteria2 с `mport`,
-      `ss://` с `plugin=`, подписка с xray-балансировщиком
-
-### 3.7 Что сознательно не переносим
-
-`manager.go`, `sysproxy*`, `systun*`, `sysdns*`, `serverconn*`, `tray*`,
-`webview2*`, `processtree`, `killswitch_*`, `priority_*`, `deviceinfo*`,
-`instance_messenger*`, весь `internal/updater` — десктопное. `internal/updater`
-не нужен принципиально: самообновление APK в Google Play запрещено, и на
-Android его сейчас нет.
-
-`geodat.go`, `georesolve.go`, `routinglist.go`, `routingprofile.go`,
-`sublists.go` — относятся к блоку 4.
-
-Из Smart-режима ПК стоит рассмотреть отдельно (не входит в блок 1, требует
-своего разбора): пин голосовой сети Discord `66.22.192.0/18` (`dev/router.go`),
-Discord по процессу, path-qualified записи в app-списках, домены аккаунт-слоя и
-записи со знаком `^`. Часть Smart-фиксов на `android` уже своя (`2f48f61`,
-`534ed1c`) — дублировать не надо.
+Приёмка на эмуляторе Android 16 (API 36): обе сборки ставятся и подключаются,
+страница с уникальным URL грузится через туннель; Smart расщепляет трафик
+(`example.com`, `ya.ru` → `direct`; `instagram.com`, `static.cdninstagram.com` →
+`vless[proxy]`); в play нет ни браузерного ad-block, ни DNS-фильтрации, в full
+оба на месте. Юнит-тесты Kotlin: full 71, play 69. Go-сборка и тесты зелёные в
+обеих конфигурациях.
 
 ---
 
-## 4. Блок 2 — остальной Google Play комплаенс
+## 4. Что открыто
 
-Требует своего спека. Проверенные факты и объём:
+Отсюда начинать следующий цикл.
 
-### 4.1 Target API 36
+### 4.1 Per-app блокировка не работает под браузерным ad-block (дефект)
 
-Сейчас `compileSdk = 34`, `targetSdk = 34` (`android/app/build.gradle.kts`).
-С 31 августа 2026 новые приложения и обновления должны таргетить Android 16
-(API 36); существующие с API ≤ 34 перестают быть доступны новым пользователям
-на более новых ОС. Продление возможно до 1 ноября 2026.
+**Симптом.** Приложение, добавленное в «Запретить», спокойно ходит в сеть, пока
+в full-сборке включён браузерный ad-block. В Smart-режиме оно вдобавок
+оказывается **вне туннеля**, то есть получает незащищённый интернет — это хуже
+простого несрабатывания.
 
-Тянет за собой: принудительный edge-to-edge (введён в API 35) — придётся
-пройтись по всем `Scaffold` и вставкам в `HomeScreen`, `ProxiesScreen`,
-`RulesScreen`, `SettingsScreen`, `AddScreen`, `LogsScreen`, `CertWizardScreen`;
-изменения правил foreground-сервисов.
+**Причина.** `BoxModule.applyBrowserAdBlockProxy` ставит системный прокси
+`setHttpProxy(ProxyInfo.buildDirectProxy("127.0.0.1", BROWSER_ADBLOCK_PORT))`.
+Браузер идёт в MITM напрямую, минуя tun, а обратно в движок трафик приходит
+петлёй через loopback SOCKS-inbound — уже без личности приложения. Движок это и
+пишет: `inbound connection from 127.0.0.1` и `router: failed to search process:
+connection owner not found`, после чего `package_name`-правило совпасть не
+может, а `findConnectionOwner` по построению fail-open.
 
-AGP уже 8.13.2, Gradle 9.0.0, Kotlin 2.0.21 — поднимать не нужно.
+**Само правило исправно** — доказано play-сборкой, где MITM нет:
+`inbound connection from 172.19.0.1` → `found package name: com.android.chrome`
+→ `=> reject`, браузер получает `ERR_CONNECTION_CLOSED`.
 
-### 4.2 Видимость приложений
+**Область поражения:** только приложения, уважающие системный прокси (Chrome,
+WebView), и только пока работает браузерный ad-block. Приложения со своим
+TLS-стеком и вся play-сборка не затронуты.
 
-Сейчас в манифесте объявлен `QUERY_ALL_PACKAGES` с `tools:ignore`. В списке
-разрешённых применений Google (поиск по устройству, антивирусы, файловые
-менеджеры, браузеры) per-app VPN routing прямо не назван, и требуется
-обосновать, почему менее интрузивный способ не подходит. Риск отказа высокий.
+**Очевидный путь закрыт.** Проверять личность внутри MITM нельзя: Android не
+резолвит владельца loopback-соединения. Замерено временной пробой на кортеже,
+который был известен точно (наш собственный сокет `127.0.0.1:55028 →
+127.0.0.1:18130`): `getConnectionOwnerUid` вернул `-1` при реальном
+`myUid=10222`. Обходных путей атрибуции тоже нет: `/proc/net/tcp` запрещён
+SELinux для untrusted_app (поэтому в коде `useProcFS() = false`), а
+`SO_PEERCRED` работает только с unix-сокетом, тогда как `setHttpProxy` требует
+host:port.
 
-Замена: убрать разрешение, добавить `<queries>`:
+**Остались два варианта, решение за человеком:**
 
-```xml
-<queries>
-    <intent>
-        <action android:name="android.intent.action.MAIN" />
-        <category android:name="android.intent.category.LAUNCHER" />
-    </intent>
-    <intent>
-        <action android:name="android.intent.action.VIEW" />
-        <data android:scheme="http" />
-    </intent>
-</queries>
-```
+1. **Завести браузерный трафик в MITM изнутри sing-box** вместо `setHttpProxy` —
+   правилом маршрута на локальный outbound. Первый хоп идёт через tun, личность
+   приложения сохраняется, per-app правила отрабатывают раньше редиректа, обе
+   функции живут вместе. Это же чинит давнюю проблему «MITM ходит мимо туннеля».
+   Цена: правки конфига движка, аккуратный порядок правил, пересборка AAR и
+   отдельная проверка, что фильтрация в новой схеме вообще работает.
+2. **Пока есть хоть одно запрещённое приложение — не применять `setHttpProxy`.**
+   Блокировка становится честной, браузерный ad-block на это время выключается.
+   Правка только в Kotlin, без пересборки AAR, но пользователь обязан видеть в
+   интерфейсе, что одно выключает другое.
 
-Затрагивает: `AppInventory.installedApps` (`AppInventory.kt:112`),
-`AppInventory.browserPackages` (второй intent нужен именно ей),
-`RulesScreen.loadInstalledApps` (`RulesScreen.kt:740`). Проверить отдельно:
-`SmartAppMembership` ключуется на reverse-DNS имени пакета, и приложения без
-launcher-активити после этого станут невидимы — надо убедиться, что членство в
-туннеле не деградирует.
+### 4.2 crypto/rand убивает приложение на ядрах ≥ 6.11
 
-### 4.3 Формат сборки
+Go ≥ 1.24 берёт случайность через vDSO `getrandom`; на ядре 6.12 (эмулятор
+Android 17 beta с 16 КБ страницами) он возвращает EFAULT, а
+`internal/syscall/unix.GetRandom` отдаёт ошибку наверх **без отката на syscall**,
+после чего `crypto/rand.Read` по своему дизайну убивает процесс. Падает любое
+TLS-действие: обновление подписки, пинг, подключение.
 
-Сейчас `splits { abi }` + universal APK. Для Play нужен AAB и Play App Signing.
-Ключ лежит в `android/release.keystore` (в зашифрованном `secrets.enc`).
+Это баг Go, воспроизведён голым бинарём без нашего кода. Ручки GODEBUG нет,
+откат тулчейна ниже 1.24 невозможен (sing-box требует go 1.26.4), в tip-версии
+отката на syscall тоже нет. Иммунны: эмулятор Android 16 (ядро 6.6), WSL2 и
+телефоны на ядрах младше 6.11. Телефоны на GKI 6.12 — нет, поэтому к вопросу
+придётся вернуться, если pre-launch report Play покажет этот крэш.
 
-### 4.4 Флейворы play/full
+До тех пор тестировать на AVD `Pixel_9_Pro` (android-36), а не на
+16-килобайтном `Medium_Phone`.
 
-По решению из раздела 2. Вырезать из `play`: `internal/filter`,
-`internal/adblock` (проверить, что не используется DNS-веткой),
-`CertWizardScreen.kt`, `CertInstaller.kt`, `CertSelfTest.kt`, `CertStore.kt`,
-`CertExporter.kt`, `FilterProxyWatchdog.kt`, `browserAdBlock` из
-`SettingsRepository` и `BuildOptions`, `BrowserAdBlockRow` из
-`SettingsScreen.kt:305`, а также `network_security_config.xml` (его единственная
-причина существования — self-test доверия к MITM CA) и `BrowserAdBlockSocksPort`
-из `mobile/libbox.go`. DNS-adblock вырезан из play целиком (см. раздел 2):
-тег `no_adblock` убирает списки и домены из .so, `BuildConfig.DNS_ADBLOCK`
-убирает раздел из настроек и глушит сохранённый флаг, приехавший из
-full-сборки.
+### 4.3 Play Console — пункты под человека
 
-### 4.5 Декларации в Play Console
+`docs/play-console-submission.md` заполнен всем, что выводится из кода:
+разрешения, обоснование `FOREGROUND_SERVICE_SPECIAL_USE`, состав Data safety,
+отсутствие аналитики, доказательства того, что MITM и DNS-фильтрации нет в
+play-бинаре. Помечено `TODO(человек)`: URL политики конфиденциальности, тексты
+листинга и скриншоты, ответы анкеты IARC, контактные данные.
 
-Форма VpnService; обоснование `FOREGROUND_SERVICE_SPECIAL_USE` (свойство
-`PROPERTY_SPECIAL_USE_FGS_SUBTYPE` в манифесте уже есть); политика
-конфиденциальности; Data safety — приложение отправляет панели подписки HWID,
-модель устройства и версию ОС (`BuildOptionsBuilder.currentSubscriptionFetchOptionsJson`),
-это подлежит декларированию; возрастной рейтинг.
+### 4.4 Приёмка на живом устройстве
+
+На эмуляторе пройдено (см. 3.2). На реальном телефоне не пройдено: подключение к
+рабочему серверу, Smart и per-app на живой сети, а также состав пикера
+приложений после перехода на `<queries>` — на эмуляторе сторонних приложений
+почти нет, и сузился ли список на самом деле, там не видно.
+
+### 4.5 Мелочи, найденные попутно
+
+Ни одна не является регрессией блоков 1–2; все проверены и отложены сознательно.
+
+- Листы `ModalBottomSheet` (настроечные и `SubscriptionEditSheet`) в светлой
+  системной теме показывают белую панель навигации: у листа своё окно, и стиль
+  панелей активити на него не распространяется. Сверено на targetSdk 34 —
+  картина та же, дефект старше бампа. Чинится общим хелпером, который выставляет
+  appearance на окне листа через `DialogWindowProvider`.
+- Там же `padding(bottom = 48.dp) // Safe area` — магическое число вместо
+  реального инсета: на трёх кнопках совпадает случайно, на жестах даёт лишний
+  отступ.
+- В списке приложений per-app правил тап по строке не срабатывает — активен
+  только чекбокс.
+- Строки браузерного ad-block (`settings_browser_adblock*`, `log_browser_*`) и
+  DNS-фильтрации лежат в `main/res` и попадают в play-APK, где за ними нет ни
+  кода, ни функции. Стоит перенести в `src/full/res`, чтобы ресурсы совпадали с
+  бинарём.
 
 ---
 
@@ -585,21 +436,3 @@ RVSUB1 означало бы, что сторонняя панель не мож
   поле-теги из блока 3, порядок применения (`RouteOrder`), `DomainStrategy`,
   URL geo-баз. На ПК это отдельные окна; на телефоне логичнее bottom sheet
   для превью диплинка и полноэкранный редактор.
-
----
-
-## 7. Приложение: как воспроизвести проверку переноса
-
-```bash
-SC="<scratch>"
-git worktree add --detach "$SC/portcheck" android
-cd "$SC/portcheck"
-go build -tags=mobile ./internal/... ./mobile/...        # база: exit 0
-
-cp /c/ResultVPC/internal/proxy/{uriparser,outbound,autogroup}.go internal/proxy/
-cp /c/ResultVPC/internal/proxy/{probe_udp_relay,doh,ping_resolve}.go internal/proxy/
-cp /c/ResultVPC/internal/config/*.go internal/config/
-go build -tags=mobile ./internal/... ./mobile/...        # далее правки из 3.4
-
-git worktree remove "$SC/portcheck"
-```
