@@ -38,6 +38,11 @@ const defaultSettings = {
     subscriptionUpdateIntervalHours: 6,
     subscriptionSendHWID: true,
     subscriptionUserAgent: "",
+    // Пустой тестовый адрес означает «взять адрес по умолчанию» — решает
+    // бэкенд в EffectivePingTestURL, чтобы дефолт жил в одном месте.
+    pingType: "auto",
+    pingTestUrl: "",
+    pingTimeoutSec: 3,
 };
 
 export const useAppConfig = (addLog) => {

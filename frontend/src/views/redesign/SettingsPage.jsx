@@ -48,6 +48,7 @@ export const SETTINGS_GROUPS = [
   { key: "subscriptions", icon: "subscriptions" },
   { key: "security", icon: "security" },
   { key: "network", icon: "network" },
+  { key: "ping", icon: "ping" },
   { key: "experimental", icon: "autoawesome" },
 ];
 
@@ -83,6 +84,55 @@ export const DNS_PRESETS = [
   { id: "yandex", servers: ["77.88.8.8", "77.88.8.1"], label: "Яндекс DNS" },
 ];
 
+/*
+ * Типы пинга. «Авто» — сегодняшнее поведение: проба подбирается под протокол
+ * узла (TCP для VLESS и родственных, QUIC-хендшейк для Hysteria2, ICMP для
+ * WireGuard). Отдельного «TCP» нет намеренно: для Hysteria2 и WireGuard он
+ * бессмыслен — оба молча дропнут пакет, — и человек решил бы, что половина
+ * серверов мертва.
+ *
+ * HTTP GET и HTTP HEAD — это «через прокси»: запрос тестового адреса идёт
+ * через сам узел, поэтому в цифру входит его хендшейк.
+ */
+export const PING_TYPES = [
+  { value: "auto", label: "Авто" },
+  { value: "icmp", label: "ICMP" },
+  { value: "http_get", label: "HTTP GET" },
+  { value: "http_head", label: "HTTP HEAD" },
+];
+
+/*
+ * Пресеты тестового адреса. Только https, и это требование корректности, а не
+ * вкуса: по http ответ подделывает наш же локальный слушатель, и мёртвый узел
+ * засчитался бы живым.
+ */
+export const PING_URL_PRESETS = [
+  {
+    id: "google",
+    label: "Google 204",
+    url: "https://www.gstatic.com/generate_204",
+  },
+  {
+    id: "cloudflare",
+    label: "Cloudflare",
+    url: "https://cp.cloudflare.com/generate_204",
+  },
+  {
+    id: "apple",
+    label: "Apple",
+    url: "https://captive.apple.com/hotspot-detect.html",
+  },
+];
+
+export const PING_TIMEOUTS = [
+  { value: 1, label: "1 с" },
+  { value: 2, label: "2 с" },
+  { value: 3, label: "3 с" },
+  { value: 5, label: "5 с" },
+  { value: 7, label: "7 с" },
+  { value: 10, label: "10 с" },
+];
+
 /* Подписи в написании макета; приложение подставляет свои через i18n. */
 export const SETTINGS_PAGE_TEXT = {
   title: "Настройки",
@@ -112,6 +162,11 @@ export const SETTINGS_PAGE_TEXT = {
       title: "Сеть",
       items: "• DNS  • IPv6 • Локальная сеть",
       desc: "DNS, локальный доступ и порт прокси.",
+    },
+    ping: {
+      title: "Пинг",
+      items: "• Тип пробы  • Тестовый адрес  • Тайм-аут",
+      desc: "Чем и как долго измерять задержку до узлов.",
     },
     experimental: {
       title: "Экспериментально",
@@ -168,6 +223,22 @@ export const SETTINGS_PAGE_TEXT = {
       title: "Блокировать DoH в браузере",
       desc: "Заставляет браузер вернуться к системному DNS. Может сломать сайты.",
       soon: "скоро",
+    },
+    pingType: {
+      title: "Тип пинга",
+      desc: "Чем измерять задержку. «Авто» подбирает пробу под протокол узла.",
+    },
+    pingUrl: {
+      title: "Тестовый адрес",
+      desc: "Запрашивается через сам узел. Только https.",
+      customLabel: "Свой адрес",
+      placeholder: "https://www.gstatic.com/generate_204",
+      invalid: "Нужен адрес https:// — по http ответ подделает локальный слушатель",
+      onlyHTTP: "Работает только с типами HTTP GET и HTTP HEAD.",
+    },
+    pingTimeout: {
+      title: "Тайм-аут пинга",
+      desc: "Сколько ждать ответа, прежде чем считать узел недоступным.",
     },
   },
 };
@@ -238,6 +309,9 @@ export default function SettingsPage({
   languages = LANGUAGES,
   intervals = SUBSCRIPTION_HOURS,
   dnsPresets = DNS_PRESETS,
+  pingTypes = PING_TYPES,
+  pingUrlPresets = PING_URL_PRESETS,
+  pingTimeouts = PING_TIMEOUTS,
   /* Адреса, по которым прокси доступен в локальной сети. Строку собирает
      приложение: своих IP страница не знает. */
   lanAddress = "",
@@ -254,6 +328,19 @@ export default function SettingsPage({
     dnsPresets.find(
       (preset) => preset.servers.join(",") === dnsServers.join(","),
     )?.id ?? "";
+
+  const pingType = values.pingType || "auto";
+  /* Тестовый адрес нужен только там, где запрос действительно уходит через
+     узел. При «Авто» и ICMP запроса нет, и поле гасим, чтобы не обещать
+     влияния, которого у него сейчас нет. */
+  const pingUsesURL = pingType === "http_get" || pingType === "http_head";
+  const pingTestUrl = values.pingTestUrl ?? "";
+  const pingUrlInvalid =
+    pingUsesURL &&
+    pingTestUrl.trim() !== "" &&
+    !/^https:\/\/[^/\s]+/i.test(pingTestUrl.trim());
+  const activePingUrlPreset =
+    pingUrlPresets.find((preset) => preset.url === pingTestUrl.trim())?.id ?? "";
 
   const groupBody = {
     advanced: (
@@ -377,6 +464,77 @@ export default function SettingsPage({
               {rows.port.addrTitle}: {lanAddress}
             </p>
           )}
+        </Row>
+      </>
+    ),
+
+    /*
+     * Пинг. Настройка управляет только ручным измерением — кнопкой в списке
+     * серверов. Автовыбор узла её не видит намеренно: он свипает весь список
+     * сам при каждом подключении, и «через прокси» там означало бы десятки
+     * пробных движков на каждое нажатие «Подключиться».
+     */
+    ping: (
+      <>
+        <Row title={rows.pingType.title} description={rows.pingType.desc} stacked>
+          <ScrollRow>
+            {pingTypes.map((item) => (
+              <Button
+                key={item.value}
+                variant={item.value === pingType ? "green" : "default"}
+                aria-pressed={item.value === pingType}
+                onClick={() => onChange?.("pingType", item.value)}
+              >
+                {item.label}
+              </Button>
+            ))}
+          </ScrollRow>
+        </Row>
+        <Row title={rows.pingUrl.title} description={rows.pingUrl.desc} stacked>
+          <ScrollRow>
+            {pingUrlPresets.map((preset) => (
+              <Button
+                key={preset.id}
+                variant={preset.id === activePingUrlPreset ? "green" : "default"}
+                aria-pressed={preset.id === activePingUrlPreset}
+                disabled={!pingUsesURL}
+                onClick={() => onChange?.("pingTestUrl", preset.url)}
+              >
+                {preset.label}
+              </Button>
+            ))}
+          </ScrollRow>
+          <label className="rv-settings-page__custom">
+            <span className="rv-settings-page__label">
+              {rows.pingUrl.customLabel}
+            </span>
+            <CommitInput
+              value={pingTestUrl}
+              onCommit={(next) => onChange?.("pingTestUrl", next)}
+              placeholder={rows.pingUrl.placeholder}
+              disabled={!pingUsesURL}
+              invalid={pingUrlInvalid}
+            />
+          </label>
+          {pingUrlInvalid && (
+            <p className="rv-settings-page__hint" role="alert">
+              {rows.pingUrl.invalid}
+            </p>
+          )}
+          {!pingUsesURL && (
+            <p className="rv-settings-page__hint">{rows.pingUrl.onlyHTTP}</p>
+          )}
+        </Row>
+        <Row title={rows.pingTimeout.title} description={rows.pingTimeout.desc}>
+          <Select
+            options={pingTimeouts.map((item) => ({
+              value: String(item.value),
+              label: item.label,
+            }))}
+            value={String(values.pingTimeoutSec || 3)}
+            onChange={(next) => onChange?.("pingTimeoutSec", next)}
+            aria-label={rows.pingTimeout.title}
+          />
         </Row>
       </>
     ),

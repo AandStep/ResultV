@@ -132,6 +132,9 @@ export default function SettingsScreen() {
     ipv6: !!settings?.enableIPv6,
     listenLan: !!settings?.listenLan,
     localPort: Number(settings?.localPort || 0),
+    pingType: settings?.pingType || "auto",
+    pingTestUrl: settings?.pingTestUrl || "",
+    pingTimeoutSec: Number(settings?.pingTimeoutSec || 0) || 3,
     /* Адаптивный Smart живёт в правилах маршрутизации, а не в настройках:
        это тот же блок конфига, что режим и списки, которыми он управляет. */
     adaptiveSmart: !!routingRules?.adaptiveSmart,
@@ -183,6 +186,33 @@ export default function SettingsScreen() {
           return false;
         }
         return updateSetting("localPort", port);
+      }
+      case "pingType":
+        return updateSetting("pingType", value);
+      case "pingTestUrl": {
+        const raw = String(value || "").trim();
+        /* Пустое поле — это «вернуть адрес по умолчанию», а не ошибка. */
+        if (raw === "") return updateSetting("pingTestUrl", "");
+        /* Только https, и это не вкус: по http ответ подделывает наш же
+           локальный слушатель, и мёртвый узел засчитался бы живым. */
+        if (!/^https:\/\/[^/\s]+/i.test(raw)) {
+          showAlertDialog({
+            title: t("settings.ping.url_title", "Тестовый адрес"),
+            message: t(
+              "settings.ping.url_invalid",
+              "Нужен адрес https:// — по http ответ подделает локальный слушатель.",
+            ),
+            variant: "danger",
+          });
+          /* `false` — отказ: поле вернёт набранное к сохранённому адресу. */
+          return false;
+        }
+        return updateSetting("pingTestUrl", raw);
+      }
+      case "pingTimeoutSec": {
+        const sec = parseInt(String(value), 10);
+        if (!Number.isFinite(sec)) return false;
+        return updateSetting("pingTimeoutSec", Math.min(10, Math.max(1, sec)));
       }
       case "adaptiveSmart":
         /* Смена правил уходит на бэкенд сама — эффектом на routingRules
@@ -414,6 +444,7 @@ export default function SettingsScreen() {
             subscriptions: group("subscriptions"),
             security: group("security"),
             network: group("network"),
+            ping: group("ping"),
             experimental: group("experimental"),
           },
           exportImport: {
@@ -449,6 +480,14 @@ export default function SettingsScreen() {
               placeholder: t("settings.lan_listen.port_placeholder"),
               addrTitle: t("settings.lan_listen.addr_title"),
             },
+            pingType: row("ping_type"),
+            pingUrl: row("ping_url", {
+              customLabel: t("settings.ping_url.custom_label"),
+              placeholder: t("settings.ping_url.placeholder"),
+              invalid: t("settings.ping_url.invalid"),
+              onlyHTTP: t("settings.ping_url.only_http"),
+            }),
+            pingTimeout: row("ping_timeout"),
             adaptiveSmart: row("adaptive_smart"),
             adaptiveSmartMemoryOnly: row("adaptive_smart_memory_only"),
             adaptiveSmartBlockDoH: row("adaptive_smart_block_doh", {

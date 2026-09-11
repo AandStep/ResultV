@@ -213,6 +213,11 @@
         "title": "Experimental",
         "desc": "Unfinished and untested. Enable at your own risk.",
         "items": "• Adaptive smart mode"
+      },
+      "ping": {
+        "title": "Ping",
+        "items": "• Probe type  • Test URL  • Timeout",
+        "desc": "How, and for how long, latency to nodes is measured."
       }
     },
     "adaptive_smart": {
@@ -278,7 +283,7 @@
       "preset_quad9": "Quad9 DNS",
       "preset_yandex": "Yandex DNS",
       "custom_label": "Or enter your own",
-    "custom_placeholder": "Example: 8.8.8.8, 1.1.1.1",
+      "custom_placeholder": "Example: 8.8.8.8, 1.1.1.1",
       "apply": "Apply"
     },
     "lan_listen": {
@@ -326,6 +331,27 @@
       "desc": "Language of the app's labels.",
       "ru": "Русский",
       "en": "English"
+    },
+    "ping_type": {
+      "title": "Ping type",
+      "desc": "How latency is measured. “Auto” picks the probe by node protocol."
+    },
+    "ping_url": {
+      "title": "Test URL",
+      "desc": "Fetched through the node itself. HTTPS only.",
+      "custom_label": "Custom URL",
+      "placeholder": "https://www.gstatic.com/generate_204",
+      "invalid": "An https:// URL is required — over http the answer can be forged locally",
+      "only_http": "Applies to the HTTP GET and HTTP HEAD types only.",
+      "url_title": "Test URL"
+    },
+    "ping_timeout": {
+      "title": "Ping timeout",
+      "desc": "How long to wait for an answer before calling the node unreachable."
+    },
+    "ping": {
+      "url_title": "Test URL",
+      "url_invalid": "An https:// URL is required — over http the answer can be forged locally."
     }
   },
   "routingProfiles": {
