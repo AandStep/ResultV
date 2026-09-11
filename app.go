@@ -544,6 +544,11 @@ func (a *App) startup(ctx context.Context) {
 	a.netmon.SetInterfaceChangeHandler(func() {
 		proxy.InvalidateLANBindCache()
 		proxy.ResetAutoSweepCache()
+		// Вердикты адаптивного Smart привязаны к сети, а не к машине: здесь
+		// же меняется набор, которым он пользуется.
+		if a.proxy != nil {
+			a.proxy.NotifyNetworkChanged()
+		}
 		if a.log != nil {
 			a.log.Info("[СЕТЬ] Изменился состав сетевых адресов — кэш bind-адреса и подбора AUTO сброшен")
 		}

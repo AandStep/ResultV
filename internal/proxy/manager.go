@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +34,7 @@ import (
 	"resultproxy-wails/internal/logger"
 	sys "resultproxy-wails/internal/system"
 	"resultproxy-wails/internal/system/processtree"
+	"resultproxy-wails/internal/verdict"
 )
 
 type StatusDTO struct {
@@ -172,6 +174,14 @@ type Manager struct {
 	adaptiveSmartMemoryOnly bool
 	adaptiveSmartBlockDoH   bool
 
+	// verdicts is what the adaptive engine has learned about this network, and
+	// probes is the muzzle on the prober that fills it. Both are created at
+	// Init and live for the process: the store is partitioned by network, so
+	// roaming switches namespaces rather than rebuilding it.
+	verdicts    *verdict.Store
+	verdictPath string
+	probes      *probeGate
+
 	// secrets encrypts the persistent server-IP pin cache (server_pins.json)
 	// with the app's hardware-keyed CryptoService — those hostname→backend-IP
 	// entries are exactly what a censor needs, so they never touch disk in the
@@ -187,6 +197,11 @@ func (m *Manager) SetSecretCodec(c SecretCodec) {
 	m.secrets = c
 	m.mu.Unlock()
 }
+
+// verdictCacheFileName is where the adaptive engine's learned verdicts live,
+// beside the other caches in the data dir. It holds no plaintext names — only
+// salted hashes — so it needs no encryption of its own.
+const verdictCacheFileName = "verdicts.cache.json"
 
 var pingTCPProbe = PingProxy
 var pingLANProbe = PingProxyLANBind
@@ -304,6 +319,22 @@ func (m *Manager) Init(ctx context.Context) {
 	m.sysDNS = NewSystemDNS()
 	m.procTracker = processtree.New(nil)
 	m.procTracker.OnChange(m.onProcessTreeChange)
+
+	// The verdict store is an optimisation, never a precondition: a failure to
+	// load it costs a few extra probes, so it must not be able to block a
+	// connect. It is loaded unconditionally rather than behind the switch
+	// because the switch can be turned on mid-session, and an empty store at
+	// that moment would throw away everything the previous session proved.
+	m.verdictPath = filepath.Join(resultProxyDataDir(), verdictCacheFileName)
+	store, err := verdict.Load(m.verdictPath, nil)
+	if err != nil {
+		m.log.Info("[SMART] Кэш вердиктов не загружен, начинаем с чистого листа")
+		salt, _ := verdict.NewSalt()
+		store = verdict.New(salt, nil)
+	}
+	store.SetNamespace(sys.NetworkFingerprint())
+	m.verdicts = store
+	m.probes = newProbeGate(nil)
 
 	// Leftover system state from a crashed / force-killed prior run (DNS
 	// override, system proxy, kill-switch firewall) is intentionally NOT
@@ -2939,6 +2970,47 @@ func (m *Manager) Shutdown() {
 	if m.engine != nil && (m.connected || m.engine.IsRunning()) {
 		m.engine.Stop()
 	}
+
+	// Saved last, after the network is back to normal: the write is local and
+	// cheap, but nothing about it is worth delaying the restore of the user's
+	// routes and resolver by even a moment.
+	m.saveVerdictsLocked()
+}
+
+// saveVerdictsLocked persists what was learned, unless the user asked for no
+// residue on disk. Caller must hold m.mu.
+func (m *Manager) saveVerdictsLocked() {
+	if m.verdicts == nil || m.verdictPath == "" || m.adaptiveSmartMemoryOnly {
+		return
+	}
+	if err := m.verdicts.Save(m.verdictPath); err != nil {
+		m.log.Info("[SMART] Не удалось сохранить кэш вердиктов")
+	}
+}
+
+// NotifyNetworkChanged switches the verdict store to the set belonging to the
+// network the machine is on now. Called from the same place the LAN-bind and
+// AUTO caches are invalidated — a roam is exactly when what was learned about
+// the previous link stops being evidence about this one.
+//
+// Nothing is dropped: the previous network's set is still there when the user
+// comes home.
+func (m *Manager) NotifyNetworkChanged() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.verdicts == nil {
+		return
+	}
+	fp := sys.NetworkFingerprint()
+	if fp == "" || fp == m.verdicts.Namespace() {
+		return
+	}
+	// Write out what the previous network taught us before switching away: a
+	// roam is followed often enough by a crash or a force-quit that "we will
+	// save it at shutdown" is not a promise this can keep.
+	m.saveVerdictsLocked()
+	m.verdicts.SetNamespace(fp)
+	m.log.Info("[SMART] Сменилась сеть — переключаю набор вердиктов")
 }
 
 func (m *Manager) GetRouter() *Router {
