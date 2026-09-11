@@ -288,6 +288,7 @@ type SBDNSServer struct {
 
 type SBDNSRule struct {
 	Domain           []string `json:"domain,omitempty"`
+	DomainSuffix     []string `json:"domain_suffix,omitempty"`
 	ProcessPathRegex []string `json:"process_path_regex,omitempty"`
 	RuleSet          []string `json:"rule_set,omitempty"`
 	QueryType        []string `json:"query_type,omitempty"`
@@ -1091,6 +1092,15 @@ func smartRuleSetActive(cfg EngineConfig) bool {
 		cfg.SmartRuleSetPath != ""
 }
 
+// osConnectivityProbeDomains are the hostnames the operating system uses to
+// decide whether this machine has internet at all. They are matched as
+// suffixes because each family has several members (ipv6., www., dns.) and
+// Windows has changed which one it asks for between releases.
+var osConnectivityProbeDomains = []string{
+	"msftconnecttest.com",
+	"msftncsi.com",
+}
+
 const (
 	fakeIPTag        = "fakeip"
 	fakeIPInet4Range = "198.18.0.0/15"
@@ -1257,6 +1267,25 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 				// always resolves.
 				dns.Final = "local"
 			}
+		}
+
+		// The OS connectivity probes have to keep getting the truth. A probe
+		// exists to answer "is there a working path", and a fake address makes
+		// it answer yes every time.
+		//
+		// One of them makes the cost visible: ipv6.msftconnecttest.com has AAAA
+		// records and no A record at all. FakeIP answers every A query anyway,
+		// so Windows dialled 198.18.x.x, the router turned that back into the
+		// name, and the direct outbound resolved it for real under ipv4_only —
+		// "lookup ipv6.msftconnecttest.com: empty result" for a probe that had
+		// simply returned nothing before. Sent to the system resolver, it goes
+		// back to returning nothing, and no connection is opened over a name
+		// that was never going to resolve.
+		if adaptiveSmartActive(cfg) {
+			dns.Rules = append(dns.Rules, SBDNSRule{
+				DomainSuffix: append([]string(nil), osConnectivityProbeDomains...),
+				Server:       "local",
+			})
 		}
 
 		// FakeIP goes last: every exemption above has already claimed what it

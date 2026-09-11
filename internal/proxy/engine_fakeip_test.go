@@ -17,6 +17,8 @@ package proxy
 
 import (
 	"regexp"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -161,6 +163,70 @@ func TestSwitchOffEmitsNoFakeIP(t *testing.T) {
 	if built.Experimental != nil && built.Experimental.CacheFile != nil && built.Experimental.CacheFile.StoreFakeIP {
 		t.Fatal("store_fakeip leaked into a config with the switch off")
 	}
+}
+
+// A connectivity probe exists to tell the truth about the network path, so it
+// is the one kind of name a fake address must never be handed to.
+//
+// Windows asks for ipv6.msftconnecttest.com, a hostname that has AAAA records
+// and no A record at all. FakeIP answers every A query regardless, so Windows
+// opened a connection to 198.18.x.x, the router turned it back into the name,
+// and the direct outbound resolved it for real under ipv4_only — producing
+// "lookup ipv6.msftconnecttest.com: empty result" for a probe that had simply
+// returned nothing before.
+func TestConnectivityProbesAreExemptFromFakeIP(t *testing.T) {
+	cfg := mustBuildTunnelModeConfig(t, adaptiveTunnelConfig())
+
+	probes := []string{
+		"ipv6.msftconnecttest.com",
+		"www.msftconnecttest.com",
+		"dns.msftncsi.com",
+	}
+	for _, host := range probes {
+		server, ok := dnsServerForHost(cfg.DNS, host)
+		if !ok {
+			t.Fatalf("%s matched no DNS rule at all", host)
+		}
+		if server == fakeIPTag {
+			t.Errorf("%s was answered from the fake pool", host)
+		}
+	}
+
+	// The exemption must be narrow: an ordinary name still has to reach fakeip,
+	// or the feature has been switched off by accident.
+	if server, _ := dnsServerForHost(cfg.DNS, "example.com"); server != fakeIPTag {
+		t.Fatalf("an ordinary name went to %q instead of fakeip", server)
+	}
+}
+
+// dnsServerForHost walks the built DNS rules the way sing-box does — first
+// match wins — and reports which server would answer an A query for host from
+// a process the config knows nothing about.
+func dnsServerForHost(dns *SBDNS, host string) (string, bool) {
+	for _, rule := range dns.Rules {
+		// Rules keyed on the asking process do not apply to an arbitrary app.
+		if len(rule.ProcessPathRegex) > 0 || len(rule.RuleSet) > 0 {
+			continue
+		}
+		if len(rule.QueryType) > 0 && !slices.Contains(rule.QueryType, "A") {
+			continue
+		}
+		if len(rule.Domain) == 0 && len(rule.DomainSuffix) == 0 {
+			return rule.Server, true
+		}
+		if slices.Contains(rule.Domain, host) {
+			return rule.Server, true
+		}
+		for _, suffix := range rule.DomainSuffix {
+			if host == suffix || strings.HasSuffix(host, "."+strings.TrimPrefix(suffix, ".")) {
+				return rule.Server, true
+			}
+		}
+	}
+	if dns.Final != "" {
+		return dns.Final, true
+	}
+	return "", false
 }
 
 // The core is the final judge of whether this config is legal at all.
