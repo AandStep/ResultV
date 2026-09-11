@@ -1152,6 +1152,68 @@ const (
 	fakeIPInet6Range = "fc00::/18"
 )
 
+// isFakeIPAddr reports whether an address came out of the fake pool rather than
+// out of the internet.
+//
+// This has to be checked at the point of USE, not prevented at the point of
+// answer: on Windows a name is resolved by the DNS Client service, not by the
+// process that asked, so every lookup reaches the engine wearing svchost's
+// name and the process_path_regex exemption in buildDNS cannot see ours. The
+// application therefore gets fake addresses like everyone else, and the only
+// place that can tell is the code about to dial one.
+//
+// A fake address is harmless while the connection goes through the TUN — the
+// router turns it back into the name before matching a rule. It is fatal the
+// moment we deliberately bypass the TUN, which is exactly what the LAN-bound
+// probes do: 198.18.x.x means nothing on the physical adapter, and the dial
+// sits there until it times out.
+//
+// The ranges are safe to reject unconditionally: 198.18.0.0/15 is RFC 2544
+// benchmarking space and fc00::/18 is ULA — no reachable server lives in
+// either, whatever produced the answer.
+func isFakeIPAddr(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	for _, cidr := range []string{fakeIPInet4Range, fakeIPInet6Range} {
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// realIPv4s keeps the IPv4 addresses in a resolver answer that a socket can
+// actually reach, dropping fakes and duplicates.
+//
+// Every place the application resolves a name for ITS OWN use has to go through
+// this: the pings and the AUTO sweep dial bound to the physical adapter, and
+// the server pin feeds route_exclude_address, so a fake address there does not
+// degrade anything gracefully — it points the tunnel at itself. An empty result
+// is the signal for the caller to fall back to DoH, which every one of them
+// already knows how to do.
+func realIPv4s(addrs []net.IPAddr) []string {
+	seen := make(map[string]struct{}, len(addrs))
+	var out []string
+	for _, a := range addrs {
+		v4 := a.IP.To4()
+		if v4 == nil || isFakeIPAddr(v4) {
+			continue
+		}
+		s := v4.String()
+		if _, dup := seen[s]; dup {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
 // adaptiveSmartActive reports whether the experimental verdict engine is on
 // for this config. Proxy mode is excluded: it has no TUN, so nothing would
 // route the fake range anywhere.

@@ -37,6 +37,12 @@ const pingResolveTTL = 5 * time.Minute
 // it without touching the network.
 var pingDoHResolve = resolveServerIPsViaDoH
 
+// pingLookupIPAddr is the OS resolver behind a var so tests can hand back the
+// fake addresses a live tunnel produces without needing one.
+var pingLookupIPAddr = func(ctx context.Context, host string) ([]net.IPAddr, error) {
+	return net.DefaultResolver.LookupIPAddr(ctx, host)
+}
+
 type pingResolveEntry struct {
 	ip      string
 	expires time.Time
@@ -97,13 +103,24 @@ func resolvePingHost(host string) string {
 
 	ctx, cancel := context.WithTimeout(context.Background(), pingResolveTimeout)
 	defer cancel()
-	if addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host); err == nil {
+	if addrs, err := pingLookupIPAddr(ctx, host); err == nil {
 		for _, a := range addrs {
-			if v4 := a.IP.To4(); v4 != nil {
-				ip := v4.String()
-				storePingResolveCache(host, ip, now)
-				return ip
+			v4 := a.IP.To4()
+			if v4 == nil {
+				continue
 			}
+			// A fake address is not an answer to this question. The probes below
+			// bind to the physical adapter on purpose, and 198.18.x.x exists only
+			// inside the tunnel — dialling it there is a guaranteed five-second
+			// timeout, reported as "Timeout" for every server in the list. It must
+			// not be cached either: the entry outlives the session by its whole
+			// TTL, so the pings keep failing after disconnecting.
+			if isFakeIPAddr(v4) {
+				break
+			}
+			ip := v4.String()
+			storePingResolveCache(host, ip, now)
+			return ip
 		}
 	}
 

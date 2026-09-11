@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	neturl "net/url"
 	"strconv"
@@ -108,6 +109,11 @@ var probeFetch = func(ctx context.Context, url string, viaNode bool) probeOutcom
 		// Never reuse a connection that may have been opened over the other
 		// path: the whole measurement is about which path was used.
 		DisableKeepAlives: true,
+		// The direct half has to actually be direct. Left to the standard
+		// dialer it would resolve through the OS resolver, receive a fake
+		// address, and dial into the TUN — measuring the engine it is supposed
+		// to be measuring against.
+		DialContext: probeDirectDial,
 	}
 	if viaNode {
 		port := probeInboundPort()
@@ -121,6 +127,9 @@ var probeFetch = func(ctx context.Context, url string, viaNode bool) probeOutcom
 			return probeOutcome{Err: err}
 		}
 		transport.Proxy = http.ProxyURL(proxyURL)
+		// The node half goes to a loopback listener, so binding it to the
+		// physical adapter would be both pointless and wrong.
+		transport.DialContext = nil
 	}
 	client := &http.Client{
 		Transport: transport,
@@ -148,3 +157,35 @@ var probeFetch = func(ctx context.Context, url string, viaNode bool) probeOutcom
 		Elapsed:  time.Since(start),
 	}
 }
+
+// probeDirectDial opens the direct half of a probe, deliberately bypassing the
+// tunnel the way the LAN-bound pings do.
+//
+// Two refusals rather than a best effort. A name that only resolves to a fake
+// address has no direct path to measure, and without an address to bind to
+// there is no way to keep the dial off the TUN — in both cases the probe would
+// quietly compare the tunnel against itself and hand classifyProbe a verdict it
+// has no basis for.
+var probeDirectDial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ip := resolvePingHost(host)
+	if ip == "" {
+		return nil, errors.New("probe: no usable address for " + host)
+	}
+	local, err := pickLANBindIPv4()
+	if err != nil {
+		return nil, errors.New("probe: nothing to bind the direct half to: " + err.Error())
+	}
+	d := net.Dialer{
+		Timeout:   probeDirectDialTimeout,
+		LocalAddr: &net.TCPAddr{IP: local},
+	}
+	return d.DialContext(ctx, network, net.JoinHostPort(ip, port))
+}
+
+// probeDirectDialTimeout matches the ping probes: five seconds is already long
+// enough to tell a black hole from a slow server.
+const probeDirectDialTimeout = 5 * time.Second

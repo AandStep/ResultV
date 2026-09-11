@@ -1307,23 +1307,46 @@ func (m *Manager) takeDNSTimings() string {
 // when it's cheaply available and otherwise get out of the way fast.
 const pinnedResolveTimeout = 500 * time.Millisecond
 
+// selfLookupIPAddr is the OS resolver as the application itself sees it, behind
+// a var so tests can hand back the fake addresses a live tunnel produces.
+var selfLookupIPAddr = func(host string) []net.IPAddr {
+	ctx, cancel := context.WithTimeout(context.Background(), pinnedResolveTimeout)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil
+	}
+	return addrs
+}
+
+// selfDoHResolve is the escape hatch for when the OS resolver cannot give this
+// application a usable answer — censored, or answering out of the fake pool.
+var selfDoHResolve = resolveServerIPsViaDoH
+
 func resolvePinnedServerIP(host string) string {
 	host = strings.TrimSpace(host)
 	if host == "" || net.ParseIP(host) != nil {
 		return ""
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), pinnedResolveTimeout)
-	defer cancel()
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil || len(addrs) == 0 {
-		return ""
+	if ips := resolveSelfServerIPs(host); len(ips) > 0 {
+		return ips[0]
 	}
-	for _, a := range addrs {
-		if v4 := a.IP.To4(); v4 != nil {
-			return v4.String()
-		}
+	return ""
+}
+
+// resolveSelfServerIPs is the one place that turns a server name into addresses
+// this application may act on.
+//
+// The fake-address guard is not belt and braces. A reconnect that happens while
+// the TUN is already up — a mode switch, a routing-rule change — re-resolves the
+// server through an OS resolver that FakeIP is now answering, and the result
+// feeds the server pin, the hosts record and route_exclude_address. Pinning
+// 198.18.x.x there sends the tunnel's own packets back into the tunnel.
+func resolveSelfServerIPs(host string) []string {
+	if ips := realIPv4s(selfLookupIPAddr(host)); len(ips) > 0 {
+		return ips
 	}
-	return addrs[0].IP.String()
+	return selfDoHResolve(host)
 }
 
 // resolveAllServerIPs resolves a domain server to ALL of its IPv4 addresses at
@@ -1339,27 +1362,7 @@ func resolveAllServerIPs(host string) []string {
 	if host == "" || net.ParseIP(host) != nil {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), pinnedResolveTimeout)
-	defer cancel()
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil || len(addrs) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(addrs))
-	var out []string
-	for _, a := range addrs {
-		v4 := a.IP.To4()
-		if v4 == nil {
-			continue
-		}
-		s := v4.String()
-		if _, dup := seen[s]; dup {
-			continue
-		}
-		seen[s] = struct{}{}
-		out = append(out, s)
-	}
-	return out
+	return resolveSelfServerIPs(host)
 }
 
 // captureLiveServerIP fills proxy.ResolvedIP from the live OS socket when the
