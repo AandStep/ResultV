@@ -358,8 +358,16 @@ type SBOutbound struct {
 	GlobalPadding       bool   `json:"global_padding,omitempty"`
 	AuthenticatedLength bool   `json:"authenticated_length,omitempty"`
 	Security            string `json:"security,omitempty"`
-	UpMbps              int    `json:"up_mbps,omitempty"`
-	DownMbps            int    `json:"down_mbps,omitempty"`
+	// Inet4BindAddress pins this outbound's own dialing to one local IPv4.
+	//
+	// Only the ping probe engine sets it, and only while a tunnel session is
+	// up: without it the probe's traffic enters the TUN like everything else
+	// and we would be measuring the tunnel through the tunnel. This is the
+	// same correction pingLANProbe/autoProbeDialer already apply to the direct
+	// probes, moved to where sing-box does the dialing.
+	Inet4BindAddress string `json:"inet4_bind_address,omitempty"`
+	UpMbps           int    `json:"up_mbps,omitempty"`
+	DownMbps         int    `json:"down_mbps,omitempty"`
 	// ServerPorts/HopInterval drive Hysteria2 port hopping. sing-quic parses only
 	// "start:end" ranges, so the URI's "10000-20000" spelling is converted before
 	// it gets here — a range it cannot parse aborts outbound creation.
