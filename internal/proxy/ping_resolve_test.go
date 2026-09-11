@@ -18,6 +18,8 @@ package proxy
 import (
 	"testing"
 	"time"
+
+	"resultproxy-wails/internal/config"
 )
 
 func TestResolvePingHostPassesThroughLiteralIP(t *testing.T) {
@@ -105,7 +107,7 @@ func TestManagerPingDialsResolvedIP(t *testing.T) {
 	defer func() { pingTCPProbe = origTCP }()
 
 	m := &Manager{}
-	res := m.Ping("vpn.example.invalid", 443, "VLESS")
+	res := m.Ping("vpn.example.invalid", 443, "VLESS", ProxyConfig{}, PingOptions{Type: config.PingTypeAuto, Timeout: 30 * time.Second})
 	if dialed != "198.51.100.9" {
 		t.Fatalf("probe dialed %q, want the resolved IP", dialed)
 	}
@@ -131,7 +133,7 @@ func TestManagerPingReportsUnresolvedDomain(t *testing.T) {
 	defer func() { pingTCPProbe = origTCP }()
 
 	m := &Manager{}
-	res := m.Ping("vpn.example.invalid", 443, "VLESS")
+	res := m.Ping("vpn.example.invalid", 443, "VLESS", ProxyConfig{}, PingOptions{Type: config.PingTypeAuto, Timeout: 30 * time.Second})
 	if called {
 		t.Fatal("probe dialed an unresolvable hostname; the OS resolver is the thing we're avoiding")
 	}

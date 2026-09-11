@@ -31,6 +31,7 @@ import (
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"resultproxy-wails/internal/config"
 	"resultproxy-wails/internal/logger"
 	sys "resultproxy-wails/internal/system"
 	"resultproxy-wails/internal/system/processtree"
@@ -72,6 +73,31 @@ type PingResultDTO struct {
 	LatencyMs int64  `json:"latencyMs"`
 	Reason    string `json:"reason,omitempty"`
 	CheckType string `json:"checkType,omitempty"`
+}
+
+// pingEngineMaxConcurrency caps how many throwaway probe engines run at once.
+//
+// The frontend's own worker pool is sized for cheap socket probes
+// (PING_CONCURRENCY = 16 in useDaemonPing.js), and an engine costs orders of
+// magnitude more than a socket, so the ceiling has to live here rather than
+// in the UI.
+const pingEngineMaxConcurrency = 4
+
+// pingEngineSem admits probe engines. Package-level rather than per-Manager
+// because the cost it protects — memory and sockets — is the process's.
+var pingEngineSem = make(chan struct{}, pingEngineMaxConcurrency)
+
+// PingOptions is the user's ping configuration, resolved by App from settings.
+type PingOptions struct {
+	// Type is one of config.PingType*.
+	Type string
+	// URL and Method apply to the http_* types only.
+	URL    string
+	Method string
+	// Timeout bounds one measurement. For the http_* and icmp types it is the
+	// exact budget; for "auto" it is an outer ceiling on top of each probe's
+	// own internal limit, so it can shorten a wait but not extend one.
+	Timeout time.Duration
 }
 
 type Manager struct {
@@ -2521,7 +2547,122 @@ func (m *Manager) GetMode() ProxyMode {
 	return m.mode
 }
 
-func (m *Manager) Ping(ip string, port int, proxyType string) PingResultDTO {
+// Ping measures latency to one node the way the user asked for.
+//
+// node carries the full entry because the http_* types have to build a real
+// outbound, which needs URI/Extra/credentials — ip/port/proxyType alone
+// cannot describe a VLESS node. The direct probes still use ip/port, so a
+// missing node only costs the HTTP types.
+func (m *Manager) Ping(ip string, port int, proxyType string, node ProxyConfig, opts PingOptions) PingResultDTO {
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+
+	switch opts.Type {
+	case config.PingTypeHTTPGet, config.PingTypeHTTPHead:
+		return m.pingViaNode(node, proxyType, opts, timeout)
+	case config.PingTypeICMP:
+		return m.withDeadline(timeout, "icmp", func() PingResultDTO {
+			return m.pingICMPOnly(ip, timeout)
+		})
+	default:
+		return m.withDeadline(timeout, "", func() PingResultDTO {
+			return m.pingDirect(ip, port, proxyType)
+		})
+	}
+}
+
+// withDeadline runs probe and abandons it once timeout elapses.
+//
+// The abandoned goroutine is not a leak: every probe below has an internal
+// ceiling of its own and finishes on its own schedule, and the channel is
+// buffered so a late result never blocks the sender. This is what makes the
+// timeout knob work for "auto" without changing the shared probe signatures —
+// which the AUTO sweep and 133 test assignments depend on.
+func (m *Manager) withDeadline(timeout time.Duration, checkType string, probe func() PingResultDTO) PingResultDTO {
+	done := make(chan PingResultDTO, 1)
+	go func() { done <- probe() }()
+	select {
+	case res := <-done:
+		return res
+	case <-time.After(timeout):
+		return PingResultDTO{Reachable: false, Reason: "timeout", CheckType: checkType}
+	}
+}
+
+// pingICMPOnly answers with ICMP and nothing else. There is deliberately no
+// fallback: the user picked ICMP, and quietly returning a TCP number would
+// misreport what was measured.
+func (m *Manager) pingICMPOnly(ip string, timeout time.Duration) PingResultDTO {
+	dialHost := resolvePingHost(ip)
+	if dialHost == "" {
+		return PingResultDTO{Reachable: false, Reason: "dns_unresolved", CheckType: "dns"}
+	}
+	source := ""
+	m.mu.Lock()
+	tunnelSession := m.connected && m.mode == ProxyModeTunnel
+	m.mu.Unlock()
+	if tunnelSession {
+		if local, err := pickLANBindIPv4(); err == nil && local != nil {
+			source = local.String()
+		}
+	}
+	ms, ok := pingICMPProbe(dialHost, source, timeout)
+	if !ok {
+		return PingResultDTO{Reachable: false, Reason: "icmp_unavailable", CheckType: "icmp"}
+	}
+	return PingResultDTO{Reachable: true, LatencyMs: ms, CheckType: "icmp"}
+}
+
+// pingViaNode measures through a throwaway probe engine.
+func (m *Manager) pingViaNode(node ProxyConfig, proxyType string, opts PingOptions, timeout time.Duration) PingResultDTO {
+	checkType := "http_get"
+	method := http.MethodGet
+	if opts.Type == config.PingTypeHTTPHead {
+		checkType, method = "http_head", http.MethodHead
+	}
+
+	pt := strings.ToUpper(strings.TrimSpace(proxyType))
+	if pt == "WIREGUARD" || pt == "AMNEZIAWG" {
+		return PingResultDTO{Reachable: false, Reason: "unsupported_for_protocol", CheckType: checkType}
+	}
+	if strings.TrimSpace(node.IP) == "" {
+		return PingResultDTO{Reachable: false, Reason: "node_not_found", CheckType: checkType}
+	}
+	if err := config.ValidatePingTestURL(opts.URL); err != nil {
+		return PingResultDTO{Reachable: false, Reason: "bad_test_url", CheckType: checkType}
+	}
+
+	// The budget starts AFTER the slot is won. Counting queue time against it
+	// would report a false timeout for every node that merely waited its turn.
+	pingEngineSem <- struct{}{}
+	defer func() { <-pingEngineSem }()
+
+	bindIPv4 := ""
+	m.mu.Lock()
+	tunnelSession := m.connected && m.mode == ProxyModeTunnel
+	log := m.log
+	m.mu.Unlock()
+	if tunnelSession {
+		if local, err := pickLANBindIPv4(); err == nil && local != nil {
+			bindIPv4 = local.String()
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	ms, ok, reason := pingThroughNodeProbe(ctx, node, method, opts.URL, bindIPv4, log)
+	if !ok {
+		return PingResultDTO{Reachable: false, Reason: reason, CheckType: checkType}
+	}
+	return PingResultDTO{Reachable: true, LatencyMs: ms, CheckType: checkType}
+}
+
+// pingDirect is the original probe table: a measurement to the node's own
+// address, with the probe picked by protocol. It is what PingTypeAuto runs.
+func (m *Manager) pingDirect(ip string, port int, proxyType string) PingResultDTO {
 	m.mu.Lock()
 	mode := m.mode
 	connected := m.connected
