@@ -66,6 +66,7 @@ type smartOutbound struct {
 	store   *verdict.Store
 	traffic *trafficTracker
 	health  *directHealth
+	probes  *probeGate
 }
 
 func newSmartOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options smartOutboundOptions) (adapter.Outbound, error) {
@@ -79,6 +80,7 @@ func newSmartOutbound(ctx context.Context, router adapter.Router, logger log.Con
 		store:      service.FromContext[*verdict.Store](ctx),
 		traffic:    service.FromContext[*trafficTracker](ctx),
 		health:     newDirectHealth(nil),
+		probes:     newProbeGate(nil),
 	}, nil
 }
 
@@ -222,6 +224,10 @@ func (s *smartOutbound) raceConnection(ctx context.Context, conn net.Conn, metad
 	s.learn(metadata, res.ViaProxy)
 	if res.ViaProxy {
 		conn = s.attributeProxy(conn, metadata)
+	} else {
+		// Direct won on bytes. Whether those bytes were the site or a wall is a
+		// different question, and only a probe can answer it.
+		s.recheckAsync(smartHost(&metadata))
 	}
 	// The server's first bytes are already off the socket, so they are handed
 	// back in front of it; from here this is an ordinary relayed pair and the
@@ -253,6 +259,21 @@ func (s *smartOutbound) learn(metadata adapter.InboundContext, viaProxy bool) {
 	if metadata.Destination.Addr.IsValid() {
 		s.store.LearnIP(metadata.Destination.Addr, d)
 	}
+}
+
+// recheckAsync re-examines a name the race decided in favour of the direct
+// path. The race only knows whether bytes arrived; a region wall arrives as
+// bytes too. Always asynchronous — a connection is already being served and
+// must never wait on this.
+func (s *smartOutbound) recheckAsync(host string) {
+	if host == "" || s.store == nil {
+		return
+	}
+	go func() {
+		if d := probeHost(context.Background(), host, s.probes); d != verdict.Unknown {
+			s.store.Learn(host, d)
+		}
+	}()
 }
 
 // constantDialer hands the core a connection that is already open, so the

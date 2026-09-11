@@ -17,6 +17,11 @@ package proxy
 
 import (
 	"context"
+	"errors"
+	"io"
+	"net/http"
+	neturl "net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -91,12 +96,55 @@ func classifyProbe(direct, viaNode probeOutcome) verdict.Decision {
 	return verdict.Direct
 }
 
-// probeFetch performs one observation. Declared as a var so tests can hand the
-// classifier synthetic outcomes without opening a socket — the same seam
-// autoprobe.go already uses for autoProbeLookupIPAddr.
+// probeFetch performs one observation: a plain HTTPS GET, either straight out
+// or through the local probe inbound — the loopback listener whose traffic
+// buildRoute forces into the tunnel.
 //
-// The real HTTP measurement lands with the outbound that needs it: until a
-// verdict can change a route, a probe would only be traffic with nowhere to go.
+// Declared as a var so tests can hand the classifier synthetic outcomes without
+// opening a socket — the same seam autoprobe.go already uses for
+// autoProbeLookupIPAddr.
 var probeFetch = func(ctx context.Context, url string, viaNode bool) probeOutcome {
-	return probeOutcome{Err: context.Canceled}
+	transport := &http.Transport{
+		// Never reuse a connection that may have been opened over the other
+		// path: the whole measurement is about which path was used.
+		DisableKeepAlives: true,
+	}
+	if viaNode {
+		port := probeInboundPort()
+		if port == 0 {
+			// Measuring the direct path twice and calling it a comparison is
+			// worse than not measuring at all.
+			return probeOutcome{Err: errors.New("probe inbound is not up")}
+		}
+		proxyURL, err := neturl.Parse("http://127.0.0.1:" + strconv.Itoa(port))
+		if err != nil {
+			return probeOutcome{Err: err}
+		}
+		transport.Proxy = http.ProxyURL(proxyURL)
+	}
+	client := &http.Client{
+		Transport: transport,
+		// A redirect is the answer, not a step towards it: following it would
+		// turn a region wall into a 200 from the wall's own page.
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return probeOutcome{Err: err}
+	}
+	start := time.Now()
+	resp, err := client.Do(req)
+	if err != nil {
+		return probeOutcome{Err: err, Elapsed: time.Since(start)}
+	}
+	defer resp.Body.Close()
+	n, _ := io.Copy(io.Discard, io.LimitReader(resp.Body, 64*1024))
+	return probeOutcome{
+		Status:   resp.StatusCode,
+		Location: resp.Header.Get("Location"),
+		Bytes:    n,
+		Elapsed:  time.Since(start),
+	}
 }

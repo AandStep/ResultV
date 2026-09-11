@@ -27,6 +27,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"resultproxy-wails/internal/verdict"
@@ -589,6 +590,20 @@ type SBRouteRule struct {
 // user's traffic does not inherit.
 const probeInboundTag = "probe-in"
 
+// probeInboundPortValue is the loopback port of the "probe-in" inbound for the
+// engine currently configured. The block prober needs it to send its
+// through-the-node half somewhere, and the port is chosen while the config is
+// built.
+//
+// Zero means there is no such inbound — proxy mode, or nothing started yet — and
+// the prober then refuses to run rather than quietly measuring the direct path
+// twice and calling the result a comparison.
+var probeInboundPortValue atomic.Int64
+
+func setProbeInboundPort(port int) { probeInboundPortValue.Store(int64(port)) }
+
+func probeInboundPort() int { return int(probeInboundPortValue.Load()) }
+
 // quicRejectRule builds the UDP/443 reject that forces a QUIC client back onto
 // TCP. Callers pass the same selector as the route-to-proxy rule it shadows, so
 // the reject covers exactly the traffic we tunnel and nothing else.
@@ -977,6 +992,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	if probePort == 0 {
 		probePort = getFreeLocalPort(14081)
 	}
+	setProbeInboundPort(probePort)
 	probeIn := SBInbound{
 		Type:       "mixed",
 		Tag:        probeInboundTag,
