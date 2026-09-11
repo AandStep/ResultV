@@ -493,6 +493,21 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 	if cfg.Verdicts != nil {
 		boxCtx = service.ContextWith[*verdict.Store](boxCtx, cfg.Verdicts)
 	}
+	tracker := &trafficTracker{
+		upload:        &e.uploadBytes,
+		download:      &e.downloadBytes,
+		proxyUpload:   &e.proxyUploadBytes,
+		proxyDownload: &e.proxyDownloadBytes,
+		log:           e.log,
+		server:        fmt.Sprintf("%s:%d", cfg.Proxy.IP, cfg.Proxy.Port),
+		protocol:      strings.ToLower(strings.TrimSpace(cfg.Proxy.Type)),
+		mode:          cfg.Mode,
+		isSub:         cfg.Proxy.SubscriptionURL != "",
+	}
+	// The tracker has to exist before the core does: the smart outbound books
+	// its own traffic once it has chosen a path, and it is constructed during
+	// box.New. AppendTracker below still installs it the usual way.
+	boxCtx = service.ContextWith[*trafficTracker](boxCtx, tracker)
 	boxCtx = extendedBoxContext(boxCtx)
 
 	var options option.Options
@@ -519,17 +534,6 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 		e.proxyDownloadBytes.Store(0)
 	}
 
-	tracker := &trafficTracker{
-		upload:        &e.uploadBytes,
-		download:      &e.downloadBytes,
-		proxyUpload:   &e.proxyUploadBytes,
-		proxyDownload: &e.proxyDownloadBytes,
-		log:           e.log,
-		server:        fmt.Sprintf("%s:%d", cfg.Proxy.IP, cfg.Proxy.Port),
-		protocol:      strings.ToLower(strings.TrimSpace(cfg.Proxy.Type)),
-		mode:          cfg.Mode,
-		isSub:         cfg.Proxy.SubscriptionURL != "",
-	}
 	instance.Router().AppendTracker(tracker)
 
 	if err := instance.Start(); err != nil {
@@ -756,6 +760,44 @@ func (t *trafficTracker) rotateLogged() {
 	t.log.Info(fmt.Sprintf("[CONN] Буфер детализации очищен (превышен порог %d уникальных хостов)", loggedRotateThreshold))
 }
 
+// attributeProxyConn books everything that flows through conn to the node
+// counters, on top of whatever totals it is already feeding.
+//
+// The orientation is deliberately the same as RoutedConnection's: both wrap the
+// client-side connection, so "read" and "write" have to mean the same thing in
+// both places, or the node's share would be measured in the opposite direction
+// from the total.
+func (t *trafficTracker) attributeProxyConn(conn net.Conn) net.Conn {
+	return bufio.NewInt64CounterConn(conn,
+		[]*atomic.Int64{t.proxyDownload},
+		[]*atomic.Int64{t.proxyUpload})
+}
+
+// logProxyConnection writes the one [CONN] line per host that logConnection
+// would have written, for a connection whose outbound only became known later.
+func (t *trafficTracker) logProxyConnection(metadata adapter.InboundContext) {
+	host := metadata.Domain
+	if host == "" {
+		host = metadata.Destination.Fqdn
+	}
+	if host == "" {
+		return
+	}
+	key := host + "→" + smartOutboundTag
+	if _, loaded := t.logged.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	if t.count.Add(1) > loggedRotateThreshold {
+		t.rotateLogged()
+	}
+	viaStr := fmt.Sprintf(" | via %s", t.server)
+	if t.isSub {
+		viaStr = ""
+	}
+	msg := fmt.Sprintf("[CONN] %s -> %s%s | status: connected", host, metadata.Destination.String(), viaStr)
+	t.log.LogWithSource(msg, logger.TypeInfo, host, "", host)
+}
+
 func (t *trafficTracker) logConnection(metadata adapter.InboundContext, outbound adapter.Outbound) (string, string, bool) {
 	dest := metadata.Destination.String()
 	if dest == "" {
@@ -788,7 +830,11 @@ func (t *trafficTracker) logConnection(metadata adapter.InboundContext, outbound
 	// a warning about a routing decision that was correct: in Smart mode
 	// Final="direct" (buildRoute), so anything off the censored block-list is
 	// supposed to go direct.
-	if outTag == "direct" || outTag == "block" {
+	// The smart outbound has not chosen yet: the router wraps the connection
+	// before handing it over (fork route/route.go:158), so at this point the
+	// answer literally does not exist. It books its own traffic once it knows,
+	// via attributeProxyConn and logProxyConnection.
+	if outTag == "direct" || outTag == "block" || outTag == smartOutboundTag {
 		return host, dest, false
 	}
 

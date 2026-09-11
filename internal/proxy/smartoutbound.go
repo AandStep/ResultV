@@ -57,10 +57,11 @@ type smartOutbound struct {
 	connection adapter.ConnectionManager
 	logger     logger.ContextLogger
 
-	tags   []string
-	direct adapter.Outbound
-	proxy  adapter.Outbound
-	store  *verdict.Store
+	tags    []string
+	direct  adapter.Outbound
+	proxy   adapter.Outbound
+	store   *verdict.Store
+	traffic *trafficTracker
 }
 
 func newSmartOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options smartOutboundOptions) (adapter.Outbound, error) {
@@ -72,6 +73,7 @@ func newSmartOutbound(ctx context.Context, router adapter.Router, logger log.Con
 		logger:     logger,
 		tags:       options.Outbounds,
 		store:      service.FromContext[*verdict.Store](ctx),
+		traffic:    service.FromContext[*trafficTracker](ctx),
 	}, nil
 }
 
@@ -142,8 +144,23 @@ func (s *smartOutbound) ListenPacket(ctx context.Context, destination M.Socksadd
 	return s.member(choice).ListenPacket(ctx, destination)
 }
 
+// attributeProxy books this connection to the node, both in the counters the
+// speed indicator reads and in the log line the user sees. Called only when the
+// proxy member actually carried the connection.
+func (s *smartOutbound) attributeProxy(conn net.Conn, metadata adapter.InboundContext) net.Conn {
+	if s.traffic == nil {
+		return conn
+	}
+	s.traffic.logProxyConnection(metadata)
+	return s.traffic.attributeProxyConn(conn)
+}
+
 func (s *smartOutbound) NewConnectionEx(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
-	chosen := s.member(s.decide(&metadata))
+	choice := s.decide(&metadata)
+	if choice == chooseProxy {
+		conn = s.attributeProxy(conn, metadata)
+	}
+	chosen := s.member(choice)
 	if handler, isHandler := chosen.(adapter.ConnectionHandlerEx); isHandler {
 		handler.NewConnectionEx(ctx, conn, metadata, onClose)
 		return
