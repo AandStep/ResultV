@@ -1254,11 +1254,75 @@ func (a *App) GetMode() string {
 	return string(a.proxy.GetMode())
 }
 
-func (a *App) PingProxy(ip string, port int, proxyType string) proxy.PingResultDTO {
+// nodeByID finds one proxy entry and copies it into the shape the engine
+// builders take.
+//
+// The whole entry travels on purpose: the http_* ping types build a real
+// outbound through buildOutbounds, which reads URI, Extra and credentials.
+// Rebuilding the node from ip+port would be guesswork, and it breaks outright
+// on a subscription where several nodes share one address.
+func nodeByID(entries []config.ProxyEntry, id string) (proxy.ProxyConfig, bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return proxy.ProxyConfig{}, false
+	}
+	for i := range entries {
+		if entries[i].ID != id {
+			continue
+		}
+		e := entries[i]
+		return proxy.ProxyConfig{
+			ID:              e.ID,
+			IP:              e.IP,
+			Port:            e.Port,
+			Type:            e.Type,
+			Username:        e.Username,
+			Password:        e.Password,
+			URI:             e.URI,
+			Extra:           e.Extra,
+			SubscriptionURL: e.SubscriptionURL,
+		}, true
+	}
+	return proxy.ProxyConfig{}, false
+}
+
+// pingOptionsFromSettings resolves the stored settings into one measurement's
+// parameters, applying every default and clamp on the way.
+func pingOptionsFromSettings(s config.AppSettings) proxy.PingOptions {
+	pingType := s.EffectivePingType()
+	method := ""
+	switch pingType {
+	case config.PingTypeHTTPGet:
+		method = http.MethodGet
+	case config.PingTypeHTTPHead:
+		method = http.MethodHead
+	}
+	return proxy.PingOptions{
+		Type:    pingType,
+		URL:     s.EffectivePingTestURL(),
+		Method:  method,
+		Timeout: s.EffectivePingTimeout(),
+	}
+}
+
+func (a *App) PingProxy(id string, ip string, port int, proxyType string) proxy.PingResultDTO {
 	if a.proxy == nil {
 		return proxy.PingResultDTO{}
 	}
-	return a.proxy.Ping(ip, port, proxyType)
+	var (
+		opts proxy.PingOptions
+		node proxy.ProxyConfig
+	)
+	if a.config != nil {
+		cfg := a.config.GetConfig()
+		opts = pingOptionsFromSettings(cfg.Settings)
+		// Copy the entry out immediately: GetConfig hands back shared slices
+		// and holding one past this call is not safe.
+		node, _ = nodeByID(cfg.Proxies, id)
+	} else {
+		opts = pingOptionsFromSettings(config.AppSettings{})
+	}
+	return a.proxy.Ping(ip, port, proxyType, node, opts)
 }
 
 func (a *App) GetLogs(page, size int) logger.LogPage {
