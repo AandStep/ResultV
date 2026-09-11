@@ -746,6 +746,11 @@ func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
 		dnsServers = fromProxy
 	}
 	a.proxy.SetTunStack(cfg.Settings.EffectiveTunStack())
+	a.proxy.SetAdaptiveSmart(
+		rules.AdaptiveSmart,
+		rules.AdaptiveSmartMemoryOnly,
+		rules.AdaptiveSmartBlockBrowserDoH,
+	)
 
 	result := a.proxy.Connect(
 		a.ctx,
@@ -1151,6 +1156,11 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 			modeSwitchDNS = fromProxy
 		}
 		a.proxy.SetTunStack(cfg.Settings.EffectiveTunStack())
+		a.proxy.SetAdaptiveSmart(
+			cfg.RoutingRules.AdaptiveSmart,
+			cfg.RoutingRules.AdaptiveSmartMemoryOnly,
+			cfg.RoutingRules.AdaptiveSmartBlockBrowserDoH,
+		)
 		result := a.proxy.Connect(
 			a.ctx,
 			prevProxy,
@@ -1329,6 +1339,16 @@ func (a *App) UpdateRules(rules config.RoutingRules) error {
 	if r := a.proxy.GetRouter(); r != nil {
 		r.SetCustomBlockedDomains(rules.CustomBlockedDomains)
 	}
+	// Адаптивный Smart передаётся отдельно: ReconnectWithRoutingRules берёт
+	// только режим и три списка, а тумблер живёт в том же блоке конфига.
+	// Ставится до проверки подключения, чтобы выключенное приложение ушло в
+	// следующий Connect с тем же значением, что видит пользователь.
+	a.proxy.SetAdaptiveSmart(
+		rules.AdaptiveSmart,
+		rules.AdaptiveSmartMemoryOnly,
+		rules.AdaptiveSmartBlockBrowserDoH,
+	)
+
 	status := a.proxy.GetStatus()
 	if !status.IsConnected || status.CurrentProxy == nil {
 		return nil

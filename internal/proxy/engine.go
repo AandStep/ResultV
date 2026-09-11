@@ -147,6 +147,18 @@ type EngineConfig struct {
 	// adapter (returning Rostelecom/MSK-IX addresses instead of the
 	// chosen resolver). Has no effect in Proxy mode.
 	DNSLeakProtection bool
+
+	// AdaptiveSmart turns on the experimental verdict engine. Its first
+	// visible half is FakeIP: with it on, every connection carries the real
+	// domain before any rule is matched (fork route/route.go:422), which is
+	// what lets UDP and HTTP/3 be classified at all.
+	AdaptiveSmart bool
+	// AdaptiveSmartBlockBrowserDoH rejects well-known browser DoH endpoints so
+	// the browser falls back to the system resolver FakeIP can see.
+	AdaptiveSmartBlockBrowserDoH bool
+	// SelfExecutablePath is this application's own binary. Its lookups must
+	// never be answered with a fake address — see buildDNS.
+	SelfExecutablePath string
 }
 
 type Engine interface {
@@ -231,6 +243,12 @@ type SBExperimental struct {
 type SBCacheFile struct {
 	Enabled bool   `json:"enabled,omitempty"`
 	Path    string `json:"path,omitempty"`
+	// StoreFakeIP persists the fake address to domain mapping. Mandatory
+	// whenever a fakeip server is emitted: without it an in-place reload drops
+	// the mapping while clients still hold the addresses, and the fork turns
+	// each such connection into a fatal "missing fakeip record"
+	// (route/route.go:426).
+	StoreFakeIP bool `json:"store_fakeip,omitempty"`
 }
 
 type SBLog struct {
@@ -262,12 +280,17 @@ type SBDNSServer struct {
 	// Used to pin the proxy server's own domain to its connect-time IPs so
 	// re-resolution never touches the redirected OS resolver (see buildDNS).
 	Predefined map[string][]string `json:"predefined,omitempty"`
+	// Inet4Range/Inet6Range configure a fakeip server's pools. Only a server
+	// of type "fakeip" reads them.
+	Inet4Range string `json:"inet4_range,omitempty"`
+	Inet6Range string `json:"inet6_range,omitempty"`
 }
 
 type SBDNSRule struct {
 	Domain           []string `json:"domain,omitempty"`
 	ProcessPathRegex []string `json:"process_path_regex,omitempty"`
 	RuleSet          []string `json:"rule_set,omitempty"`
+	QueryType        []string `json:"query_type,omitempty"`
 	Server           string   `json:"server,omitempty"`
 	Action           string   `json:"action,omitempty"`
 }
@@ -620,6 +643,10 @@ func effectiveDataDir(cfg EngineConfig) string {
 	return resultProxyDataDir()
 }
 
+// singBoxCacheDBName is the core's own cache file. Named once because the
+// FakeIP mapping has to land in this very file and not beside it.
+const singBoxCacheDBName = "sing-box-cache.db"
+
 func buildExperimentalCache(dataDir string) *SBExperimental {
 	if dataDir == "" {
 		return nil
@@ -627,7 +654,7 @@ func buildExperimentalCache(dataDir string) *SBExperimental {
 	return &SBExperimental{
 		CacheFile: &SBCacheFile{
 			Enabled: true,
-			Path:    filepath.Join(dataDir, "sing-box-cache.db"),
+			Path:    filepath.Join(dataDir, singBoxCacheDBName),
 		},
 	}
 }
@@ -947,6 +974,24 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
 	}
+	// A fakeip server without a persistent mapping is a time bomb: see the
+	// comment on SBCacheFile.StoreFakeIP. buildExperimentalCache already emits
+	// that same file for every other reason the core caches things, so this
+	// only has to make sure it exists and carries the flag — a second cache
+	// file would split the mapping away from the rest of the core's state.
+	if adaptiveSmartActive(cfg) {
+		if sbCfg.Experimental == nil {
+			sbCfg.Experimental = &SBExperimental{}
+		}
+		if sbCfg.Experimental.CacheFile == nil {
+			sbCfg.Experimental.CacheFile = &SBCacheFile{}
+		}
+		sbCfg.Experimental.CacheFile.Enabled = true
+		sbCfg.Experimental.CacheFile.StoreFakeIP = true
+		if sbCfg.Experimental.CacheFile.Path == "" {
+			sbCfg.Experimental.CacheFile.Path = filepath.Join(dd, singBoxCacheDBName)
+		}
+	}
 
 	return sbCfg, nil
 }
@@ -1046,6 +1091,19 @@ func smartRuleSetActive(cfg EngineConfig) bool {
 		cfg.SmartRuleSetPath != ""
 }
 
+const (
+	fakeIPTag        = "fakeip"
+	fakeIPInet4Range = "198.18.0.0/15"
+	fakeIPInet6Range = "fc00::/18"
+)
+
+// adaptiveSmartActive reports whether the experimental verdict engine is on
+// for this config. Proxy mode is excluded: it has no TUN, so nothing would
+// route the fake range anywhere.
+func adaptiveSmartActive(cfg EngineConfig) bool {
+	return cfg.AdaptiveSmart && cfg.Mode == ProxyModeTunnel && cfg.RoutingMode == ModeSmart
+}
+
 // firstDetourServerTag returns the tag of the first DNS server routed through
 // the given detour. That server is already the de-facto default today: with no
 // dns.final, sing-box uses the first registered transport and reaches the rest
@@ -1112,6 +1170,22 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		dns.Strategy = "ipv4_only"
 		if tunCarriesIPv6(cfg) {
 			dns.Strategy = "prefer_ipv4"
+		}
+
+		// The application's own lookups must never be answered from the fake
+		// pool. This rule is emitted FIRST because DNS rules are ordered and
+		// everything below would otherwise be able to claim them: the prober,
+		// the updater and the subscription fetch would each receive a perfectly
+		// successful answer of 198.18.x.x and fail in silence. The project has
+		// already paid for the quieter version of this bug once, when the app's
+		// own resolver was killed by its own DNS override.
+		if adaptiveSmartActive(cfg) && cfg.SelfExecutablePath != "" {
+			if rx := appWhitelistPathRegexes([]string{cfg.SelfExecutablePath}); len(rx) > 0 {
+				dns.Rules = append(dns.Rules, SBDNSRule{
+					ProcessPathRegex: rx,
+					Server:           "local",
+				})
+			}
 		}
 
 		// Resolve the server's own hostname. When we pinned its IPs at connect
@@ -1181,6 +1255,30 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 				// restores correct GeoDNS answers. The "local" server is
 				// appended unconditionally in both branches above, so this tag
 				// always resolves.
+				dns.Final = "local"
+			}
+		}
+
+		// FakeIP goes last: every exemption above has already claimed what it
+		// needs, and what is left is the traffic whose name we actually want to
+		// carry into the router. Scoped to A/AAAA because that is all a fake
+		// answer can stand in for. dns.Final stays a real server — the fork
+		// rejects a fakeip default outright (dns/transport_manager.go:217).
+		if adaptiveSmartActive(cfg) {
+			server := SBDNSServer{
+				Type:       "fakeip",
+				Tag:        fakeIPTag,
+				Inet4Range: fakeIPInet4Range,
+			}
+			if tunCarriesIPv6(cfg) {
+				server.Inet6Range = fakeIPInet6Range
+			}
+			dns.Servers = append(dns.Servers, server)
+			dns.Rules = append(dns.Rules, SBDNSRule{
+				QueryType: []string{"A", "AAAA"},
+				Server:    fakeIPTag,
+			})
+			if dns.Final == "" {
 				dns.Final = "local"
 			}
 		}

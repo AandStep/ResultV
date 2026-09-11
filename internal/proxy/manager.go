@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -161,6 +162,15 @@ type Manager struct {
 	// upstream dead while kill switch is armed — not on routine Connect.
 	KillSwitchFirewallEngage    func(ProxyConfig, []string)
 	KillSwitchFirewallDisengage func()
+
+	// adaptiveSmart mirrors RoutingRules.AdaptiveSmart and its two sub-switches
+	// for the LIVE session, the same way enableIPv6 and dnsLeakProtection do:
+	// the internal reconnect paths rebuild the engine config from these fields,
+	// so a value that only lived in the caller's argument list would be lost on
+	// the first mode switch or routing-rule change.
+	adaptiveSmart           bool
+	adaptiveSmartMemoryOnly bool
+	adaptiveSmartBlockDoH   bool
 
 	// secrets encrypts the persistent server-IP pin cache (server_pins.json)
 	// with the app's hardware-keyed CryptoService — those hostname→backend-IP
@@ -852,6 +862,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	}
 	engineCfg.RoutingLists = m.routingListSpecsLocked()
 	engineCfg.RoutingOrder = m.routingOrderLocked()
+	m.applyAdaptiveSmartLocked(&engineCfg)
 	// Smart mode needs the censored block-list in the engine config so
 	// buildRoute can tunnel those domains/ranges while everything else goes
 	// direct. Only populated for Smart — Global/Whitelist ignore it.
@@ -1456,6 +1467,7 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 	}
 	engineCfg.RoutingLists = m.routingListSpecsLocked()
 	engineCfg.RoutingOrder = m.routingOrderLocked()
+	m.applyAdaptiveSmartLocked(&engineCfg)
 	// Smart mode needs the censored block-list in the engine config so
 	// buildRoute can tunnel those domains/ranges while everything else goes
 	// direct. Only populated for Smart — Global/Whitelist ignore it.
@@ -2271,6 +2283,41 @@ func (m *Manager) SetTunStack(stack string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.tunStack = stack
+}
+
+// SetAdaptiveSmart stores the experimental verdict-engine switches for the
+// next engine start or reload. Call it before Connect the way SetTunStack is
+// called: the switches live in RoutingRules, which Connect does not receive.
+func (m *Manager) SetAdaptiveSmart(enabled, memoryOnly, blockBrowserDoH bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.adaptiveSmart = enabled
+	m.adaptiveSmartMemoryOnly = memoryOnly
+	m.adaptiveSmartBlockDoH = blockBrowserDoH
+}
+
+// applyAdaptiveSmartLocked copies the experimental switches into the engine
+// config being built, and tells the engine which binary is ours.
+//
+// SelfExecutablePath is not optional decoration: buildDNS turns it into the
+// first DNS rule, the one that keeps the app's own lookups — the prober, the
+// updater, the subscription fetch — away from the fake address pool. An empty
+// path silently removes that rule, so failing to resolve it also disables the
+// feature rather than shipping it without its guard.
+//
+// Caller must hold m.mu.
+func (m *Manager) applyAdaptiveSmartLocked(cfg *EngineConfig) {
+	if !m.adaptiveSmart {
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		m.log.Warning("[SMART] Не удалось определить путь к своему exe — адаптивный режим не включён")
+		return
+	}
+	cfg.AdaptiveSmart = true
+	cfg.AdaptiveSmartBlockBrowserDoH = m.adaptiveSmartBlockDoH
+	cfg.SelfExecutablePath = exe
 }
 
 // SetRoutingLists replaces the resolved routing-list specs used by the next
