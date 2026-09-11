@@ -1740,7 +1740,16 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	// cost is HTTP/3 for direct destinations, which drop to TCP; Global mode
 	// already loses h3 the same way (Final="proxy" sends it into the node's
 	// dead UDP path), so this only brings Smart in line.
-	if cfg.RoutingMode == ModeSmart {
+	//
+	// The blanket form is a consequence of not knowing the name: the sniffer
+	// cannot pull SNI out of Chrome's multi-packet QUIC ClientHello, so an
+	// unnamed HTTP/3 request could not be classified and had to be knocked back
+	// onto TCP. FakeIP names the connection before any rule runs, so with the
+	// adaptive engine on the smart outbound decides UDP the same way it decides
+	// TCP and only refuses what it genuinely does not know yet. The targeted
+	// rejects above stay in both cases: those are about UDP being unreliable
+	// through the node, which FakeIP does not change.
+	if cfg.RoutingMode == ModeSmart && !smartOutboundActive(cfg) {
 		rules = append(rules, quicRejectRule(SBRouteRule{}))
 	}
 

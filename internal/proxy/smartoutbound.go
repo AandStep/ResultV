@@ -271,12 +271,48 @@ func (d constantDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 }
 
 func (s *smartOutbound) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
-	chosen := s.member(s.decide(&metadata))
+	// A QUIC Initial is cryptographically bound to its connection ID, so there
+	// is nothing to replay and no race to run. An unknown name is refused
+	// instead: the client drops to TCP at once, the race there produces a
+	// verdict, and the NEXT QUIC attempt goes the right way. One bounce to
+	// learn, rather than a permanent ban on HTTP/3.
+	choice := decideSmart(s.store, smartHost(&metadata), metadata.Destination.Addr, false)
+	if metadata.Destination.Port == 443 && !s.knows(&metadata) {
+		err := E.New("smart: no verdict for ", smartHost(&metadata), " yet, falling back to TCP")
+		N.CloseOnHandshakeFailure(conn, onClose, err)
+		s.logger.DebugContext(ctx, err)
+		return
+	}
+	if choice == chooseProxy && s.traffic != nil {
+		s.traffic.logProxyConnection(metadata)
+	}
+	chosen := s.member(choice)
 	if handler, isHandler := chosen.(adapter.PacketConnectionHandlerEx); isHandler {
 		handler.NewPacketConnectionEx(ctx, conn, metadata, onClose)
 		return
 	}
 	s.connection.NewPacketConnection(ctx, chosen, conn, metadata, onClose)
+}
+
+// knows reports whether the store has an actual answer for this destination, as
+// opposed to decideSmart's fallback. UDP needs the difference: "known to work
+// directly" and "nothing is known" both come back as chooseDirect, and only the
+// second has to be refused so the client retries over TCP.
+func (s *smartOutbound) knows(metadata *adapter.InboundContext) bool {
+	if s.store == nil {
+		return false
+	}
+	if host := smartHost(metadata); host != "" {
+		if _, ok := s.store.Lookup(host); ok {
+			return true
+		}
+	}
+	if metadata.Destination.Addr.IsValid() {
+		if _, ok := s.store.LookupIP(metadata.Destination.Addr); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // extendedBoxContext is include.Context plus our own outbound type.
