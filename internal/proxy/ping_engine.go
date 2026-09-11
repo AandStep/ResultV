@@ -18,9 +18,20 @@
 package proxy
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"net/url"
+	"time"
+
+	box "github.com/sagernet/sing-box"
+	"github.com/sagernet/sing-box/option"
+	singjson "github.com/sagernet/sing/common/json"
+
+	"resultproxy-wails/internal/logger"
 )
 
 // errPingProbeUnsupported marks a node whose protocol cannot carry an
@@ -94,3 +105,116 @@ func BuildPingProbeConfig(proxy ProxyConfig, listenPort int, bindIPv4 string) (S
 
 	return cfg, nil
 }
+
+// pingProbeEngineCeiling bounds how long the throwaway engine is given to shut
+// down. Mirrors the main engine's teardown ceiling: a leaked instance is
+// collected eventually, a frozen sweep is not.
+const pingProbeEngineCeiling = 5 * time.Second
+
+// classifyPingFetch turns one HTTP attempt into a verdict.
+//
+// Any status counts as success on purpose. The request goes out over HTTPS as
+// a CONNECT and the certificate is verified inside this process, so a response
+// arriving at all proves the bytes reached the real host — which is exactly
+// what the measurement is asking. That is also why the plain-HTTP probes
+// elsewhere in this package cannot be this permissive: there, a dead outbound
+// is answered by our own inbound with a forged 502, and only an exact expected
+// status tells the two apart (see probeResponseMatches).
+func classifyPingFetch(resp *http.Response, err error) (bool, string) {
+	if err != nil {
+		return false, pingReasonFromError(err)
+	}
+	if resp == nil {
+		return false, "no response"
+	}
+	if resp.StatusCode == http.StatusProxyAuthRequired {
+		return false, "proxy_auth_required"
+	}
+	return true, ""
+}
+
+// pingThroughNode measures how long the node takes to deliver testURL.
+//
+// The clock covers the node handshake, the CONNECT, the TLS session to the
+// target and the wait for response headers — everything the user is actually
+// waiting on. Starting the engine is NOT in the figure: that is our cost, not
+// the node's.
+func pingThroughNode(ctx context.Context, proxy ProxyConfig, method, testURL, bindIPv4 string, log *logger.Logger) (latencyMs int64, reachable bool, reason string) {
+	port := getFreeLocalPort(0)
+	cfg, err := BuildPingProbeConfig(proxy, port, bindIPv4)
+	if err != nil {
+		if errors.Is(err, errPingProbeUnsupported) {
+			return 0, false, "unsupported_for_protocol"
+		}
+		return 0, false, "engine_config_failed"
+	}
+
+	configJSON, err := json.Marshal(cfg)
+	if err != nil {
+		return 0, false, "engine_config_failed"
+	}
+
+	boxCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	boxCtx = extendedBoxContext(boxCtx)
+
+	var options option.Options
+	if err := singjson.UnmarshalContext(boxCtx, configJSON, &options); err != nil {
+		return 0, false, "engine_config_failed"
+	}
+
+	// No PlatformLogWriter and no traffic tracker: this engine's bytes are our
+	// own measurement, not the user's session, and must not land in either the
+	// visible log or the traffic counters.
+	instance, err := box.New(box.Options{Context: boxCtx, Options: options})
+	if err != nil {
+		return 0, false, "engine_start_failed"
+	}
+	if err := instance.Start(); err != nil {
+		closeInstanceBounded(instance, pingProbeEngineCeiling, log)
+		return 0, false, "engine_start_failed"
+	}
+	defer closeInstanceBounded(instance, pingProbeEngineCeiling, log)
+
+	proxyURL, err := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
+	if err != nil {
+		return 0, false, "engine_config_failed"
+	}
+	client := &http.Client{
+		Transport: &http.Transport{
+			Proxy:             http.ProxyURL(proxyURL),
+			DisableKeepAlives: true,
+		},
+		// Redirects are not followed: the first answer already proves the node
+		// carried the request, and chasing a redirect would measure a second
+		// host instead of this one.
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, testURL, nil)
+	if err != nil {
+		return 0, false, "bad_test_url"
+	}
+
+	start := time.Now()
+	resp, err := client.Do(req)
+	elapsed := time.Since(start)
+	if resp != nil {
+		defer resp.Body.Close()
+	}
+	ok, reason := classifyPingFetch(resp, err)
+	if !ok {
+		return 0, false, reason
+	}
+	ms := elapsed.Milliseconds()
+	if ms <= 0 {
+		ms = 1
+	}
+	return ms, true, ""
+}
+
+// pingThroughNodeProbe is a var so Manager tests can measure the dispatch
+// logic without standing up a real engine, matching the pingTCPProbe pattern.
+var pingThroughNodeProbe = pingThroughNode

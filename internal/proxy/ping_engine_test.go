@@ -1,8 +1,10 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"testing"
 )
 
@@ -112,5 +114,35 @@ func TestBuildPingProbeConfigRejectsWireGuard(t *testing.T) {
 	_, err := BuildPingProbeConfig(node, 14999, "")
 	if !errors.Is(err, errPingProbeUnsupported) {
 		t.Fatalf("WireGuard carries no arbitrary TCP; want errPingProbeUnsupported, got %v", err)
+	}
+}
+
+func TestClassifyPingFetchAcceptsAnyStatus(t *testing.T) {
+	// Over HTTPS the certificate is verified in this process, so a response
+	// arriving at all already proves the bytes reached the real host. Status
+	// is deliberately not a criterion: a user-chosen URL may answer 200, 204,
+	// 301 or 404 and all of them mean "the node carried the request".
+	for _, status := range []int{200, 204, 301, 404, 500} {
+		ok, reason := classifyPingFetch(&http.Response{StatusCode: status}, nil)
+		if !ok {
+			t.Fatalf("status %d: want reachable, got reason %q", status, reason)
+		}
+	}
+}
+
+func TestClassifyPingFetchRejectsProxyAuth(t *testing.T) {
+	ok, reason := classifyPingFetch(&http.Response{StatusCode: http.StatusProxyAuthRequired}, nil)
+	if ok || reason != "proxy_auth_required" {
+		t.Fatalf("got ok=%v reason=%q", ok, reason)
+	}
+}
+
+func TestClassifyPingFetchReportsTransportError(t *testing.T) {
+	ok, reason := classifyPingFetch(nil, context.DeadlineExceeded)
+	if ok {
+		t.Fatal("a transport error is never a successful measurement")
+	}
+	if reason == "" {
+		t.Fatal("a failure must carry a reason the UI can show")
 	}
 }
