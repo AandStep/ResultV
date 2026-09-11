@@ -65,6 +65,7 @@ type smartOutbound struct {
 	proxy   adapter.Outbound
 	store   *verdict.Store
 	traffic *trafficTracker
+	health  *directHealth
 }
 
 func newSmartOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options smartOutboundOptions) (adapter.Outbound, error) {
@@ -77,6 +78,7 @@ func newSmartOutbound(ctx context.Context, router adapter.Router, logger log.Con
 		tags:       options.Outbounds,
 		store:      service.FromContext[*verdict.Store](ctx),
 		traffic:    service.FromContext[*trafficTracker](ctx),
+		health:     newDirectHealth(nil),
 	}, nil
 }
 
@@ -121,9 +123,9 @@ func (s *smartOutbound) decide(metadata *adapter.InboundContext) smartChoice {
 	return decideSmart(s.store, smartHost(metadata), metadata.Destination.Addr, s.raceAllowed())
 }
 
-// raceAllowed is the breaker. It is always on until the health check exists,
-// which keeps this step readable on its own.
-func (s *smartOutbound) raceAllowed() bool { return true }
+// raceAllowed is the breaker (spec §6.5). While the direct path is failing on
+// everything at once, nothing is raced and nothing is learned.
+func (s *smartOutbound) raceAllowed() bool { return s.health.healthy() }
 
 // smartHost is the name this connection is for, or "" when there is none.
 // FakeIP puts the name in Destination.Fqdn before any rule is matched (fork
@@ -208,11 +210,15 @@ func (s *smartOutbound) raceConnection(ctx context.Context, conn net.Conn, metad
 			return s.proxy.DialContext(dialCtx, N.NetworkTCP, metadata.Destination)
 		})
 	if res.Err != nil {
+		s.health.record(smartHost(&metadata), false)
 		N.CloseOnHandshakeFailure(conn, onClose, res.Err)
 		s.logger.ErrorContext(ctx, res.Err)
 		return
 	}
 
+	// A race the direct path won is proof the link works; one the proxy won is
+	// one more site that did not answer directly.
+	s.health.record(smartHost(&metadata), !res.ViaProxy)
 	s.learn(metadata, res.ViaProxy)
 	if res.ViaProxy {
 		conn = s.attributeProxy(conn, metadata)
@@ -229,6 +235,11 @@ func (s *smartOutbound) raceConnection(ctx context.Context, conn net.Conn, metad
 // Discord's voice media ever give us.
 func (s *smartOutbound) learn(metadata adapter.InboundContext, viaProxy bool) {
 	if s.store == nil {
+		return
+	}
+	if !s.health.healthy() {
+		// The link itself is down. Anything written here would be a guess with a
+		// seven-day lifetime.
 		return
 	}
 	d := verdict.Direct
