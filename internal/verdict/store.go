@@ -39,6 +39,10 @@ type Store struct {
 	spaces map[string]map[string]Record
 
 	plain map[string]string
+
+	// children counts, per namespace, which hashed child keys were learned
+	// under which hashed parent key and with what answer. Promotion reads it.
+	children map[string]map[string]map[string]Decision
 }
 
 func New(salt []byte, now func() time.Time) *Store {
@@ -46,11 +50,12 @@ func New(salt []byte, now func() time.Time) *Store {
 		now = time.Now
 	}
 	return &Store{
-		now:    now,
-		salt:   append([]byte(nil), salt...),
-		ns:     "default",
-		spaces: make(map[string]map[string]Record),
-		plain:  make(map[string]string),
+		now:      now,
+		salt:     append([]byte(nil), salt...),
+		ns:       "default",
+		spaces:   make(map[string]map[string]Record),
+		plain:    make(map[string]string),
+		children: make(map[string]map[string]map[string]Decision),
 	}
 }
 
@@ -120,6 +125,9 @@ func (s *Store) putLocked(key string, rec Record) {
 	}
 	space[h] = rec
 	s.plain[h] = key
+	if rec.Source == SourceLearned {
+		s.notePromotionLocked(key, rec.Decision)
+	}
 }
 
 // Lookup walks the name upwards and answers with the strongest source that
