@@ -59,3 +59,9 @@
   transform: translateX(28px);
   background: var(--rv-main-color);
 }
+
+/* Неактивный тумблер гасится так же, как неактивные кнопка и выбор. */
+.rv-tumbler:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

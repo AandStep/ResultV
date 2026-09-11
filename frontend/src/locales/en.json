@@ -208,7 +208,25 @@
         "title": "Network",
         "desc": "DNS, local access, and proxy port.",
         "items": "• DNS  • IPv6 • Local network"
+      },
+      "experimental": {
+        "title": "Experimental",
+        "desc": "Unfinished and untested. Enable at your own risk.",
+        "items": "• Adaptive smart mode"
       }
+    },
+    "adaptive_smart": {
+      "title": "Adaptive smart mode",
+      "desc": "Detect blocks on its own instead of relying on a list. Experimental."
+    },
+    "adaptive_smart_memory_only": {
+      "title": "Do not store verdicts on disk",
+      "desc": "Kept in memory only, forgotten on restart."
+    },
+    "adaptive_smart_block_doh": {
+      "title": "Block browser DoH",
+      "desc": "Forces the browser back to the system DNS. May break sites.",
+      "soon": "soon"
     },
     "tun_stack": {
       "title": "TUN mode",

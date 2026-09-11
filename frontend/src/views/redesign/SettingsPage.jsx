@@ -48,6 +48,7 @@ export const SETTINGS_GROUPS = [
   { key: "subscriptions", icon: "subscriptions" },
   { key: "security", icon: "security" },
   { key: "network", icon: "network" },
+  { key: "experimental", icon: "autoawesome" },
 ];
 
 /*
@@ -112,6 +113,11 @@ export const SETTINGS_PAGE_TEXT = {
       items: "• DNS  • IPv6 • Локальная сеть",
       desc: "DNS, локальный доступ и порт прокси.",
     },
+    experimental: {
+      title: "Экспериментально",
+      items: "• Адаптивный умный режим",
+      desc: "Недоделанное и необкатанное. Включать на свой страх.",
+    },
   },
   exportImport: {
     title: "Экспорт / импорт конфигураций",
@@ -150,6 +156,19 @@ export const SETTINGS_PAGE_TEXT = {
     ipv6: { title: "IPv6 в туннеле", desc: "" },
     listenLan: { title: "Слушать в локальной сети", desc: "" },
     port: { title: "Локальный порт", desc: "", placeholder: "", addrTitle: "" },
+    adaptiveSmart: {
+      title: "Адаптивный умный режим",
+      desc: "Определять блокировки самостоятельно, не полагаясь на список. Экспериментально.",
+    },
+    adaptiveSmartMemoryOnly: {
+      title: "Не сохранять вердикты на диск",
+      desc: "Всё в памяти, забывается при перезапуске.",
+    },
+    adaptiveSmartBlockDoH: {
+      title: "Блокировать DoH в браузере",
+      desc: "Заставляет браузер вернуться к системному DNS. Может сломать сайты.",
+      soon: "скоро",
+    },
   },
 };
 
@@ -358,6 +377,46 @@ export default function SettingsPage({
               {rows.port.addrTitle}: {lanAddress}
             </p>
           )}
+        </Row>
+      </>
+    ),
+
+    /*
+     * Экспериментальный блок. Два нижних тумблера ведомые: без верхнего
+     * им нечем управлять. Третий неактивен всегда и помечен «скоро»:
+     * правило, роняющее DoH-эндпоинты, появится вместе с аутбаундом,
+     * а включаемый тумблер, который ни на что не влияет, — ложь пользователю.
+     */
+    experimental: (
+      <>
+        <Row
+          title={rows.adaptiveSmart.title}
+          description={rows.adaptiveSmart.desc}
+        >
+          <Tumbler
+            checked={!!values.adaptiveSmart}
+            onChange={set("adaptiveSmart")}
+          />
+        </Row>
+        <Row
+          title={rows.adaptiveSmartMemoryOnly.title}
+          description={rows.adaptiveSmartMemoryOnly.desc}
+        >
+          <Tumbler
+            checked={!!values.adaptiveSmartMemoryOnly}
+            onChange={set("adaptiveSmartMemoryOnly")}
+            disabled={!values.adaptiveSmart}
+          />
+        </Row>
+        <Row
+          title={rows.adaptiveSmartBlockDoH.title}
+          description={
+            rows.adaptiveSmartBlockDoH.soon
+              ? `${rows.adaptiveSmartBlockDoH.desc} (${rows.adaptiveSmartBlockDoH.soon})`
+              : rows.adaptiveSmartBlockDoH.desc
+          }
+        >
+          <Tumbler checked={false} disabled />
         </Row>
       </>
     ),

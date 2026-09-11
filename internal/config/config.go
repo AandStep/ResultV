@@ -47,6 +47,19 @@ type RoutingRules struct {
 	Profiles []RoutingProfile `json:"routingProfiles"`
 	// ActiveProfileID names the profile in effect, "" for none.
 	ActiveProfileID string `json:"activeRoutingProfileId"`
+	// AdaptiveSmart turns on the experimental engine that decides direct vs
+	// tunnel by measuring, instead of by looking the name up in a list. Off by
+	// default: with it off nothing in the built sing-box config changes, which
+	// is what the golden test in internal/proxy guards.
+	AdaptiveSmart bool `json:"adaptiveSmart"`
+	// AdaptiveSmartMemoryOnly keeps learned verdicts out of the filesystem.
+	// They are hashed on disk either way; this is for users who want no
+	// residue at all, at the cost of relearning every start.
+	AdaptiveSmartMemoryOnly bool `json:"adaptiveSmartMemoryOnly"`
+	// AdaptiveSmartBlockBrowserDoH rejects the well-known browser DoH
+	// endpoints so the browser falls back to the system resolver, where FakeIP
+	// can name its connections. Intrusive — off unless asked for.
+	AdaptiveSmartBlockBrowserDoH bool `json:"adaptiveSmartBlockBrowserDoH"`
 }
 
 // RoutingProfile is one complete routing rule set: what goes direct, what goes

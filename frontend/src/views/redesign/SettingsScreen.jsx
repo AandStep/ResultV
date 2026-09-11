@@ -132,6 +132,10 @@ export default function SettingsScreen() {
     ipv6: !!settings?.enableIPv6,
     listenLan: !!settings?.listenLan,
     localPort: Number(settings?.localPort || 0),
+    /* Адаптивный Smart живёт в правилах маршрутизации, а не в настройках:
+       это тот же блок конфига, что режим и списки, которыми он управляет. */
+    adaptiveSmart: !!routingRules?.adaptiveSmart,
+    adaptiveSmartMemoryOnly: !!routingRules?.adaptiveSmartMemoryOnly,
   };
 
   const change = (key, value) => {
@@ -180,6 +184,21 @@ export default function SettingsScreen() {
         }
         return updateSetting("localPort", port);
       }
+      case "adaptiveSmart":
+        /* Смена правил уходит на бэкенд сама — эффектом на routingRules
+           в useAppConfig, тем же путём, каким сохраняются режим и списки.
+           Выключение гасит и подтумблер: иначе он остался бы включённым
+           в конфиге под неактивным видом. */
+        return setRoutingRules((prev) => ({
+          ...prev,
+          adaptiveSmart: value,
+          adaptiveSmartMemoryOnly: value ? prev.adaptiveSmartMemoryOnly : false,
+        }));
+      case "adaptiveSmartMemoryOnly":
+        return setRoutingRules((prev) => ({
+          ...prev,
+          adaptiveSmartMemoryOnly: value,
+        }));
       default:
         return undefined;
     }
@@ -395,6 +414,7 @@ export default function SettingsScreen() {
             subscriptions: group("subscriptions"),
             security: group("security"),
             network: group("network"),
+            experimental: group("experimental"),
           },
           exportImport: {
             title: t("settings.export_import.title"),
@@ -429,6 +449,11 @@ export default function SettingsScreen() {
               placeholder: t("settings.lan_listen.port_placeholder"),
               addrTitle: t("settings.lan_listen.addr_title"),
             },
+            adaptiveSmart: row("adaptive_smart"),
+            adaptiveSmartMemoryOnly: row("adaptive_smart_memory_only"),
+            adaptiveSmartBlockDoH: row("adaptive_smart_block_doh", {
+              soon: t("settings.adaptive_smart_block_doh.soon"),
+            }),
           },
         }}
       />
