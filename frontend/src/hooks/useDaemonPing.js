@@ -155,6 +155,7 @@ export const useDaemonPing = (proxies, isConfigLoaded) => {
                     let value = "Error";
                     try {
                         const data = await wailsAPI.ping(
+                            p.id,
                             p.ip,
                             parseInt(p.port, 10) || 0,
                             p.type || "",

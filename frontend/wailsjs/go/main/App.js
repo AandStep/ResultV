@@ -158,8 +158,8 @@ export function PickAppForWhitelist() {
   return window['go']['main']['App']['PickAppForWhitelist']();
 }
 
-export function PingProxy(arg1, arg2, arg3) {
-  return window['go']['main']['App']['PingProxy'](arg1, arg2, arg3);
+export function PingProxy(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['PingProxy'](arg1, arg2, arg3, arg4);
 }
 
 export function PreviewRoutingDeepLink(arg1) {
