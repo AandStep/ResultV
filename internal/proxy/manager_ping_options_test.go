@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"net"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -184,5 +185,74 @@ func TestPingHTTPConcurrencyIsCapped(t *testing.T) {
 	mu.Unlock()
 	if got > pingEngineMaxConcurrency {
 		t.Fatalf("peak concurrency %d exceeds cap %d", got, pingEngineMaxConcurrency)
+	}
+}
+
+func TestPingICMPVerdictBeatsTheOuterDeadline(t *testing.T) {
+	old := pingICMPProbe
+	defer func() { pingICMPProbe = old }()
+	// A host that blocks ICMP consumes the whole budget it was handed and then
+	// reports "no answer" — that is the common case, not an exotic one. Its
+	// verdict has to reach the user: "this host does not answer echo" and "we
+	// gave up waiting" are different facts, and the UI prints only the latter
+	// as "Timeout".
+	pingICMPProbe = func(_, _ string, budget time.Duration) (int64, bool) {
+		time.Sleep(budget)
+		return 0, false
+	}
+
+	m := &Manager{}
+	res := m.Ping("1.2.3.4", 443, "VLESS", ProxyConfig{}, PingOptions{
+		Type:    config.PingTypeICMP,
+		Timeout: 1 * time.Second,
+	})
+	if res.Reason != "icmp_unavailable" {
+		t.Fatalf("the ICMP verdict must beat the outer deadline, got %+v", res)
+	}
+}
+
+func TestPingICMPResolveCannotEatTheProbeBudget(t *testing.T) {
+	oldLookup := pingLookupIPAddr
+	oldDoH := pingDoHResolve
+	oldICMP := pingICMPProbe
+	defer func() {
+		pingLookupIPAddr = oldLookup
+		pingDoHResolve = oldDoH
+		pingICMPProbe = oldICMP
+	}()
+
+	// A resolver that never answers must not spend the probe's share of the
+	// budget: worst case today is a 2s OS lookup plus 1.5s per DoH endpoint,
+	// which alone overruns any timeout the user can choose.
+	pingLookupIPAddr = func(ctx context.Context, _ string) ([]net.IPAddr, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	pingDoHResolve = func(string) []string { time.Sleep(2 * time.Second); return nil }
+
+	probed := make(chan struct{}, 1)
+	pingICMPProbe = func(_, _ string, _ time.Duration) (int64, bool) {
+		probed <- struct{}{}
+		return 1, true
+	}
+
+	m := &Manager{}
+	start := time.Now()
+	res := m.Ping("vpn.example.invalid", 443, "VLESS", ProxyConfig{}, PingOptions{
+		Type:    config.PingTypeICMP,
+		Timeout: 1 * time.Second,
+	})
+	elapsed := time.Since(start)
+
+	if res.Reason != "dns_unresolved" {
+		t.Fatalf("an unresolvable host must be reported as such, got %+v", res)
+	}
+	if elapsed > 900*time.Millisecond {
+		t.Fatalf("resolve was allowed to spend the whole budget: %v", elapsed)
+	}
+	select {
+	case <-probed:
+		t.Fatal("nothing to ping: the probe must not run without an address")
+	default:
 	}
 }

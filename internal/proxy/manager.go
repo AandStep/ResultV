@@ -2591,11 +2591,62 @@ func (m *Manager) withDeadline(timeout time.Duration, checkType string, probe fu
 	}
 }
 
+// pingBudgetMargin is the slice of the outer deadline reserved so an inner
+// probe's own verdict gets back before withDeadline gives up.
+//
+// Without it the two budgets are equal and the outer one always wins, because
+// the inner path pays for a name lookup and a socket first. That is not a
+// cosmetic difference: "this host does not answer echo" and "we stopped
+// waiting" are different facts, and the UI prints only the second one
+// ("Timeout"). Every host that blocks ICMP — which is most of them — was
+// therefore reported as a timeout, hiding the real answer.
+const pingBudgetMargin = 150 * time.Millisecond
+
+// pingResolveShare is how much of one measurement's budget the name lookup may
+// spend before the probe itself is starved.
+//
+// A third, capped at the resolver's own ceiling. Resolving is nearly free in
+// the common case (a literal address returns immediately, a cached one too),
+// so the share only ever matters when the resolver is struggling — which is
+// exactly when it must not consume the probe's turn. Left unbounded it can
+// cost pingResolveTimeout plus dohQueryTimeout per DoH endpoint: 5 seconds,
+// more than any timeout the user is allowed to pick.
+func pingResolveShare(timeout time.Duration) time.Duration {
+	share := timeout / 3
+	if share > pingResolveTimeout {
+		share = pingResolveTimeout
+	}
+	return share
+}
+
+// resolvePingHostBounded is resolvePingHost with a hard ceiling.
+//
+// The lookup keeps running after we walk away — it has ceilings of its own and
+// populates the shared cache, so the next sweep gets the answer this one paid
+// for. The channel is buffered so that late result never blocks its sender.
+func resolvePingHostBounded(host string, budget time.Duration) string {
+	trimmed := strings.TrimSpace(host)
+	// A literal address is already the answer; no goroutine, no clock.
+	if trimmed == "" || net.ParseIP(trimmed) != nil {
+		return trimmed
+	}
+	done := make(chan string, 1)
+	go func() { done <- resolvePingHost(trimmed) }()
+	select {
+	case ip := <-done:
+		return ip
+	case <-time.After(budget):
+		return ""
+	}
+}
+
 // pingICMPOnly answers with ICMP and nothing else. There is deliberately no
 // fallback: the user picked ICMP, and quietly returning a TCP number would
 // misreport what was measured.
 func (m *Manager) pingICMPOnly(ip string, timeout time.Duration) PingResultDTO {
-	dialHost := resolvePingHost(ip)
+	deadline := time.Now().Add(timeout)
+
+	dialHost := resolvePingHostBounded(ip, pingResolveShare(timeout))
 	if dialHost == "" {
 		return PingResultDTO{Reachable: false, Reason: "dns_unresolved", CheckType: "dns"}
 	}
@@ -2608,7 +2659,16 @@ func (m *Manager) pingICMPOnly(ip string, timeout time.Duration) PingResultDTO {
 			source = local.String()
 		}
 	}
-	ms, ok := pingICMPProbe(dialHost, source, timeout)
+
+	// Whatever the lookup left, minus the margin. A budget already spent means
+	// the host had its chance and said nothing — which is the ICMP verdict,
+	// not a timeout.
+	budget := time.Until(deadline) - pingBudgetMargin
+	if budget <= 0 {
+		return PingResultDTO{Reachable: false, Reason: "icmp_unavailable", CheckType: "icmp"}
+	}
+
+	ms, ok := pingICMPProbe(dialHost, source, budget)
 	if !ok {
 		return PingResultDTO{Reachable: false, Reason: "icmp_unavailable", CheckType: "icmp"}
 	}
