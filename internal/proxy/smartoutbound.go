@@ -18,12 +18,15 @@ package proxy
 import (
 	"context"
 	"net"
+	"time"
 
 	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing/common/buf"
+	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
@@ -115,8 +118,12 @@ func (s *smartOutbound) member(c smartChoice) adapter.Outbound {
 // decide answers for one connection. Racing is switched off here and turned on
 // by the task that implements it.
 func (s *smartOutbound) decide(metadata *adapter.InboundContext) smartChoice {
-	return decideSmart(s.store, smartHost(metadata), metadata.Destination.Addr, false)
+	return decideSmart(s.store, smartHost(metadata), metadata.Destination.Addr, s.raceAllowed())
 }
+
+// raceAllowed is the breaker. It is always on until the health check exists,
+// which keeps this step readable on its own.
+func (s *smartOutbound) raceAllowed() bool { return true }
 
 // smartHost is the name this connection is for, or "" when there is none.
 // FakeIP puts the name in Destination.Fqdn before any rule is matched (fork
@@ -157,6 +164,10 @@ func (s *smartOutbound) attributeProxy(conn net.Conn, metadata adapter.InboundCo
 
 func (s *smartOutbound) NewConnectionEx(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	choice := s.decide(&metadata)
+	if choice == chooseRace {
+		s.raceConnection(ctx, conn, metadata, onClose)
+		return
+	}
 	if choice == chooseProxy {
 		conn = s.attributeProxy(conn, metadata)
 	}
@@ -166,6 +177,86 @@ func (s *smartOutbound) NewConnectionEx(ctx context.Context, conn net.Conn, meta
 		return
 	}
 	s.connection.NewConnection(ctx, chosen, conn, metadata, onClose)
+}
+
+// raceConnection handles a destination nothing is known about.
+//
+// The client's opening bytes are usually already waiting in the connection: the
+// router pushes the sniffed buffer back before handing it over (fork
+// route/route.go:155-157), so on the normal path this read costs nothing.
+func (s *smartOutbound) raceConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
+	first := make([]byte, smartFirstReadBudget)
+	_ = conn.SetReadDeadline(time.Now().Add(smartRaceHeadStart))
+	n, readErr := conn.Read(first)
+	_ = conn.SetReadDeadline(time.Time{})
+	if n == 0 {
+		// A client that says nothing cannot be raced: there is nothing to replay
+		// and no way to tell the two paths apart. Send it the way it would have
+		// gone before this feature existed.
+		if readErr != nil {
+			s.logger.DebugContext(ctx, "smart: client sent nothing, falling back to direct: ", readErr)
+		}
+		s.connection.NewConnection(ctx, s.direct, conn, metadata, onClose)
+		return
+	}
+
+	res := runSmartRace(ctx, first[:n],
+		func(dialCtx context.Context) (net.Conn, error) {
+			return s.direct.DialContext(dialCtx, N.NetworkTCP, metadata.Destination)
+		},
+		func(dialCtx context.Context) (net.Conn, error) {
+			return s.proxy.DialContext(dialCtx, N.NetworkTCP, metadata.Destination)
+		})
+	if res.Err != nil {
+		N.CloseOnHandshakeFailure(conn, onClose, res.Err)
+		s.logger.ErrorContext(ctx, res.Err)
+		return
+	}
+
+	s.learn(metadata, res.ViaProxy)
+	if res.ViaProxy {
+		conn = s.attributeProxy(conn, metadata)
+	}
+	// The server's first bytes are already off the socket, so they are handed
+	// back in front of it; from here this is an ordinary relayed pair and the
+	// core's own copy loop owns it.
+	server := bufio.NewCachedConn(res.Conn, buf.As(res.Head))
+	s.connection.NewConnection(ctx, constantDialer{conn: server}, conn, metadata, onClose)
+}
+
+// learn writes down what the race proved. A name is worth remembering; a bare
+// address is remembered under the address, which is all Telegram's MTProto and
+// Discord's voice media ever give us.
+func (s *smartOutbound) learn(metadata adapter.InboundContext, viaProxy bool) {
+	if s.store == nil {
+		return
+	}
+	d := verdict.Direct
+	if viaProxy {
+		d = verdict.Proxy
+	}
+	if host := smartHost(&metadata); host != "" {
+		s.store.Learn(host, d)
+		return
+	}
+	if metadata.Destination.Addr.IsValid() {
+		s.store.LearnIP(metadata.Destination.Addr, d)
+	}
+}
+
+// constantDialer hands the core a connection that is already open, so the
+// core's copy loop, connection tracking and interrupt handling are reused
+// instead of reimplemented here.
+type constantDialer struct {
+	conn net.Conn
+}
+
+func (d constantDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	return d.conn, nil
+}
+
+func (d constantDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	return nil, E.New("smart: constantDialer is TCP only")
 }
 
 func (s *smartOutbound) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
