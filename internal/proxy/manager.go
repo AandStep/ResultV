@@ -2349,6 +2349,7 @@ func (m *Manager) applyAdaptiveSmartLocked(cfg *EngineConfig) {
 	cfg.AdaptiveSmart = true
 	cfg.AdaptiveSmartBlockBrowserDoH = m.adaptiveSmartBlockDoH
 	cfg.SelfExecutablePath = exe
+	cfg.Verdicts = m.verdicts
 }
 
 // SetRoutingLists replaces the resolved routing-list specs used by the next

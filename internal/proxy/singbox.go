@@ -30,14 +30,15 @@ import (
 
 	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/include"
 	sblog "github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/bufio"
 	singjson "github.com/sagernet/sing/common/json"
 	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/service"
 
 	"resultproxy-wails/internal/logger"
+	"resultproxy-wails/internal/verdict"
 )
 
 
@@ -485,7 +486,14 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 	}
 
 	boxCtx, cancel := context.WithCancel(ctx)
-	boxCtx = include.Context(boxCtx)
+	// The verdict store has to reach the smart outbound, and the outbound is
+	// built by the core out of JSON — so it cannot be handed over as an option.
+	// The service context is the core's own answer to exactly this, and it is how
+	// every built-in outbound reaches the managers it needs.
+	if cfg.Verdicts != nil {
+		boxCtx = service.ContextWith[*verdict.Store](boxCtx, cfg.Verdicts)
+	}
+	boxCtx = extendedBoxContext(boxCtx)
 
 	var options option.Options
 	if err := singjson.UnmarshalContext(boxCtx, configJSON, &options); err != nil {

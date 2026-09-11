@@ -28,6 +28,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"resultproxy-wails/internal/verdict"
 )
 
 type ProxyMode string
@@ -159,6 +161,9 @@ type EngineConfig struct {
 	// SelfExecutablePath is this application's own binary. Its lookups must
 	// never be answered with a fake address — see buildDNS.
 	SelfExecutablePath string
+	// Verdicts is the store the smart outbound asks. Nil means "decide as if
+	// nothing is known", which is what every config built by a test does.
+	Verdicts *verdict.Store
 }
 
 type Engine interface {
@@ -366,6 +371,11 @@ type SBOutbound struct {
 	Transport *SBOutboundTransport `json:"transport,omitempty"`
 
 	DomainStrategy string `json:"domain_strategy,omitempty"`
+
+	// Outbounds names the members of a group outbound. Only a group reads
+	// it — for us that is the "smart" type, whose two members are the plain
+	// direct and proxy outbounds it chooses between.
+	Outbounds []string `json:"outbounds,omitempty"`
 }
 
 type SBHysteria2Obfs struct {
@@ -920,6 +930,13 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 
 	dd := effectiveDataDir(cfg)
 	outbounds := buildOutbounds(cfg.Proxy)
+	if smartOutboundActive(cfg) {
+		outbounds = append(outbounds, SBOutbound{
+			Type:      smartOutboundTag,
+			Tag:       smartOutboundTag,
+			Outbounds: []string{"direct", "proxy"},
+		})
+	}
 
 	endpoints, err := buildEndpoints(cfg.Proxy)
 	if err != nil {
@@ -1004,6 +1021,18 @@ func effectiveTunStack(stack string) string {
 	default:
 		return "system"
 	}
+}
+
+// smartOutboundActive reports whether the group outbound is emitted. It needs a
+// real "proxy" member: WireGuard and AmneziaWG are endpoints and buildOutbounds
+// emits only direct+block for them, so a group pointing at "proxy" would name a
+// tag the core cannot resolve and the engine would not start at all.
+func smartOutboundActive(cfg EngineConfig) bool {
+	if !adaptiveSmartActive(cfg) {
+		return false
+	}
+	pt := strings.ToUpper(strings.TrimSpace(cfg.Proxy.Type))
+	return pt != "WIREGUARD" && pt != "AMNEZIAWG"
 }
 
 func buildOutbounds(proxy ProxyConfig) []SBOutbound {
@@ -1388,7 +1417,15 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	// Global/Whitelist keep proxy as the catch-all.
 	final := "proxy"
 	if cfg.RoutingMode == ModeSmart {
+		// Smart mode inverts the default: everything not on the block-list goes
+		// direct. With the adaptive engine on, that default stops being a blind
+		// "direct" and becomes "ask what we know about this one" — every explicit
+		// rule above still fires first and still wins, so what reaches final is
+		// exactly the traffic no list had an opinion about.
 		final = "direct"
+		if smartOutboundActive(cfg) {
+			final = smartOutboundTag
+		}
 	}
 	route := &SBRoute{
 		Final:       final,
