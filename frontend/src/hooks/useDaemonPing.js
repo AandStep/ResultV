@@ -50,6 +50,13 @@ function pingResultToLabel(data) {
     }
     if (reason === "connection_closed") return "Closed";
     if (reason === "dns_unresolved") return "DNS";
+    /* Причины типов пинга из настроек. Без них всё это слилось бы в
+       «Unavailable», и человек не отличил бы «хост не отвечает на echo» от
+       «мы перестали ждать» — а это разные факты и разные действия. */
+    if (reason === "icmp_unavailable") return "No ICMP";
+    if (reason === "unsupported_for_protocol") return "N/A";
+    if (reason === "bad_test_url") return "URL";
+    if (reason === "proxy_auth_required") return "Auth";
     if (reason === "error" || reason === "probe_error") return "Error";
     return "Unavailable";
 }
