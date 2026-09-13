@@ -1304,12 +1304,28 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		}
 
 		// The application's own lookups must never be answered from the fake
-		// pool. This rule is emitted FIRST because DNS rules are ordered and
-		// everything below would otherwise be able to claim them: the prober,
-		// the updater and the subscription fetch would each receive a perfectly
-		// successful answer of 198.18.x.x and fail in silence. The project has
-		// already paid for the quieter version of this bug once, when the app's
-		// own resolver was killed by its own DNS override.
+		// pool: the prober, the updater and the subscription fetch would each
+		// receive a perfectly successful answer of 198.18.x.x and fail in
+		// silence. The project has already paid for the quieter version of this
+		// bug once, when the app's own resolver was killed by its own DNS
+		// override.
+		//
+		// READ THIS BEFORE RELYING ON IT: on Windows this rule almost never
+		// fires, and it is NOT what protects the app. Names are resolved by the
+		// DNS Client service inside svchost, not by the process that asked, so
+		// the engine matches svchost against this regex and misses. Measured on
+		// a live tunnel: resolvePingHost, going through net.DefaultResolver from
+		// our own process, still got example.com = 198.18.0.224 with this rule
+		// in place, and the ping bound to the physical adapter then spent the
+		// full five seconds timing out against it.
+		//
+		// What actually protects the app is the check at the point of use —
+		// isFakeIPAddr and realIPv4s, applied in resolvePingHost,
+		// probeDirectDial, resolveSelfServerIPs and pickIPv4. The rule is kept
+		// because it is free and does fire for a lookup that reaches sing-box
+		// from our process directly, bypassing getaddrinfo; it must never be
+		// counted as the defence. Emitted FIRST because DNS rules are ordered
+		// and everything below would otherwise claim what it does catch.
 		if adaptiveSmartActive(cfg) && cfg.SelfExecutablePath != "" {
 			if rx := appWhitelistPathRegexes([]string{cfg.SelfExecutablePath}); len(rx) > 0 {
 				dns.Rules = append(dns.Rules, SBDNSRule{
@@ -1351,6 +1367,27 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		// for SSH/SFTP clients (WinSCP, etc.) this manifests as silent
 		// "Failed to establish connection" because the encrypted DNS detour
 		// to a public resolver is slower than the SSH handshake timeout.
+		//
+		// Same Windows defect as the self-exemption above, and it predates the
+		// adaptive work: getaddrinfo hands the query to the DNS Client service,
+		// so the engine sees svchost and this regex does not match. The rule
+		// therefore does not do the job it was written for — an excluded app's
+		// lookups are still resolved by whatever the rules below decide, not by
+		// this one. It is kept rather than deleted because it is free and it is
+		// correct wherever a process resolves names itself instead of calling
+		// getaddrinfo; it must not be read as a guarantee.
+		//
+		// What the excluded app's lookup actually hits, once this rule misses:
+		// in Smart mode without the adaptive engine, dns.Final = "local" below,
+		// so it lands on the system resolver and the original symptom is gone
+		// by accident. With the adaptive engine on, the fakeip catch-all is the
+		// last rule and claims every A/AAAA, so the app is handed a fake
+		// address — which still works, because the route-level process rule
+		// (buildRoute matches processes on the connection, where Windows does
+		// preserve the owner) sends the connection direct and the direct
+		// outbound resolves the real name. Global mode keeps the original
+		// symptom in full. A real fix needs a selector the Windows resolver
+		// preserves, and the rule language has none today.
 		if rx := appWhitelistPathRegexes(cfg.AppWhitelist); len(rx) > 0 {
 			dns.Rules = append(dns.Rules, SBDNSRule{
 				ProcessPathRegex: rx,

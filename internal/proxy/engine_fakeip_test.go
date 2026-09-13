@@ -35,10 +35,16 @@ func adaptiveTunnelConfig() EngineConfig {
 	}
 }
 
-// Everything this feature is worth rests on the app's own lookups never being
-// answered with a fake address: with one, the prober, the updater and the
-// subscription fetch all get a successful answer pointing at 198.18.x.x and
-// fail silently. The rule must also come FIRST — DNS rules are ordered.
+// The app's own lookups must never be answered with a fake address: with one,
+// the prober, the updater and the subscription fetch all get a successful
+// answer pointing at 198.18.x.x and fail silently. The rule must also come
+// FIRST — DNS rules are ordered.
+//
+// This asserts the rule is emitted and positioned, not that it protects
+// anything: on Windows it is bypassed, because getaddrinfo resolves through
+// svchost and the engine matches that instead of us. The real defence is
+// isFakeIPAddr / realIPv4s at the point of use — see the rule's own comment in
+// buildDNS.
 func TestSelfExecutableIsExemptFromFakeIPAndComesFirst(t *testing.T) {
 	cfg := mustBuildTunnelModeConfig(t, adaptiveTunnelConfig())
 	if cfg.DNS == nil || len(cfg.DNS.Rules) == 0 {
