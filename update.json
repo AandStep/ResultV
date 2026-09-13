@@ -7,18 +7,13 @@
   "releaseNotes": [
     {
       "type": "improve",
-      "ru": "Глобальный редизайн интерфейса",
-      "en": "Global interface redesign"
+      "ru": "Умный режим теперь имеет эксперементальный адаптивный режим, который без списка определяет заблокированные ресурсы и передает их в ВПН, настройка доступна в разделе \"Настройки\" -> \"Эксперементально\"",
+      "en": "The smart mode now has an experimental adaptive mode that determines blocked resources without a list and passes them to the VPN. The setting is available in the \"Settings\" -> \"Experimental\" section."
     },
     {
-      "type": "fix",
-      "ru": "Фикс утечки HTTP/3 некоторые сайты могли проверять реальный IP и блокировать доступ, улучшено покрытие",
-      "en": "Fixed HTTP/3 leak issue where some websites could check the real IP and block access, improved coverage"
-    },
-    {
-      "type": "fix",
-      "ru": "Улучшен подбор авто-сервера",
-      "en": "Improved auto-server selection"
+      "type": "feature",
+      "ru": "Появился раздел \"Настройки\" -> \"Пинг\": можно выбрать, чем измерять задержку до серверов - автоматически по протоколу узла, через ICMP или HTTP-запросом через сам узел, - указать свой тестовый адрес и задать тайм-аут ожидания",
+      "en": "New \"Settings\" -> \"Ping\" section: choose how latency to servers is measured - automatically by node protocol, via ICMP, or with an HTTP request through the node itself - set your own test URL and the wait timeout"
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",
