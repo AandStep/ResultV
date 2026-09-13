@@ -222,7 +222,6 @@ export const SETTINGS_PAGE_TEXT = {
     adaptiveSmartBlockDoH: {
       title: "Блокировать DoH в браузере",
       desc: "Заставляет браузер вернуться к системному DNS. Может сломать сайты.",
-      soon: "скоро",
     },
     pingType: {
       title: "Тип пинга",
@@ -541,9 +540,8 @@ export default function SettingsPage({
 
     /*
      * Экспериментальный блок. Два нижних тумблера ведомые: без верхнего
-     * им нечем управлять. Третий неактивен всегда и помечен «скоро»:
-     * правило, роняющее DoH-эндпоинты, появится вместе с аутбаундом,
-     * а включаемый тумблер, который ни на что не влияет, — ложь пользователю.
+     * им нечем управлять — правило DoH живёт только при включённом FakeIP,
+     * иначе оно отнимает у пользователя DoH и ничего не даёт взамен.
      */
     experimental: (
       <>
@@ -568,13 +566,13 @@ export default function SettingsPage({
         </Row>
         <Row
           title={rows.adaptiveSmartBlockDoH.title}
-          description={
-            rows.adaptiveSmartBlockDoH.soon
-              ? `${rows.adaptiveSmartBlockDoH.desc} (${rows.adaptiveSmartBlockDoH.soon})`
-              : rows.adaptiveSmartBlockDoH.desc
-          }
+          description={rows.adaptiveSmartBlockDoH.desc}
         >
-          <Tumbler checked={false} disabled />
+          <Tumbler
+            checked={!!values.adaptiveSmartBlockDoH}
+            onChange={set("adaptiveSmartBlockDoH")}
+            disabled={!values.adaptiveSmart}
+          />
         </Row>
       </>
     ),

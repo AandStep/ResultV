@@ -139,6 +139,7 @@ export default function SettingsScreen() {
        это тот же блок конфига, что режим и списки, которыми он управляет. */
     adaptiveSmart: !!routingRules?.adaptiveSmart,
     adaptiveSmartMemoryOnly: !!routingRules?.adaptiveSmartMemoryOnly,
+    adaptiveSmartBlockDoH: !!routingRules?.adaptiveSmartBlockBrowserDoH,
   };
 
   const change = (key, value) => {
@@ -223,11 +224,19 @@ export default function SettingsScreen() {
           ...prev,
           adaptiveSmart: value,
           adaptiveSmartMemoryOnly: value ? prev.adaptiveSmartMemoryOnly : false,
+          adaptiveSmartBlockBrowserDoH: value
+            ? prev.adaptiveSmartBlockBrowserDoH
+            : false,
         }));
       case "adaptiveSmartMemoryOnly":
         return setRoutingRules((prev) => ({
           ...prev,
           adaptiveSmartMemoryOnly: value,
+        }));
+      case "adaptiveSmartBlockDoH":
+        return setRoutingRules((prev) => ({
+          ...prev,
+          adaptiveSmartBlockBrowserDoH: value,
         }));
       default:
         return undefined;
@@ -490,9 +499,7 @@ export default function SettingsScreen() {
             pingTimeout: row("ping_timeout"),
             adaptiveSmart: row("adaptive_smart"),
             adaptiveSmartMemoryOnly: row("adaptive_smart_memory_only"),
-            adaptiveSmartBlockDoH: row("adaptive_smart_block_doh", {
-              soon: t("settings.adaptive_smart_block_doh.soon"),
-            }),
+            adaptiveSmartBlockDoH: row("adaptive_smart_block_doh"),
           },
         }}
       />

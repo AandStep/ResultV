@@ -230,8 +230,7 @@
     },
     "adaptive_smart_block_doh": {
       "title": "Block browser DoH",
-      "desc": "Forces the browser back to the system DNS. May break sites.",
-      "soon": "soon"
+      "desc": "Forces the browser back to the system DNS. May break sites."
     },
     "tun_stack": {
       "title": "TUN mode",

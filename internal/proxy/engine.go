@@ -670,6 +670,48 @@ func quicRejectRule(sel SBRouteRule) SBRouteRule {
 	return sel
 }
 
+// browserDoHDomains are the DoH endpoints browsers ship as built-in providers.
+//
+// Membership has one criterion, the same one blockedDomainFloor uses: the host
+// exists to serve DoH, so a domain_suffix rule on it pulls in nothing else.
+// That is why cloudflare-dns.com is here as a whole domain — every
+// mozilla./chrome./family./security. prefix under it is a resolver — while
+// Quad9 and AdGuard are listed host by host, because their registrable domains
+// also carry the company's website, and this rule rejects rather than reroutes:
+// swallowing quad9.net would take the site off the network.
+//
+// Not covered, and it cannot be: a browser pointed at a custom DoH template,
+// especially one written as a literal IP. Blocking resolver IPs was considered
+// and rejected — the application's own DoH fallback (doh.go) reaches the same
+// addresses, and a rule that cannot tell the two apart would cut the ground
+// out from under the resolver of last resort.
+func browserDoHDomains() []string {
+	return []string{
+		// Chrome, Edge and Firefox all ship Google's endpoint.
+		"dns.google",
+		"dns.google.com",
+		// The whole domain is the resolver product.
+		"cloudflare-dns.com",
+		"one.one.one.one",
+		// Quad9 by host: quad9.net is also their website.
+		"dns.quad9.net",
+		"dns9.quad9.net",
+		"dns10.quad9.net",
+		"dns11.quad9.net",
+		"dns.opendns.com",
+		"doh.opendns.com",
+		"doh.familyshield.opendns.com",
+		"dns.nextdns.io",
+		"doh.xfinity.com",
+		"dns.adguard-dns.com",
+		"unfiltered.adguard-dns.com",
+		"family.adguard-dns.com",
+		"doh.cleanbrowsing.org",
+		"dns.controld.com",
+		"freedns.controld.com",
+	}
+}
+
 func effectiveDataDir(cfg EngineConfig) string {
 	if cfg.DataDir != "" {
 		return cfg.DataDir
@@ -1722,6 +1764,30 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 			Action:           "route",
 			ProcessPathRegex: builtinAppRegexes,
 			Outbound:         "proxy",
+		})
+	}
+
+	// Browser DoH, under its own sub-toggle. A browser with Secure DNS on never
+	// asks the system resolver, so FakeIP never sees the name and the
+	// connection arrives at the router as a bare address. The race still works
+	// on it, but what it learns is filed under an address — and a CDN rotates
+	// addresses, so the knowledge is weaker, ages faster and does not
+	// generalise to the domain. Rejecting the endpoint makes the browser fall
+	// back to the system resolver, where FakeIP can name it.
+	//
+	// Placed here deliberately: AFTER the user's own routing lists, app
+	// exclusions and force-VPN rules, so anything the user said explicitly
+	// still wins; BEFORE the block-list, because a DoH endpoint that happens to
+	// be on the list would otherwise be routed to the node and keep working,
+	// which is exactly the outcome this rule exists to prevent.
+	//
+	// Only with the adaptive engine on: without FakeIP the rule costs the user
+	// their DoH and buys nothing.
+	if adaptiveSmartActive(cfg) && cfg.AdaptiveSmartBlockBrowserDoH {
+		rules = append(rules, SBRouteRule{
+			Action:       "reject",
+			Method:       "default",
+			DomainSuffix: browserDoHDomains(),
 		})
 	}
 
