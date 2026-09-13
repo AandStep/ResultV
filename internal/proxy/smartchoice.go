@@ -62,20 +62,44 @@ type smartLookup interface {
 // destination goes direct — exactly what the client did before this feature —
 // rather than being tunnelled on a guess made while the network is broken.
 func decideSmart(store smartLookup, host string, addr netip.Addr, raceAllowed bool) smartChoice {
-	if store == nil {
+	rec, ok := lookupSmart(store, host, addr)
+	if !ok {
 		return unknownChoice(raceAllowed)
+	}
+	return choiceFor(rec.Decision, raceAllowed)
+}
+
+// lookupSmart is decideSmart's first half on its own: the record, and whether
+// there was one at all.
+//
+// Two callers need more than the choice. UDP needs to tell "known to work
+// directly" from "nothing is known", which collapse into the same choice. The
+// refresh trigger needs the record's age. Both used to ask the store a second
+// time for it; one lookup answers all three questions.
+func lookupSmart(store smartLookup, host string, addr netip.Addr) (verdict.Record, bool) {
+	if store == nil {
+		return verdict.Record{}, false
 	}
 	if key := verdict.NormalizeHost(host); key != "" {
 		if rec, ok := store.Lookup(key); ok {
-			return choiceFor(rec.Decision, raceAllowed)
+			return rec, true
 		}
 	}
 	if addr.IsValid() {
 		if rec, ok := store.LookupIP(addr); ok {
-			return choiceFor(rec.Decision, raceAllowed)
+			return rec, true
 		}
 	}
-	return unknownChoice(raceAllowed)
+	return verdict.Record{}, false
+}
+
+// choiceFrom is choiceFor for a caller that already has the record, so it does
+// not have to ask the store again just to turn it into a choice.
+func choiceFrom(rec verdict.Record, known bool, raceAllowed bool) smartChoice {
+	if !known {
+		return unknownChoice(raceAllowed)
+	}
+	return choiceFor(rec.Decision, raceAllowed)
 }
 
 func choiceFor(d verdict.Decision, raceAllowed bool) smartChoice {

@@ -18,6 +18,7 @@ package proxy
 import (
 	"context"
 	"net"
+	"sync"
 	"time"
 
 	box "github.com/sagernet/sing-box"
@@ -68,6 +69,14 @@ type smartOutbound struct {
 	health   *directHealth
 	probes   *probeGate
 	udpAlive nodeUDPCheck
+
+	// probe is probeHost, indirected so tests can answer without a network.
+	probe func(ctx context.Context, host string, gate *probeGate) verdict.Decision
+	// inflight holds the hosts a probe is already running for. A page load
+	// opens dozens of connections to one host at once; without this each of
+	// them would start its own probe and one page would spend the whole
+	// twenty-per-minute budget the gate exists to enforce.
+	inflight sync.Map
 }
 
 // nodeUDPCheck reports whether the node currently in use has been measured
@@ -100,6 +109,7 @@ func newSmartOutbound(ctx context.Context, router adapter.Router, logger log.Con
 		health:     newDirectHealth(nil),
 		probes:     newProbeGate(nil),
 		udpAlive:   service.FromContext[nodeUDPCheck](ctx),
+		probe:      probeHost,
 	}, nil
 }
 
@@ -196,7 +206,8 @@ func (s *smartOutbound) attributeProxy(conn net.Conn, metadata adapter.InboundCo
 }
 
 func (s *smartOutbound) NewConnectionEx(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
-	choice := s.decide(&metadata)
+	rec, known := s.lookupAndRefresh(&metadata)
+	choice := choiceFrom(rec, known, s.raceAllowed())
 	if choice == chooseRace {
 		s.raceConnection(ctx, conn, metadata, onClose)
 		return
@@ -295,14 +306,57 @@ func (s *smartOutbound) learn(metadata adapter.InboundContext, viaProxy bool) {
 // bytes too. Always asynchronous — a connection is already being served and
 // must never wait on this.
 func (s *smartOutbound) recheckAsync(host string) {
-	if host == "" || s.store == nil {
+	if host == "" || s.store == nil || s.probe == nil {
+		return
+	}
+	if _, busy := s.inflight.LoadOrStore(host, struct{}{}); busy {
 		return
 	}
 	go func() {
-		if d := probeHost(context.Background(), host, s.probes); d != verdict.Unknown {
+		defer s.inflight.Delete(host)
+		if d := s.probe(context.Background(), host, s.probes); d != verdict.Unknown {
 			s.store.Learn(host, d)
 		}
 	}()
+}
+
+// verdictRefreshDivisor sets how early a learned verdict is renewed: once less
+// than a TTL/verdictRefreshDivisor of its life is left. A fraction rather than
+// a fixed lead because the two TTLs differ by a factor of seven — three hours
+// of warning on a Direct verdict, twenty-one on a Proxy one.
+const verdictRefreshDivisor = 8
+
+// verdictNeedsRefresh reports whether this record is close enough to expiry to
+// be worth renewing now, while it is still valid.
+//
+// Only learned records age, and only they may be re-derived: a user rule is
+// not a guess to be second-guessed, and re-deriving a floor entry would put
+// the data plane above the hand-proven answer that the source order exists to
+// keep it below. Both of those carry no expiry at all, so the check is the
+// same either way — but it is spelled out, because the day someone gives a
+// floor entry a TTL this must not quietly start probing it.
+func verdictNeedsRefresh(rec verdict.Record, now time.Time) bool {
+	if rec.Source != verdict.SourceLearned || rec.ExpiresAt.IsZero() {
+		return false
+	}
+	ttl := verdict.TTLDirect
+	if rec.Decision == verdict.Proxy {
+		ttl = verdict.TTLProxy
+	}
+	return rec.ExpiresAt.Sub(now) < ttl/verdictRefreshDivisor
+}
+
+// refreshExpiringAsync is the second of the prober's three triggers (spec §7).
+// The first is the race; this one renews a verdict before it dies, so the user
+// never pays for the same classification twice.
+//
+// Nothing waits on it: the record still in force answers the connection that
+// triggered this, and the probe replaces it behind the user's back.
+func (s *smartOutbound) refreshExpiringAsync(host string, rec verdict.Record) {
+	if !verdictNeedsRefresh(rec, time.Now()) {
+		return
+	}
+	s.recheckAsync(host)
 }
 
 // constantDialer hands the core a connection that is already open, so the
@@ -326,8 +380,9 @@ func (s *smartOutbound) NewPacketConnectionEx(ctx context.Context, conn N.Packet
 	// already known, and refusing is its answer to everything it cannot send
 	// somewhere safe. A refusal costs the client one immediate fall back to TCP
 	// — where the race does work — rather than the full HTTP/3 timeout.
-	choice := decideSmart(s.store, smartHost(&metadata), metadata.Destination.Addr, false)
-	switch decideSmartUDP(choice, s.knows(&metadata), metadata.Destination.Port, s.nodeCarriesUDP()) {
+	rec, known := s.lookupAndRefresh(&metadata)
+	choice := choiceFrom(rec, known, false)
+	switch decideSmartUDP(choice, known, metadata.Destination.Port, s.nodeCarriesUDP()) {
 	case udpRefuse:
 		err := E.New("smart: udp to ", metadata.Destination, " refused (verdict ", choice,
 			", node udp confirmed: ", s.nodeCarriesUDP(), "), falling back to TCP")
@@ -362,25 +417,21 @@ func (s *smartOutbound) dispatchPacket(
 	s.connection.NewPacketConnection(ctx, chosen, conn, metadata, onClose)
 }
 
-// knows reports whether the store has an actual answer for this destination, as
-// opposed to decideSmart's fallback. UDP needs the difference: "known to work
-// directly" and "nothing is known" both come back as chooseDirect, and only the
-// second has to be refused so the client retries over TCP.
-func (s *smartOutbound) knows(metadata *adapter.InboundContext) bool {
-	if s.store == nil {
-		return false
+// lookupAndRefresh answers what is known about this destination and, on the
+// way past, renews the record if it is nearing the end of its life.
+//
+// One lookup on the connection path, used for three things: the choice, the
+// "known versus merely defaulted" distinction UDP needs, and the age the
+// refresh trigger reads. The renewal is fired here rather than from a sweep
+// because this is the moment a name is proven to still matter — a store full
+// of names the user stopped visiting is not worth probing.
+func (s *smartOutbound) lookupAndRefresh(metadata *adapter.InboundContext) (verdict.Record, bool) {
+	host := smartHost(metadata)
+	rec, known := lookupSmart(s.store, host, metadata.Destination.Addr)
+	if known {
+		s.refreshExpiringAsync(host, rec)
 	}
-	if host := smartHost(metadata); host != "" {
-		if _, ok := s.store.Lookup(host); ok {
-			return true
-		}
-	}
-	if metadata.Destination.Addr.IsValid() {
-		if _, ok := s.store.LookupIP(metadata.Destination.Addr); ok {
-			return true
-		}
-	}
-	return false
+	return rec, known
 }
 
 // extendedBoxContext is include.Context plus our own outbound type.
