@@ -68,20 +68,20 @@ func TestSwitchOffKeepsDirectFinal(t *testing.T) {
 // endpoints, and buildOutbounds emits only direct+block for them — must not get
 // a group pointing at a tag that does not exist: the core refuses to start.
 //
-// Asserted on the predicate rather than on a built config: a WireGuard
-// EngineConfig without keys cannot be built at all (buildEndpoints errors
-// first), so going through BuildTunnelModeConfig here would fail for a reason
-// that has nothing to do with what is under test.
+// Asserted on the predicate directly: this is the single condition the whole
+// feature hangs off, and what a WireGuard config must NOT contain as a result
+// is checked against a real built config in
+// TestWireGuardNodeGetsNoFakeIPEvenWithTheSwitchOn.
 func TestSmartOutboundIsSkippedWhenThereIsNoProxyOutbound(t *testing.T) {
 	cfg := adaptiveTunnelConfig()
 	for _, pt := range []string{"wireguard", "WireGuard", "amneziawg", "AMNEZIAWG"} {
 		cfg.Proxy.Type = pt
-		if smartOutboundActive(cfg) {
+		if adaptiveSmartActive(cfg) {
 			t.Errorf("%s has no proxy outbound to group, but the smart group was still active", pt)
 		}
 	}
 	cfg.Proxy.Type = "vless"
-	if !smartOutboundActive(cfg) {
+	if !adaptiveSmartActive(cfg) {
 		t.Fatal("a normal node lost its smart group")
 	}
 }

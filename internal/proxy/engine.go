@@ -953,7 +953,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 
 	dd := effectiveDataDir(cfg)
 	outbounds := buildOutbounds(cfg.Proxy)
-	if smartOutboundActive(cfg) {
+	if adaptiveSmartActive(cfg) {
 		outbounds = append(outbounds, SBOutbound{
 			Type:      smartOutboundTag,
 			Tag:       smartOutboundTag,
@@ -1045,18 +1045,6 @@ func effectiveTunStack(stack string) string {
 	default:
 		return "system"
 	}
-}
-
-// smartOutboundActive reports whether the group outbound is emitted. It needs a
-// real "proxy" member: WireGuard and AmneziaWG are endpoints and buildOutbounds
-// emits only direct+block for them, so a group pointing at "proxy" would name a
-// tag the core cannot resolve and the engine would not start at all.
-func smartOutboundActive(cfg EngineConfig) bool {
-	if !adaptiveSmartActive(cfg) {
-		return false
-	}
-	pt := strings.ToUpper(strings.TrimSpace(cfg.Proxy.Type))
-	return pt != "WIREGUARD" && pt != "AMNEZIAWG"
 }
 
 func buildOutbounds(proxy ProxyConfig) []SBOutbound {
@@ -1222,11 +1210,29 @@ func realIPv4s(addrs []net.IPAddr) []string {
 	return out
 }
 
-// adaptiveSmartActive reports whether the experimental verdict engine is on
-// for this config. Proxy mode is excluded: it has no TUN, so nothing would
-// route the fake range anywhere.
+// adaptiveSmartActive reports whether the experimental verdict engine is on for
+// this config. One predicate for the whole feature, because every part of it
+// stands or falls together: the fake pool exists to carry a name to the smart
+// outbound, and the smart outbound exists to compare two paths.
+//
+// Proxy mode is excluded: it has no TUN, so nothing would route the fake range
+// anywhere.
+//
+// WireGuard and AmneziaWG are excluded because they are endpoints —
+// buildOutbounds emits only direct+block for them, so a group naming "proxy"
+// would point at a tag the core cannot resolve and the engine would not start
+// at all. That half was always enforced; what was not is that FakeIP used to be
+// emitted for those nodes anyway. The result was every cost of the fake pool
+// (launchers seeing 198.18.x.x, names with no A record turning into dead
+// connections) with none of the benefit, since with no second member there is
+// nobody to ask what was learned. If the smart outbound ever learns to treat an
+// endpoint as its second member, this is the single line that changes.
 func adaptiveSmartActive(cfg EngineConfig) bool {
-	return cfg.AdaptiveSmart && cfg.Mode == ProxyModeTunnel && cfg.RoutingMode == ModeSmart
+	if !cfg.AdaptiveSmart || cfg.Mode != ProxyModeTunnel || cfg.RoutingMode != ModeSmart {
+		return false
+	}
+	pt := strings.ToUpper(strings.TrimSpace(cfg.Proxy.Type))
+	return pt != "WIREGUARD" && pt != "AMNEZIAWG"
 }
 
 // firstDetourServerTag returns the tag of the first DNS server routed through
@@ -1509,7 +1515,7 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		// rule above still fires first and still wins, so what reaches final is
 		// exactly the traffic no list had an opinion about.
 		final = "direct"
-		if smartOutboundActive(cfg) {
+		if adaptiveSmartActive(cfg) {
 			final = smartOutboundTag
 		}
 	}
@@ -1835,7 +1841,7 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	// TCP and only refuses what it genuinely does not know yet. The targeted
 	// rejects above stay in both cases: those are about UDP being unreliable
 	// through the node, which FakeIP does not change.
-	if cfg.RoutingMode == ModeSmart && !smartOutboundActive(cfg) {
+	if cfg.RoutingMode == ModeSmart && !adaptiveSmartActive(cfg) {
 		rules = append(rules, quicRejectRule(SBRouteRule{}))
 	}
 
