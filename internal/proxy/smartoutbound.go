@@ -60,13 +60,31 @@ type smartOutbound struct {
 	connection adapter.ConnectionManager
 	logger     logger.ContextLogger
 
-	tags    []string
-	direct  adapter.Outbound
-	proxy   adapter.Outbound
-	store   *verdict.Store
-	traffic *trafficTracker
-	health  *directHealth
-	probes  *probeGate
+	tags     []string
+	direct   adapter.Outbound
+	proxy    adapter.Outbound
+	store    *verdict.Store
+	traffic  *trafficTracker
+	health   *directHealth
+	probes   *probeGate
+	udpAlive nodeUDPCheck
+}
+
+// nodeUDPCheck reports whether the node currently in use has been measured
+// carrying UDP. A function rather than a value because the measurement arrives
+// a few seconds after connect (startUDPRelayProbe) — long after this outbound
+// was built — and can flip again on a reload.
+type nodeUDPCheck func() bool
+
+// nodeUDPCheckFor binds the check to one node.
+//
+// AutoNodeKeyOf, and nothing else, because that is the key startUDPRelayProbe
+// files the verdict under. A key derived any other way would never match, the
+// check would answer "not measured" forever, and HTTP/3 would stay off for
+// every learned name with nothing in the logs to say why.
+func nodeUDPCheckFor(p ProxyConfig) nodeUDPCheck {
+	key := AutoNodeKeyOf(p)
+	return func() bool { return NodeCarriesUDP(key) }
 }
 
 func newSmartOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options smartOutboundOptions) (adapter.Outbound, error) {
@@ -81,7 +99,18 @@ func newSmartOutbound(ctx context.Context, router adapter.Router, logger log.Con
 		traffic:    service.FromContext[*trafficTracker](ctx),
 		health:     newDirectHealth(nil),
 		probes:     newProbeGate(nil),
+		udpAlive:   service.FromContext[nodeUDPCheck](ctx),
 	}, nil
+}
+
+// nodeCarriesUDP is the measured answer, and "not measured" is not the same as
+// "measured working": an engine that registered no check at all has to read as
+// unproven, or the gate it feeds would open on every node nobody ever probed.
+func (s *smartOutbound) nodeCarriesUDP() bool {
+	if s.udpAlive == nil {
+		return false
+	}
+	return s.udpAlive()
 }
 
 // Start resolves the two members once. Resolving them per connection would put
@@ -293,21 +322,39 @@ func (d constantDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 
 func (s *smartOutbound) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	// A QUIC Initial is cryptographically bound to its connection ID, so there
-	// is nothing to replay and no race to run. An unknown name is refused
-	// instead: the client drops to TCP at once, the race there produces a
-	// verdict, and the NEXT QUIC attempt goes the right way. One bounce to
-	// learn, rather than a permanent ban on HTTP/3.
+	// is nothing to replay and no race to run: decideSmartUDP works off what is
+	// already known, and refusing is its answer to everything it cannot send
+	// somewhere safe. A refusal costs the client one immediate fall back to TCP
+	// — where the race does work — rather than the full HTTP/3 timeout.
 	choice := decideSmart(s.store, smartHost(&metadata), metadata.Destination.Addr, false)
-	if metadata.Destination.Port == 443 && !s.knows(&metadata) {
-		err := E.New("smart: no verdict for ", smartHost(&metadata), " yet, falling back to TCP")
+	switch decideSmartUDP(choice, s.knows(&metadata), metadata.Destination.Port, s.nodeCarriesUDP()) {
+	case udpRefuse:
+		err := E.New("smart: udp to ", metadata.Destination, " refused (verdict ", choice,
+			", node udp confirmed: ", s.nodeCarriesUDP(), "), falling back to TCP")
 		N.CloseOnHandshakeFailure(conn, onClose, err)
 		s.logger.DebugContext(ctx, err)
 		return
+	case udpViaProxy:
+		if s.traffic != nil {
+			s.traffic.logProxyConnection(metadata)
+			// Booked here for the same reason the TCP path books in
+			// attributeProxy: the router's tracker ran before this outbound
+			// had chosen, so without this the node's share of every tunnelled
+			// UDP flow is missing from the speed indicator.
+			conn = s.traffic.attributeProxyPacketConn(conn)
+		}
+		s.dispatchPacket(ctx, s.proxy, conn, metadata, onClose)
+	default:
+		s.dispatchPacket(ctx, s.direct, conn, metadata, onClose)
 	}
-	if choice == chooseProxy && s.traffic != nil {
-		s.traffic.logProxyConnection(metadata)
-	}
-	chosen := s.member(choice)
+}
+
+// dispatchPacket hands the flow to a member, preferring the member's own
+// handler so the core's UDP NAT and timeouts stay where they were.
+func (s *smartOutbound) dispatchPacket(
+	ctx context.Context, chosen adapter.Outbound, conn N.PacketConn,
+	metadata adapter.InboundContext, onClose N.CloseHandlerFunc,
+) {
 	if handler, isHandler := chosen.(adapter.PacketConnectionHandlerEx); isHandler {
 		handler.NewPacketConnectionEx(ctx, conn, metadata, onClose)
 		return

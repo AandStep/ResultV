@@ -367,3 +367,32 @@ func RecordConnectOutcome(key string, ok bool, reason string) {
 func LookupNodeStat(key string) NodeStat {
 	return nodeStats().Get(key)
 }
+
+// udpRelayConfirmed reports whether this record proves the node carries UDP.
+//
+// Three states collapse into "no" and the distinction matters: measured as
+// failing, measured too long ago to still be true, and never measured at all.
+// Every node is in the third one for the first seconds of its first session,
+// so callers must treat "not confirmed" as "do not rely on UDP" rather than as
+// "UDP is broken".
+//
+// The age limit is autoUDPRelayVerdictTTL, the same one the auto-selector
+// honours: a server's UDP policy is configuration rather than weather, but a
+// verdict that outlives the configuration is worse than no verdict.
+func udpRelayConfirmed(st NodeStat, now time.Time) bool {
+	if st.UDPRelay != UDPRelayOK || st.UDPRelayCheckedAt.IsZero() {
+		return false
+	}
+	return now.Sub(st.UDPRelayCheckedAt) < autoUDPRelayVerdictTTL
+}
+
+// NodeCarriesUDP answers the same question for a node key, against the live
+// store. Used by the smart outbound, which has to decide per flow and whose
+// answer must change within the session: the verdict is written a few seconds
+// after connect (startUDPRelayProbe), long after the outbound was built.
+func NodeCarriesUDP(key string) bool {
+	if strings.TrimSpace(key) == "" {
+		return false
+	}
+	return udpRelayConfirmed(nodeStats().Get(key), time.Now())
+}

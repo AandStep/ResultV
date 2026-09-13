@@ -508,6 +508,11 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 	// its own traffic once it has chosen a path, and it is constructed during
 	// box.New. AppendTracker below still installs it the usual way.
 	boxCtx = service.ContextWith[*trafficTracker](boxCtx, tracker)
+	// Whether this node carries UDP decides what the smart outbound does with
+	// HTTP/3 (see decideSmartUDP). Registered as a closure, not a value: the
+	// verdict is written a few seconds after connect by startUDPRelayProbe, so
+	// anything sampled here would be "not measured" for the whole session.
+	boxCtx = service.ContextWith[nodeUDPCheck](boxCtx, nodeUDPCheckFor(cfg.Proxy))
 	boxCtx = extendedBoxContext(boxCtx)
 
 	var options option.Options
@@ -771,6 +776,21 @@ func (t *trafficTracker) attributeProxyConn(conn net.Conn) net.Conn {
 	return bufio.NewInt64CounterConn(conn,
 		[]*atomic.Int64{t.proxyDownload},
 		[]*atomic.Int64{t.proxyUpload})
+}
+
+// attributeProxyPacketConn is attributeProxyConn for a UDP flow. Same job,
+// same reason it exists separately from RoutedPacketConnection: the tracker
+// runs before the smart outbound has chosen, so the node's share of a flow it
+// decides to tunnel has to be booked here instead.
+//
+// The orientation comes from RoutedPacketConnection rather than being derived
+// again — read is download, write is upload — because the two wrap the same
+// side of the same flow and a disagreement would make the node's share move
+// against the total.
+func (t *trafficTracker) attributeProxyPacketConn(conn N.PacketConn) N.PacketConn {
+	return bufio.NewInt64CounterPacketConn(conn,
+		[]*atomic.Int64{t.proxyDownload}, nil,
+		[]*atomic.Int64{t.proxyUpload}, nil)
 }
 
 // logProxyConnection writes the one [CONN] line per host that logConnection

@@ -95,3 +95,58 @@ func unknownChoice(raceAllowed bool) smartChoice {
 	}
 	return chooseDirect
 }
+
+// smartUDPAction is what the smart outbound does with one UDP flow. UDP needs
+// its own answer because it has a third option TCP does not: refusing the flow
+// outright, which costs the client one immediate fallback instead of a timeout.
+type smartUDPAction uint8
+
+const (
+	udpViaDirect smartUDPAction = iota
+	udpViaProxy
+	udpRefuse
+)
+
+func (a smartUDPAction) String() string {
+	switch a {
+	case udpViaProxy:
+		return "proxy"
+	case udpRefuse:
+		return "reject"
+	default:
+		return "direct"
+	}
+}
+
+// decideSmartUDP answers where one UDP flow should go.
+//
+// choice is what decideSmart made of the destination and known says whether
+// that came from an actual record or from the fallback — UDP needs the
+// difference, because "known to work directly" and "nothing is known" both
+// arrive as chooseDirect and only the second has to be refused.
+//
+// nodeUDPAlive is the node's own measured ability to carry UDP (see
+// ProbeUDPRelay). It only ever gates port 443, and that is the whole point of
+// the parameter: on 443 a refusal costs the client one instant fall back to
+// TCP, where the same verdict still sends it through the node, whereas on any
+// other port a refusal is the end of the flow. So HTTP/3 through a node whose
+// UDP was never proven is knocked back — the same thing the route rule does
+// for a name the block-list knows — while a game or a voice flow is still
+// handed to the node, on the reasoning that an unproven node beats a certain
+// failure and a stale measurement must not break what works.
+func decideSmartUDP(choice smartChoice, known bool, port uint16, nodeUDPAlive bool) smartUDPAction {
+	const http3Port = 443
+	if port == http3Port && !known {
+		// Nothing is known yet. Refusing makes the client retry over TCP, the
+		// race there produces a verdict, and the NEXT attempt goes the right
+		// way. One bounce to learn, rather than a permanent ban on HTTP/3.
+		return udpRefuse
+	}
+	if choice != chooseProxy {
+		return udpViaDirect
+	}
+	if port == http3Port && !nodeUDPAlive {
+		return udpRefuse
+	}
+	return udpViaProxy
+}

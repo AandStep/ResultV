@@ -19,8 +19,11 @@ import (
 	"net"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing/common/buf"
+	"github.com/sagernet/sing/common/bufio"
 	M "github.com/sagernet/sing/common/metadata"
 
 	"resultproxy-wails/internal/logger"
@@ -96,5 +99,48 @@ func TestAttributingAConnectionFeedsTheProxyCounters(t *testing.T) {
 	}
 	if tr.proxyDownload.Load() == 0 && tr.proxyUpload.Load() == 0 {
 		t.Fatal("ten bytes through an attributed connection moved no node counter")
+	}
+}
+
+// The node's share of the traffic was measured for TCP and not for UDP: the
+// packet path only wrote its [CONN] line. In Smart mode with the adaptive
+// engine on, everything HTTP/3 sends through the node therefore vanished from
+// the speed indicator.
+func TestAttributingAPacketConnectionFeedsTheProxyCounters(t *testing.T) {
+	tr := trackerForTest()
+
+	left, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("no loopback UDP socket available: %v", err)
+	}
+	defer left.Close()
+	right, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("no loopback UDP socket available: %v", err)
+	}
+	defer right.Close()
+
+	wrapped := tr.attributeProxyPacketConn(bufio.NewPacketConn(left))
+	if _, err := right.WriteTo([]byte("0123456789"), left.LocalAddr()); err != nil {
+		t.Fatal(err)
+	}
+	if err := left.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	buffer := buf.NewSize(64)
+	defer buffer.Release()
+	if _, err := wrapped.ReadPacket(buffer); err != nil {
+		t.Fatal(err)
+	}
+
+	if tr.proxyDownload.Load() == 0 && tr.proxyUpload.Load() == 0 {
+		t.Fatal("ten bytes through an attributed packet connection moved no node counter")
+	}
+	// Same orientation as the TCP wrapper and as RoutedPacketConnection: an
+	// inbound packet is download. Getting this backwards would make the node's
+	// share move in the opposite direction from the total.
+	if tr.proxyDownload.Load() == 0 {
+		t.Fatalf("an inbound packet was booked as upload: down=%d up=%d",
+			tr.proxyDownload.Load(), tr.proxyUpload.Load())
 	}
 }
