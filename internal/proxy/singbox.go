@@ -32,6 +32,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	sblog "github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/bufio"
 	singjson "github.com/sagernet/sing/common/json"
 	N "github.com/sagernet/sing/common/network"
@@ -332,6 +333,8 @@ func (w *singBoxLogWriter) WriteMessage(level sblog.Level, message string) {
 }
 
 
+
+var _ adapter.ConnectionTracker = (*trafficTracker)(nil)
 
 type trafficTracker struct {
 	upload        *atomic.Int64
@@ -745,6 +748,63 @@ func (t *trafficTracker) RoutedPacketConnection(
 	_, _, shouldTrack := t.logConnection(metadata, matchOutbound)
 	return bufio.NewInt64CounterPacketConn(conn, t.downCounters(shouldTrack), nil, t.upCounters(shouldTrack), nil)
 }
+
+// RoutedFlow is the third method sing-box 1.14 added to adapter.ConnectionTracker.
+// It covers traffic the router hands to an outbound as a raw L3 flow instead of
+// a connection, and for this client that is not a corner case: the TUN asks the
+// router about every new flow (Router.PreMatch), and a WireGuard endpoint —
+// which is what a WG or AmneziaWG node is here, under the "proxy" tag — answers
+// PreMatchFlow for every network and implements tun.Port. So on those nodes the
+// packets are forwarded at L3 and never become a net.Conn: RoutedConnection and
+// RoutedPacketConnection are simply never called, and returning nil here would
+// leave the speed indicator and the watchdog's traffic veto reading zero for the
+// whole session. Plain proxy outbounds (VLESS, Trojan, hysteria2, …) are not
+// FlowOutbound at all and keep taking the connection path.
+//
+// ICMP is deliberately excluded. `direct` is a FlowOutbound solely for ICMP
+// (PreMatchFlow in protocol/direct/outbound.go), so every ping would arrive
+// here; ping bytes never fed these counters before 1.14 and must not start.
+func (t *trafficTracker) RoutedFlow(
+	_ context.Context,
+	metadata adapter.InboundContext,
+	_ adapter.Rule,
+	matchOutbound adapter.Outbound,
+) tun.FlowTracker {
+	if metadata.Network == N.NetworkICMP {
+		return nil
+	}
+	_, _, shouldTrack := t.logConnection(metadata, matchOutbound)
+	return &flowCounter{
+		down: t.downCounters(shouldTrack),
+		up:   t.upCounters(shouldTrack),
+	}
+}
+
+// flowCounter books a forwarded flow into the same counters a wrapped
+// connection feeds. Forward is client→server (upload), reverse is the way back,
+// matching the core's own flowLogger (route/flow_tracker.go).
+type flowCounter struct {
+	down []*atomic.Int64
+	up   []*atomic.Int64
+}
+
+func (f *flowCounter) AttachFlow(tun.FlowHandle) {}
+
+func (f *flowCounter) CountForward(n int) {
+	for _, c := range f.up {
+		c.Add(int64(n))
+	}
+}
+
+func (f *flowCounter) CountReverse(n int) {
+	for _, c := range f.down {
+		c.Add(int64(n))
+	}
+}
+
+func (f *flowCounter) FlowEstablished() {}
+
+func (f *flowCounter) CloseFlow(tun.FlowCloseReason) {}
 
 // rotateLogged drops every entry in the dedup map and resets the counter.
 // Called from the hot path once the unique-host count crosses the threshold.

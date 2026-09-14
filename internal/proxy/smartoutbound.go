@@ -49,9 +49,9 @@ type smartOutboundOptions struct {
 }
 
 var (
-	_ adapter.OutboundGroup             = (*smartOutbound)(nil)
-	_ adapter.ConnectionHandlerEx       = (*smartOutbound)(nil)
-	_ adapter.PacketConnectionHandlerEx = (*smartOutbound)(nil)
+	_ adapter.OutboundGroup           = (*smartOutbound)(nil)
+	_ adapter.ConnectionHandler       = (*smartOutbound)(nil)
+	_ adapter.PacketConnectionHandler = (*smartOutbound)(nil)
 )
 
 type smartOutbound struct {
@@ -205,7 +205,7 @@ func (s *smartOutbound) attributeProxy(conn net.Conn, metadata adapter.InboundCo
 	return s.traffic.attributeProxyConn(conn)
 }
 
-func (s *smartOutbound) NewConnectionEx(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
+func (s *smartOutbound) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	rec, known := s.lookupAndRefresh(&metadata)
 	choice := choiceFrom(rec, known, s.raceAllowed())
 	if choice == chooseRace {
@@ -216,8 +216,8 @@ func (s *smartOutbound) NewConnectionEx(ctx context.Context, conn net.Conn, meta
 		conn = s.attributeProxy(conn, metadata)
 	}
 	chosen := s.member(choice)
-	if handler, isHandler := chosen.(adapter.ConnectionHandlerEx); isHandler {
-		handler.NewConnectionEx(ctx, conn, metadata, onClose)
+	if handler, isHandler := chosen.(adapter.ConnectionHandler); isHandler {
+		handler.NewConnection(ctx, conn, metadata, onClose)
 		return
 	}
 	s.connection.NewConnection(ctx, chosen, conn, metadata, onClose)
@@ -374,7 +374,7 @@ func (d constantDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 	return nil, E.New("smart: constantDialer is TCP only")
 }
 
-func (s *smartOutbound) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
+func (s *smartOutbound) NewPacketConnection(ctx context.Context, conn N.PacketConn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	// A QUIC Initial is cryptographically bound to its connection ID, so there
 	// is nothing to replay and no race to run: decideSmartUDP works off what is
 	// already known, and refusing is its answer to everything it cannot send
@@ -410,8 +410,8 @@ func (s *smartOutbound) dispatchPacket(
 	ctx context.Context, chosen adapter.Outbound, conn N.PacketConn,
 	metadata adapter.InboundContext, onClose N.CloseHandlerFunc,
 ) {
-	if handler, isHandler := chosen.(adapter.PacketConnectionHandlerEx); isHandler {
-		handler.NewPacketConnectionEx(ctx, conn, metadata, onClose)
+	if handler, isHandler := chosen.(adapter.PacketConnectionHandler); isHandler {
+		handler.NewPacketConnection(ctx, conn, metadata, onClose)
 		return
 	}
 	s.connection.NewPacketConnection(ctx, chosen, conn, metadata, onClose)
@@ -436,10 +436,9 @@ func (s *smartOutbound) lookupAndRefresh(metadata *adapter.InboundContext) (verd
 
 // extendedBoxContext is include.Context plus our own outbound type.
 //
-// It has to be spelled out rather than wrapped: include.Context builds all six
-// registries and hands them to box.Context in one call
-// (include/registry.go:60-62), so there is no seam to slip a type into
-// afterwards.
+// It has to be spelled out rather than wrapped: include.Context builds all seven
+// registries and hands them to box.Context in one call (include/registry.go), so
+// there is no seam to slip a type into afterwards.
 func extendedBoxContext(ctx context.Context) context.Context {
 	outbounds := include.OutboundRegistry()
 	outbound.Register[smartOutboundOptions](outbounds, smartOutboundTag, newSmartOutbound)
@@ -451,5 +450,6 @@ func extendedBoxContext(ctx context.Context) context.Context {
 		include.ProviderRegistry(),
 		include.DNSTransportRegistry(),
 		include.ServiceRegistry(),
+		include.CertificateProviderRegistry(),
 	)
 }

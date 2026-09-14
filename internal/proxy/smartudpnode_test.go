@@ -184,7 +184,7 @@ type recordingPacketOutbound struct {
 
 func (o *recordingPacketOutbound) Tag() string  { return o.tag }
 func (o *recordingPacketOutbound) Type() string { return o.tag }
-func (o *recordingPacketOutbound) NewPacketConnectionEx(
+func (o *recordingPacketOutbound) NewPacketConnection(
 	ctx context.Context, conn N.PacketConn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc,
 ) {
 	o.took.Store(true)
@@ -229,7 +229,7 @@ func TestPacketConnectionRefusesHTTP3OnAnUnprovenNode(t *testing.T) {
 	s, _, proxy := udpTestOutbound(t, false)
 	conn := &fakePacketConn{}
 
-	s.NewPacketConnectionEx(context.Background(), conn, udpMetadata("blocked.example", 443), nil)
+	s.NewPacketConnection(context.Background(), conn, udpMetadata("blocked.example", 443), nil)
 
 	if proxy.took.Load() {
 		t.Fatal("HTTP/3 was handed to a node whose UDP was never measured")
@@ -245,7 +245,7 @@ func TestPacketConnectionCarriesHTTP3OnAProvenNodeAndCountsIt(t *testing.T) {
 	s, _, proxy := udpTestOutbound(t, true)
 	conn := &fakePacketConn{}
 
-	s.NewPacketConnectionEx(context.Background(), conn, udpMetadata("blocked.example", 443), nil)
+	s.NewPacketConnection(context.Background(), conn, udpMetadata("blocked.example", 443), nil)
 
 	if !proxy.took.Load() {
 		t.Fatal("HTTP/3 to a learned-blocked name never reached the node")
