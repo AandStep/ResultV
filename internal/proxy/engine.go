@@ -380,6 +380,15 @@ type SBInbound struct {
 	// starving the inbound's table is the same class of mistake that once
 	// collapsed live tunnel traffic.
 	UDPNATMax uint32 `json:"udp_nat_max,omitempty"`
+	// DNSMode says how the TUN interface handles DNS: "disabled", "native"
+	// (set the platform's per-interface DNS, which on Windows means the
+	// adapter's own DNS servers) or "hijack" (native plus intercepting DNS
+	// traffic). sing-box 1.14 defaults to hijack, which is what this client has
+	// always relied on — written down here so a future default cannot move it
+	// silently, the way endpoint_independent_nat did. DNSAddress is left unset
+	// on purpose: the core then derives the hijack address from the TUN address,
+	// which is the behaviour that existed before the option did.
+	DNSMode string `json:"dns_mode,omitempty"`
 }
 
 type SBOutbound struct {
@@ -1075,6 +1084,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 		AutoRoute:           true,
 		StrictRoute:         strictRoute,
 		RouteExcludeAddress: routeExclude,
+		DNSMode:             "hijack",
 	}
 	if pt != "WIREGUARD" && pt != "AMNEZIAWG" {
 		tun.UDPTimeout = "30s"

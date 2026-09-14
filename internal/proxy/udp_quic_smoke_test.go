@@ -120,6 +120,7 @@ func TestTunInboundUDPTimeoutShapeSmoke(t *testing.T) {
 		`"udp_mapping":"endpoint_independent"`,
 		`"udp_filtering":"endpoint_independent"`,
 		`"udp_nat_max":8192`,
+		`"dns_mode":"hijack"`,
 		`"type":"tun"`,
 	} {
 		if !strings.Contains(js, want) {
