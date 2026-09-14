@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -115,7 +116,7 @@ func buildEndpoints(proxy ProxyConfig) ([]SBEndpoint, error) {
 		Detour:        "direct",
 		System:        getBoolField(extra, "system"),
 		Name:          getStringField(extra, "name", ""),
-		MTU:           intFromExtra(extra, "mtu", "MTU"),
+		MTU:           wireguardMTU(intFromExtra(extra, "mtu", "MTU")),
 		Address:       address,
 		PrivateKey:    privateKey,
 		ListenPort:    intFromExtra(extra, "listen_port", "listenPort"),
@@ -210,6 +211,33 @@ func intListFromExtra(extra map[string]interface{}, key string) []int {
 	default:
 		return nil
 	}
+}
+
+// wireguardMTU returns the endpoint MTU, letting RESULTV_WG_MTU override what
+// the node's config asked for.
+//
+// The override exists because MTU is the one WireGuard parameter whose failure
+// mode is invisible from the inside: small packets pass, large ones are dropped
+// somewhere on the path, and the tunnel looks alive while carrying nothing.
+// Sessions on 14.09.2026 show exactly that shape — every packet in the stack
+// counters between 150 and 330 bytes, retransmits starting the moment a speed
+// test asks for volume, and the device still exchanging keepalives afterwards.
+// Answering "is it the packet size" needs one run at a smaller MTU, and a build
+// flag beats hand-editing a subscription node.
+//
+// Out-of-range values are ignored rather than clamped: 576 is the IPv4 minimum
+// any path must carry, and above 1500 the override would create the very
+// problem it is meant to test for.
+func wireguardMTU(configured int) int {
+	raw := strings.TrimSpace(os.Getenv("RESULTV_WG_MTU"))
+	if raw == "" {
+		return configured
+	}
+	override, err := strconv.Atoi(raw)
+	if err != nil || override < 576 || override > 1500 {
+		return configured
+	}
+	return override
 }
 
 // wireguardEndpointTag is the tag a WireGuard/AmneziaWG node is given in the
