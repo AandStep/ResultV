@@ -17,10 +17,12 @@ package proxy
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 	"time"
 
+	"github.com/sagernet/gvisor/pkg/tcpip"
 	wgprotocol "github.com/sagernet/sing-box/protocol/wireguard"
 )
 
@@ -87,6 +89,9 @@ func startWGStatsSampler(ctx context.Context, boxCtx context.Context, core *core
 					return
 				}
 				core.writeLine(wgStatsPrefix + " " + line)
+				if stackLine, stackErr := wgStackStatsLine(boxCtx); stackErr == nil {
+					core.writeLine(wgStackPrefix + " " + stackLine)
+				}
 			}
 		}
 	}()
@@ -170,4 +175,94 @@ func awg31DeviceInterface(wgEndpoint *wgprotocol.Endpoint) (any, error) {
 		return nil, &awg31Error{"устройство WireGuard ещё не создано"}
 	}
 	return deviceValue.Interface(), nil
+}
+
+// The counters above stop at the WireGuard device: they say packets left and
+// packets came back, and nothing about what happened to them afterwards. The
+// 14.09.2026 sessions need exactly that next step — tx and rx both keep rising
+// after the tunnel stops carrying anything, so the packets reach the device and
+// the fault is in the gVisor stack that sits on top of it inside the endpoint.
+//
+// Its own statistics are the witness. Received-but-invalid segments, packets
+// dropped for a destination the stack does not recognise, failed connection
+// attempts and resets each point at a different cause, and they are counted
+// whether or not anything is logged.
+const wgStackPrefix = "wg-stack"
+
+// statsProvider is the gVisor stack's own accounting.
+type statsProvider interface {
+	Stats() tcpip.Stats
+}
+
+// wgStackStatsLine reads the endpoint's gVisor stack counters.
+func wgStackStatsLine(boxCtx context.Context) (string, error) {
+	endpoint, err := wgEndpointFrom(boxCtx)
+	if err != nil {
+		return "", err
+	}
+	stackValue, err := wgStackFrom(endpoint)
+	if err != nil {
+		return "", err
+	}
+	stats := stackValue.Stats()
+	fields := []struct {
+		name    string
+		counter *tcpip.StatCounter
+	}{
+		{"ip_received", stats.IP.PacketsReceived},
+		{"ip_delivered", stats.IP.PacketsDelivered},
+		{"ip_sent", stats.IP.PacketsSent},
+		{"ip_bad_dst", stats.IP.InvalidDestinationAddressesReceived},
+		{"ip_malformed", stats.IP.MalformedPacketsReceived},
+		{"ip_out_err", stats.IP.OutgoingPacketErrors},
+		{"tcp_opened", stats.TCP.ActiveConnectionOpenings},
+		{"tcp_established", stats.TCP.CurrentEstablished},
+		{"tcp_failed", stats.TCP.FailedConnectionAttempts},
+		{"tcp_valid_in", stats.TCP.ValidSegmentsReceived},
+		{"tcp_invalid_in", stats.TCP.InvalidSegmentsReceived},
+		{"tcp_sent", stats.TCP.SegmentsSent},
+		{"tcp_send_err", stats.TCP.SegmentSendErrors},
+		{"tcp_rst_in", stats.TCP.ResetsReceived},
+		{"tcp_rst_out", stats.TCP.ResetsSent},
+		{"tcp_retransmit", stats.TCP.Retransmits},
+		{"tcp_timeout", stats.TCP.EstablishedTimedout},
+	}
+	var parts []string
+	for _, field := range fields {
+		if field.counter == nil {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s=%d", field.name, field.counter.Value()))
+	}
+	return strings.Join(parts, " "), nil
+}
+
+// wgStackFrom walks the endpoint down to the gVisor stack inside its device.
+func wgStackFrom(wgEndpoint *wgprotocol.Endpoint) (statsProvider, error) {
+	transportEndpoint, err := unexportedField(reflect.ValueOf(wgEndpoint), "endpoint")
+	if err != nil {
+		return nil, &awg31Error{"protocol/wireguard.Endpoint: " + err.Error()}
+	}
+	if transportEndpoint.Kind() == reflect.Pointer && transportEndpoint.IsNil() {
+		return nil, &awg31Error{"устройство WireGuard ещё не создано"}
+	}
+	tunDevice, err := unexportedField(transportEndpoint, "tunDevice")
+	if err != nil {
+		return nil, &awg31Error{"transport/wireguard.Endpoint: " + err.Error()}
+	}
+	if !tunDevice.IsValid() || tunDevice.IsZero() {
+		return nil, &awg31Error{"устройство WireGuard ещё не создано"}
+	}
+	// tunDevice is an interface holding *stackDevice for a gVisor endpoint, and
+	// something else entirely for a system one — where there is no stack to read
+	// and nothing to report.
+	stackField, err := unexportedField(reflect.ValueOf(tunDevice.Interface()), "stack")
+	if err != nil {
+		return nil, &awg31Error{"устройство без gVisor-стека: " + err.Error()}
+	}
+	provider, ok := stackField.Interface().(statsProvider)
+	if !ok {
+		return nil, &awg31Error{"стек не отдаёт статистику"}
+	}
+	return provider, nil
 }
