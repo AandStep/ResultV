@@ -281,7 +281,6 @@ type SBDNSServer struct {
 	Server          string `json:"server,omitempty"`
 	ServerPort      int    `json:"server_port,omitempty"`
 	Detour          string `json:"detour,omitempty"`
-	AddressStrategy string `json:"address_strategy,omitempty"`
 	// Predefined seeds a static "hosts" DNS server: domain → fixed IP list.
 	// Used to pin the proxy server's own domain to its connect-time IPs so
 	// re-resolution never touches the redirected OS resolver (see buildDNS).
@@ -326,12 +325,21 @@ type SBInbound struct {
 	// captures under such conditions consistently showed lingering
 	// udpnat2.natConn waiters that never resolved.
 	UDPTimeout string `json:"udp_timeout,omitempty"`
-	// EndpointIndependentNat lets multiple destinations share NAT slots for
-	// the same (source IP, source port) pair instead of allocating a slot
-	// per destination. Under browser QUIC connection storms hitting many
-	// CDN IPs from a single ephemeral source port, this reduces total slot
-	// count proportionally.
-	EndpointIndependentNat bool `json:"endpoint_independent_nat,omitempty"`
+	// UDPMapping and UDPFiltering replace endpoint_independent_nat, which
+	// sing-box 1.14 kept in the schema but stopped reading — a silently
+	// ignored knob is worse than a removed one, because the config still
+	// parses and only the behaviour changes. Both take "endpoint_independent",
+	// "address_dependent" or "address_and_port_dependent".
+	//
+	// Endpoint-independent lets multiple destinations share NAT slots for the
+	// same (source IP, source port) pair instead of allocating a slot per
+	// destination: under browser QUIC storms hitting many CDN IPs from one
+	// ephemeral port that cuts the slot count proportionally. It is also the
+	// core's new default, which is the opposite of what 1.13 did when the
+	// field was absent — so both branches in buildTun say it out loud rather
+	// than inherit anything.
+	UDPMapping   string `json:"udp_mapping,omitempty"`
+	UDPFiltering string `json:"udp_filtering,omitempty"`
 }
 
 type SBOutbound struct {
@@ -1007,14 +1015,17 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	if err != nil {
 		return SingBoxConfig{}, err
 	}
-	// UDPTimeout / EndpointIndependentNat are TUN-inbound NAT knobs aimed at
-	// cleaning up dead UDP flows under DPI-driven QUIC retry storms. They
-	// must NOT be applied when the active protocol is a WireGuard endpoint:
-	// for WG/AWG the TUN inbound feeds packets straight into the endpoint,
-	// which maintains its own session state, and forcing the inbound to
-	// expire NAT slots after 30s tore down live tunnel traffic (handshake
+	// UDPTimeout / UDPMapping / UDPFiltering are TUN-inbound NAT knobs aimed at
+	// cleaning up dead UDP flows under DPI-driven QUIC retry storms. The
+	// timeout must NOT be applied when the active protocol is a WireGuard
+	// endpoint: for WG/AWG the TUN inbound feeds packets straight into the
+	// endpoint, which maintains its own session state, and forcing the inbound
+	// to expire NAT slots after 30s tore down live tunnel traffic (handshake
 	// passes, browser works for ~30s, then every UDP flow inside the tunnel
-	// collapses). Keep inbound defaults (5min, symmetric) for endpoint protos.
+	// collapses). The timeout stays at the inbound default there, but the NAT
+	// behaviour can no longer be left unsaid: sing-box 1.13 defaulted to
+	// symmetric and 1.14 defaults to endpoint-independent, so silence would
+	// now mean the opposite of what this branch intends.
 	tun := SBInbound{
 		Type:                "tun",
 		Tag:                 "tun-in",
@@ -1027,7 +1038,13 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	}
 	if pt != "WIREGUARD" && pt != "AMNEZIAWG" {
 		tun.UDPTimeout = "30s"
-		tun.EndpointIndependentNat = true
+		tun.UDPMapping = "endpoint_independent"
+		tun.UDPFiltering = "endpoint_independent"
+	} else {
+		// Same NAT behaviour this branch had before 1.14, now stated explicitly
+		// because the core default moved out from under it.
+		tun.UDPMapping = "address_and_port_dependent"
+		tun.UDPFiltering = "address_and_port_dependent"
 	}
 	// Loopback probe inbound: post-start and watchdog health probes go through
 	// this listener instead of the TUN default route. The target hostname
