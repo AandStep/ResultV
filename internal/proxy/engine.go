@@ -1356,15 +1356,23 @@ func realIPv4s(addrs []net.IPAddr) []string {
 // Proxy mode is excluded: it has no TUN, so nothing would route the fake range
 // anywhere.
 //
-// WireGuard and AmneziaWG are excluded because they are endpoints —
-// buildOutbounds emits only direct+block for them, so a group naming "proxy"
-// would point at a tag the core cannot resolve and the engine would not start
-// at all. That half was always enforced; what was not is that FakeIP used to be
-// emitted for those nodes anyway. The result was every cost of the fake pool
-// (launchers seeing 198.18.x.x, names with no A record turning into dead
-// connections) with none of the benefit, since with no second member there is
-// nobody to ask what was learned. If the smart outbound ever learns to treat an
-// endpoint as its second member, this is the single line that changes.
+// WireGuard and AmneziaWG are excluded — but NOT for the reason this comment
+// used to give. It claimed a group naming "proxy" would point at a tag the core
+// cannot resolve, because buildOutbounds emits only direct+block for endpoint
+// protocols. That is wrong and was wrong on 1.13 too: OutboundManager.Outbound
+// falls back to endpoint.Get (adapter/outbound/manager.go), so smartOutbound.Start
+// would find the WireGuard endpoint under that tag like any other member.
+//
+// What is true is that nobody has ever run the fake pool and the verdict engine
+// against an endpoint: the smart outbound would be racing a FlowOutbound, whose
+// packets can bypass the connection path entirely, and none of that has been
+// measured. The exclusion stays until it is — as an untested path, not an
+// impossible one.
+//
+// Separately: FakeIP used to be emitted for these nodes anyway, which bought
+// every cost of the fake pool (launchers seeing 198.18.x.x, names with no A
+// record turning into dead connections) and none of the benefit, since with no
+// second member there is nobody to ask what was learned.
 func adaptiveSmartActive(cfg EngineConfig) bool {
 	if !cfg.AdaptiveSmart || cfg.Mode != ProxyModeTunnel || cfg.RoutingMode != ModeSmart {
 		return false
