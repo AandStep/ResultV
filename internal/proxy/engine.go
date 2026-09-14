@@ -780,6 +780,30 @@ func effectiveDataDir(cfg EngineConfig) string {
 // FakeIP mapping has to land in this very file and not beside it.
 const singBoxCacheDBName = "sing-box-cache.db"
 
+// singBoxLogLevel is "error" unless RESULTV_SINGBOX_LOG_LEVEL says otherwise.
+//
+// The default is not a preference, it is a necessity: at "info" the core logs
+// a line per connection and per DNS answer, and the log window is also what
+// the user sends us. But several questions can only be answered by the core's
+// own voice — which service a hanging Close is stuck on (box.Close traces each
+// one with its elapsed time at "trace"), and whether an answer came out of the
+// optimistic cache rather than the network ("optimistic <domain>" at "debug").
+// Leaving a documented way in beats rebuilding a special binary each time.
+func singBoxLogLevel() string {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("RESULTV_SINGBOX_LOG_LEVEL"))) {
+	case "trace":
+		return "trace"
+	case "debug":
+		return "debug"
+	case "info":
+		return "info"
+	case "warn", "warning":
+		return "warn"
+	default:
+		return "error"
+	}
+}
+
 func buildExperimentalCache(dataDir string) *SBExperimental {
 	if dataDir == "" {
 		return nil
@@ -1122,7 +1146,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 		ListenPort: probePort,
 	}
 	sbCfg := SingBoxConfig{
-		Log:          &SBLog{Level: "error", Disabled: false},
+		Log:          &SBLog{Level: singBoxLogLevel(), Disabled: false},
 		DNS:          buildDNS(cfg),
 		Endpoints:    endpoints,
 		Inbounds:     []SBInbound{tun, probeIn},
