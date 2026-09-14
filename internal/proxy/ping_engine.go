@@ -171,10 +171,10 @@ func pingThroughNode(ctx context.Context, proxy ProxyConfig, method, testURL, bi
 		return 0, false, "engine_start_failed"
 	}
 	if err := instance.Start(); err != nil {
-		closeInstanceBounded(instance, pingProbeEngineCeiling, log)
+		closeInstanceBounded(instance, boxCtx, pingProbeEngineCeiling, log)
 		return 0, false, "engine_start_failed"
 	}
-	defer closeInstanceBounded(instance, pingProbeEngineCeiling, log)
+	defer closeInstanceBounded(instance, boxCtx, pingProbeEngineCeiling, log)
 
 	proxyURL, err := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
 	if err != nil {

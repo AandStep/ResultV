@@ -209,6 +209,11 @@ type SingBoxEngine struct {
 	pendingClose <-chan struct{}
 	pendingSince time.Time
 
+	// boxCtx is the context box.New was given, kept because the core registers
+	// its services in it — closeTrackedConnections needs the connection manager
+	// out of there while shutting down.
+	boxCtx context.Context
+
 	// savedCfg / savedCtx are the original Start args, kept so ApplyAppWhitelist
 	// can rebuild the sing-box config in-place without reconstructing the
 	// caller's intent. They are only meaningful while running.
@@ -567,7 +572,7 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 		// Keep the handle even though this instance never became ours: a start
 		// that failed late still opened the cache file, and the next attempt has
 		// to wait for that to be released.
-		e.pendingClose = closeInstanceBounded(instance, 5*time.Second, e.log)
+		e.pendingClose = closeInstanceBounded(instance, boxCtx, 5*time.Second, e.log)
 		e.pendingSince = time.Now()
 		cancel()
 		return fmt.Errorf("starting sing-box: %w", err)
@@ -576,7 +581,40 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 	e.configPath = configPath
 	e.instance = instance
 	e.cancel = cancel
+	e.boxCtx = boxCtx
 	return nil
+}
+
+// closeTrackedConnections closes every connection the core is tracking, before
+// the core itself starts shutting down.
+//
+// This is what keeps a WireGuard or AmneziaWG disconnect from hanging. Goroutine
+// dumps taken on 14.09.2026 show the whole teardown stopped in one place:
+// box.Close → endpoint manager → the WireGuard endpoint → its gVisor stack →
+// Stack.Wait → tcp.Endpoint.Wait, parked on a HUp event. Those TCP endpoints
+// are the far ends of live proxied connections, and the connection manager that
+// owns them is SIX entries further down box.Close's list — so the endpoint waits
+// for something only a later step could do, and the wait is unbounded. Two
+// minutes was the longest measured; the instance holds the cache-file lock for
+// all of it, which is why the next connect used to fail as well.
+//
+// Closing the near side is enough: connectionCopy sees the error and closes the
+// far side with it, so the gVisor endpoint gets its HUp and Wait returns. The
+// core closing the same manager again later is a no-op — the list is empty.
+func closeTrackedConnections(boxCtx context.Context, log *logger.Logger) {
+	if boxCtx == nil {
+		return
+	}
+	manager := service.FromContext[adapter.ConnectionManager](boxCtx)
+	if manager == nil {
+		return
+	}
+	if log != nil {
+		if count := manager.Count(); count > 0 {
+			log.Info(fmt.Sprintf("[SING-BOX] Закрываем %d соединений перед остановкой", count))
+		}
+	}
+	manager.CloseAll()
 }
 
 // closeInstanceBounded closes a sing-box instance with a hard ceiling, returning
@@ -590,10 +628,11 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 // e.mu) never returned, freezing the UI until the process was killed. On timeout
 // the goroutine is left running: a single stale sing-box instance is
 // GC-collected eventually; a frozen disconnect button is not.
-func closeInstanceBounded(inst *box.Box, ceiling time.Duration, log *logger.Logger) <-chan struct{} {
+func closeInstanceBounded(inst *box.Box, boxCtx context.Context, ceiling time.Duration, log *logger.Logger) <-chan struct{} {
 	closeDone := make(chan struct{})
 	started := time.Now()
 	go func() {
+		closeTrackedConnections(boxCtx, log)
 		_ = inst.Close()
 		close(closeDone)
 	}()
@@ -694,8 +733,9 @@ func (e *SingBoxEngine) shutdownInstanceLocked() {
 	if e.instance != nil {
 		inst := e.instance
 		e.instance = nil
-		e.pendingClose = closeInstanceBounded(inst, 5*time.Second, e.log)
+		e.pendingClose = closeInstanceBounded(inst, e.boxCtx, 5*time.Second, e.log)
 		e.pendingSince = time.Now()
+		e.boxCtx = nil
 	}
 	if e.configPath != "" {
 		os.Remove(e.configPath)
