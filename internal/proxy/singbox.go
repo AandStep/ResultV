@@ -214,6 +214,12 @@ type SingBoxEngine struct {
 	// out of there while shutting down.
 	boxCtx context.Context
 
+	// coreLog is the diagnostic sink for this instance's core output, open only
+	// when RESULTV_SINGBOX_LOG_LEVEL raised the level. Held here because the
+	// file has to be closed when the instance goes away, and the log writer the
+	// core holds is not ours to reach afterwards.
+	coreLog *coreLogFile
+
 	// savedCfg / savedCtx are the original Start args, kept so ApplyAppWhitelist
 	// can rebuild the sing-box config in-place without reconstructing the
 	// caller's intent. They are only meaningful while running.
@@ -240,13 +246,106 @@ type singBoxLogWriter struct {
 	// "lookup <domain>: ..." or "open connection ... using outbound" would
 	// otherwise leak the provider's backend address. Empty for manual servers.
 	redact []string
+	// core is the diagnostic sink, non-nil only when RESULTV_SINGBOX_LOG_LEVEL
+	// asked for more than errors. See coreLogFile for why the visible log
+	// cannot be that sink.
+	core *coreLogFile
+}
+
+// coreLogFile writes the core's own voice to a file under diag/.
+//
+// RESULTV_SINGBOX_LOG_LEVEL (see singBoxLogLevel) raises the level the core
+// logs AT, but on its own it changes nothing observable: WriteMessage drops
+// everything below Warn before it reaches the user's log, and that log is a
+// 500-entry ring — at "debug" the core fills it in a couple of seconds and the
+// session's own events scroll out. So the raised level went into a sink that
+// discarded it, which is exactly the state this type exists to fix: the
+// questions that need the core's voice (does the WireGuard handshake retry,
+// does the peer endpoint resolve, does the bind get rebuilt under us) are
+// answered by lines at debug and trace.
+//
+// The visible log keeps its old contract — Warn and Error only. Everything
+// else goes to the file and nowhere near the UI.
+type coreLogFile struct {
+	mu   sync.Mutex
+	file *os.File
+}
+
+// newCoreLogFile opens the sink, or returns nil when the level was not raised.
+// A nil *coreLogFile is usable: write and Close are no-ops on it, so the
+// caller never branches.
+func newCoreLogFile(level string) *coreLogFile {
+	if level == "" || level == "error" {
+		return nil
+	}
+	dir := filepath.Join(resultProxyDataDir(), "diag")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil
+	}
+	path := filepath.Join(dir, fmt.Sprintf("core-%s.log", time.Now().Format("20060102-150405")))
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil
+	}
+	c := &coreLogFile{file: file}
+	c.writeLine(fmt.Sprintf("=== ResultV core log, level=%s, started %s ===",
+		level, time.Now().Format("2006-01-02 15:04:05")))
+	return c
+}
+
+func (c *coreLogFile) write(level sblog.Level, message string) {
+	if c == nil {
+		return
+	}
+	// Secrets are stripped here too. The whole point of this file is to be sent
+	// to someone, and a failed WireGuard setup dumps the entire ipcConf —
+	// private key included — into one error string.
+	//
+	// The server's address is deliberately NOT redacted: a WireGuard handshake
+	// is diagnosed by which endpoint the initiation went to, and a file that
+	// hides it cannot answer the question it was opened for. This file stays on
+	// disk until the user sends it, unlike the visible log.
+	c.writeLine(fmt.Sprintf("[%s] %s", sblog.FormatLevel(level), redactEngineSecrets(message)))
+}
+
+func (c *coreLogFile) writeLine(line string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.file == nil {
+		return
+	}
+	_, _ = c.file.WriteString(time.Now().Format("15:04:05.000") + " " + line + "\n")
+}
+
+// Path reports where the sink is writing, for the one line the user does see.
+func (c *coreLogFile) Path() string {
+	if c == nil || c.file == nil {
+		return ""
+	}
+	return c.file.Name()
+}
+
+func (c *coreLogFile) Close() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.file == nil {
+		return
+	}
+	_ = c.file.Close()
+	c.file = nil
 }
 
 // newSingBoxLogWriter builds a log writer that hides the server's domain/IP when
 // the active proxy comes from a subscription. Manual servers keep full detail —
 // the user owns them and the address is already visible in the UI.
-func newSingBoxLogWriter(log *logger.Logger, proxy ProxyConfig) *singBoxLogWriter {
-	w := &singBoxLogWriter{log: log}
+func newSingBoxLogWriter(log *logger.Logger, proxy ProxyConfig, core *coreLogFile) *singBoxLogWriter {
+	w := &singBoxLogWriter{log: log, core: core}
 	if proxy.SubscriptionURL == "" {
 		return w
 	}
@@ -289,6 +388,11 @@ func redactEngineSecrets(msg string) string {
 }
 
 func (w *singBoxLogWriter) WriteMessage(level sblog.Level, message string) {
+	// The file sink sees everything, before any filter: the lines this function
+	// drops next are precisely the ones worth having when the core is the only
+	// witness left.
+	w.core.write(level, message)
+
 	if level > sblog.LevelWarn {
 		return
 	}
@@ -543,13 +647,22 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 		return fmt.Errorf("parsing options: %w", err)
 	}
 
+	// Opened before the core exists so the very first lines — the ones a failed
+	// start produces — are already being captured. Nil unless the level was
+	// raised, and every method tolerates nil.
+	coreLog := newCoreLogFile(singBoxLogLevel())
+	if path := coreLog.Path(); path != "" {
+		e.log.Info(fmt.Sprintf("[SING-BOX] Подробный лог ядра пишется в %s", path))
+	}
+
 	instance, err := box.New(box.Options{
 		Context:           boxCtx,
 		Options:           options,
-		PlatformLogWriter: newSingBoxLogWriter(e.log, cfg.Proxy),
+		PlatformLogWriter: newSingBoxLogWriter(e.log, cfg.Proxy, coreLog),
 	})
 	if err != nil {
 		cancel()
+		coreLog.Close()
 		return fmt.Errorf("creating sing-box instance: %w", err)
 	}
 
@@ -574,6 +687,7 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 		// to wait for that to be released.
 		e.pendingClose = closeInstanceBounded(instance, boxCtx, 5*time.Second, e.log)
 		e.pendingSince = time.Now()
+		closeCoreLogAfter(coreLog, e.pendingClose)
 		cancel()
 		return fmt.Errorf("starting sing-box: %w", err)
 	}
@@ -582,6 +696,7 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 	e.instance = instance
 	e.cancel = cancel
 	e.boxCtx = boxCtx
+	e.coreLog = coreLog
 	return nil
 }
 
@@ -653,6 +768,28 @@ func closeInstanceBounded(inst *box.Box, boxCtx context.Context, ceiling time.Du
 		}
 	}
 	return closeDone
+}
+
+// closeCoreLogAfter closes the diagnostic sink once the instance's Close has
+// actually finished — not when Stop returns.
+//
+// The difference matters precisely in the case the sink is usually opened for:
+// closeInstanceBounded gives up on a hanging Close after its ceiling and leaves
+// the goroutine running, and the core keeps logging from in there ("close
+// endpoint/wireguard[proxy] take too much time to finish!"). Closing the file
+// at Stop would cut the log off right before the part being investigated.
+func closeCoreLogAfter(core *coreLogFile, done <-chan struct{}) {
+	if core == nil {
+		return
+	}
+	if done == nil {
+		core.Close()
+		return
+	}
+	go func() {
+		<-done
+		core.Close()
+	}()
 }
 
 // dumpGoroutinesOnCloseHang writes every goroutine stack to a file the moment
@@ -743,6 +880,8 @@ func (e *SingBoxEngine) shutdownInstanceLocked() {
 		e.pendingClose = closeInstanceBounded(inst, e.boxCtx, 5*time.Second, e.log)
 		e.pendingSince = time.Now()
 		e.boxCtx = nil
+		closeCoreLogAfter(e.coreLog, e.pendingClose)
+		e.coreLog = nil
 	}
 	if e.configPath != "" {
 		os.Remove(e.configPath)

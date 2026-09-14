@@ -143,7 +143,7 @@ func TestSingBoxLogWriter_RedactsSubscriptionServer(t *testing.T) {
 		ResolvedIP:      "203.0.113.7",
 		ResolvedIPs:     []string{"203.0.113.7", "203.0.113.8"},
 		SubscriptionURL: "https://sub.example/abc",
-	})
+	}, nil)
 	in := "connection upload closed: raw-read tcp4 ...->203.0.113.8: forcibly closed (lookup k.example.com) [203.0.113.7]"
 	got := w.redactServer(in)
 	for _, leak := range []string{"k.example.com", "203.0.113.7", "203.0.113.8"} {
@@ -185,7 +185,7 @@ func TestBuildTunnelConfig_RouteExcludesAllBackends(t *testing.T) {
 
 // Manual (non-subscription) servers keep full detail — the user owns them.
 func TestSingBoxLogWriter_ManualServerNotRedacted(t *testing.T) {
-	w := newSingBoxLogWriter(nil, ProxyConfig{IP: "198.51.100.10", Port: 443})
+	w := newSingBoxLogWriter(nil, ProxyConfig{IP: "198.51.100.10", Port: 443}, nil)
 	in := "lookup 198.51.100.10 failed"
 	if got := w.redactServer(in); got != in {
 		t.Fatalf("manual server should not be redacted, got %q", got)
