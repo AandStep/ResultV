@@ -1176,7 +1176,25 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	return sbCfg, nil
 }
 
+// effectiveTunStack resolves which TUN stack to run, letting RESULTV_TUN_STACK
+// override the stored setting.
+//
+// The override is here because the stack is the one half of the tunnel the app
+// offers no way to change, and 14.09.2026 put it under suspicion: with the
+// engine on 1.14 the same AmneziaWG node moves 109 Mbit/s in proxy mode with
+// zero retransmits, and collapses within a minute of real throughput in tunnel
+// mode. The endpoint, the WireGuard device and its own gVisor stack are the
+// same objects in both, so what differs is the TUN inbound — and sing-tun 0.9
+// rewrote the system stack, putting a flow dispatcher in front of every packet
+// and replacing both NAT tables. Comparing system against gvisor needs a switch
+// the user can flip without editing an encrypted config.
 func effectiveTunStack(stack string) string {
+	if override := strings.ToLower(strings.TrimSpace(os.Getenv("RESULTV_TUN_STACK"))); override != "" {
+		switch override {
+		case "gvisor", "system":
+			return override
+		}
+	}
 	switch strings.ToLower(strings.TrimSpace(stack)) {
 	case "gvisor":
 		return "gvisor"
