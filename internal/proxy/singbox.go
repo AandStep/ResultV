@@ -703,6 +703,12 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 		}
 	}
 
+	// While the diagnostic log is open, sample the WireGuard device counters:
+	// a tunnel that goes quiet logs nothing at all otherwise, and tx/rx say
+	// immediately whether our packets are leaving and whether anything comes
+	// back. Costs nothing in an ordinary session — coreLog is nil there.
+	startWGStatsSampler(boxCtx, boxCtx, coreLog)
+
 	e.configPath = configPath
 	e.instance = instance
 	e.cancel = cancel

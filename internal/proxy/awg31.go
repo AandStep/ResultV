@@ -178,17 +178,9 @@ func applyAWG31(boxCtx context.Context, knobs awg31Knobs, log *logger.Logger) er
 	if boxCtx == nil {
 		return &awg31Error{"нет контекста ядра"}
 	}
-	manager := service.FromContext[adapter.EndpointManager](boxCtx)
-	if manager == nil {
-		return &awg31Error{"ядро не отдало менеджер эндпоинтов"}
-	}
-	ep, loaded := manager.Get(wireguardEndpointTag)
-	if !loaded {
-		return &awg31Error{"эндпоинт " + wireguardEndpointTag + " не найден"}
-	}
-	wgEndpoint, ok := ep.(*wgprotocol.Endpoint)
-	if !ok {
-		return &awg31Error{fmt.Sprintf("эндпоинт %s не WireGuard (%T)", wireguardEndpointTag, ep)}
+	wgEndpoint, err := wgEndpointFrom(boxCtx)
+	if err != nil {
+		return err
 	}
 	device, err := awg31Device(wgEndpoint)
 	if err != nil {
@@ -224,29 +216,23 @@ func awgOnOff(v bool) string {
 
 // awg31Device walks the endpoint down to the wireguard-go device.
 func awg31Device(wgEndpoint *wgprotocol.Endpoint) (ipcSetter, error) {
-	transportEndpoint, err := unexportedField(reflect.ValueOf(wgEndpoint), "endpoint")
+	deviceValue, err := awg31DeviceInterface(wgEndpoint)
 	if err != nil {
-		return nil, &awg31Error{"protocol/wireguard.Endpoint: " + err.Error()}
+		return nil, err
 	}
-	// Not-yet-built and built-but-deviceless are one state to a caller, and it
-	// is a legitimate one rather than a defect: the device is created by
-	// transport.Endpoint.Start, which for a domain-addressed peer runs in the
-	// post-start stage.
-	if transportEndpoint.Kind() == reflect.Pointer && transportEndpoint.IsNil() {
-		return nil, &awg31Error{"устройство WireGuard ещё не создано"}
-	}
-	deviceValue, err := unexportedField(transportEndpoint, "device")
-	if err != nil {
-		return nil, &awg31Error{"transport/wireguard.Endpoint: " + err.Error()}
-	}
-	if !deviceValue.IsValid() || deviceValue.IsZero() {
-		return nil, &awg31Error{"устройство WireGuard ещё не создано"}
-	}
-	device, ok := deviceValue.Interface().(ipcSetter)
+	device, ok := deviceValue.(ipcSetter)
 	if !ok {
-		return nil, &awg31Error{fmt.Sprintf("устройство не принимает UAPI (%s)", deviceValue.Type())}
+		return nil, &awg31Error{fmt.Sprintf("устройство не принимает UAPI (%T)", deviceValue)}
 	}
 	return device, nil
+}
+
+// endpointManagerFrom pulls the core's endpoint manager out of the box context.
+func endpointManagerFrom(boxCtx context.Context) adapter.EndpointManager {
+	if boxCtx == nil {
+		return nil
+	}
+	return service.FromContext[adapter.EndpointManager](boxCtx)
 }
 
 // unexportedField reads an unexported struct field by name.
