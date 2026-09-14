@@ -111,7 +111,7 @@ func buildEndpoints(proxy ProxyConfig) ([]SBEndpoint, error) {
 
 	ep := SBEndpoint{
 		Type:          "wireguard",
-		Tag:           "proxy",
+		Tag:           wireguardEndpointTag,
 		Detour:        "direct",
 		System:        getBoolField(extra, "system"),
 		Name:          getStringField(extra, "name", ""),
@@ -211,6 +211,11 @@ func intListFromExtra(extra map[string]interface{}, key string) []int {
 		return nil
 	}
 }
+
+// wireguardEndpointTag is the tag a WireGuard/AmneziaWG node is given in the
+// engine config. Named because applyAWG31 looks the endpoint up by it after
+// start — the two must never drift apart.
+const wireguardEndpointTag = "proxy"
 
 // awg3Keys lists the AmneziaWG 3.0 device knobs in the order they are written
 // into ipcConf. See appendAWG3Lines for how they reach the engine.

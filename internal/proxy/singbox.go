@@ -692,6 +692,17 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 		return fmt.Errorf("starting sing-box: %w", err)
 	}
 
+	// AmneziaWG 3.1 switches, which the core cannot carry in its config (see
+	// applyAWG31). Done here, right after Start, because the device only
+	// exists once the endpoint has started and because random_trailers has to
+	// match the peer before the first handshake is answered. A failure is not
+	// fatal: the session still runs, with 3.0 behaviour.
+	if knobs := awg31KnobsFor(cfg.Proxy); !knobs.empty() {
+		if err := applyAWG31(boxCtx, knobs, e.log); err != nil {
+			e.log.Warning(fmt.Sprintf("[PROXY] Параметры AmneziaWG 3.1 не применены: %v", err))
+		}
+	}
+
 	e.configPath = configPath
 	e.instance = instance
 	e.cancel = cancel
