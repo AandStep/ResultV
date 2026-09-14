@@ -273,6 +273,37 @@ type SBDNS struct {
 	// no matching server is a hard start failure ("default DNS server not
 	// found"), so only ever set a tag that is registered.
 	Final string `json:"final,omitempty"`
+	// Optimistic trades a little staleness for a resolver that never blocks on
+	// an expired entry — the same bargain the Smart lists already make at
+	// startup. Set by newSBDNS, never by hand.
+	Optimistic *SBDNSOptimistic `json:"optimistic,omitempty"`
+}
+
+// SBDNSOptimistic configures sing-box 1.14's optimistic DNS cache: an expired
+// entry is answered immediately while a refresh runs in the background. The
+// core rejects it alongside disable_cache or disable_expire, neither of which
+// this client emits.
+type SBDNSOptimistic struct {
+	Enabled bool   `json:"enabled,omitempty"`
+	Timeout string `json:"timeout,omitempty"`
+}
+
+// newSBDNS builds the DNS block for a real session, so the options every mode
+// must share cannot be forgotten by one of buildDNS's exits. The ping engine
+// spells out its own tiny DNS block instead and is right not to come here: it
+// serves one static hosts record for the node's own name and lives for the
+// length of a single measurement, so there is nothing for a cache to be
+// optimistic about.
+//
+// The optimistic window is stated rather than defaulted: the core would serve a
+// stale answer for three days, which outlives any network change the user makes
+// — six hours still covers a laptop that slept overnight while a move between
+// Wi-Fi and mobile refreshes well inside it.
+func newSBDNS(servers []SBDNSServer) *SBDNS {
+	return &SBDNS{
+		Servers:    servers,
+		Optimistic: &SBDNSOptimistic{Enabled: true, Timeout: "6h"},
+	}
 }
 
 type SBDNSServer struct {
@@ -1363,9 +1394,7 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			}
 		}
 
-		dns := &SBDNS{
-			Servers: servers,
-		}
+		dns := newSBDNS(servers)
 
 		// Same predicate as the TUN address, so the two halves can never disagree:
 		// AAAA answers with no IPv6 path to use them would be worse than no AAAA.
@@ -1580,8 +1609,7 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		}
 	}
 
-	dns := &SBDNS{Servers: servers}
-	return dns
+	return newSBDNS(servers)
 }
 
 func splitDNSServer(raw string) (string, int) {
