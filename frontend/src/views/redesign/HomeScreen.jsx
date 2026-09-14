@@ -146,6 +146,7 @@ export default function HomeScreen() {
     isPingPending,
     selectAndConnect,
     toggleConnection,
+    disconnectOnly,
     cancelConnect,
   } = useConnectionContext();
 
@@ -245,6 +246,17 @@ export default function HomeScreen() {
    */
   const canCancel = isResolving || (status === "connecting" && !modeReconnect);
   const powerBusy = isDisconnecting || modeReconnect;
+
+  /*
+   * Красная кнопка гасит, а не запускает заново. После сбоя `isConnected`
+   * уже false, поэтому общий переключатель понимал нажатие как «подключить»
+   * и повторял ту же неудачную попытку к тому же серверу. Между тем сбой
+   * подключения оставляет за собой движок в неопределённом состоянии, и
+   * человеку в этот момент нужно именно «выключить»: disconnectOnly гасит
+   * его, снимает ошибку и возвращает экран в исходное положение. Повторить
+   * попытку или сменить сервер можно двумя кнопками, которые в этом
+   * состоянии стоят на месте плиток скорости.
+   */
 
   /*
    * Показываем тот же сервер, что и раньше: упавший, затем подключённый,
@@ -460,7 +472,7 @@ export default function HomeScreen() {
       time={formatUptime(uptime)}
       mode={settings?.mode === "tunnel" ? "tunnel" : "proxy"}
       onModeChange={onModeChange}
-      onPower={canCancel ? cancelConnect : toggleConnection}
+      onPower={canCancel ? cancelConnect : status === "error" ? disconnectOnly : toggleConnection}
       powerDisabled={powerBusy}
       server={server}
       serverGroups={serverGroups}
