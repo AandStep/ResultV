@@ -119,6 +119,7 @@ func TestTunInboundUDPTimeoutShapeSmoke(t *testing.T) {
 		`"udp_timeout":"30s"`,
 		`"udp_mapping":"endpoint_independent"`,
 		`"udp_filtering":"endpoint_independent"`,
+		`"udp_nat_max":8192`,
 		`"type":"tun"`,
 	} {
 		if !strings.Contains(js, want) {
@@ -170,6 +171,9 @@ func TestTunInboundWireGuardKeepsSymmetricNAT(t *testing.T) {
 	}
 	if strings.Contains(js, `"udp_timeout"`) {
 		t.Fatalf("WireGuard TUN inbound must not force a UDP timeout: %s", js)
+	}
+	if strings.Contains(js, `"udp_nat_max"`) {
+		t.Fatalf("WireGuard TUN inbound must not cap the NAT table: %s", js)
 	}
 	assertCoreAcceptsConfig(t, cfg)
 }

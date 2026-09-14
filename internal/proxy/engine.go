@@ -340,6 +340,15 @@ type SBInbound struct {
 	// than inherit anything.
 	UDPMapping   string `json:"udp_mapping,omitempty"`
 	UDPFiltering string `json:"udp_filtering,omitempty"`
+	// UDPNATMax caps how many UDP NAT slots the TUN inbound holds at once.
+	// UDPTimeout alone only bounds how long a dead flow lingers; under the DPI
+	// retry storms this client runs in — browsers reopening QUIC handshakes
+	// that get dropped at UDP/443 — the table still grows faster than it
+	// drains, and pprof captures showed udpnat2.natConn waiters piling up. Not
+	// set for WireGuard endpoints: they keep their own session state, and
+	// starving the inbound's table is the same class of mistake that once
+	// collapsed live tunnel traffic.
+	UDPNATMax uint32 `json:"udp_nat_max,omitempty"`
 }
 
 type SBOutbound struct {
@@ -1040,6 +1049,11 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 		tun.UDPTimeout = "30s"
 		tun.UDPMapping = "endpoint_independent"
 		tun.UDPFiltering = "endpoint_independent"
+		// 8192 is a starting value, not a measured one: it is far above what
+		// ordinary browsing holds open, so the cap only bites during a storm.
+		// If real traffic ever starts hitting it — UDP failing while TCP is
+		// fine — raise it and write down what forced the change.
+		tun.UDPNATMax = 8192
 	} else {
 		// Same NAT behaviour this branch had before 1.14, now stated explicitly
 		// because the core default moved out from under it.
