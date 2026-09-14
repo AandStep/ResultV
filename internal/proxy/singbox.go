@@ -18,11 +18,13 @@ package proxy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -199,6 +201,13 @@ type SingBoxEngine struct {
 	cancel     context.CancelFunc
 	configPath string
 	instance   *box.Box
+
+	// pendingClose is closed when the PREVIOUS instance's Close() actually
+	// returns, which can be long after we stopped waiting for it. Until then
+	// that instance still holds the bbolt lock on the cache file, so starting a
+	// new one on top of it is guaranteed to fail — see awaitPendingClose.
+	pendingClose <-chan struct{}
+	pendingSince time.Time
 
 	// savedCfg / savedCtx are the original Start args, kept so ApplyAppWhitelist
 	// can rebuild the sing-box config in-place without reconstructing the
@@ -436,6 +445,11 @@ func (e *SingBoxEngine) Start(ctx context.Context, cfg EngineConfig) error {
 		return fmt.Errorf("data directory: %w", err)
 	}
 
+	if err := awaitPendingClose(ctx, e.pendingClose, e.pendingSince, pendingCloseCeiling, e.log); err != nil {
+		return err
+	}
+	e.pendingClose = nil
+
 	if err := e.bootLocked(ctx, cfg, true); err != nil {
 		return err
 	}
@@ -550,7 +564,11 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 		// caller's retry get a clean slate: cancel() unwinds goroutines but not
 		// the OS-level adapter/filters, which would otherwise linger and make the
 		// next CreateAdapter fail with "configure tun interface / access denied".
-		closeInstanceBounded(instance, 5*time.Second, e.log)
+		// Keep the handle even though this instance never became ours: a start
+		// that failed late still opened the cache file, and the next attempt has
+		// to wait for that to be released.
+		e.pendingClose = closeInstanceBounded(instance, 5*time.Second, e.log)
+		e.pendingSince = time.Now()
 		cancel()
 		return fmt.Errorf("starting sing-box: %w", err)
 	}
@@ -572,12 +590,12 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 // e.mu) never returned, freezing the UI until the process was killed. On timeout
 // the goroutine is left running: a single stale sing-box instance is
 // GC-collected eventually; a frozen disconnect button is not.
-func closeInstanceBounded(inst *box.Box, ceiling time.Duration, log *logger.Logger) {
-	closeDone := make(chan struct{}, 1)
+func closeInstanceBounded(inst *box.Box, ceiling time.Duration, log *logger.Logger) <-chan struct{} {
+	closeDone := make(chan struct{})
 	started := time.Now()
 	go func() {
 		_ = inst.Close()
-		closeDone <- struct{}{}
+		close(closeDone)
 	}()
 	select {
 	case <-closeDone:
@@ -586,6 +604,82 @@ func closeInstanceBounded(inst *box.Box, ceiling time.Duration, log *logger.Logg
 		}
 	case <-time.After(ceiling):
 		log.Warning("[SING-BOX] Close() timeout — продолжаем без ожидания (goroutine завершится позже)")
+		dumpGoroutinesOnCloseHang(log)
+	}
+	return closeDone
+}
+
+// dumpGoroutinesOnCloseHang writes every goroutine stack to a file the moment
+// Close overruns its ceiling.
+//
+// Which service is blocking is knowable only from the inside: box.Close walks
+// its services in a fixed order (endpoint before cache-file, among others) and
+// a single slow one holds everything behind it. Without a stack dump the next
+// investigation starts from the same log line this one did — "Close() timeout"
+// and nothing else.
+func dumpGoroutinesOnCloseHang(log *logger.Logger) {
+	dir := filepath.Join(resultProxyDataDir(), "diag")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return
+	}
+	buf := make([]byte, 1<<20)
+	buf = buf[:runtime.Stack(buf, true)]
+	path := filepath.Join(dir, fmt.Sprintf("close-hang-%s.txt", time.Now().Format("20060102-150405")))
+	if err := os.WriteFile(path, buf, 0o600); err != nil {
+		return
+	}
+	log.Warning(fmt.Sprintf("[SING-BOX] Стеки горутин сохранены: %s", path))
+}
+
+// pendingCloseCeiling is how long a connect waits for the previous session to
+// let go of the cache file. Two minutes was the longest hang measured; the
+// wait is cancellable, so the cost of being generous here is only a spinner
+// the user can stop, while being stingy puts back the failure this replaces.
+const pendingCloseCeiling = 150 * time.Second
+
+// errPreviousSessionClosing is returned when a new instance cannot start
+// because the previous one has not finished closing.
+var errPreviousSessionClosing = errors.New("предыдущая сессия ещё закрывается")
+
+// awaitPendingClose blocks until the previous instance's Close() returns.
+//
+// It exists because of what that instance still owns while it hangs: box.Close
+// shuts the cache file down LAST, after the endpoint it is stuck on, and the
+// cache file is a bbolt database held under an exclusive file lock. Starting a
+// new instance in that window does not degrade — it spends ten seconds inside
+// bbolt.Open and dies with "initialize cache-file: timeout", a message that
+// points at the new session instead of the old one. Measured on 14.09.2026
+// with an AmneziaWG node whose Close took about two minutes: three connect
+// attempts failed that way before the lock cleared by itself.
+//
+// Waiting is cancellable on purpose. Disconnect cancels the connect context
+// before it touches the engine, so the button still works while this runs.
+func awaitPendingClose(
+	ctx context.Context,
+	pending <-chan struct{},
+	since time.Time,
+	ceiling time.Duration,
+	log *logger.Logger,
+) error {
+	if pending == nil {
+		return nil
+	}
+	select {
+	case <-pending:
+		return nil
+	default:
+	}
+	log.Warning("[SING-BOX] Предыдущая сессия ещё закрывается — ждём, иначе новая не получит файл кэша")
+	select {
+	case <-pending:
+		log.Info(fmt.Sprintf("[SING-BOX] Предыдущая сессия закрылась за %s",
+			time.Since(since).Round(100*time.Millisecond)))
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(ceiling):
+		return fmt.Errorf("%w (%s)", errPreviousSessionClosing,
+			time.Since(since).Round(time.Second))
 	}
 }
 
@@ -600,7 +694,8 @@ func (e *SingBoxEngine) shutdownInstanceLocked() {
 	if e.instance != nil {
 		inst := e.instance
 		e.instance = nil
-		closeInstanceBounded(inst, 5*time.Second, e.log)
+		e.pendingClose = closeInstanceBounded(inst, 5*time.Second, e.log)
+		e.pendingSince = time.Now()
 	}
 	if e.configPath != "" {
 		os.Remove(e.configPath)
@@ -634,6 +729,15 @@ func (e *SingBoxEngine) ApplyAppWhitelist(paths []string) error {
 	newCfg.AppWhitelist = append([]string(nil), paths...)
 
 	e.shutdownInstanceLocked()
+	// Same hazard as a fresh connect: the instance just told to stop still owns
+	// the cache file until its Close returns, and a reload that trips over that
+	// leaves the user with no tunnel at all (running is flipped false below).
+	if err := awaitPendingClose(e.savedCtx, e.pendingClose, e.pendingSince, pendingCloseCeiling, e.log); err != nil {
+		e.running.Store(false)
+		e.log.Error(fmt.Sprintf("[SING-BOX] Hot-reload не начат: %v", err))
+		return err
+	}
+	e.pendingClose = nil
 	if err := e.bootLocked(e.savedCtx, newCfg, false); err != nil {
 		// Reload failed — engine is now stopped. Flip running so callers see
 		// a consistent state and don't keep applying changes to a dead engine.
