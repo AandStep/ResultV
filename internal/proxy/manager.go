@@ -2702,7 +2702,6 @@ func (m *Manager) pingViaNode(node ProxyConfig, proxyType string, opts PingOptio
 	bindIPv4 := ""
 	m.mu.Lock()
 	tunnelSession := m.connected && m.mode == ProxyModeTunnel
-	log := m.log
 	m.mu.Unlock()
 	if tunnelSession {
 		if local, err := pickLANBindIPv4(); err == nil && local != nil {
@@ -2713,7 +2712,7 @@ func (m *Manager) pingViaNode(node ProxyConfig, proxyType string, opts PingOptio
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	ms, ok, reason := pingThroughNodeProbe(ctx, node, method, opts.URL, bindIPv4, log)
+	ms, ok, reason := pingThroughNodeProbe(ctx, node, method, opts.URL, bindIPv4)
 	if !ok {
 		return PingResultDTO{Reachable: false, Reason: reason, CheckType: checkType}
 	}

@@ -161,3 +161,13 @@ func TestClassifyPingFetchReportsTransportError(t *testing.T) {
 		t.Fatal("a failure must carry a reason the UI can show")
 	}
 }
+
+// Compile-time seal: the probe engine must have no way to reach the user's log.
+//
+// It briefly did. closeInstanceBounded writes one line per teardown, the probe
+// path handed it the Manager's logger, and a sweep that stands up a throwaway
+// engine per node turned that into a stream of "Закрываем N соединений перед
+// остановкой" in the user's own log — several lines a second, drowning the
+// session's real events. The fix is the absent parameter, not a quieter call
+// site: with no logger in the signature there is nothing to pass by mistake.
+var _ func(context.Context, ProxyConfig, string, string, string) (int64, bool, string) = pingThroughNode

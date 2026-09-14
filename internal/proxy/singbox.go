@@ -628,6 +628,11 @@ func closeTrackedConnections(boxCtx context.Context, log *logger.Logger) {
 // e.mu) never returned, freezing the UI until the process was killed. On timeout
 // the goroutine is left running: a single stale sing-box instance is
 // GC-collected eventually; a frozen disconnect button is not.
+//
+// log may be nil, and the ping probe engine passes nil on purpose: every line
+// here describes the user's own session, and a probe sweep tearing down one
+// throwaway engine per node would otherwise bury that session's log in its own
+// bookkeeping.
 func closeInstanceBounded(inst *box.Box, boxCtx context.Context, ceiling time.Duration, log *logger.Logger) <-chan struct{} {
 	closeDone := make(chan struct{})
 	started := time.Now()
@@ -638,12 +643,14 @@ func closeInstanceBounded(inst *box.Box, boxCtx context.Context, ceiling time.Du
 	}()
 	select {
 	case <-closeDone:
-		if elapsed := time.Since(started); elapsed > 3*time.Second {
+		if elapsed := time.Since(started); elapsed > 3*time.Second && log != nil {
 			log.Warning(fmt.Sprintf("[SING-BOX] Close занял %s", elapsed.Round(100*time.Millisecond)))
 		}
 	case <-time.After(ceiling):
-		log.Warning("[SING-BOX] Close() timeout — продолжаем без ожидания (goroutine завершится позже)")
-		dumpGoroutinesOnCloseHang(log)
+		if log != nil {
+			log.Warning("[SING-BOX] Close() timeout — продолжаем без ожидания (goroutine завершится позже)")
+			dumpGoroutinesOnCloseHang(log)
+		}
 	}
 	return closeDone
 }

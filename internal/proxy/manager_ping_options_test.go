@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"resultproxy-wails/internal/config"
-	"resultproxy-wails/internal/logger"
 )
 
 func TestPingHTTPTypeUsesNodeProbe(t *testing.T) {
@@ -32,7 +31,7 @@ func TestPingHTTPTypeUsesNodeProbe(t *testing.T) {
 	defer func() { pingThroughNodeProbe = old }()
 
 	var gotMethod, gotURL string
-	pingThroughNodeProbe = func(_ context.Context, _ ProxyConfig, method, testURL, _ string, _ *logger.Logger) (int64, bool, string) {
+	pingThroughNodeProbe = func(_ context.Context, _ ProxyConfig, method, testURL, _ string) (int64, bool, string) {
 		gotMethod, gotURL = method, testURL
 		return 42, true, ""
 	}
@@ -167,7 +166,7 @@ func TestPingHTTPConcurrencyIsCapped(t *testing.T) {
 
 	var inFlight, peak int64
 	var mu sync.Mutex
-	pingThroughNodeProbe = func(_ context.Context, _ ProxyConfig, _, _, _ string, _ *logger.Logger) (int64, bool, string) {
+	pingThroughNodeProbe = func(_ context.Context, _ ProxyConfig, _, _, _ string) (int64, bool, string) {
 		n := atomic.AddInt64(&inFlight, 1)
 		mu.Lock()
 		if n > peak {

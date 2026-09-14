@@ -30,8 +30,6 @@ import (
 	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/option"
 	singjson "github.com/sagernet/sing/common/json"
-
-	"resultproxy-wails/internal/logger"
 )
 
 // errPingProbeUnsupported marks a node whose protocol cannot carry an
@@ -139,7 +137,7 @@ func classifyPingFetch(resp *http.Response, err error) (bool, string) {
 // target and the wait for response headers — everything the user is actually
 // waiting on. Starting the engine is NOT in the figure: that is our cost, not
 // the node's.
-func pingThroughNode(ctx context.Context, proxy ProxyConfig, method, testURL, bindIPv4 string, log *logger.Logger) (latencyMs int64, reachable bool, reason string) {
+func pingThroughNode(ctx context.Context, proxy ProxyConfig, method, testURL, bindIPv4 string) (latencyMs int64, reachable bool, reason string) {
 	port := getFreeLocalPort(0)
 	cfg, err := BuildPingProbeConfig(proxy, port, bindIPv4)
 	if err != nil {
@@ -163,18 +161,22 @@ func pingThroughNode(ctx context.Context, proxy ProxyConfig, method, testURL, bi
 		return 0, false, "engine_config_failed"
 	}
 
-	// No PlatformLogWriter and no traffic tracker: this engine's bytes are our
-	// own measurement, not the user's session, and must not land in either the
-	// visible log or the traffic counters.
+	// No PlatformLogWriter, no traffic tracker and no logger on the teardown
+	// path: this engine's bytes are our own measurement, not the user's
+	// session, and must not land in either the visible log or the traffic
+	// counters. The logger is not merely unused here, it is absent from the
+	// signature — closeInstanceBounded writes a line per teardown, and a sweep
+	// that probes every node once a cycle turned that into a wall of
+	// "Закрываем N соединений перед остановкой" in the user's own log.
 	instance, err := box.New(box.Options{Context: boxCtx, Options: options})
 	if err != nil {
 		return 0, false, "engine_start_failed"
 	}
 	if err := instance.Start(); err != nil {
-		closeInstanceBounded(instance, boxCtx, pingProbeEngineCeiling, log)
+		closeInstanceBounded(instance, boxCtx, pingProbeEngineCeiling, nil)
 		return 0, false, "engine_start_failed"
 	}
-	defer closeInstanceBounded(instance, boxCtx, pingProbeEngineCeiling, log)
+	defer closeInstanceBounded(instance, boxCtx, pingProbeEngineCeiling, nil)
 
 	proxyURL, err := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
 	if err != nil {
