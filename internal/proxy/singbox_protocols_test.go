@@ -220,3 +220,49 @@ func TestSSTunnelConfigParsesWithDNS(t *testing.T) {
 		t.Fatalf("parsing options: %v", err)
 	}
 }
+// TestVMessOutboundConfigParses pins the VMess shape against the core's strict
+// decoder: cipher, packet encoding and the VMess-only padding flags travel as
+// their own JSON keys, and a rename on the core side would otherwise surface as
+// a dead engine for every VMess node rather than a test failure.
+func TestVMessOutboundConfigParses(t *testing.T) {
+	cfg := tunnelConfigFromExtra(t, "VMESS", map[string]interface{}{
+		"uuid":                 "af815621-b245-4149-89da-dd184cfc4b3d",
+		"alterId":              0,
+		"security_cipher":      "auto",
+		"packet_encoding":      "xudp",
+		"global_padding":       true,
+		"authenticated_length": true,
+		"network":              "ws",
+		"path":                 "/ws",
+		"host":                 "example.com",
+		"security":             "tls",
+		"sni":                  "example.com",
+	})
+	if len(cfg.Outbounds) == 0 {
+		t.Fatal("no outbounds built")
+	}
+	assertCoreAcceptsConfig(t, cfg)
+}
+
+// TestTrojanOutboundConfigParses covers the branch that synthesises TLS when the
+// node did not ask for it explicitly (see buildProxyOutboundRaw) — the ALPN list
+// it picks there is computed, not copied, so it is exactly the kind of value a
+// stricter enum check in a new core would reject.
+func TestTrojanOutboundConfigParses(t *testing.T) {
+	cfg := tunnelConfigFromExtra(t, "TROJAN", map[string]interface{}{
+		"sni":      "example.com",
+		"fp":       "chrome",
+		"alpn":     "h2,http/1.1",
+		"network":  "tcp",
+		"insecure": false,
+	})
+	assertCoreAcceptsConfig(t, cfg)
+}
+
+// TestSocksOutboundConfigParses is the cheapest protocol we emit and the one
+// most likely to be forgotten: version is a string ("5"), not a number, and the
+// core validates it while decoding.
+func TestSocksOutboundConfigParses(t *testing.T) {
+	cfg := tunnelConfigFromExtra(t, "SOCKS5", map[string]interface{}{})
+	assertCoreAcceptsConfig(t, cfg)
+}
