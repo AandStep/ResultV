@@ -132,6 +132,10 @@ func TestStartEngine_NoAdapterRemovalForNonTransientError(t *testing.T) {
 func TestStartEngine_PersistentTunErrorNotPrivilegesWhenElevated(t *testing.T) {
 	fastTunRetry(t)
 	fakeAdmin(t, true)
+	// The error below is a transient one, so the retry path goes through the
+	// device removal on its way to the second attempt. Without the stub that is
+	// `pnputil /remove-device` against this machine's own live TUN.
+	stubRemoveStaleTunAdapter(t)
 
 	tunErr := errors.New("configure tun interface: Access is denied.")
 	eng := &seqEngine{errs: []error{tunErr, tunErr}}
@@ -161,6 +165,10 @@ func TestStartEngine_PersistentTunErrorNotPrivilegesWhenElevated(t *testing.T) {
 func TestStartEngine_PersistentTunErrorKeepsPrivilegesWhenNotElevated(t *testing.T) {
 	fastTunRetry(t)
 	fakeAdmin(t, false)
+	// fakeAdmin swaps isAdminCheck, which the removal path does NOT consult — it
+	// has its own tunIsAdmin. So "not elevated" here still reaches the real
+	// device removal (via the UAC path) unless it is stubbed.
+	stubRemoveStaleTunAdapter(t)
 
 	tunErr := errors.New("configure tun interface: Access is denied.")
 	eng := &seqEngine{errs: []error{tunErr, tunErr}}

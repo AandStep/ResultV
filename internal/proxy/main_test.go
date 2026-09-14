@@ -40,10 +40,68 @@ func TestMain(m *testing.M) {
 	}
 	SetNodeStatStore(NewNodeStatStore(dir))
 
+	sealSystemTunHooks()
+
 	code := m.Run()
 
 	_ = os.RemoveAll(dir)
 	os.Exit(code)
+}
+
+// TestSystemTunHooksAreSealed fails if the seal is ever lifted. It is not a
+// test of production behaviour but of the harness: without it, a refactor that
+// drops the sealSystemTunHooks call restores a package whose tunnel-mode
+// Connect tests quietly dismantle the tunnel of the machine running them, and
+// nothing fails — the damage lands on the developer's network, not on a test
+// result.
+func TestSystemTunHooksAreSealed(t *testing.T) {
+	if hasLeftoverTunFn() {
+		t.Fatal("hasLeftoverTun must answer 'no' in tests — otherwise Connect(tunnel) cleans up this machine's live adapter")
+	}
+	assertSealed(t, "clearLeftoverTunFn", func() { _ = clearLeftoverTunFn() })
+	assertSealed(t, "removeStaleTunAdapterFn", func() { _, _ = removeStaleTunAdapterFn() })
+}
+
+func assertSealed(t *testing.T, name string, call func()) {
+	t.Helper()
+	defer func() {
+		if recover() == nil {
+			t.Fatalf("%s is not sealed: a test reaching it would run the production implementation against the live system", name)
+		}
+	}()
+	call()
+}
+
+// sealSystemTunHooks makes the sing-tun cleanup hooks inert for the whole
+// package, so that no test can reach the real network stack of the machine it
+// runs on.
+//
+// The hooks default to the production implementations, and those find "our"
+// adapter by our FIXED Wintun GUID — the very adapter the developer's own
+// running ResultV is using. A test binary calling them is therefore not
+// cleaning up after a crashed session, it is dismantling the live tunnel:
+// clearLeftoverTun deletes EVERY route bound to that adapter and resets its
+// DNS, removeStaleTunAdapter feeds its device node to `pnputil /remove-device`.
+// From an elevated dev shell both run silently. That is the whole of the
+// "запускаю тесты — интернет отваливается, помогает только перезапуск" report:
+// no CPU load, no engine, just a tunnel-mode Connect inside a test reaching the
+// real device tree (manager.go:971 and the transient-TUN retry in startEngine).
+//
+// hasLeftoverTun answers "no" — a test machine has no leftover session by
+// definition — so the Connect path never asks for a cleanup at all. The two
+// mutating hooks panic rather than no-op: a test that means to exercise those
+// paths installs its own recording stub (stubLeftoverTun / stubRemoveStale-
+// TunAdapter) and asserts on it, and a test that reaches them by accident must
+// fail loudly instead of quietly running the production implementation against
+// the developer's own tunnel.
+func sealSystemTunHooks() {
+	hasLeftoverTunFn = func() bool { return false }
+	clearLeftoverTunFn = func() error {
+		panic("clearLeftoverTun is sealed in tests — it deletes every route of the LIVE TUN adapter; install stubLeftoverTun(t, ...) in this test")
+	}
+	removeStaleTunAdapterFn = func() ([]string, error) {
+		panic("removeStaleTunAdapter is sealed in tests — it runs `pnputil /remove-device` on the LIVE TUN device; install stubRemoveStaleTunAdapter(t) in this test")
+	}
 }
 
 // isolateNodeStats gives one test its own empty node-stat store and restores
