@@ -508,6 +508,7 @@
     "deleteSubscriptionAria": "Delete subscription",
     "deleteManualGroupAria": "Delete all manual servers",
     "confirmDeleteSubscription": "Delete subscription \"{{name}}\" and all its servers from the list?",
+    "confirmDelete": "Delete server “{{name}}”?",
     "confirmDeleteMyProxies": "Delete all manually added servers ({{count}})?",
     "subUnlimited": "∞",
     "subActiveUntil": "Active until: {{date}}",
@@ -543,6 +544,8 @@
     "subMetaNoDate": "{{used}} / {{total}}",
     "pingServers": "Measure latency to servers",
     "sortServers": "List order",
+    "deleteServer": "Delete server",
+    "editServer": "Edit server",
     "editSubscription": "Subscription settings",
     "support": "Support",
     "renameLabel": "Rename",
@@ -666,12 +669,14 @@
     "endpointOnly": "WireGuard and AmneziaWG do not work in Proxy mode — Tunnel only."
   },
   "toast": {
+    "deleteWithoutConfirm": "The next servers will be deleted right away, without asking.",
     "autoResolveHint": "Connecting to an auto server can take longer — we're picking the best node for you.",
     "autoNoNodes": "Auto group: no node responded. Connection cancelled — pick another server or try again later."
   },
   "changelog": {
     "title": "What's new",
     "dismiss": "Got it",
+    "version": "Version {{version}}",
     "typeFeature": "New",
     "typeImprove": "Improvement",
     "typeFix": "Fix",
