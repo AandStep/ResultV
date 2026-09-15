@@ -64,7 +64,10 @@ func normalizeWireGuardLocalPrefixes(addrs []string) ([]string, error) {
 	return out, nil
 }
 
-func buildEndpoints(proxy ProxyConfig) ([]SBEndpoint, error) {
+// buildEndpoints builds the WireGuard/AmneziaWG endpoint, if the node is one.
+// domainResolver comes from serverDomainResolverTag and answers for a peer
+// addressed by a domain.
+func buildEndpoints(proxy ProxyConfig, domainResolver string) ([]SBEndpoint, error) {
 	pt := strings.ToUpper(strings.TrimSpace(proxy.Type))
 	if pt != "WIREGUARD" && pt != "AMNEZIAWG" {
 		return nil, nil
@@ -111,19 +114,20 @@ func buildEndpoints(proxy ProxyConfig) ([]SBEndpoint, error) {
 	}
 
 	ep := SBEndpoint{
-		Type:          "wireguard",
-		Tag:           wireguardEndpointTag,
-		Detour:        "direct",
-		System:        getBoolField(extra, "system"),
-		Name:          getStringField(extra, "name", ""),
-		MTU:           wireguardMTU(intFromExtra(extra, "mtu", "MTU")),
-		Address:       address,
-		PrivateKey:    privateKey,
-		ListenPort:    intFromExtra(extra, "listen_port", "listenPort"),
-		Peers:         []SBWireGuardPeer{peer},
-		UDPTimeout:    getStringField(extra, "udp_timeout", ""),
-		Workers:       intFromExtra(extra, "workers", "Workers"),
-		DisablePauses: getBoolField(extra, "disable_pauses"),
+		Type:           "wireguard",
+		Tag:            wireguardEndpointTag,
+		Detour:         "direct",
+		DomainResolver: domainResolver,
+		System:         getBoolField(extra, "system"),
+		Name:           getStringField(extra, "name", ""),
+		MTU:            wireguardMTU(intFromExtra(extra, "mtu", "MTU")),
+		Address:        address,
+		PrivateKey:     privateKey,
+		ListenPort:     intFromExtra(extra, "listen_port", "listenPort"),
+		Peers:          []SBWireGuardPeer{peer},
+		UDPTimeout:     getStringField(extra, "udp_timeout", ""),
+		Workers:        intFromExtra(extra, "workers", "Workers"),
+		DisablePauses:  getBoolField(extra, "disable_pauses"),
 	}
 
 	if pt == "AMNEZIAWG" {
@@ -342,17 +346,17 @@ func amneziaFromExtra(extra map[string]interface{}) *SBWireGuardAmnezia {
 		return nil
 	}
 	am := &SBWireGuardAmnezia{
-		JC:    intFromAny(m["jc"]),
-		JMin:  intFromAny(m["jmin"]),
-		JMax:  intFromAny(m["jmax"]),
-		S1:    intFromAny(m["s1"]),
-		S2:    intFromAny(m["s2"]),
-		S3:    intFromAny(m["s3"]),
-		S4:    intFromAny(m["s4"]),
-		H1:    amneziaHeaderString(m["h1"]),
-		H2:    amneziaHeaderString(m["h2"]),
-		H3:    amneziaHeaderString(m["h3"]),
-		H4:    amneziaHeaderString(m["h4"]),
+		JC:   intFromAny(m["jc"]),
+		JMin: intFromAny(m["jmin"]),
+		JMax: intFromAny(m["jmax"]),
+		S1:   intFromAny(m["s1"]),
+		S2:   intFromAny(m["s2"]),
+		S3:   intFromAny(m["s3"]),
+		S4:   intFromAny(m["s4"]),
+		H1:   amneziaHeaderString(m["h1"]),
+		H2:   amneziaHeaderString(m["h2"]),
+		H3:   amneziaHeaderString(m["h3"]),
+		H4:   amneziaHeaderString(m["h4"]),
 		I1:   stringFromExtraValue(m["i1"]),
 		I2:   stringFromExtraValue(m["i2"]),
 		I3:   stringFromExtraValue(m["i3"]),

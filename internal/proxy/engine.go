@@ -312,6 +312,12 @@ type SBDNSServer struct {
 	Server     string `json:"server,omitempty"`
 	ServerPort int    `json:"server_port,omitempty"`
 	Detour     string `json:"detour,omitempty"`
+	// DomainResolver bootstraps a resolver that is itself addressed by a
+	// hostname. Without a detour to hide behind, sing-box 1.14 refuses to build
+	// the dialer for such a server at all — "missing domain resolver for domain
+	// server address" — so this is not a warning but the difference between an
+	// engine that starts and one that does not. See buildDNS.
+	DomainResolver string `json:"domain_resolver,omitempty"`
 	// Predefined seeds a static "hosts" DNS server: domain → fixed IP list.
 	// Used to pin the proxy server's own domain to its connect-time IPs so
 	// re-resolution never touches the redirected OS resolver (see buildDNS).
@@ -340,9 +346,20 @@ type SBDNSRule struct {
 	DomainSuffix     []string `json:"domain_suffix,omitempty"`
 	ProcessPathRegex []string `json:"process_path_regex,omitempty"`
 	RuleSet          []string `json:"rule_set,omitempty"`
-	QueryType        []string `json:"query_type,omitempty"`
-	Server           string   `json:"server,omitempty"`
-	Action           string   `json:"action,omitempty"`
+	// QueryType is no longer a filter that only applies to what the inbound
+	// asks. On sing-box 1.14 an internal resolve — the dial for a
+	// domain-addressed server — reaches dns/router.go lookupWithRules, which
+	// builds real A and AAAA questions, so these rules match there too. Two
+	// consequences before adding another one: the lookup fans A and AAAA out as
+	// two INDEPENDENT rule walks, so a rule scoped to one type splits a single
+	// dial's resolution across two servers; and the only reason the fakeip
+	// catch-all below is harmless is that an internal lookup passes
+	// allowFakeIP=false and the core skips a fakeip transport outright. That
+	// protection comes from the server's type, not from this field.
+	// TestQueryTypeIsOnlyEverUsedForTheFakeIPRule holds the boundary.
+	QueryType []string `json:"query_type,omitempty"`
+	Server    string   `json:"server,omitempty"`
+	Action    string   `json:"action,omitempty"`
 }
 
 type SBInbound struct {
@@ -409,9 +426,15 @@ type SBOutbound struct {
 	Tag        string `json:"tag"`
 	Server     string `json:"server,omitempty"`
 	ServerPort int    `json:"server_port,omitempty"`
-	Username   string `json:"username,omitempty"`
-	Password   string `json:"password,omitempty"`
-	Method     string `json:"method,omitempty"`
+	// DomainResolver names the DNS server that resolves Server when it is a
+	// domain rather than a literal IP. See serverDomainResolverTag for which
+	// tag belongs here and why the field exists at all; left empty for a
+	// literal address, where the core builds no resolve dialer in the first
+	// place.
+	DomainResolver string `json:"domain_resolver,omitempty"`
+	Username       string `json:"username,omitempty"`
+	Password       string `json:"password,omitempty"`
+	Method         string `json:"method,omitempty"`
 	// Plugin/PluginOptions carry SIP003 (obfs-local, v2ray-plugin). A node whose
 	// server runs a plugin does not work without them.
 	Plugin        string `json:"plugin,omitempty"`
@@ -484,20 +507,26 @@ type SBOutboundTLS struct {
 }
 
 type SBEndpoint struct {
-	Type          string              `json:"type"`
-	Tag           string              `json:"tag"`
-	Detour        string              `json:"detour,omitempty"`
-	System        bool                `json:"system,omitempty"`
-	Name          string              `json:"name,omitempty"`
-	MTU           int                 `json:"mtu,omitempty"`
-	Address       []string            `json:"address,omitempty"`
-	PrivateKey    string              `json:"private_key,omitempty"`
-	ListenPort    int                 `json:"listen_port,omitempty"`
-	Peers         []SBWireGuardPeer   `json:"peers,omitempty"`
-	UDPTimeout    string              `json:"udp_timeout,omitempty"`
-	Workers       int                 `json:"workers,omitempty"`
-	DisablePauses bool                `json:"disable_pauses,omitempty"`
-	Amnezia       *SBWireGuardAmnezia `json:"amnezia,omitempty"`
+	Type   string `json:"type"`
+	Tag    string `json:"tag"`
+	Detour string `json:"detour,omitempty"`
+	// DomainResolver resolves a peer addressed by a domain. The endpoint dials
+	// through Detour="direct", so without this the peer's address is resolved
+	// by the direct outbound's own resolve dialer — the deprecated
+	// walk-the-rules path. Naming the server here reaches the same answer
+	// without depending on it. See serverDomainResolverTag.
+	DomainResolver string              `json:"domain_resolver,omitempty"`
+	System         bool                `json:"system,omitempty"`
+	Name           string              `json:"name,omitempty"`
+	MTU            int                 `json:"mtu,omitempty"`
+	Address        []string            `json:"address,omitempty"`
+	PrivateKey     string              `json:"private_key,omitempty"`
+	ListenPort     int                 `json:"listen_port,omitempty"`
+	Peers          []SBWireGuardPeer   `json:"peers,omitempty"`
+	UDPTimeout     string              `json:"udp_timeout,omitempty"`
+	Workers        int                 `json:"workers,omitempty"`
+	DisablePauses  bool                `json:"disable_pauses,omitempty"`
+	Amnezia        *SBWireGuardAmnezia `json:"amnezia,omitempty"`
 }
 
 type SBWireGuardPeer struct {
@@ -633,6 +662,14 @@ type SBOutboundTransport struct {
 	Seed             string `json:"seed,omitempty"`
 }
 
+// SBRoute has no DefaultDomainResolver field, and that is the decision rather
+// than an oversight. sing-box 1.14 deprecated resolving a domain-addressed
+// server with no resolver named, but naming one here would send every internal
+// resolve straight to that transport and past dns.rules entirely — and the rule
+// walk is what keeps a blocked domain resolving through the tunnel instead of
+// through the censored local resolver. The node's own dial fields are named
+// instead (serverDomainResolverTag); TestRouteNeverNamesADefaultDomainResolver
+// holds this shut and carries the full reasoning.
 type SBRoute struct {
 	RuleSet     []SBRuleSet   `json:"rule_set,omitempty"`
 	Rules       []SBRouteRule `json:"rules,omitempty"`
@@ -889,13 +926,18 @@ func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	host, _ := splitHostPort(cfg.ListenAddr, "127.0.0.1", port)
 
 	dd := effectiveDataDir(cfg)
-	endpoints, err := buildEndpoints(cfg.Proxy)
+	// DNS first: in proxy mode the node's own resolver tag is whichever
+	// transport the core would have reached for by itself, so the tag cannot be
+	// named before the server list exists.
+	dns := buildDNS(cfg)
+	nodeResolver := serverDomainResolverTag(cfg.Proxy, ProxyModeProxy, dns)
+	endpoints, err := buildEndpoints(cfg.Proxy, nodeResolver)
 	if err != nil {
 		return SingBoxConfig{}, err
 	}
 	sbCfg := SingBoxConfig{
 		Log:       &SBLog{Level: "error", Disabled: true},
-		DNS:       buildDNS(cfg),
+		DNS:       dns,
 		Endpoints: endpoints,
 		Inbounds: []SBInbound{{
 			Type:       "mixed",
@@ -903,7 +945,7 @@ func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 			Listen:     host,
 			ListenPort: port,
 		}},
-		Outbounds:    buildOutbounds(cfg.Proxy),
+		Outbounds:    buildOutbounds(cfg.Proxy, nodeResolver),
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
 	}
@@ -1109,7 +1151,11 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	}
 
 	dd := effectiveDataDir(cfg)
-	outbounds := buildOutbounds(cfg.Proxy)
+	// In tunnel mode the tag does not depend on the built server list — it
+	// mirrors the DNS rule buildDNS emits for this same domain — so it can be
+	// named before the DNS block exists.
+	nodeResolver := serverDomainResolverTag(cfg.Proxy, ProxyModeTunnel, nil)
+	outbounds := buildOutbounds(cfg.Proxy, nodeResolver)
 	if adaptiveSmartActive(cfg) {
 		outbounds = append(outbounds, SBOutbound{
 			Type:      smartOutboundTag,
@@ -1118,7 +1164,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 		})
 	}
 
-	endpoints, err := buildEndpoints(cfg.Proxy)
+	endpoints, err := buildEndpoints(cfg.Proxy, nodeResolver)
 	if err != nil {
 		return SingBoxConfig{}, err
 	}
@@ -1237,7 +1283,11 @@ func effectiveTunStack(stack string) string {
 	}
 }
 
-func buildOutbounds(proxy ProxyConfig) []SBOutbound {
+// buildOutbounds assembles the outbound list. domainResolver is the tag from
+// serverDomainResolverTag and lands on the node's own outbound only: "direct"
+// dials every destination the router sends it and has no single correct
+// resolver, so it stays on the core's rule-walking fallback deliberately.
+func buildOutbounds(proxy ProxyConfig, domainResolver string) []SBOutbound {
 	pt := strings.ToUpper(strings.TrimSpace(proxy.Type))
 	if pt == "WIREGUARD" || pt == "AMNEZIAWG" {
 		return []SBOutbound{
@@ -1245,10 +1295,12 @@ func buildOutbounds(proxy ProxyConfig) []SBOutbound {
 			{Type: "block", Tag: "block"},
 		}
 	}
+	proxyOut := buildProxyOutbound(proxy)
+	proxyOut.DomainResolver = domainResolver
 	outbounds := []SBOutbound{
 		{Type: "direct", Tag: "direct"},
 		{Type: "block", Tag: "block"},
-		buildProxyOutbound(proxy),
+		proxyOut,
 	}
 	return outbounds
 }
@@ -1278,6 +1330,46 @@ func serverPinnedIPs(proxy ProxyConfig) []string {
 	}
 	add(proxy.ResolvedIP)
 	return out
+}
+
+// serverDomainResolverTag names the DNS server that must answer for the node's
+// own address, for the `domain_resolver` dial field on the outbound or endpoint
+// that dials it. Empty when the node is a literal IP: there is nothing to
+// resolve and the core builds no resolve dialer at all.
+//
+// Why the field exists. sing-box 1.14 deprecated dialing a domain-addressed
+// server with no resolver named, and scheduled the fallback for removal. On
+// this fork the fallback survives and is in fact the semantics the rest of the
+// config depends on — it walks dns.rules, which is how a blocked domain still
+// leaves through the tunnel — so `route.default_domain_resolver` stays unset on
+// purpose (see SBRoute). The node is the one dial where the right answer is
+// known ahead of any rule, so it is the one that gets spelled out.
+//
+// Which tag. In tunnel mode the answer mirrors the DNS rule buildDNS already
+// emits for the same domain: the static hosts record when connect time pinned
+// the server's IPs, the system resolver when it did not. It must never be a
+// resolver that rides the tunnel — that tunnel is what this dial is opening.
+//
+// Proxy mode has no TUN, so nothing redirects the system resolver and no hosts
+// record is built. Naming "local" there would move the node's own domain off
+// the encrypted resolver it uses today and hand it to the ISP in plaintext, so
+// the tag is whatever the core would have chosen by itself: the first
+// registered transport. Turning the field on then changes nothing but the
+// deprecation.
+func serverDomainResolverTag(proxy ProxyConfig, mode ProxyMode, dns *SBDNS) string {
+	if proxy.IP == "" || net.ParseIP(proxy.IP) != nil {
+		return ""
+	}
+	if mode == ProxyModeTunnel {
+		if len(serverPinnedIPs(proxy)) > 0 {
+			return serverPinDNSTag
+		}
+		return "local"
+	}
+	if dns != nil && len(dns.Servers) > 0 {
+		return dns.Servers[0].Tag
+	}
+	return ""
 }
 
 // serverEndpointUnresolvable reports whether a TUN connect should be aborted up
@@ -1337,6 +1429,13 @@ const (
 	fakeIPInet4Range = "198.18.0.0/15"
 	fakeIPInet6Range = "fc00::/18"
 )
+
+// serverPinDNSTag names the static `hosts` DNS server seeded with the node's
+// connect-time IPs. Both the DNS rule that points at it and the `domain_resolver`
+// dial field that names it spell the tag through this constant, so the two can
+// never drift apart — a dial field naming an unregistered server is a dead
+// engine, not a warning.
+const serverPinDNSTag = "server-pin"
 
 // isFakeIPAddr reports whether an address came out of the fake pool rather than
 // out of the internet.
@@ -1589,12 +1688,12 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			if pinned := serverPinnedIPs(cfg.Proxy); len(pinned) > 0 {
 				dns.Servers = append(dns.Servers, SBDNSServer{
 					Type:       "hosts",
-					Tag:        "server-pin",
+					Tag:        serverPinDNSTag,
 					Predefined: map[string][]string{cfg.Proxy.IP: pinned},
 				})
 				dns.Rules = append(dns.Rules, SBDNSRule{
 					Domain: []string{cfg.Proxy.IP},
-					Server: "server-pin",
+					Server: serverPinDNSTag,
 				})
 			} else {
 				dns.Rules = append(dns.Rules, SBDNSRule{
@@ -1694,6 +1793,14 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		// carry into the router. Scoped to A/AAAA because that is all a fake
 		// answer can stand in for. dns.Final stays a real server — the fork
 		// rejects a fakeip default outright (dns/transport_manager.go:217).
+		//
+		// This rule is also reached by the engine's OWN lookups on 1.14, where
+		// query_type no longer confines a rule to the inbound's questions (see
+		// SBDNSRule.QueryType). It does no harm there only because such a lookup
+		// carries allowFakeIP=false and resolveDNSRoute skips the transport,
+		// falling through to dns.Final — so a dial for a domain-addressed server
+		// never receives 198.18.x.x. Change the server type here and that
+		// protection is gone.
 		if adaptiveSmartActive(cfg) {
 			server := SBDNSServer{
 				Type:       "fakeip",
@@ -1734,12 +1841,25 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			if server == "" {
 				continue
 			}
-			servers = append(servers, SBDNSServer{
+			entry := SBDNSServer{
 				Type:       "udp",
 				Tag:        fmt.Sprintf("custom-%d", i+1),
 				Server:     server,
 				ServerPort: port,
-			})
+			}
+			// A resolver named by hostname has to be resolved by something
+			// before it can answer anything, and nothing here validates that
+			// the user typed an IP. In tunnel mode the detour covers it — the
+			// node resolves the name remotely — but in proxy mode there is no
+			// detour, and sing-box 1.14 refuses to build the dialer at all
+			// rather than guess: "missing domain resolver for domain server
+			// address". That is a dead engine for every node, from one
+			// hostname in a settings field. The system resolver is the only
+			// answer that cannot be circular.
+			if net.ParseIP(server) == nil {
+				entry.DomainResolver = "local"
+			}
+			servers = append(servers, entry)
 		}
 		servers = append(servers, SBDNSServer{Type: "local", Tag: "local"})
 	} else {

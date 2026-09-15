@@ -53,7 +53,10 @@ const pingProbeInboundTag = "ping-probe-in"
 //
 // bindIPv4, when non-empty, pins the node dial to the physical adapter.
 func BuildPingProbeConfig(proxy ProxyConfig, listenPort int, bindIPv4 string) (SingBoxConfig, error) {
-	outbounds := buildOutbounds(proxy)
+	// The probe engine's DNS block below has the same shape tunnel mode builds —
+	// the hosts record when the server is pinned, the system resolver when it is
+	// not — so it asks for the tag the same way.
+	outbounds := buildOutbounds(proxy, serverDomainResolverTag(proxy, ProxyModeTunnel, nil))
 	found := false
 	for i := range outbounds {
 		if outbounds[i].Tag != "proxy" {
@@ -87,10 +90,10 @@ func BuildPingProbeConfig(proxy ProxyConfig, listenPort int, bindIPv4 string) (S
 		if pinned := serverPinnedIPs(proxy); len(pinned) > 0 {
 			cfg.DNS = &SBDNS{
 				Servers: []SBDNSServer{
-					{Type: "hosts", Tag: "server-pin", Predefined: map[string][]string{proxy.IP: pinned}},
+					{Type: "hosts", Tag: serverPinDNSTag, Predefined: map[string][]string{proxy.IP: pinned}},
 					{Type: "local", Tag: "local"},
 				},
-				Rules: []SBDNSRule{{Domain: []string{proxy.IP}, Server: "server-pin"}},
+				Rules: []SBDNSRule{{Domain: []string{proxy.IP}, Server: serverPinDNSTag}},
 				Final: "local",
 			}
 		} else {
