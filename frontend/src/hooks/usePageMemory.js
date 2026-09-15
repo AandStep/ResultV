@@ -127,12 +127,29 @@ export function usePageState(pageKey, stateKey, initial) {
  */
 export function useScrollMemory(pageKey) {
   const ref = useRef(null);
+  /*
+   * Последнее положение, которое мы у прокрутки действительно видели.
+   *
+   * Спрашивать о нём сам узел на выходе нельзя, и это стоило целого бага.
+   * У страницы с разделами узел один на все разделы, меняются только его
+   * дети, — а правки DOM детей React применяет РАНЬШЕ, чем уборку эффекта
+   * родителя. К моменту уборки внутри узла уже стоит карточка раздела, она
+   * ниже прокрученного списка, и браузер успел обрезать `scrollTop` по новой
+   * высоте. Уборка читала этот обрезанный ноль и записывала его вместо
+   * правильного положения, которое слушатель прокрутки уже сохранил, — и
+   * «назад» возвращало список в начало.
+   */
+  const seenRef = useRef(0);
 
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return undefined;
 
     const saved = readPageScroll(pageKey);
+    /* Считаем, что мы там, куда собираемся встать. Не дотянемся из-за
+       недорисованного содержимого — слушатель поправит нас настоящим
+       положением, а запомненное не потеряется из-за одного короткого кадра. */
+    seenRef.current = saved;
     let frames = 0;
     let raf = 0;
 
@@ -152,14 +169,18 @@ export function useScrollMemory(pageKey) {
        открытый впервые, открывался бы сразу прокрученным. */
     restore();
 
-    const onScroll = () => writePageScroll(pageKey, el.scrollTop);
+    const onScroll = () => {
+      seenRef.current = el.scrollTop;
+      writePageScroll(pageKey, el.scrollTop);
+    };
     el.addEventListener("scroll", onScroll, { passive: true });
 
     return () => {
       if (raf) cancelAnimationFrame(raf);
       el.removeEventListener("scroll", onScroll);
-      /* Последнее движение колеса могло не успеть дойти событием. */
-      writePageScroll(pageKey, el.scrollTop);
+      /* Сохраняем виденное, а не то, что показывает узел сейчас: содержимое
+         под ним могли уже подменить. */
+      writePageScroll(pageKey, seenRef.current);
     };
   }, [pageKey]);
 
