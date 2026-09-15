@@ -41,7 +41,7 @@
  * сюрприз; страницы держат такие окна в обычном `useState`.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 /* Ключи страниц. Строкой их легко разойтись, поэтому они собраны здесь. */
 export const PAGE_HOME = "home";
@@ -118,6 +118,12 @@ export function usePageState(pageKey, stateKey, initial) {
  * Возвращает `ref`, который вешается на прокручиваемый узел страницы
  * (`.rv-scroll`). Положение восстанавливается до первой отрисовки кадра —
  * в `useLayoutEffect`, иначе страница успела бы мигнуть началом.
+ *
+ * `pageKey` можно менять на живом узле: у страницы с внутренними разделами
+ * (настройки) прокручивается один и тот же узел, а положений у него столько
+ * же, сколько разделов. Смена ключа запоминает прежнее положение и
+ * восстанавливает положение нового — у раздела, открытого впервые, это
+ * начало страницы.
  */
 export function useScrollMemory(pageKey) {
   const ref = useRef(null);
@@ -140,7 +146,11 @@ export function useScrollMemory(pageKey) {
       raf = requestAnimationFrame(restore);
     };
 
-    if (saved > 0) restore();
+    /* Ставим положение и когда оно нулевое. На свежесмонтированном узле это
+       ничего не меняет, а вот при смене ключа на живом узле — меняет всё:
+       узел остаётся тем же и держит прокрутку прежнего ключа, и раздел,
+       открытый впервые, открывался бы сразу прокрученным. */
+    restore();
 
     const onScroll = () => writePageScroll(pageKey, el.scrollTop);
     el.addEventListener("scroll", onScroll, { passive: true });

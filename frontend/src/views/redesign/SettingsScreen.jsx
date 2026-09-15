@@ -79,8 +79,18 @@ export default function SettingsScreen() {
   const [pwdDialog, setPwdDialog] = useState({ mode: "", data: null });
   const [lanIPs, setLanIPs] = useState([]);
 
-  /* Прокрутка возвращается туда, где её оставили. */
-  const contentRef = useScrollMemory(PAGE_SETTINGS);
+  /*
+   * Прокрутка возвращается туда, где её оставили, — и у списка пунктов, и у
+   * каждого раздела своя.
+   *
+   * Ключ поэтому с разделом внутри. Прокручивается ведь один и тот же узел:
+   * с общим ключом раздел открывался бы сразу прокрученным — ровно настолько,
+   * насколько был отмотан список, — а «назад» возвращало бы список туда, где
+   * бросили раздел, то есть обычно в самое начало.
+   */
+  const contentRef = useScrollMemory(
+    section ? `${PAGE_SETTINGS}:${section}` : PAGE_SETTINGS,
+  );
 
   /* Escape уводит со страницы пункта назад к списку — тем же путём, каким
      он закрывает любое окно приложения. */
