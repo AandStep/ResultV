@@ -109,6 +109,11 @@ export const ConnectionProvider = ({ children }) => {
         showAlertDialog,
         pings,
         statusGenerationRef,
+        /* По ним выбор сервера решает, можно ли оборвать то, что выполняется
+           сейчас: запуск — да, разрыв соединения и смену режима — нет. */
+        isConnecting,
+        isDisconnecting,
+        isApplyingMode,
     );
 
     // A dead node in an AUTO group is a reason to move, not to stop — the group
