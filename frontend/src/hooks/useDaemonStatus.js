@@ -259,7 +259,24 @@ export const useDaemonStatus = (
                 // handshake) meant the user saw "Connected" right before the
                 // tunnel died. Spinner stays via setIsConnecting(true) above.
                 setIsConnected(connected);
-                resolveActiveProxy(data);
+                /*
+                 * А вот строку сервера во время пользовательской операции не
+                 * трогаем вовсе.
+                 *
+                 * Оговорка `|| establishing` выше нужна смене режима: её
+                 * переподключение ведёт не useDaemonControl, и без опроса
+                 * экран замер бы на всё её время. Но она же пропускала сюда
+                 * и середину переключения серверов: ядро в этот момент ещё
+                 * поднимает ПРЕЖНИЙ узел и отдаёт его в `currentProxy`, и
+                 * опрос перебивал только что сделанный выбор — на экране
+                 * мигал предыдущий сервер, а следом возвращался выбранный.
+                 *
+                 * Пока операция идёт, какой сервер показывать, решает только
+                 * тот, кто её ведёт: он ставит выбор сразу по нажатию и знает
+                 * про него то, чего ядро ещё не знает. Смене режима это
+                 * ничего не стоит — узел там не меняется.
+                 */
+                if (!isSwitchingRef.current) resolveActiveProxy(data);
             }
 
             setUptime(typeof data.uptime === "number" ? data.uptime : 0);

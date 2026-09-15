@@ -48,14 +48,9 @@ export const useDaemonControl = (
     pings,
     statusGenerationRef,
     /*
-     * Что именно выполняется прямо сейчас. Нужно ровно для одного решения:
-     * идущий ЗАПУСК можно перехватить и увести на другой сервер, а разрыв
-     * соединения и переподключение под смену режима — нельзя, там обратного
-     * хода уже нет. Одного `isSwitchingRef` для этого мало: он говорит
-     * «что-то выполняется», но не говорит что.
+     * Переподключение под смену режима ведёт не этот хук, а настройки, и
+     * вмешиваться в него отсюда нечем — поэтому о нём надо знать.
      */
-    isConnecting,
-    isDisconnecting,
     isApplyingMode,
 ) => {
     const { t } = useTranslation();
@@ -103,20 +98,51 @@ export const useDaemonControl = (
      * подключения идут в своих await, и остановить их — это ровно то же
      * самое, что делает кнопка питания, когда прерывает запуск.
      *
-     * `takeoverRef` держит вход, пока перехват выполняет свои два await:
-     * без него три нажатия подряд начали бы три обрыва разом.
+     * Пока идёт подготовка — обрыв прежнего запуска и вопрос о правах, —
+     * ведущий один, и это `drivingRef`. Нажатия, попавшие в это окно, своего
+     * обрыва не начинают, а только переписывают цель: иначе быстрый перебор
+     * серверов выстроил бы очередь из обрывов, каждый со своим походом в
+     * ядро, и палец обгонял бы приложение. Ведущий перечитывает цель на
+     * каждой развилке и ведёт к последнему выбору.
+     *
+     * Окно кончается там, где начинается подбор узла: нажатие после этого
+     * места — уже новое решение, и оно перехватывает по-настоящему.
      */
-    const takeoverRef = useRef(false);
+    const drivingRef = useRef(false);
+    /* Последний выбор человека. Живёт между вызовами: ставит его нажатие, а
+       читает тот, кто в этот момент ведёт. */
+    const targetRef = useRef(null);
 
-    /* Перехватываем только запуск. Разрыв соединения доводим до конца — ядро
-       уже гасит сессию; переподключение под смену режима ведёт не эта
-       функция, и вмешиваться в него отсюда нечем. */
+    /*
+     * Номер запуска, которым сейчас занят хук, — или 0, если занят он не
+     * запуском. Совпадает с текущим номером ровно до тех пор, пока этот
+     * запуск и есть то, что выполняется: любой обрыв сдвигает номер, и
+     * совпадение пропадает само.
+     *
+     * Судить о том же по `isConnecting`/`isDisconnecting` нельзя, и это
+     * стоило попапа на ровном месте: переключение с живого сервера сначала
+     * рвёт прежнее соединение, и на экране в этот момент «Отключение...» —
+     * ровно то же, что показывает кнопка «выключить». Отличить одно от
+     * другого может только тот, кто это делает.
+     */
+    const connectOwnerRef = useRef(0);
+    const claimConnect = () => {
+        const epoch = beginConnect();
+        connectOwnerRef.current = epoch;
+        return epoch;
+    };
+    /* Занялись не запуском: перехватывать теперь нечего. */
+    const releaseConnect = () => {
+        connectOwnerRef.current = 0;
+    };
+
+    /* Перехватываем только запуск. Разрыв соединения по воле человека доводим
+       до конца — ядро уже гасит сессию; смену режима ведёт не эта функция. */
     const canTakeOver = () =>
         isSwitchingRef.current &&
-        isConnecting &&
-        !isDisconnecting &&
         !isApplyingMode &&
-        !takeoverRef.current;
+        connectOwnerRef.current !== 0 &&
+        connectOwnerRef.current === connectEpochRef.current;
 
     /*
      * Оборвать незаконченный запуск: и на своей стороне, и в ядре.
@@ -254,6 +280,7 @@ export const useDaemonControl = (
 
         try {
             bumpGen();
+            releaseConnect();
             isSwitchingRef.current = true;
             setIsConnecting(false);
             setIsDisconnecting(true);
@@ -307,6 +334,7 @@ export const useDaemonControl = (
             setFailedProxy(null);
 
             if (isConnected) {
+                releaseConnect();
                 setIsConnecting(false);
                 setIsDisconnecting(true);
                 addLog("Отключение...", "info");
@@ -329,7 +357,7 @@ export const useDaemonControl = (
                     return;
                 }
                 const isAuto = targetProxy?.type?.toUpperCase() === "AUTO";
-                epoch = beginConnect();
+                epoch = claimConnect();
 
                 // Tell the UI about the choice BEFORE awaiting the resolve.
                 // For an AUTO group that await runs a two-phase probe over
@@ -546,7 +574,12 @@ export const useDaemonControl = (
              * Что-то уже выполняется. Идущий запуск перехватываем: рвём его и
              * уходим на выбранный сервер. Остальное доводим до конца — и тогда
              * говорим об этом вслух, а не отмалчиваемся, как раньше.
+             *
+             * Цель записываем до всех развилок: на неё смотрит и ведущий, и
+             * проверки ниже, и ведёт всегда последний выбор.
              */
+            targetRef.current = proxy;
+
             let tookOver = false;
             if (isSwitchingRef.current) {
                 /* Нажали на тот же сервер, к которому запуск и так идёт:
@@ -554,14 +587,34 @@ export const useDaemonControl = (
                    удлинилось бы. */
                 if (!forceReconnect && String(activeProxy?.id) === String(proxy.id))
                     return;
+                /* Подготовку уже кто-то ведёт — он подхватит цель, которую мы
+                   только что записали. Строку зажигаем сразу, чтобы нажатие не
+                   проваливалось в тишину, и молча уходим: своего обрыва не
+                   начинаем и тостом не мешаем перебирать серверы дальше. */
+                if (drivingRef.current) {
+                    setActiveProxy(proxy);
+                    return;
+                }
                 if (!canTakeOver()) {
                     showToast({ variant: "info", message: t("toast.switchBusy") });
                     return;
                 }
+            } else if (drivingRef.current) {
+                /* Подготовка без объявленной занятости — окно между взятием
+                   ведения и замком. Сейчас оно замкнуто в один синхронный
+                   участок и сюда не попасть, но ведущий должен остаться
+                   единственным и если участок когда-нибудь разорвут. */
+                setActiveProxy(proxy);
+                return;
+            }
 
-                takeoverRef.current = true;
-                tookOver = true;
-                try {
+            /* Как в toggleConnection: номер запуска нужен и в catch. */
+            let epoch = connectEpochRef.current;
+
+            drivingRef.current = true;
+            try {
+                if (isSwitchingRef.current) {
+                    tookOver = true;
                     addLog(
                         `Прерываем запуск и переключаемся на ${proxy.name}...`,
                         "info",
@@ -578,28 +631,43 @@ export const useDaemonControl = (
                     setIsConnected(false);
                     setIsConnecting(true);
                     setIsDisconnecting(false);
-                } finally {
-                    takeoverRef.current = false;
+                    /* Пока рвали, могли ткнуть ещё раз — ведём к последнему. */
+                    proxy = targetRef.current || proxy;
                 }
-            }
 
-            // Замок на время асинхронной проверки — как в toggleConnection.
-            isSwitchingRef.current = true;
-            const allowed = await ensureElevated(proxy);
-            isSwitchingRef.current = false;
-            if (!allowed) {
-                /* Перехват уже погасил прежний запуск, и молчаливый выход
-                   оставил бы экран подключающимся в никуда. */
-                if (tookOver) {
-                    setIsConnecting(false);
-                    setActiveProxy(null);
-                    addLog("Переключение отменено: нет прав администратора.", "info");
+                // Замок на время асинхронной проверки — как в toggleConnection.
+                isSwitchingRef.current = true;
+                const allowed = await ensureElevated(proxy);
+                isSwitchingRef.current = false;
+                if (!allowed) {
+                    /* Перехват уже погасил прежний запуск, и молчаливый выход
+                       оставил бы экран подключающимся в никуда. */
+                    if (tookOver) {
+                        setIsConnecting(false);
+                        setActiveProxy(null);
+                        addLog(
+                            "Переключение отменено: нет прав администратора.",
+                            "info",
+                        );
+                    }
+                    return;
                 }
-                return;
-            }
+                /* И пока спрашивали права — тоже. */
+                proxy = targetRef.current || proxy;
 
-            /* Как в toggleConnection: номер запуска нужен и в catch. */
-            let epoch = connectEpochRef.current;
+                /*
+                 * Номер запуска берём здесь, в последней точке подготовки, а
+                 * не в середине хода. Раньше его брали позже — и обогнанный
+                 * ход, дойдя до того места, забирал номер СЕБЕ, хотя обогнали
+                 * именно его: последнее нажатие оказывалось старее
+                 * предпоследнего, и подключиться можно было не туда, куда
+                 * ткнули. Здесь номер достаётся каждому ходу ровно один раз и
+                 * в порядке нажатий.
+                 */
+                epoch = claimConnect();
+            } finally {
+                drivingRef.current = false;
+            }
 
             try {
                 bumpGen();
@@ -613,7 +681,6 @@ export const useDaemonControl = (
                 const live = isConnected && !tookOver;
 
                 const isAuto = proxy?.type?.toUpperCase() === "AUTO";
-                epoch = beginConnect();
 
                 // Tell the UI about the choice BEFORE awaiting the resolve.
                 // For an AUTO group that await runs a two-phase probe over
@@ -683,6 +750,15 @@ export const useDaemonControl = (
                 if (live) {
                     setIsDisconnecting(true);
                     await wailsAPI.disconnect();
+                    /* Пока рвали прежнее соединение, нас могли обогнать — и
+                       тогда флаги принадлежат уже не нам. Порядок отключений
+                       в ядре держит замок, так что обогнавший ещё не успел
+                       подключиться, но правило тут общее: устаревший ход не
+                       трогает общих флагов. */
+                    if (isStale(epoch)) {
+                        addLog("Запуск остановлен.", "info");
+                        return;
+                    }
                     setIsConnected(false);
                     setIsDisconnecting(false);
                 }
@@ -811,10 +887,8 @@ export const useDaemonControl = (
             getConnectCandidates,
             reportEmptyAutoGroup,
             ensureElevated,
-            /* Перехват решает по ним, можно ли оборвать то, что выполняется
-               сейчас; без них функция судила бы по состоянию прошлого кадра. */
-            isConnecting,
-            isDisconnecting,
+            /* Смену режима перехватывать нельзя, а её признак — состояние:
+               без него функция судила бы по прошлому кадру. */
             isApplyingMode,
         ],
     );
@@ -827,6 +901,7 @@ export const useDaemonControl = (
             if (isDeletingActive) {
                 if (isConnected) {
                     bumpGen();
+                    releaseConnect();
                     isSwitchingRef.current = true;
                     setIsConnecting(false);
                     setIsDisconnecting(true);

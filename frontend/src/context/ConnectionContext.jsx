@@ -109,10 +109,8 @@ export const ConnectionProvider = ({ children }) => {
         showAlertDialog,
         pings,
         statusGenerationRef,
-        /* По ним выбор сервера решает, можно ли оборвать то, что выполняется
-           сейчас: запуск — да, разрыв соединения и смену режима — нет. */
-        isConnecting,
-        isDisconnecting,
+        /* Смену режима выбор сервера перехватывать не должен: её
+           переподключение ведут настройки, а не этот хук. */
         isApplyingMode,
     );
 
