@@ -539,6 +539,7 @@
     "countSubs_other": "{{count}} subscriptions",
     "search": "Search servers...",
     "myServers": "My servers",
+    "emptyGroup": "No servers",
     "subDate": "{{date}} at {{time}}",
     "subMeta": "Until {{date}} | {{used}} / {{total}}",
     "subMetaNoDate": "{{used}} / {{total}}",

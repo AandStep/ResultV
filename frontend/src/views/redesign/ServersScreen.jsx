@@ -499,6 +499,7 @@ export default function ServersScreen() {
     deleteServer: t("serversPage.deleteServer"),
     favorite: t("proxyList.favoriteAria"),
     empty: t("proxyList.noResults"),
+    emptyGroup: t("serversPage.emptyGroup"),
   };
 
   /* Подписи окна правки. Ключи те же, что имена полей формы, — так видно,

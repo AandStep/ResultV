@@ -16,6 +16,8 @@
  */
 
 
+import { Children } from "react";
+
 import "./HomeServerList.css";
 
 /**
@@ -32,15 +34,27 @@ import "./HomeServerList.css";
  * Список внутри прокручивается: в макете он показан с двумя серверами и
  * свободно вылезает за низ окна, а в приложении серверов бывает сколько
  * угодно.
+ *
+ * `emptyText` — что показать, когда раскрывать оказалось нечего. Пустая
+ * группа на странице серверов бывает штатно («Мои сервера» у того, кто ещё
+ * не добавил ни одного своего), и без этой строки раскрытие выглядело
+ * поломкой: шеврон разворачивался, а под ним не появлялось ничего. Строки в
+ * макете нет, см. docs/design/GAPS.md.
  */
 export default function HomeServerList({
   open = false,
   header,
   status,
+  emptyText,
   children,
   className = "",
   ...rest
 }) {
+  /* `Children.count` считает и `false`, и `null`, которыми страницы гасят
+     отдельные строки, поэтому пустоту определяем по тому, что осталось
+     после отсева. */
+  const empty = Children.toArray(children).length === 0;
+
   return (
     <div
       className={`rv-home-server-list rv-border ${className}`}
@@ -50,7 +64,15 @@ export default function HomeServerList({
     >
       <div className="rv-home-server-list__inner">
         {header}
-        {open && <div className="rv-home-server-list__rows">{children}</div>}
+        {open && (
+          <div className="rv-home-server-list__rows">
+            {empty && emptyText ? (
+              <p className="rv-home-server-list__empty">{emptyText}</p>
+            ) : (
+              children
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

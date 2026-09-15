@@ -45,6 +45,9 @@ export const SERVERS_PAGE_TEXT = {
   deleteServer: "Удалить сервер",
   favorite: "В избранное",
   empty: "Серверы не найдены",
+  /* Раскрытая группа, в которой нет ни одного сервера. Кадра в макете нет,
+     см. docs/design/GAPS.md. */
+  emptyGroup: "Нет серверов",
 };
 
 /**
@@ -118,6 +121,7 @@ export default function ServersPage({
             <HomeServerList
               key={group.key}
               open={group.open}
+              emptyText={text.emptyGroup}
               header={
                 <ServerItem
                   variant={group.variant}

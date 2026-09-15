@@ -543,6 +543,7 @@
     "countSubs_many": "{{count}} подписок",
     "search": "Поиск серверов...",
     "myServers": "Мои сервера",
+    "emptyGroup": "Нет серверов",
     "subDate": "{{date}} в {{time}}",
     "subMeta": "До {{date}} | {{used}} / {{total}}",
     "subMetaNoDate": "{{used}} / {{total}}",
