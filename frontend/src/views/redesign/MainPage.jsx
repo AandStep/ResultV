@@ -266,11 +266,24 @@ export default function MainPage({
                       key={item.key}
                       variant={item.variant ?? "row"}
                       flag={item.flag}
+                      /*
+                       * Подключённый сервер подсвечен и здесь, а не только на
+                       * странице серверов. Раньше строки списка на главной шли
+                       * без подсветки вовсе, и раскрытый список не отвечал на
+                       * вопрос «а к какому из них я подключён» — при том что
+                       * шапка над ним горела зелёным. Цвет у каждой строки
+                       * свой (`item.accent`), а не общий по состоянию
+                       * страницы: зелёной должна быть одна строка, а не весь
+                       * список.
+                       */
+                      flagStatus={item.accent}
                       badges={item.badges}
+                      badgeColor={item.accent}
                       title={item.title}
                       ping={item.ping}
                       pingBusy={item.pingBusy}
                       favorite={item.favorite}
+                      active={item.active}
                       onFavorite={item.onFavorite}
                       onClick={item.onSelect}
                     />

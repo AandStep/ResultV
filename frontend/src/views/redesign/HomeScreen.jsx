@@ -358,22 +358,40 @@ export default function HomeScreen() {
    * У авто-группы своя строка кита (`autoserver`): вместо флага — значок
    * автовыбора, а бейдж набран «Авто».
    */
-  const toRow = (p) => ({
-    key: String(p.id),
-    variant: isAuto(p) ? "autoserver" : "row",
-    flag: isAuto(p) ? undefined : <FlagIcon code={p.country} className="rv-flag__img" />,
-    badges: protocolBadges(p, t),
-    title: formatProxyDisplayName(p.name, p.country) || p.name,
-    ping: rowPing(p),
-    /* Задержку ещё меряют — на её месте спиннер, а не пустота. */
-    pingBusy: isPingPending(p),
-    favorite: favorites.has(String(p.id)),
-    onFavorite: () => toggleFavorite(p.id),
-    onSelect: () => {
-      selectAndConnect(p);
-      setListOpen(false);
-    },
-  });
+  const toRow = (p) => {
+    /*
+     * Подключённый сервер подсвечен и в списке на главной — теми же цветами,
+     * что и на странице серверов (фрейм 6744:4162). Раньше строки здесь шли
+     * без подсветки вовсе: шапка карточки горела зелёным, а раскрыв список,
+     * человек не видел, какая из строк ей соответствует.
+     *
+     * Пока к выбранному только идёт подключение, строка держит жёлтый — как
+     * шапка и кнопка питания: нажатие на строку не должно проваливаться в
+     * тишину до самого конца запуска.
+     */
+    const target = String(activeProxy?.id) === String(p.id);
+    const current = isConnected && target;
+    const accent = !target ? "default" : busy ? "warning" : current ? "success" : "default";
+
+    return {
+      key: String(p.id),
+      variant: isAuto(p) ? "autoserver" : "row",
+      flag: isAuto(p) ? undefined : <FlagIcon code={p.country} className="rv-flag__img" />,
+      badges: protocolBadges(p, t),
+      title: formatProxyDisplayName(p.name, p.country) || p.name,
+      ping: rowPing(p),
+      /* Задержку ещё меряют — на её месте спиннер, а не пустота. */
+      pingBusy: isPingPending(p),
+      favorite: favorites.has(String(p.id)),
+      active: current,
+      accent,
+      onFavorite: () => toggleFavorite(p.id),
+      onSelect: () => {
+        selectAndConnect(p);
+        setListOpen(false);
+      },
+    };
+  };
 
   /*
    * Список разбит на группы по подпискам, «Мои сервера» идут последними
@@ -428,6 +446,13 @@ export default function HomeScreen() {
     toggleFavorite,
     selectAndConnect,
     t,
+    /* Подсветка подключённой строки живёт этими тремя. Полагаться на то, что
+       вместе с ними меняется `selectAndConnect`, нельзя: в его зависимостях
+       нет ни `isConnecting`, ни `isDisconnecting`, и переход «не подключено»
+       -> «подключаемся» список бы не заметил. */
+    isConnected,
+    activeProxy,
+    busy,
   ]);
 
   const rowCount = serverGroups.reduce((n, g) => n + g.servers.length, 0);
