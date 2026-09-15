@@ -1539,13 +1539,10 @@ func TestBuildDNS_SmartModeTunnelsBlockedAndForceVPN(t *testing.T) {
 	cfg.AppForceVPN = []string{"Battle.net.exe"}
 	dns := buildDNS(cfg)
 
-	var tunnelTag string
-	for _, s := range dns.Servers {
-		if s.Detour == "proxy" {
-			tunnelTag = s.Tag
-			break
-		}
-	}
+	// Ask the same helper buildDNS uses. Since the tunnel resolver became a
+	// DoH/TCP pair behind a fallback wrapper, "first server with the proxy
+	// detour" is a leg, not the tag rules point at.
+	tunnelTag := firstDetourServerTag(dns.Servers, "proxy")
 	if tunnelTag == "" {
 		t.Fatal("expected at least one dns server with proxy detour")
 	}

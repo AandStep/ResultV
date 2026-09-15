@@ -307,11 +307,11 @@ func newSBDNS(servers []SBDNSServer) *SBDNS {
 }
 
 type SBDNSServer struct {
-	Type            string `json:"type"`
-	Tag             string `json:"tag"`
-	Server          string `json:"server,omitempty"`
-	ServerPort      int    `json:"server_port,omitempty"`
-	Detour          string `json:"detour,omitempty"`
+	Type       string `json:"type"`
+	Tag        string `json:"tag"`
+	Server     string `json:"server,omitempty"`
+	ServerPort int    `json:"server_port,omitempty"`
+	Detour     string `json:"detour,omitempty"`
 	// Predefined seeds a static "hosts" DNS server: domain → fixed IP list.
 	// Used to pin the proxy server's own domain to its connect-time IPs so
 	// re-resolution never touches the redirected OS resolver (see buildDNS).
@@ -320,6 +320,19 @@ type SBDNSServer struct {
 	// of type "fakeip" reads them.
 	Inet4Range string `json:"inet4_range,omitempty"`
 	Inet6Range string `json:"inet6_range,omitempty"`
+
+	// Servers/Strategy/Timeout configure a server of type "fallback": it holds
+	// no address of its own, only the tags of servers to try, in order, each
+	// bounded by Timeout. See tunnelDNSResolver.
+	Servers  []string `json:"servers,omitempty"`
+	Strategy string   `json:"strategy,omitempty"`
+	Timeout  string   `json:"timeout,omitempty"`
+
+	// throughDetour marks a fallback wrapper whose members all route through
+	// this detour. Never serialised — the core reaches members by tag — it
+	// exists so firstDetourServerTag can name the wrapper rather than one of
+	// its legs.
+	throughDetour string `json:"-"`
 }
 
 type SBDNSRule struct {
@@ -1426,12 +1439,65 @@ func adaptiveSmartActive(cfg EngineConfig) bool {
 // only through rules. Pointing Smart mode's tunnel rules at it therefore
 // preserves current behaviour for blocked domains exactly.
 func firstDetourServerTag(servers []SBDNSServer, detour string) string {
+	// A fallback wrapper is what rules must point at: its legs carry the
+	// detour, and naming a leg directly would give up the other one. Wrappers
+	// are emitted after their legs (the core resolves members by tag at
+	// construction, so the legs have to exist first), which is why this scans
+	// for the wrapper before falling back to a plain server.
+	for _, s := range servers {
+		if s.throughDetour == detour && s.Tag != "" {
+			return s.Tag
+		}
+	}
 	for _, s := range servers {
 		if s.Detour == detour && s.Tag != "" {
 			return s.Tag
 		}
 	}
 	return ""
+}
+
+// tunnelDNSResolver emits the servers that carry one resolver through the
+// tunnel: DoH first, plain DNS-over-TCP second, and a "fallback" wrapper that
+// rules point at.
+//
+// It used to be a single DNS-over-TCP server, and on engine 1.14 that stopped
+// answering. sing-box 1.14 put a query multiplexer
+// (dns/transport/multiplexer.go) in front of the tcp, tls and udp transports:
+// once a background probe decides the resolver supports reuse, every query
+// moves onto one shared, long-lived connection whose liveness check is
+// `conn != nil`. Through a proxy outbound that connection wedges.
+//
+// Measured on the user's live tunnel (15.09.2026, core log at debug): 294 of
+// 295 lookups routed to the node never came back — no answer, no error, not
+// one "lookup failed", so they hung until the engine was stopped and the
+// browser never learned a single YouTube address. Ordinary TCP through the
+// same node was healthy the whole time: the connectivity probe answered in
+// 461 ms and 129 connections completed normally. On a stand the failure shows
+// as "write request: EOF" returned in 0-1 ms, query after query.
+//
+// The https transport is the only remote transport the multiplexer does not
+// touch, which is why DoH leads. The tcp leg stays rather than being deleted:
+// a resolver that speaks no DoH would otherwise have no path at all. The
+// wrapper bounds each leg with a timeout, so even a wedged leg now costs one
+// timeout instead of hanging forever the way the bare transport did.
+//
+// port applies to the tcp leg only. DoH is HTTPS and has to reach 443, so a
+// resolver pinned to a non-standard DNS port keeps that port on the tcp leg
+// while DoH tries the standard one and, failing that, hands over.
+func tunnelDNSResolver(tag, server string, port int, detour string) []SBDNSServer {
+	return []SBDNSServer{
+		{Type: "https", Tag: tag + "-doh", Server: server, Detour: detour},
+		{Type: "tcp", Tag: tag + "-tcp", Server: server, ServerPort: port, Detour: detour},
+		{
+			Type:          "fallback",
+			Tag:           tag,
+			Servers:       []string{tag + "-doh", tag + "-tcp"},
+			Strategy:      "sequential",
+			Timeout:       "5s",
+			throughDetour: detour,
+		},
+	}
 }
 
 func buildDNS(cfg EngineConfig) *SBDNS {
@@ -1449,6 +1515,10 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		// the tunnel for all protocols, eliminating the WFP race.
 		detour := "proxy"
 
+		// Every resolver below is emitted by tunnelDNSResolver as a DoH leg, a
+		// DNS-over-TCP leg and the fallback wrapper rules point at. Read its
+		// comment before changing the shape: a bare tcp server is what stopped
+		// answering on engine 1.14.
 		servers := []SBDNSServer{}
 		if len(cfg.DNSServers) > 0 {
 			for i, raw := range cfg.DNSServers {
@@ -1456,23 +1526,13 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 				if server == "" {
 					continue
 				}
-				servers = append(servers, SBDNSServer{
-					Type:       "tcp",
-					Tag:        fmt.Sprintf("custom-%d", i+1),
-					Server:     server,
-					ServerPort: port,
-					Detour:     detour,
-				})
+				servers = append(servers, tunnelDNSResolver(fmt.Sprintf("custom-%d", i+1), server, port, detour)...)
 			}
 			servers = append(servers, SBDNSServer{Type: "local", Tag: "local"})
 		} else {
-			servers = []SBDNSServer{
-				{Type: "tcp", Tag: "google-tcp", Server: "8.8.8.8", Detour: detour},
-				{Type: "tcp", Tag: "cloudflare-tcp", Server: "1.1.1.1", Detour: detour},
-				{Type: "tls", Tag: "google-tls", Server: "8.8.8.8", Detour: detour},
-				{Type: "tls", Tag: "cloudflare-tls", Server: "1.1.1.1", Detour: detour},
-				{Type: "local", Tag: "local"},
-			}
+			servers = append(servers, tunnelDNSResolver("google", "8.8.8.8", 0, detour)...)
+			servers = append(servers, tunnelDNSResolver("cloudflare", "1.1.1.1", 0, detour)...)
+			servers = append(servers, SBDNSServer{Type: "local", Tag: "local"})
 		}
 
 		dns := newSBDNS(servers)
