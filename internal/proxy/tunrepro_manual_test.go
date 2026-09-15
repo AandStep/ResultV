@@ -56,27 +56,43 @@ type tunVariant struct {
 
 func TestTunReproManual(t *testing.T) {
 	node := reproFindAWGNode(t)
-	t.Logf("узел: %s %s:%d", node.Type, node.IP, node.Port)
+	// Connect pins the server's addresses before starting the engine, and the
+	// tunnel depends on it: the route rule that keeps the node's own UDP out of
+	// the tunnel is built from the pinned set, and without it every WireGuard
+	// packet is routed into the TUN it is supposed to carry. The first version
+	// of this bench skipped the pin and measured nothing — rx_bytes and
+	// last_handshake_time_sec stayed at zero in all three variants because the
+	// tunnel never came up at all, while the downloads ran outside it.
+	if node.ResolvedIP == "" {
+		node.ResolvedIP = resolvePinnedServerIP(node.IP)
+	}
+	if len(node.ResolvedIPs) == 0 {
+		node.ResolvedIPs = resolveAllServerIPs(node.IP)
+	}
+	t.Logf("узел: %s %s:%d пин=%s все=%v", node.Type, node.IP, node.Port, node.ResolvedIP, node.ResolvedIPs)
+	if node.ResolvedIP == "" {
+		t.Fatal("адрес узла не разрешён — без пина стенд измеряет не туннель")
+	}
 	t.Log("ВНИМАНИЕ: закройте ResultV перед прогоном — адаптер один на всех")
 
 	variants := []tunVariant{
 		{
 			// The shape the user runs today.
-			name:  "system + strict_route (как сейчас)",
+			name:  "как сейчас",
 			apply: func(cfg *EngineConfig) { cfg.DNSLeakProtection = true },
 		},
 		{
-			// strict_route is what installs sing-tun's WFP filters, and those are
-			// the same for both stacks — which fits a failure that survived the
-			// stack switch.
-			name:  "system без strict_route",
-			apply: func(cfg *EngineConfig) { cfg.DNSLeakProtection = false },
-		},
-		{
-			name: "gvisor без strict_route",
+			// BuildTunnelModeConfig skips route_exclude_address for WireGuard
+			// nodes, so the node's own UDP enters the TUN and is let out again by
+			// a routing rule — a loop the logs show plainly ("inbound packet
+			// connection to <server>:3306"). It worked on 1.13; on 1.14 every one
+			// of those packets now goes through a rewritten UDP NAT and flow
+			// dispatcher, twice per byte carried. Excluding the server from the
+			// tunnel removes the loop instead of making it cheaper.
+			name: "с исключением сервера из TUN",
 			apply: func(cfg *EngineConfig) {
-				cfg.DNSLeakProtection = false
-				cfg.TunStack = "gvisor"
+				cfg.DNSLeakProtection = true
+				t.Setenv("RESULTV_WG_ROUTE_EXCLUDE", "1")
 			},
 		},
 	}

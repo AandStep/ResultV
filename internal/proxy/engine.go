@@ -1057,7 +1057,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	pt := strings.ToUpper(strings.TrimSpace(cfg.Proxy.Type))
 
 	var routeExclude []string
-	if pt != "WIREGUARD" && pt != "AMNEZIAWG" {
+	if pt != "WIREGUARD" && pt != "AMNEZIAWG" || wgRouteExcludeEnabled() {
 		// Exclude EVERY backend IP the server resolved to (a CDN domain has
 		// several, and sing-box may fail over among them mid-session) so none of
 		// the server's own traffic loops back into the TUN. Domains alone yield
@@ -1188,6 +1188,29 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 // rewrote the system stack, putting a flow dispatcher in front of every packet
 // and replacing both NAT tables. Comparing system against gvisor needs a switch
 // the user can flip without editing an encrypted config.
+// wgRouteExcludeEnabled reports whether a WireGuard node's own address should
+// be excluded from the tunnel's routes, which RESULTV_WG_ROUTE_EXCLUDE turns on.
+//
+// Off, the node's UDP goes into the TUN and is let back out by the routing rule
+// that matches the server's address — visible in the core log as "inbound
+// packet connection to <server>:3306". Every byte the tunnel carries therefore
+// crosses the TUN inbound twice: once as the payload, once as the encrypted
+// packet carrying it. That was merely wasteful on 1.13; sing-tun 0.9 rebuilt
+// both NAT tables and put a flow dispatcher in front of every packet, and the
+// tunnel now collapses under throughput.
+//
+// Behind a switch rather than simply turned on because the exclusion has its
+// own failure mode: the excluded address is pinned at connect time, and a
+// CDN-hosted node that moves to a backend outside the pinned set would have its
+// handshake routed into the tunnel it is trying to establish.
+func wgRouteExcludeEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("RESULTV_WG_ROUTE_EXCLUDE"))) {
+	case "1", "true", "on", "yes":
+		return true
+	}
+	return false
+}
+
 func effectiveTunStack(stack string) string {
 	if override := strings.ToLower(strings.TrimSpace(os.Getenv("RESULTV_TUN_STACK"))); override != "" {
 		switch override {
