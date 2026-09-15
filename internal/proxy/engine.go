@@ -1056,21 +1056,42 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 
 	pt := strings.ToUpper(strings.TrimSpace(cfg.Proxy.Type))
 
+	// Exclude EVERY backend IP the server resolved to (a CDN domain has several,
+	// and sing-box may fail over among them mid-session) so none of the server's
+	// own traffic loops back into the TUN. Domains alone yield nothing here
+	// (net.ParseIP fails on a hostname) — the pinned IP set is what gives
+	// domain-addressed servers their exclude CIDRs.
+	//
+	// WireGuard and AmneziaWG used to be left out of this, and that is what took
+	// the tunnel down on engine 1.14. Without the exclusion the node's own UDP
+	// enters the TUN and is let back out by the routing rule matching the
+	// server's address — the core log says it outright, "inbound packet
+	// connection to <server>:3306" — so every byte the tunnel carries crosses
+	// the inbound twice: once as payload, once as the encrypted packet carrying
+	// it. On 1.13 that only wasted work. sing-tun 0.9 rebuilt both NAT tables
+	// and put a flow dispatcher in front of every packet, and the same loop now
+	// strangles the session.
+	//
+	// Measured on the same node, same engine, back to back (tunrepro bench,
+	// 15.09.2026): without the exclusion, three 25 MB downloads all failed,
+	// every small request timed out, tcp_established never left zero and
+	// rx_bytes crawled from 1516 to 4452 in eighty seconds. With it, the same
+	// three downloads ran at 170, 101 and 142 Mbit/s, small requests answered in
+	// 74-224 ms, and retransmits and resets stayed at zero.
+	//
+	// The exclusion has a cost, and it is the reason this is pinned to resolved
+	// addresses rather than done by name: a node whose CDN moves it to a backend
+	// outside the pinned set would have its handshake routed into the tunnel it
+	// is trying to establish. That risk is identical for every other protocol
+	// here, which has carried this exclusion for months.
 	var routeExclude []string
-	if pt != "WIREGUARD" && pt != "AMNEZIAWG" || wgRouteExcludeEnabled() {
-		// Exclude EVERY backend IP the server resolved to (a CDN domain has
-		// several, and sing-box may fail over among them mid-session) so none of
-		// the server's own traffic loops back into the TUN. Domains alone yield
-		// nothing here (net.ParseIP fails on a hostname) — the pinned IP set is
-		// what gives domain-addressed servers their exclude CIDRs.
-		for _, host := range serverPinnedIPs(cfg.Proxy) {
-			if serverIP := net.ParseIP(host); serverIP != nil {
-				cidr := host + "/32"
-				if serverIP.To4() == nil {
-					cidr = host + "/128"
-				}
-				routeExclude = append(routeExclude, cidr)
+	for _, host := range serverPinnedIPs(cfg.Proxy) {
+		if serverIP := net.ParseIP(host); serverIP != nil {
+			cidr := host + "/32"
+			if serverIP.To4() == nil {
+				cidr = host + "/128"
 			}
+			routeExclude = append(routeExclude, cidr)
 		}
 	}
 
@@ -1188,29 +1209,6 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 // rewrote the system stack, putting a flow dispatcher in front of every packet
 // and replacing both NAT tables. Comparing system against gvisor needs a switch
 // the user can flip without editing an encrypted config.
-// wgRouteExcludeEnabled reports whether a WireGuard node's own address should
-// be excluded from the tunnel's routes, which RESULTV_WG_ROUTE_EXCLUDE turns on.
-//
-// Off, the node's UDP goes into the TUN and is let back out by the routing rule
-// that matches the server's address — visible in the core log as "inbound
-// packet connection to <server>:3306". Every byte the tunnel carries therefore
-// crosses the TUN inbound twice: once as the payload, once as the encrypted
-// packet carrying it. That was merely wasteful on 1.13; sing-tun 0.9 rebuilt
-// both NAT tables and put a flow dispatcher in front of every packet, and the
-// tunnel now collapses under throughput.
-//
-// Behind a switch rather than simply turned on because the exclusion has its
-// own failure mode: the excluded address is pinned at connect time, and a
-// CDN-hosted node that moves to a backend outside the pinned set would have its
-// handshake routed into the tunnel it is trying to establish.
-func wgRouteExcludeEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("RESULTV_WG_ROUTE_EXCLUDE"))) {
-	case "1", "true", "on", "yes":
-		return true
-	}
-	return false
-}
-
 func effectiveTunStack(stack string) string {
 	if override := strings.ToLower(strings.TrimSpace(os.Getenv("RESULTV_TUN_STACK"))); override != "" {
 		switch override {

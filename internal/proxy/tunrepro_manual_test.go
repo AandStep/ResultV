@@ -78,21 +78,18 @@ func TestTunReproManual(t *testing.T) {
 	variants := []tunVariant{
 		{
 			// The shape the user runs today.
-			name:  "как сейчас",
+			name:  "с исключением сервера (фикс)",
 			apply: func(cfg *EngineConfig) { cfg.DNSLeakProtection = true },
 		},
 		{
-			// BuildTunnelModeConfig skips route_exclude_address for WireGuard
-			// nodes, so the node's own UDP enters the TUN and is let out again by
-			// a routing rule — a loop the logs show plainly ("inbound packet
-			// connection to <server>:3306"). It worked on 1.13; on 1.14 every one
-			// of those packets now goes through a rewritten UDP NAT and flow
-			// dispatcher, twice per byte carried. Excluding the server from the
-			// tunnel removes the loop instead of making it cheaper.
-			name: "с исключением сервера из TUN",
+			// Same shape without the pin, which is what the exclusion is built
+			// from: it reproduces the old loop and is kept as the negative
+			// control for the fix.
+			name: "без пина (старое поведение)",
 			apply: func(cfg *EngineConfig) {
 				cfg.DNSLeakProtection = true
-				t.Setenv("RESULTV_WG_ROUTE_EXCLUDE", "1")
+				cfg.Proxy.ResolvedIP = ""
+				cfg.Proxy.ResolvedIPs = nil
 			},
 		},
 	}
