@@ -38,6 +38,7 @@ import {
   parseExtra,
   sortProxiesByOption,
 } from "../../utils/pingSort";
+import { PAGE_HOME, usePageState, useScrollMemory } from "../../hooks/usePageMemory";
 import wailsAPI from "../../utils/wailsAPI";
 import MainPage from "./MainPage";
 import SortMenu from "./SortMenu";
@@ -150,14 +151,24 @@ export default function HomeScreen() {
     cancelConnect,
   } = useConnectionContext();
 
-  const [listOpen, setListOpen] = useState(false);
+  /*
+   * Раскрытость списка и выбранный порядок переживают уход на другую
+   * страницу: экран страницы размонтируется целиком, и обычный `useState`
+   * схлопывал раскрытый список на каждом переходе по меню.
+   */
+  const [listOpen, setListOpen] = usePageState(PAGE_HOME, "listOpen", false);
   /*
    * Порядок списка и меню его выбора — те же семь вариантов, что были на
    * старой главной. Своего меню в макете пока нет, см. docs/design/GAPS.md;
    * до него работает старое, только вызванное от кнопки сортировки.
    */
-  const [sortBy, setSortBy] = useState("default");
+  const [sortBy, setSortBy] = usePageState(PAGE_HOME, "sortBy", "default");
+  /* Меню порядка — дело одного нажатия, и запоминать его незачем: вернуться
+     на страницу и застать висящее меню было бы странно. */
   const [sortAnchor, setSortAnchor] = useState(null);
+
+  /* Прокрутка возвращается туда, где её оставили. */
+  const contentRef = useScrollMemory(PAGE_HOME);
 
   /*
    * Задержку авто-группы меряет не проба, а сам движок: он знает, какой узел
@@ -537,6 +548,7 @@ export default function HomeScreen() {
       onSite={() => BrowserOpenURL(WEBSITE_URL)}
       onTelegram={() => BrowserOpenURL(TELEGRAM_URL)}
       sidebar={<AppSidebar />}
+      contentRef={contentRef}
     />
     <SortMenu
       anchor={sortAnchor}

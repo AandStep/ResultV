@@ -26,6 +26,11 @@
 import { useCallback, useLayoutEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useLogContext } from "../../context/LogContext";
+import {
+  PAGE_LOGS,
+  readPageScroll,
+  writePageScroll,
+} from "../../hooks/usePageMemory";
 import LogsPage from "./LogsPage";
 import AppSidebar from "./AppSidebar";
 
@@ -131,6 +136,7 @@ export default function LogsScreen() {
       scrollHeight: el.scrollHeight,
       scrollTop: el.scrollTop,
     };
+    writePageScroll(PAGE_LOGS, el.scrollTop);
   }, []);
 
   /*
@@ -155,6 +161,34 @@ export default function LogsScreen() {
       scrollTop: el.scrollTop,
     };
   }, [allLogs]);
+
+  /*
+   * Возврат на страницу: список встаёт туда, где его оставили.
+   *
+   * Общим хуком памяти прокрутки (`useScrollMemory`) здесь не обойтись —
+   * у журнала своя расстановка: записи приходят сверху, и эффект выше на
+   * каждую новую строку либо держит список у начала, либо сдвигает его на
+   * столько, на сколько список подрос. На первом кадре он считает список
+   * закреплённым у начала и уводит прокрутку в ноль, поэтому восстановление
+   * стоит ПОСЛЕ него (эффекты слоя выполняются в порядке объявления) и
+   * заодно приводит в порядок обе его опоры: иначе следующая же дописанная
+   * строка отсчитала бы сдвиг от нулевой высоты и увела бы список.
+   */
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    if (!el) return undefined;
+
+    const saved = readPageScroll(PAGE_LOGS);
+    if (saved > 0) el.scrollTop = saved;
+    pinnedToTopRef.current = el.scrollTop <= SCROLL_TOP_THRESHOLD;
+    scrollMetricsRef.current = {
+      scrollHeight: el.scrollHeight,
+      scrollTop: el.scrollTop,
+    };
+
+    /* Последнее движение колеса могло не успеть дойти событием. */
+    return () => writePageScroll(PAGE_LOGS, el.scrollTop);
+  }, []);
 
   const handleSave = useCallback(() => {
     /* В файл журнал уходит в обычном порядке — от старых записей к новым. */
@@ -186,6 +220,8 @@ export default function LogsScreen() {
       el.scrollTop = 0;
       scrollMetricsRef.current = { scrollHeight: el.scrollHeight, scrollTop: 0 };
     }
+    /* Журнал очистили — возвращать прокрутку некуда. */
+    writePageScroll(PAGE_LOGS, 0);
   }, [clearLogs]);
 
   const rows = allLogs.map((log, i) => ({

@@ -67,6 +67,9 @@ export default function ServersPage({
   groups = [],
   empty = false,
   sidebar,
+  /* Узел, который прокручивается. Страница отдаёт его наружу, чтобы экран мог
+     вернуть прокрутку туда, где её оставили при уходе на другую страницу. */
+  contentRef,
   text = SERVERS_PAGE_TEXT,
   className = "",
   ...rest
@@ -75,7 +78,7 @@ export default function ServersPage({
     <div className={`rv-servers-page ${className}`} {...rest}>
       {sidebar}
 
-      <div className="rv-servers-page__content rv-scroll">
+      <div ref={contentRef} className="rv-servers-page__content rv-scroll">
         <PageHeader
           title={title ?? text.title}
           subtitle={subtitle}

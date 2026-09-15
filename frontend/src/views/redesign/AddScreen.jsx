@@ -23,9 +23,10 @@
  * нужны ли списки маршрутизации из подписки, и две кнопки.
  */
 
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useConfigContext } from "../../context/ConfigContext";
+import { PAGE_ADD, forgetPage, usePageState } from "../../hooks/usePageMemory";
 import useProxyImport from "../../hooks/useProxyImport";
 import AddPage, { ADD_PAGE_PROTOCOLS } from "./AddPage";
 import AddConfirmDialog from "./AddConfirmDialog";
@@ -45,11 +46,23 @@ export default function AddScreen() {
   const { showAlertDialog } = useConfigContext();
   const { busy, preview, importText, confirm, cancel } = useProxyImport();
 
-  const [protocol, setProtocol] = useState(ADD_PAGE_PROTOCOLS[0].key);
-  const [value, setValue] = useState("");
+  /*
+   * Набранное переживает уход на другую страницу: экран размонтируется
+   * целиком, и на полпути отойти посмотреть список серверов значило потерять
+   * вставленную ссылку.
+   *
+   * Черновик гасится, когда импорт приняли, — см. `onConfirm` ниже. Иначе на
+   * странице так и висела бы ссылка, которую уже разобрали и сохранили.
+   */
+  const [protocol, setProtocol] = usePageState(
+    PAGE_ADD,
+    "protocol",
+    ADD_PAGE_PROTOCOLS[0].key,
+  );
+  const [value, setValue] = usePageState(PAGE_ADD, "value", "");
   /* Списки маршрутизации из подписки по умолчанию не берём — так нарисовано
      в макете и так подтвердил дизайнер. */
-  const [routing, setRouting] = useState(false);
+  const [routing, setRouting] = usePageState(PAGE_ADD, "routing", false);
   const fileRef = useRef(null);
 
   const onFile = (event) => {
@@ -125,7 +138,20 @@ export default function AddScreen() {
           routing={routing}
           onRoutingChange={setRouting}
           onCancel={cancel}
-          onConfirm={() => confirm({ protocol: PLAIN_PROTOCOL[protocol], routing })}
+          onConfirm={async () => {
+            const imported = await confirm({
+              protocol: PLAIN_PROTOCOL[protocol],
+              routing,
+            });
+            /* Приняли — черновик больше не нужен; не приняли — он нужен
+               человеку на месте, чтобы не набирать ссылку заново. К этому
+               моменту страница обычно уже сменилась на список серверов, и
+               настоящую работу делает `forgetPage`, а не `setValue`. */
+            if (imported) {
+              setValue("");
+              forgetPage(PAGE_ADD);
+            }
+          }}
         />
       )}
 

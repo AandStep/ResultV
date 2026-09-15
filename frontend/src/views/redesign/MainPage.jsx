@@ -156,6 +156,9 @@ export default function MainPage({
   downloadChart,
   uploadChart,
   sidebar,
+  /* Узел, который прокручивается. Страница отдаёт его наружу, чтобы экран мог
+     вернуть прокрутку туда, где её оставили при уходе на другую страницу. */
+  contentRef,
   text = MAIN_PAGE_TEXT,
   onSite,
   onTelegram,
@@ -185,7 +188,7 @@ export default function MainPage({
     <div className={`rv-main-page ${className}`} data-status={status} {...rest}>
       {sidebar}
 
-      <div className="rv-main-page__content rv-scroll">
+      <div ref={contentRef} className="rv-main-page__content rv-scroll">
         <Header
           /* Отключение перекрывает подбор: если рвём соединение, то говорим
              именно это, чем бы ход ни начинался. */

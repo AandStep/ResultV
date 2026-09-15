@@ -29,6 +29,11 @@ import { useTranslation } from "react-i18next";
 import { useConfigContext } from "../../context/ConfigContext";
 import { encryptWithPassword, decryptWithPassword } from "../../utils/crypto";
 import { rebuildSubscriptionsFromProxies } from "../../utils/proxyParser";
+import {
+  PAGE_SETTINGS,
+  usePageState,
+  useScrollMemory,
+} from "../../hooks/usePageMemory";
 import wailsAPI from "../../utils/wailsAPI";
 import AppSidebar from "./AppSidebar";
 import ConfigPasswordDialog from "./ConfigPasswordDialog";
@@ -64,12 +69,18 @@ export default function SettingsScreen() {
     showAlertDialog,
   } = useConfigContext();
 
-  /* Пустая строка — список пунктов; иначе открыта страница этой группы. */
-  const [section, setSection] = useState("");
+  /* Пустая строка — список пунктов; иначе открыта страница этой группы.
+     Переживает уход на другую страницу: настройки читают, сверяясь с другими
+     разделами приложения, и каждый раз возвращаться к корню списка значило
+     искать тот же пункт заново. */
+  const [section, setSection] = usePageState(PAGE_SETTINGS, "section", "");
   /* `mode` — что делает окно пароля: шифрует выгрузку или открывает файл.
      `data` — зашифрованное содержимое выбранного файла. */
   const [pwdDialog, setPwdDialog] = useState({ mode: "", data: null });
   const [lanIPs, setLanIPs] = useState([]);
+
+  /* Прокрутка возвращается туда, где её оставили. */
+  const contentRef = useScrollMemory(PAGE_SETTINGS);
 
   /* Escape уводит со страницы пункта назад к списку — тем же путём, каким
      он закрывает любое окно приложения. */
@@ -422,6 +433,7 @@ export default function SettingsScreen() {
     <>
       <SettingsPage
         sidebar={<AppSidebar />}
+        contentRef={contentRef}
         section={section}
         onOpenSection={setSection}
         onBack={() => setSection("")}

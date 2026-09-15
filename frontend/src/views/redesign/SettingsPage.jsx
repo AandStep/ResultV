@@ -317,6 +317,9 @@ export default function SettingsPage({
   onExport,
   onImport,
   sidebar,
+  /* Узел, который прокручивается. Страница отдаёт его наружу, чтобы экран мог
+     вернуть прокрутку туда, где её оставили при уходе на другую страницу. */
+  contentRef,
   text = SETTINGS_PAGE_TEXT,
 }) {
   const rows = text.rows;
@@ -584,7 +587,7 @@ export default function SettingsPage({
     <div className="rv-settings-page">
       {sidebar}
 
-      <div className="rv-settings-page__content rv-scroll">
+      <div ref={contentRef} className="rv-settings-page__content rv-scroll">
         {group ? (
           <>
             <PageHeader title={group.title} subtitle={group.desc} />
