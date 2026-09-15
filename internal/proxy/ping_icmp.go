@@ -39,6 +39,20 @@ import (
 // resolution failed, or the socket couldn't be created); callers fall back to a
 // UDP liveness probe.
 func pingICMPHost(host, source string) (latencyMs int64, ok bool) {
+	return pingICMPHostTimeout(host, source, pingICMPHostDefaultTimeout)
+}
+
+// pingICMPHostDefaultTimeout is what every caller that does not care gets. It
+// is the value this probe has always used; the ping settings path passes its
+// own budget instead.
+const pingICMPHostDefaultTimeout = 2 * time.Second
+
+// pingICMPProbe is a var so the manual-ping dispatch can be tested without
+// raw sockets, matching the pingTCPProbe pattern.
+var pingICMPProbe = pingICMPHostTimeout
+
+// pingICMPHostTimeout is pingICMPHost with an explicit budget.
+func pingICMPHostTimeout(host, source string, timeout time.Duration) (latencyMs int64, ok bool) {
 	pinger, err := probing.NewPinger(host)
 	if err != nil {
 		return 0, false
@@ -48,7 +62,7 @@ func pingICMPHost(host, source string) (latencyMs int64, ok bool) {
 	// different path.
 	pinger.SetNetwork("ip4")
 	pinger.Count = 1
-	pinger.Timeout = 2 * time.Second
+	pinger.Timeout = timeout
 	// Windows raw ICMP sockets work without administrator rights; Linux and
 	// macOS use unprivileged UDP "ping" sockets. SetPrivileged(true) off Windows
 	// would require root.

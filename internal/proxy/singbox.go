@@ -18,11 +18,13 @@ package proxy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,14 +32,16 @@ import (
 
 	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/include"
 	sblog "github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/bufio"
 	singjson "github.com/sagernet/sing/common/json"
 	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/service"
 
 	"resultproxy-wails/internal/logger"
+	"resultproxy-wails/internal/verdict"
 )
 
 
@@ -198,6 +202,24 @@ type SingBoxEngine struct {
 	configPath string
 	instance   *box.Box
 
+	// pendingClose is closed when the PREVIOUS instance's Close() actually
+	// returns, which can be long after we stopped waiting for it. Until then
+	// that instance still holds the bbolt lock on the cache file, so starting a
+	// new one on top of it is guaranteed to fail — see awaitPendingClose.
+	pendingClose <-chan struct{}
+	pendingSince time.Time
+
+	// boxCtx is the context box.New was given, kept because the core registers
+	// its services in it — closeTrackedConnections needs the connection manager
+	// out of there while shutting down.
+	boxCtx context.Context
+
+	// coreLog is the diagnostic sink for this instance's core output, open only
+	// when RESULTV_SINGBOX_LOG_LEVEL raised the level. Held here because the
+	// file has to be closed when the instance goes away, and the log writer the
+	// core holds is not ours to reach afterwards.
+	coreLog *coreLogFile
+
 	// savedCfg / savedCtx are the original Start args, kept so ApplyAppWhitelist
 	// can rebuild the sing-box config in-place without reconstructing the
 	// caller's intent. They are only meaningful while running.
@@ -224,13 +246,106 @@ type singBoxLogWriter struct {
 	// "lookup <domain>: ..." or "open connection ... using outbound" would
 	// otherwise leak the provider's backend address. Empty for manual servers.
 	redact []string
+	// core is the diagnostic sink, non-nil only when RESULTV_SINGBOX_LOG_LEVEL
+	// asked for more than errors. See coreLogFile for why the visible log
+	// cannot be that sink.
+	core *coreLogFile
+}
+
+// coreLogFile writes the core's own voice to a file under diag/.
+//
+// RESULTV_SINGBOX_LOG_LEVEL (see singBoxLogLevel) raises the level the core
+// logs AT, but on its own it changes nothing observable: WriteMessage drops
+// everything below Warn before it reaches the user's log, and that log is a
+// 500-entry ring — at "debug" the core fills it in a couple of seconds and the
+// session's own events scroll out. So the raised level went into a sink that
+// discarded it, which is exactly the state this type exists to fix: the
+// questions that need the core's voice (does the WireGuard handshake retry,
+// does the peer endpoint resolve, does the bind get rebuilt under us) are
+// answered by lines at debug and trace.
+//
+// The visible log keeps its old contract — Warn and Error only. Everything
+// else goes to the file and nowhere near the UI.
+type coreLogFile struct {
+	mu   sync.Mutex
+	file *os.File
+}
+
+// newCoreLogFile opens the sink, or returns nil when the level was not raised.
+// A nil *coreLogFile is usable: write and Close are no-ops on it, so the
+// caller never branches.
+func newCoreLogFile(level string) *coreLogFile {
+	if level == "" || level == "error" {
+		return nil
+	}
+	dir := filepath.Join(resultProxyDataDir(), "diag")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil
+	}
+	path := filepath.Join(dir, fmt.Sprintf("core-%s.log", time.Now().Format("20060102-150405")))
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil
+	}
+	c := &coreLogFile{file: file}
+	c.writeLine(fmt.Sprintf("=== ResultV core log, level=%s, started %s ===",
+		level, time.Now().Format("2006-01-02 15:04:05")))
+	return c
+}
+
+func (c *coreLogFile) write(level sblog.Level, message string) {
+	if c == nil {
+		return
+	}
+	// Secrets are stripped here too. The whole point of this file is to be sent
+	// to someone, and a failed WireGuard setup dumps the entire ipcConf —
+	// private key included — into one error string.
+	//
+	// The server's address is deliberately NOT redacted: a WireGuard handshake
+	// is diagnosed by which endpoint the initiation went to, and a file that
+	// hides it cannot answer the question it was opened for. This file stays on
+	// disk until the user sends it, unlike the visible log.
+	c.writeLine(fmt.Sprintf("[%s] %s", sblog.FormatLevel(level), redactEngineSecrets(message)))
+}
+
+func (c *coreLogFile) writeLine(line string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.file == nil {
+		return
+	}
+	_, _ = c.file.WriteString(time.Now().Format("15:04:05.000") + " " + line + "\n")
+}
+
+// Path reports where the sink is writing, for the one line the user does see.
+func (c *coreLogFile) Path() string {
+	if c == nil || c.file == nil {
+		return ""
+	}
+	return c.file.Name()
+}
+
+func (c *coreLogFile) Close() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.file == nil {
+		return
+	}
+	_ = c.file.Close()
+	c.file = nil
 }
 
 // newSingBoxLogWriter builds a log writer that hides the server's domain/IP when
 // the active proxy comes from a subscription. Manual servers keep full detail —
 // the user owns them and the address is already visible in the UI.
-func newSingBoxLogWriter(log *logger.Logger, proxy ProxyConfig) *singBoxLogWriter {
-	w := &singBoxLogWriter{log: log}
+func newSingBoxLogWriter(log *logger.Logger, proxy ProxyConfig, core *coreLogFile) *singBoxLogWriter {
+	w := &singBoxLogWriter{log: log, core: core}
 	if proxy.SubscriptionURL == "" {
 		return w
 	}
@@ -273,6 +388,11 @@ func redactEngineSecrets(msg string) string {
 }
 
 func (w *singBoxLogWriter) WriteMessage(level sblog.Level, message string) {
+	// The file sink sees everything, before any filter: the lines this function
+	// drops next are precisely the ones worth having when the core is the only
+	// witness left.
+	w.core.write(level, message)
+
 	if level > sblog.LevelWarn {
 		return
 	}
@@ -331,6 +451,8 @@ func (w *singBoxLogWriter) WriteMessage(level sblog.Level, message string) {
 }
 
 
+
+var _ adapter.ConnectionTracker = (*trafficTracker)(nil)
 
 type trafficTracker struct {
 	upload        *atomic.Int64
@@ -432,6 +554,11 @@ func (e *SingBoxEngine) Start(ctx context.Context, cfg EngineConfig) error {
 		return fmt.Errorf("data directory: %w", err)
 	}
 
+	if err := awaitPendingClose(ctx, e.pendingClose, e.pendingSince, pendingCloseCeiling, e.log); err != nil {
+		return err
+	}
+	e.pendingClose = nil
+
 	if err := e.bootLocked(ctx, cfg, true); err != nil {
 		return err
 	}
@@ -485,32 +612,13 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 	}
 
 	boxCtx, cancel := context.WithCancel(ctx)
-	boxCtx = include.Context(boxCtx)
-
-	var options option.Options
-	if err := singjson.UnmarshalContext(boxCtx, configJSON, &options); err != nil {
-		cancel()
-		return fmt.Errorf("parsing options: %w", err)
+	// The verdict store has to reach the smart outbound, and the outbound is
+	// built by the core out of JSON — so it cannot be handed over as an option.
+	// The service context is the core's own answer to exactly this, and it is how
+	// every built-in outbound reaches the managers it needs.
+	if cfg.Verdicts != nil {
+		boxCtx = service.ContextWith[*verdict.Store](boxCtx, cfg.Verdicts)
 	}
-
-	instance, err := box.New(box.Options{
-		Context:           boxCtx,
-		Options:           options,
-		PlatformLogWriter: newSingBoxLogWriter(e.log, cfg.Proxy),
-	})
-	if err != nil {
-		cancel()
-		return fmt.Errorf("creating sing-box instance: %w", err)
-	}
-
-	if announceMode {
-		// Counters reset on first start; preserved across reloads.
-		e.uploadBytes.Store(0)
-		e.downloadBytes.Store(0)
-		e.proxyUploadBytes.Store(0)
-		e.proxyDownloadBytes.Store(0)
-	}
-
 	tracker := &trafficTracker{
 		upload:        &e.uploadBytes,
 		download:      &e.downloadBytes,
@@ -522,6 +630,50 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 		mode:          cfg.Mode,
 		isSub:         cfg.Proxy.SubscriptionURL != "",
 	}
+	// The tracker has to exist before the core does: the smart outbound books
+	// its own traffic once it has chosen a path, and it is constructed during
+	// box.New. AppendTracker below still installs it the usual way.
+	boxCtx = service.ContextWith[*trafficTracker](boxCtx, tracker)
+	// Whether this node carries UDP decides what the smart outbound does with
+	// HTTP/3 (see decideSmartUDP). Registered as a closure, not a value: the
+	// verdict is written a few seconds after connect by startUDPRelayProbe, so
+	// anything sampled here would be "not measured" for the whole session.
+	boxCtx = service.ContextWith[nodeUDPCheck](boxCtx, nodeUDPCheckFor(cfg.Proxy))
+	boxCtx = extendedBoxContext(boxCtx)
+
+	var options option.Options
+	if err := singjson.UnmarshalContext(boxCtx, configJSON, &options); err != nil {
+		cancel()
+		return fmt.Errorf("parsing options: %w", err)
+	}
+
+	// Opened before the core exists so the very first lines — the ones a failed
+	// start produces — are already being captured. Nil unless the level was
+	// raised, and every method tolerates nil.
+	coreLog := newCoreLogFile(singBoxLogLevel())
+	if path := coreLog.Path(); path != "" {
+		e.log.Info(fmt.Sprintf("[SING-BOX] Подробный лог ядра пишется в %s", path))
+	}
+
+	instance, err := box.New(box.Options{
+		Context:           boxCtx,
+		Options:           options,
+		PlatformLogWriter: newSingBoxLogWriter(e.log, cfg.Proxy, coreLog),
+	})
+	if err != nil {
+		cancel()
+		coreLog.Close()
+		return fmt.Errorf("creating sing-box instance: %w", err)
+	}
+
+	if announceMode {
+		// Counters reset on first start; preserved across reloads.
+		e.uploadBytes.Store(0)
+		e.downloadBytes.Store(0)
+		e.proxyUploadBytes.Store(0)
+		e.proxyDownloadBytes.Store(0)
+	}
+
 	instance.Router().AppendTracker(tracker)
 
 	if err := instance.Start(); err != nil {
@@ -530,15 +682,71 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 		// caller's retry get a clean slate: cancel() unwinds goroutines but not
 		// the OS-level adapter/filters, which would otherwise linger and make the
 		// next CreateAdapter fail with "configure tun interface / access denied".
-		closeInstanceBounded(instance, 5*time.Second, e.log)
+		// Keep the handle even though this instance never became ours: a start
+		// that failed late still opened the cache file, and the next attempt has
+		// to wait for that to be released.
+		e.pendingClose = closeInstanceBounded(instance, boxCtx, 5*time.Second, e.log)
+		e.pendingSince = time.Now()
+		closeCoreLogAfter(coreLog, e.pendingClose)
 		cancel()
 		return fmt.Errorf("starting sing-box: %w", err)
 	}
 
+	// AmneziaWG 3.1 switches, which the core cannot carry in its config (see
+	// applyAWG31). Done here, right after Start, because the device only
+	// exists once the endpoint has started and because random_trailers has to
+	// match the peer before the first handshake is answered. A failure is not
+	// fatal: the session still runs, with 3.0 behaviour.
+	if knobs := awg31KnobsFor(cfg.Proxy); !knobs.empty() {
+		if err := applyAWG31(boxCtx, knobs, e.log); err != nil {
+			e.log.Warning(fmt.Sprintf("[PROXY] Параметры AmneziaWG 3.1 не применены: %v", err))
+		}
+	}
+
+	// While the diagnostic log is open, sample the WireGuard device counters:
+	// a tunnel that goes quiet logs nothing at all otherwise, and tx/rx say
+	// immediately whether our packets are leaving and whether anything comes
+	// back. Costs nothing in an ordinary session — coreLog is nil there.
+	startWGStatsSampler(boxCtx, boxCtx, coreLog)
+
 	e.configPath = configPath
 	e.instance = instance
 	e.cancel = cancel
+	e.boxCtx = boxCtx
+	e.coreLog = coreLog
 	return nil
+}
+
+// closeTrackedConnections closes every connection the core is tracking, before
+// the core itself starts shutting down.
+//
+// This is what keeps a WireGuard or AmneziaWG disconnect from hanging. Goroutine
+// dumps taken on 14.09.2026 show the whole teardown stopped in one place:
+// box.Close → endpoint manager → the WireGuard endpoint → its gVisor stack →
+// Stack.Wait → tcp.Endpoint.Wait, parked on a HUp event. Those TCP endpoints
+// are the far ends of live proxied connections, and the connection manager that
+// owns them is SIX entries further down box.Close's list — so the endpoint waits
+// for something only a later step could do, and the wait is unbounded. Two
+// minutes was the longest measured; the instance holds the cache-file lock for
+// all of it, which is why the next connect used to fail as well.
+//
+// Closing the near side is enough: connectionCopy sees the error and closes the
+// far side with it, so the gVisor endpoint gets its HUp and Wait returns. The
+// core closing the same manager again later is a no-op — the list is empty.
+func closeTrackedConnections(boxCtx context.Context, log *logger.Logger) {
+	if boxCtx == nil {
+		return
+	}
+	manager := service.FromContext[adapter.ConnectionManager](boxCtx)
+	if manager == nil {
+		return
+	}
+	if log != nil {
+		if count := manager.Count(); count > 0 {
+			log.Info(fmt.Sprintf("[SING-BOX] Закрываем %d соединений перед остановкой", count))
+		}
+	}
+	manager.CloseAll()
 }
 
 // closeInstanceBounded closes a sing-box instance with a hard ceiling, returning
@@ -552,20 +760,126 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 // e.mu) never returned, freezing the UI until the process was killed. On timeout
 // the goroutine is left running: a single stale sing-box instance is
 // GC-collected eventually; a frozen disconnect button is not.
-func closeInstanceBounded(inst *box.Box, ceiling time.Duration, log *logger.Logger) {
-	closeDone := make(chan struct{}, 1)
+//
+// log may be nil, and the ping probe engine passes nil on purpose: every line
+// here describes the user's own session, and a probe sweep tearing down one
+// throwaway engine per node would otherwise bury that session's log in its own
+// bookkeeping.
+func closeInstanceBounded(inst *box.Box, boxCtx context.Context, ceiling time.Duration, log *logger.Logger) <-chan struct{} {
+	closeDone := make(chan struct{})
 	started := time.Now()
 	go func() {
+		closeTrackedConnections(boxCtx, log)
 		_ = inst.Close()
-		closeDone <- struct{}{}
+		close(closeDone)
 	}()
 	select {
 	case <-closeDone:
-		if elapsed := time.Since(started); elapsed > 3*time.Second {
+		if elapsed := time.Since(started); elapsed > 3*time.Second && log != nil {
 			log.Warning(fmt.Sprintf("[SING-BOX] Close занял %s", elapsed.Round(100*time.Millisecond)))
 		}
 	case <-time.After(ceiling):
-		log.Warning("[SING-BOX] Close() timeout — продолжаем без ожидания (goroutine завершится позже)")
+		if log != nil {
+			log.Warning("[SING-BOX] Close() timeout — продолжаем без ожидания (goroutine завершится позже)")
+			dumpGoroutinesOnCloseHang(log)
+		}
+	}
+	return closeDone
+}
+
+// closeCoreLogAfter closes the diagnostic sink once the instance's Close has
+// actually finished — not when Stop returns.
+//
+// The difference matters precisely in the case the sink is usually opened for:
+// closeInstanceBounded gives up on a hanging Close after its ceiling and leaves
+// the goroutine running, and the core keeps logging from in there ("close
+// endpoint/wireguard[proxy] take too much time to finish!"). Closing the file
+// at Stop would cut the log off right before the part being investigated.
+func closeCoreLogAfter(core *coreLogFile, done <-chan struct{}) {
+	if core == nil {
+		return
+	}
+	if done == nil {
+		core.Close()
+		return
+	}
+	go func() {
+		<-done
+		core.Close()
+	}()
+}
+
+// dumpGoroutinesOnCloseHang writes every goroutine stack to a file the moment
+// Close overruns its ceiling.
+//
+// Which service is blocking is knowable only from the inside: box.Close walks
+// its services in a fixed order (endpoint before cache-file, among others) and
+// a single slow one holds everything behind it. Without a stack dump the next
+// investigation starts from the same log line this one did — "Close() timeout"
+// and nothing else.
+func dumpGoroutinesOnCloseHang(log *logger.Logger) {
+	dir := filepath.Join(resultProxyDataDir(), "diag")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return
+	}
+	buf := make([]byte, 1<<20)
+	buf = buf[:runtime.Stack(buf, true)]
+	path := filepath.Join(dir, fmt.Sprintf("close-hang-%s.txt", time.Now().Format("20060102-150405")))
+	if err := os.WriteFile(path, buf, 0o600); err != nil {
+		return
+	}
+	log.Warning(fmt.Sprintf("[SING-BOX] Стеки горутин сохранены: %s", path))
+}
+
+// pendingCloseCeiling is how long a connect waits for the previous session to
+// let go of the cache file. Two minutes was the longest hang measured; the
+// wait is cancellable, so the cost of being generous here is only a spinner
+// the user can stop, while being stingy puts back the failure this replaces.
+const pendingCloseCeiling = 150 * time.Second
+
+// errPreviousSessionClosing is returned when a new instance cannot start
+// because the previous one has not finished closing.
+var errPreviousSessionClosing = errors.New("предыдущая сессия ещё закрывается")
+
+// awaitPendingClose blocks until the previous instance's Close() returns.
+//
+// It exists because of what that instance still owns while it hangs: box.Close
+// shuts the cache file down LAST, after the endpoint it is stuck on, and the
+// cache file is a bbolt database held under an exclusive file lock. Starting a
+// new instance in that window does not degrade — it spends ten seconds inside
+// bbolt.Open and dies with "initialize cache-file: timeout", a message that
+// points at the new session instead of the old one. Measured on 14.09.2026
+// with an AmneziaWG node whose Close took about two minutes: three connect
+// attempts failed that way before the lock cleared by itself.
+//
+// Waiting is cancellable on purpose. Disconnect cancels the connect context
+// before it touches the engine, so the button still works while this runs.
+func awaitPendingClose(
+	ctx context.Context,
+	pending <-chan struct{},
+	since time.Time,
+	ceiling time.Duration,
+	log *logger.Logger,
+) error {
+	if pending == nil {
+		return nil
+	}
+	select {
+	case <-pending:
+		return nil
+	default:
+	}
+	log.Warning("[SING-BOX] Предыдущая сессия ещё закрывается — ждём, иначе новая не получит файл кэша")
+	select {
+	case <-pending:
+		log.Info(fmt.Sprintf("[SING-BOX] Предыдущая сессия закрылась за %s",
+			time.Since(since).Round(100*time.Millisecond)))
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(ceiling):
+		return fmt.Errorf("%w (%s)", errPreviousSessionClosing,
+			time.Since(since).Round(time.Second))
 	}
 }
 
@@ -580,7 +894,11 @@ func (e *SingBoxEngine) shutdownInstanceLocked() {
 	if e.instance != nil {
 		inst := e.instance
 		e.instance = nil
-		closeInstanceBounded(inst, 5*time.Second, e.log)
+		e.pendingClose = closeInstanceBounded(inst, e.boxCtx, 5*time.Second, e.log)
+		e.pendingSince = time.Now()
+		e.boxCtx = nil
+		closeCoreLogAfter(e.coreLog, e.pendingClose)
+		e.coreLog = nil
 	}
 	if e.configPath != "" {
 		os.Remove(e.configPath)
@@ -614,6 +932,15 @@ func (e *SingBoxEngine) ApplyAppWhitelist(paths []string) error {
 	newCfg.AppWhitelist = append([]string(nil), paths...)
 
 	e.shutdownInstanceLocked()
+	// Same hazard as a fresh connect: the instance just told to stop still owns
+	// the cache file until its Close returns, and a reload that trips over that
+	// leaves the user with no tunnel at all (running is flipped false below).
+	if err := awaitPendingClose(e.savedCtx, e.pendingClose, e.pendingSince, pendingCloseCeiling, e.log); err != nil {
+		e.running.Store(false)
+		e.log.Error(fmt.Sprintf("[SING-BOX] Hot-reload не начат: %v", err))
+		return err
+	}
+	e.pendingClose = nil
 	if err := e.bootLocked(e.savedCtx, newCfg, false); err != nil {
 		// Reload failed — engine is now stopped. Flip running so callers see
 		// a consistent state and don't keep applying changes to a dead engine.
@@ -729,6 +1056,63 @@ func (t *trafficTracker) RoutedPacketConnection(
 	return bufio.NewInt64CounterPacketConn(conn, t.downCounters(shouldTrack), nil, t.upCounters(shouldTrack), nil)
 }
 
+// RoutedFlow is the third method sing-box 1.14 added to adapter.ConnectionTracker.
+// It covers traffic the router hands to an outbound as a raw L3 flow instead of
+// a connection, and for this client that is not a corner case: the TUN asks the
+// router about every new flow (Router.PreMatch), and a WireGuard endpoint —
+// which is what a WG or AmneziaWG node is here, under the "proxy" tag — answers
+// PreMatchFlow for every network and implements tun.Port. So on those nodes the
+// packets are forwarded at L3 and never become a net.Conn: RoutedConnection and
+// RoutedPacketConnection are simply never called, and returning nil here would
+// leave the speed indicator and the watchdog's traffic veto reading zero for the
+// whole session. Plain proxy outbounds (VLESS, Trojan, hysteria2, …) are not
+// FlowOutbound at all and keep taking the connection path.
+//
+// ICMP is deliberately excluded. `direct` is a FlowOutbound solely for ICMP
+// (PreMatchFlow in protocol/direct/outbound.go), so every ping would arrive
+// here; ping bytes never fed these counters before 1.14 and must not start.
+func (t *trafficTracker) RoutedFlow(
+	_ context.Context,
+	metadata adapter.InboundContext,
+	_ adapter.Rule,
+	matchOutbound adapter.Outbound,
+) tun.FlowTracker {
+	if metadata.Network == N.NetworkICMP {
+		return nil
+	}
+	_, _, shouldTrack := t.logConnection(metadata, matchOutbound)
+	return &flowCounter{
+		down: t.downCounters(shouldTrack),
+		up:   t.upCounters(shouldTrack),
+	}
+}
+
+// flowCounter books a forwarded flow into the same counters a wrapped
+// connection feeds. Forward is client→server (upload), reverse is the way back,
+// matching the core's own flowLogger (route/flow_tracker.go).
+type flowCounter struct {
+	down []*atomic.Int64
+	up   []*atomic.Int64
+}
+
+func (f *flowCounter) AttachFlow(tun.FlowHandle) {}
+
+func (f *flowCounter) CountForward(n int) {
+	for _, c := range f.up {
+		c.Add(int64(n))
+	}
+}
+
+func (f *flowCounter) CountReverse(n int) {
+	for _, c := range f.down {
+		c.Add(int64(n))
+	}
+}
+
+func (f *flowCounter) FlowEstablished() {}
+
+func (f *flowCounter) CloseFlow(tun.FlowCloseReason) {}
+
 // rotateLogged drops every entry in the dedup map and resets the counter.
 // Called from the hot path once the unique-host count crosses the threshold.
 // Safe under concurrent callers: the mutex serializes rotations and the
@@ -746,6 +1130,59 @@ func (t *trafficTracker) rotateLogged() {
 	})
 	t.count.Store(0)
 	t.log.Info(fmt.Sprintf("[CONN] Буфер детализации очищен (превышен порог %d уникальных хостов)", loggedRotateThreshold))
+}
+
+// attributeProxyConn books everything that flows through conn to the node
+// counters, on top of whatever totals it is already feeding.
+//
+// The orientation is deliberately the same as RoutedConnection's: both wrap the
+// client-side connection, so "read" and "write" have to mean the same thing in
+// both places, or the node's share would be measured in the opposite direction
+// from the total.
+func (t *trafficTracker) attributeProxyConn(conn net.Conn) net.Conn {
+	return bufio.NewInt64CounterConn(conn,
+		[]*atomic.Int64{t.proxyDownload},
+		[]*atomic.Int64{t.proxyUpload})
+}
+
+// attributeProxyPacketConn is attributeProxyConn for a UDP flow. Same job,
+// same reason it exists separately from RoutedPacketConnection: the tracker
+// runs before the smart outbound has chosen, so the node's share of a flow it
+// decides to tunnel has to be booked here instead.
+//
+// The orientation comes from RoutedPacketConnection rather than being derived
+// again — read is download, write is upload — because the two wrap the same
+// side of the same flow and a disagreement would make the node's share move
+// against the total.
+func (t *trafficTracker) attributeProxyPacketConn(conn N.PacketConn) N.PacketConn {
+	return bufio.NewInt64CounterPacketConn(conn,
+		[]*atomic.Int64{t.proxyDownload}, nil,
+		[]*atomic.Int64{t.proxyUpload}, nil)
+}
+
+// logProxyConnection writes the one [CONN] line per host that logConnection
+// would have written, for a connection whose outbound only became known later.
+func (t *trafficTracker) logProxyConnection(metadata adapter.InboundContext) {
+	host := metadata.Domain
+	if host == "" {
+		host = metadata.Destination.Fqdn
+	}
+	if host == "" {
+		return
+	}
+	key := host + "→" + smartOutboundTag
+	if _, loaded := t.logged.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	if t.count.Add(1) > loggedRotateThreshold {
+		t.rotateLogged()
+	}
+	viaStr := fmt.Sprintf(" | via %s", t.server)
+	if t.isSub {
+		viaStr = ""
+	}
+	msg := fmt.Sprintf("[CONN] %s -> %s%s | status: connected", host, metadata.Destination.String(), viaStr)
+	t.log.LogWithSource(msg, logger.TypeInfo, host, "", host)
 }
 
 func (t *trafficTracker) logConnection(metadata adapter.InboundContext, outbound adapter.Outbound) (string, string, bool) {
@@ -780,7 +1217,11 @@ func (t *trafficTracker) logConnection(metadata adapter.InboundContext, outbound
 	// a warning about a routing decision that was correct: in Smart mode
 	// Final="direct" (buildRoute), so anything off the censored block-list is
 	// supposed to go direct.
-	if outTag == "direct" || outTag == "block" {
+	// The smart outbound has not chosen yet: the router wraps the connection
+	// before handing it over (fork route/route.go:158), so at this point the
+	// answer literally does not exist. It books its own traffic once it knows,
+	// via attributeProxyConn and logProxyConnection.
+	if outTag == "direct" || outTag == "block" || outTag == smartOutboundTag {
 		return host, dest, false
 	}
 

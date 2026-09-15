@@ -208,7 +208,29 @@
         "title": "Network",
         "desc": "DNS, local access, and proxy port.",
         "items": "• DNS  • IPv6 • Local network"
+      },
+      "experimental": {
+        "title": "Experimental",
+        "desc": "Unfinished and untested. Enable at your own risk.",
+        "items": "• Adaptive smart mode"
+      },
+      "ping": {
+        "title": "Ping",
+        "items": "• Probe type  • Test URL  • Timeout",
+        "desc": "How, and for how long, latency to nodes is measured."
       }
+    },
+    "adaptive_smart": {
+      "title": "Adaptive smart mode",
+      "desc": "Detect blocks on its own instead of relying on a list. Experimental."
+    },
+    "adaptive_smart_memory_only": {
+      "title": "Do not store verdicts on disk",
+      "desc": "Kept in memory only, forgotten on restart."
+    },
+    "adaptive_smart_block_doh": {
+      "title": "Block browser DoH",
+      "desc": "Forces the browser back to the system DNS. May break sites."
     },
     "tun_stack": {
       "title": "TUN mode",
@@ -249,7 +271,7 @@
     "subscription_user_agent": {
       "title": "User agent",
       "desc": "Empty — the default ResultV header.",
-      "placeholder": "ResultV/3.4.0/Windows/11_10.0.26200"
+      "placeholder": "ResultV/3.5.0/Windows/11_10.0.26200"
     },
     "dns": {
       "title": "DNS Servers",
@@ -260,7 +282,7 @@
       "preset_quad9": "Quad9 DNS",
       "preset_yandex": "Yandex DNS",
       "custom_label": "Or enter your own",
-    "custom_placeholder": "Example: 8.8.8.8, 1.1.1.1",
+      "custom_placeholder": "Example: 8.8.8.8, 1.1.1.1",
       "apply": "Apply"
     },
     "lan_listen": {
@@ -308,6 +330,27 @@
       "desc": "Language of the app's labels.",
       "ru": "Русский",
       "en": "English"
+    },
+    "ping_type": {
+      "title": "Ping type",
+      "desc": "How latency is measured. “Auto” picks the probe by node protocol."
+    },
+    "ping_url": {
+      "title": "Test URL",
+      "desc": "Fetched through the node itself. HTTPS only.",
+      "custom_label": "Custom URL",
+      "placeholder": "https://www.gstatic.com/generate_204",
+      "invalid": "An https:// URL is required — over http the answer can be forged locally",
+      "only_http": "Applies to the HTTP GET and HTTP HEAD types only.",
+      "url_title": "Test URL"
+    },
+    "ping_timeout": {
+      "title": "Ping timeout",
+      "desc": "How long to wait for an answer before calling the node unreachable."
+    },
+    "ping": {
+      "url_title": "Test URL",
+      "url_invalid": "An https:// URL is required — over http the answer can be forged locally."
     }
   },
   "routingProfiles": {
@@ -465,6 +508,7 @@
     "deleteSubscriptionAria": "Delete subscription",
     "deleteManualGroupAria": "Delete all manual servers",
     "confirmDeleteSubscription": "Delete subscription \"{{name}}\" and all its servers from the list?",
+    "confirmDelete": "Delete server “{{name}}”?",
     "confirmDeleteMyProxies": "Delete all manually added servers ({{count}})?",
     "subUnlimited": "∞",
     "subActiveUntil": "Active until: {{date}}",
@@ -495,11 +539,14 @@
     "countSubs_other": "{{count}} subscriptions",
     "search": "Search servers...",
     "myServers": "My servers",
+    "emptyGroup": "No servers",
     "subDate": "{{date}} at {{time}}",
     "subMeta": "Until {{date}} | {{used}} / {{total}}",
     "subMetaNoDate": "{{used}} / {{total}}",
     "pingServers": "Measure latency to servers",
     "sortServers": "List order",
+    "deleteServer": "Delete server",
+    "editServer": "Edit server",
     "editSubscription": "Subscription settings",
     "support": "Support",
     "renameLabel": "Rename",
@@ -623,12 +670,15 @@
     "endpointOnly": "WireGuard and AmneziaWG do not work in Proxy mode — Tunnel only."
   },
   "toast": {
+    "deleteWithoutConfirm": "The next servers will be deleted right away, without asking.",
     "autoResolveHint": "Connecting to an auto server can take longer — we're picking the best node for you.",
-    "autoNoNodes": "Auto group: no node responded. Connection cancelled — pick another server or try again later."
+    "autoNoNodes": "Auto group: no node responded. Connection cancelled — pick another server or try again later.",
+    "switchBusy": "Wait for the current operation to finish."
   },
   "changelog": {
     "title": "What's new",
     "dismiss": "Got it",
+    "version": "Version {{version}}",
     "typeFeature": "New",
     "typeImprove": "Improvement",
     "typeFix": "Fix",

@@ -115,9 +115,12 @@ func TestConnect_TunnelStartFailureIncludesReasonAndFallbackFlag(t *testing.T) {
 	prev := isAdminCheck
 	isAdminCheck = func() bool { return true }
 	defer func() { isAdminCheck = prev }()
-	prevDelay := tunRetryDelay
-	tunRetryDelay = 0
-	defer func() { tunRetryDelay = prevDelay }()
+	// The engine below fails with a transient TUN error, so this Connect walks
+	// the whole retry path: device removal, then the poll that waits for the
+	// node to disappear. fastTunRetry drops the delays and answers the poll;
+	// the stub keeps `pnputil /remove-device` off this machine's live adapter.
+	fastTunRetry(t)
+	stubRemoveStaleTunAdapter(t)
 
 	host, port, closeFn := startReachableTCP(t)
 	defer closeFn()

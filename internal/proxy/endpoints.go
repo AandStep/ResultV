@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -63,7 +64,10 @@ func normalizeWireGuardLocalPrefixes(addrs []string) ([]string, error) {
 	return out, nil
 }
 
-func buildEndpoints(proxy ProxyConfig) ([]SBEndpoint, error) {
+// buildEndpoints builds the WireGuard/AmneziaWG endpoint, if the node is one.
+// domainResolver comes from serverDomainResolverTag and answers for a peer
+// addressed by a domain.
+func buildEndpoints(proxy ProxyConfig, domainResolver string) ([]SBEndpoint, error) {
 	pt := strings.ToUpper(strings.TrimSpace(proxy.Type))
 	if pt != "WIREGUARD" && pt != "AMNEZIAWG" {
 		return nil, nil
@@ -110,19 +114,20 @@ func buildEndpoints(proxy ProxyConfig) ([]SBEndpoint, error) {
 	}
 
 	ep := SBEndpoint{
-		Type:          "wireguard",
-		Tag:           "proxy",
-		Detour:        "direct",
-		System:        getBoolField(extra, "system"),
-		Name:          getStringField(extra, "name", ""),
-		MTU:           intFromExtra(extra, "mtu", "MTU"),
-		Address:       address,
-		PrivateKey:    privateKey,
-		ListenPort:    intFromExtra(extra, "listen_port", "listenPort"),
-		Peers:         []SBWireGuardPeer{peer},
-		UDPTimeout:    getStringField(extra, "udp_timeout", ""),
-		Workers:       intFromExtra(extra, "workers", "Workers"),
-		DisablePauses: getBoolField(extra, "disable_pauses"),
+		Type:           "wireguard",
+		Tag:            wireguardEndpointTag,
+		Detour:         "direct",
+		DomainResolver: domainResolver,
+		System:         getBoolField(extra, "system"),
+		Name:           getStringField(extra, "name", ""),
+		MTU:            wireguardMTU(intFromExtra(extra, "mtu", "MTU")),
+		Address:        address,
+		PrivateKey:     privateKey,
+		ListenPort:     intFromExtra(extra, "listen_port", "listenPort"),
+		Peers:          []SBWireGuardPeer{peer},
+		UDPTimeout:     getStringField(extra, "udp_timeout", ""),
+		Workers:        intFromExtra(extra, "workers", "Workers"),
+		DisablePauses:  getBoolField(extra, "disable_pauses"),
 	}
 
 	if pt == "AMNEZIAWG" {
@@ -211,6 +216,38 @@ func intListFromExtra(extra map[string]interface{}, key string) []int {
 		return nil
 	}
 }
+
+// wireguardMTU returns the endpoint MTU, letting RESULTV_WG_MTU override what
+// the node's config asked for.
+//
+// The override exists because MTU is the one WireGuard parameter whose failure
+// mode is invisible from the inside: small packets pass, large ones are dropped
+// somewhere on the path, and the tunnel looks alive while carrying nothing.
+// Sessions on 14.09.2026 show exactly that shape — every packet in the stack
+// counters between 150 and 330 bytes, retransmits starting the moment a speed
+// test asks for volume, and the device still exchanging keepalives afterwards.
+// Answering "is it the packet size" needs one run at a smaller MTU, and a build
+// flag beats hand-editing a subscription node.
+//
+// Out-of-range values are ignored rather than clamped: 576 is the IPv4 minimum
+// any path must carry, and above 1500 the override would create the very
+// problem it is meant to test for.
+func wireguardMTU(configured int) int {
+	raw := strings.TrimSpace(os.Getenv("RESULTV_WG_MTU"))
+	if raw == "" {
+		return configured
+	}
+	override, err := strconv.Atoi(raw)
+	if err != nil || override < 576 || override > 1500 {
+		return configured
+	}
+	return override
+}
+
+// wireguardEndpointTag is the tag a WireGuard/AmneziaWG node is given in the
+// engine config. Named because applyAWG31 looks the endpoint up by it after
+// start — the two must never drift apart.
+const wireguardEndpointTag = "proxy"
 
 // awg3Keys lists the AmneziaWG 3.0 device knobs in the order they are written
 // into ipcConf. See appendAWG3Lines for how they reach the engine.
@@ -309,17 +346,17 @@ func amneziaFromExtra(extra map[string]interface{}) *SBWireGuardAmnezia {
 		return nil
 	}
 	am := &SBWireGuardAmnezia{
-		JC:    intFromAny(m["jc"]),
-		JMin:  intFromAny(m["jmin"]),
-		JMax:  intFromAny(m["jmax"]),
-		S1:    intFromAny(m["s1"]),
-		S2:    intFromAny(m["s2"]),
-		S3:    intFromAny(m["s3"]),
-		S4:    intFromAny(m["s4"]),
-		H1:    amneziaHeaderString(m["h1"]),
-		H2:    amneziaHeaderString(m["h2"]),
-		H3:    amneziaHeaderString(m["h3"]),
-		H4:    amneziaHeaderString(m["h4"]),
+		JC:   intFromAny(m["jc"]),
+		JMin: intFromAny(m["jmin"]),
+		JMax: intFromAny(m["jmax"]),
+		S1:   intFromAny(m["s1"]),
+		S2:   intFromAny(m["s2"]),
+		S3:   intFromAny(m["s3"]),
+		S4:   intFromAny(m["s4"]),
+		H1:   amneziaHeaderString(m["h1"]),
+		H2:   amneziaHeaderString(m["h2"]),
+		H3:   amneziaHeaderString(m["h3"]),
+		H4:   amneziaHeaderString(m["h4"]),
 		I1:   stringFromExtraValue(m["i1"]),
 		I2:   stringFromExtraValue(m["i2"]),
 		I3:   stringFromExtraValue(m["i3"]),

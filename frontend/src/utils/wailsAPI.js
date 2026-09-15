@@ -93,9 +93,12 @@ export const wailsAPI = {
     }
   },
 
-  ping: async (host, port, proxyType) => {
+  // id идёт первым, потому что типы «через прокси» строят настоящий аутбаунд
+  // и им нужна вся запись узла целиком, а не адрес с портом. Прямым пробам
+  // идентификатор не нужен — для них пустая строка безвредна.
+  ping: async (id, host, port, proxyType) => {
     try {
-      return await PingProxy(host, port, proxyType || "");
+      return await PingProxy(String(id || ""), host, port, proxyType || "");
     } catch (e) {
       console.error("wailsAPI.ping error:", e);
       throw e;

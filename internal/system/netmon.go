@@ -17,6 +17,8 @@ package system
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"net"
 	"sort"
 	"strings"
@@ -217,6 +219,65 @@ func localAddrSignature() string {
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, ",")
+}
+
+// VirtualInterfaceName reports whether an adapter name looks like a tunnel or
+// other virtual link rather than a real one. Exported so internal/proxy can
+// ask the same question with the same answer instead of keeping a second copy
+// of the list that drifts away from this one.
+func VirtualInterfaceName(name string) bool {
+	n := strings.ToLower(name)
+	for _, marker := range []string{
+		"tun", "tap", "wintun", "tailscale", "wireguard", "nordlynx",
+		"zerotier", "sing-tun",
+	} {
+		if strings.Contains(n, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// NetworkFingerprint names the network this machine is currently on, collapsed
+// to a short stable token. Censorship is a property of the network, not of the
+// laptop: what a home ISP blocks says nothing about the same name on a hotel
+// Wi-Fi, so anything the client learns is filed under this.
+//
+// Tunnel adapters are excluded, and that exclusion is the whole point rather
+// than tidiness. localAddrSignature counts every up adapter, so connecting the
+// VPN would itself change the fingerprint — and since the verdicts are only
+// ever consulted while connected, every session would open on an empty set and
+// the store would never remember anything across a reconnect.
+//
+// Returns "" when the adapters cannot be enumerated, which callers treat as
+// "keep using whatever namespace we were on" rather than as a new network.
+func NetworkFingerprint() string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	parts := make([]string, 0, len(ifaces))
+	for _, ifi := range ifaces {
+		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if VirtualInterfaceName(ifi.Name) {
+			continue
+		}
+		addrs, err := ifi.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			parts = append(parts, ifi.Name+"="+a.String())
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	sort.Strings(parts)
+	sum := sha256.Sum256([]byte(strings.Join(parts, ",")))
+	return hex.EncodeToString(sum[:8])
 }
 
 

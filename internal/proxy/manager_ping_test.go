@@ -15,7 +15,12 @@
 
 package proxy
 
-import "testing"
+import (
+	"testing"
+	"time"
+
+	"resultproxy-wails/internal/config"
+)
 
 func TestManagerPing_TunnelUsesLANProbeForNonHysteria2(t *testing.T) {
 	m := NewManager(nil)
@@ -46,7 +51,7 @@ func TestManagerPing_TunnelUsesLANProbeForNonHysteria2(t *testing.T) {
 		return 0, false, "error", "udp"
 	}
 
-	res := m.Ping("1.2.3.4", 443, "http")
+	res := m.Ping("1.2.3.4", 443, "http", ProxyConfig{}, PingOptions{Type: config.PingTypeAuto, Timeout: 30 * time.Second})
 	if !res.Reachable || res.LatencyMs != 55 || res.CheckType != "tcp_lan_bind" {
 		t.Fatalf("unexpected result: %+v", res)
 	}
@@ -80,7 +85,7 @@ func TestManagerPing_TunnelUsesLANProbeForHysteria2(t *testing.T) {
 		return -1, true, "", "udp_lan_bind"
 	}
 
-	res := m.Ping("1.2.3.4", 443, "hysteria2")
+	res := m.Ping("1.2.3.4", 443, "hysteria2", ProxyConfig{}, PingOptions{Type: config.PingTypeAuto, Timeout: 30 * time.Second})
 	if !res.Reachable || res.LatencyMs != -1 || res.CheckType != "udp_lan_bind" {
 		t.Fatalf("unexpected result: %+v", res)
 	}
@@ -121,7 +126,7 @@ func TestManagerPing_Hysteria2FallsBackToTCPWhenUDPProbeFails(t *testing.T) {
 		return 0, false, "timeout"
 	}
 
-	res := m.Ping("1.2.3.4", 443, "hysteria2")
+	res := m.Ping("1.2.3.4", 443, "hysteria2", ProxyConfig{}, PingOptions{Type: config.PingTypeAuto, Timeout: 30 * time.Second})
 	if !res.Reachable || res.LatencyMs != 61 || res.CheckType != "tcp_fallback" || res.Reason != "" {
 		t.Fatalf("unexpected result: %+v", res)
 	}
@@ -163,7 +168,7 @@ func TestManagerPing_TunnelUsesLANProbeForWireGuard(t *testing.T) {
 		return -1, true, ""
 	}
 
-	res := m.Ping("1.2.3.4", 51820, "wireguard")
+	res := m.Ping("1.2.3.4", 51820, "wireguard", ProxyConfig{}, PingOptions{Type: config.PingTypeAuto, Timeout: 30 * time.Second})
 	if !res.Reachable || res.LatencyMs != -1 || res.CheckType != "udp_lan_bind" {
 		t.Fatalf("unexpected result: %+v", res)
 	}

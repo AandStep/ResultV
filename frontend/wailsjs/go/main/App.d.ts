@@ -85,7 +85,7 @@ export function ParseSubscriptionText(arg1:string):Promise<main.SubscriptionPrev
 
 export function PickAppForWhitelist():Promise<string>;
 
-export function PingProxy(arg1:string,arg2:number,arg3:string):Promise<proxy.PingResultDTO>;
+export function PingProxy(arg1:string,arg2:string,arg3:number,arg4:string):Promise<proxy.PingResultDTO>;
 
 export function PreviewRoutingDeepLink(arg1:string):Promise<config.RoutingProfile>;
 

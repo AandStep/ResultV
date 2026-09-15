@@ -26,6 +26,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BrowserOpenURL } from "../../../wailsjs/runtime/runtime";
+import { PAGE_BUY, useScrollMemory } from "../../hooks/usePageMemory";
 import implogo from "../../assets/implogo.png";
 import BuyPage from "./BuyPage";
 import AppSidebar from "./AppSidebar";
@@ -48,6 +49,9 @@ export default function BuyScreen() {
   const { t } = useTranslation();
   const [copiedId, setCopiedId] = useState("");
   const copiedTimer = useRef(0);
+
+  /* Прокрутка возвращается туда, где её оставили. */
+  const contentRef = useScrollMemory(PAGE_BUY);
 
   useEffect(() => () => clearTimeout(copiedTimer.current), []);
 
@@ -80,6 +84,7 @@ export default function BuyScreen() {
         copied: t("buy.copied"),
       }}
       sidebar={<AppSidebar />}
+      contentRef={contentRef}
     />
   );
 }

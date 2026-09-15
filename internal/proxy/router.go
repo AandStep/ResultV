@@ -483,10 +483,27 @@ func blockedCIDRFloor() []string {
 // answers suspicious requests with `cf-mitigated: challenge`, and that page
 // loads challenges.cloudflare.com.
 //
+// Anthropic's artifact host (measured 2026-09-10 from the user's real RU
+// address and through the node side by side): the document inside an artifact
+// is served from a per-artifact subdomain of claudeusercontent.com — the host
+// answers with `frame-ancestors 'self' https://claude.ai https://*.claude.ai
+// https://claude.com https://*.claude.com`, i.e. it exists to be framed by the
+// chat page. That registrable domain is in none of the sources, so the page
+// left through the tunnel while the document it frames was fetched direct.
+// Anthropic answers a Russian address with 302 →
+// claude.com/app-unavailable-in-region (claude.ai/public/artifacts/<id> gives
+// 200 through the node and that redirect from the real address), and the region
+// page ships `x-frame-options: SAMEORIGIN`, so the browser cannot render it in
+// the frame: the site loads and the artifact alone shows a connection error.
+// claude.site is the same product one hop earlier — published artifacts are
+// linked as claude.site/artifacts/<id>, which 308-redirects into claude.ai.
+//
 // Kept to specific hosts for the same reason blockedCIDRFloor could aggregate
 // only Discord's own /18: buildRoute emits these as domain_suffix, so a bare
 // google.com would pull search and every other Google property into the tunnel
-// — a much larger change of behaviour than the bug being fixed.
+// — a much larger change of behaviour than the bug being fixed. The exception
+// is singleTenantFloorDomains, where the whole registrable domain is the
+// product and its hosts cannot be enumerated.
 func blockedDomainFloor() []string {
 	return []string{
 		"accounts.google.com",
@@ -499,6 +516,22 @@ func blockedDomainFloor() []string {
 		"api2.hcaptcha.com",
 		"pst-issuer.hcaptcha.com",
 		"challenges.cloudflare.com",
+		"claudeusercontent.com",
+		"claude.site",
+	}
+}
+
+// singleTenantFloorDomains are the floor entries deliberately kept at the
+// registrable domain instead of a specific host. Membership needs both: the
+// whole domain serves one product (so a domain_suffix rule pulls in nothing
+// else), and its hosts cannot be listed — claudeusercontent.com gives every
+// artifact its own subdomain. Adding a domain here is a decision, which is
+// why it sits next to the floor rather than inside the test that enforces the
+// specific-host rule for everything else.
+func singleTenantFloorDomains() map[string]struct{} {
+	return map[string]struct{}{
+		"claudeusercontent.com": {},
+		"claude.site":           {},
 	}
 }
 

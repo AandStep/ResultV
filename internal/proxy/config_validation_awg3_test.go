@@ -147,3 +147,56 @@ func TestAmneziaAcceptsOrdinarySignaturePackets(t *testing.T) {
 		t.Fatalf("unexpected validation error: %v", err)
 	}
 }
+
+// The engine refuses overlapping packet-type headers inside IpcSet, and that
+// refusal costs the whole connect and arrives with the entire ipcConf attached.
+// Catching it here names the pair instead.
+func TestAWGOverlappingHeadersRejected(t *testing.T) {
+	_, err := awg3ValidationError(t, `{"h1": "5", "h2": "3-7"}`)
+	if err == nil {
+		t.Fatal("пересекающиеся H1/H2 должны быть отклонены")
+	}
+	if !strings.Contains(err.Error(), "overlap") {
+		t.Errorf("сообщение должно называть пересечение, получено: %v", err)
+	}
+}
+
+// Unset slots keep their protocol defaults (1,2,3,4), so a config that sets
+// only H1 = 3 collides with the H3 the engine will use.
+func TestAWGHeaderCollidesWithDefault(t *testing.T) {
+	if _, err := awg3ValidationError(t, `{"h1": "3"}`); err == nil {
+		t.Error("H1=3 сталкивается с дефолтным H3=3 — ядро это отвергнет")
+	}
+}
+
+// Defaults on their own must stay valid: an amnezia block without H-values is
+// the common case.
+func TestAWGDefaultHeadersAccepted(t *testing.T) {
+	if _, err := awg3ValidationError(t, `{"jc": 4}`); err != nil {
+		t.Errorf("конфиг без H-значений должен проходить, получено: %v", err)
+	}
+}
+
+// A 3.1 switch that cannot be read must be refused rather than dropped: with
+// random_trailers mismatched the tunnel never comes up and the log says
+// nothing.
+func TestAWG31UnreadableSwitchRejected(t *testing.T) {
+	_, err := awg3ValidationError(t, `{"random_trailers": "maybe"}`)
+	if err == nil {
+		t.Fatal("нечитаемое значение random_trailers должно быть отклонено")
+	}
+	if !strings.Contains(err.Error(), "random_trailers") {
+		t.Errorf("сообщение должно называть параметр, получено: %v", err)
+	}
+}
+
+func TestAWG31ReadableSwitchesAccepted(t *testing.T) {
+	for _, block := range []string{
+		`{"random_trailers": "on", "disable_cookies": "off"}`,
+		`{"RandomTrailers": true}`,
+	} {
+		if _, err := awg3ValidationError(t, block); err != nil {
+			t.Errorf("%s должен проходить валидацию, получено: %v", block, err)
+		}
+	}
+}

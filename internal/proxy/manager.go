@@ -23,15 +23,19 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"resultproxy-wails/internal/config"
 	"resultproxy-wails/internal/logger"
 	sys "resultproxy-wails/internal/system"
 	"resultproxy-wails/internal/system/processtree"
+	"resultproxy-wails/internal/verdict"
 )
 
 type StatusDTO struct {
@@ -69,6 +73,31 @@ type PingResultDTO struct {
 	LatencyMs int64  `json:"latencyMs"`
 	Reason    string `json:"reason,omitempty"`
 	CheckType string `json:"checkType,omitempty"`
+}
+
+// pingEngineMaxConcurrency caps how many throwaway probe engines run at once.
+//
+// The frontend's own worker pool is sized for cheap socket probes
+// (PING_CONCURRENCY = 16 in useDaemonPing.js), and an engine costs orders of
+// magnitude more than a socket, so the ceiling has to live here rather than
+// in the UI.
+const pingEngineMaxConcurrency = 4
+
+// pingEngineSem admits probe engines. Package-level rather than per-Manager
+// because the cost it protects — memory and sockets — is the process's.
+var pingEngineSem = make(chan struct{}, pingEngineMaxConcurrency)
+
+// PingOptions is the user's ping configuration, resolved by App from settings.
+type PingOptions struct {
+	// Type is one of config.PingType*.
+	Type string
+	// URL and Method apply to the http_* types only.
+	URL    string
+	Method string
+	// Timeout bounds one measurement. For the http_* and icmp types it is the
+	// exact budget; for "auto" it is an outer ceiling on top of each probe's
+	// own internal limit, so it can shorten a wait but not extend one.
+	Timeout time.Duration
 }
 
 type Manager struct {
@@ -162,6 +191,23 @@ type Manager struct {
 	KillSwitchFirewallEngage    func(ProxyConfig, []string)
 	KillSwitchFirewallDisengage func()
 
+	// adaptiveSmart mirrors RoutingRules.AdaptiveSmart and its two sub-switches
+	// for the LIVE session, the same way enableIPv6 and dnsLeakProtection do:
+	// the internal reconnect paths rebuild the engine config from these fields,
+	// so a value that only lived in the caller's argument list would be lost on
+	// the first mode switch or routing-rule change.
+	adaptiveSmart           bool
+	adaptiveSmartMemoryOnly bool
+	adaptiveSmartBlockDoH   bool
+
+	// verdicts is what the adaptive engine has learned about this network, and
+	// probes is the muzzle on the prober that fills it. Both are created at
+	// Init and live for the process: the store is partitioned by network, so
+	// roaming switches namespaces rather than rebuilding it.
+	verdicts    *verdict.Store
+	verdictPath string
+	probes      *probeGate
+
 	// secrets encrypts the persistent server-IP pin cache (server_pins.json)
 	// with the app's hardware-keyed CryptoService — those hostname→backend-IP
 	// entries are exactly what a censor needs, so they never touch disk in the
@@ -177,6 +223,11 @@ func (m *Manager) SetSecretCodec(c SecretCodec) {
 	m.secrets = c
 	m.mu.Unlock()
 }
+
+// verdictCacheFileName is where the adaptive engine's learned verdicts live,
+// beside the other caches in the data dir. It holds no plaintext names — only
+// salted hashes — so it needs no encryption of its own.
+const verdictCacheFileName = "verdicts.cache.json"
 
 var pingTCPProbe = PingProxy
 var pingLANProbe = PingProxyLANBind
@@ -294,6 +345,22 @@ func (m *Manager) Init(ctx context.Context) {
 	m.sysDNS = NewSystemDNS()
 	m.procTracker = processtree.New(nil)
 	m.procTracker.OnChange(m.onProcessTreeChange)
+
+	// The verdict store is an optimisation, never a precondition: a failure to
+	// load it costs a few extra probes, so it must not be able to block a
+	// connect. It is loaded unconditionally rather than behind the switch
+	// because the switch can be turned on mid-session, and an empty store at
+	// that moment would throw away everything the previous session proved.
+	m.verdictPath = filepath.Join(resultProxyDataDir(), verdictCacheFileName)
+	store, err := verdict.Load(m.verdictPath, nil)
+	if err != nil {
+		m.log.Info("[SMART] Кэш вердиктов не загружен, начинаем с чистого листа")
+		salt, _ := verdict.NewSalt()
+		store = verdict.New(salt, nil)
+	}
+	store.SetNamespace(sys.NetworkFingerprint())
+	m.verdicts = store
+	m.probes = newProbeGate(nil)
 
 	// Leftover system state from a crashed / force-killed prior run (DNS
 	// override, system proxy, kill-switch firewall) is intentionally NOT
@@ -852,6 +919,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	}
 	engineCfg.RoutingLists = m.routingListSpecsLocked()
 	engineCfg.RoutingOrder = m.routingOrderLocked()
+	m.applyAdaptiveSmartLocked(&engineCfg)
 	// Smart mode needs the censored block-list in the engine config so
 	// buildRoute can tunnel those domains/ranges while everything else goes
 	// direct. Only populated for Smart — Global/Whitelist ignore it.
@@ -1265,23 +1333,46 @@ func (m *Manager) takeDNSTimings() string {
 // when it's cheaply available and otherwise get out of the way fast.
 const pinnedResolveTimeout = 500 * time.Millisecond
 
+// selfLookupIPAddr is the OS resolver as the application itself sees it, behind
+// a var so tests can hand back the fake addresses a live tunnel produces.
+var selfLookupIPAddr = func(host string) []net.IPAddr {
+	ctx, cancel := context.WithTimeout(context.Background(), pinnedResolveTimeout)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil
+	}
+	return addrs
+}
+
+// selfDoHResolve is the escape hatch for when the OS resolver cannot give this
+// application a usable answer — censored, or answering out of the fake pool.
+var selfDoHResolve = resolveServerIPsViaDoH
+
 func resolvePinnedServerIP(host string) string {
 	host = strings.TrimSpace(host)
 	if host == "" || net.ParseIP(host) != nil {
 		return ""
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), pinnedResolveTimeout)
-	defer cancel()
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil || len(addrs) == 0 {
-		return ""
+	if ips := resolveSelfServerIPs(host); len(ips) > 0 {
+		return ips[0]
 	}
-	for _, a := range addrs {
-		if v4 := a.IP.To4(); v4 != nil {
-			return v4.String()
-		}
+	return ""
+}
+
+// resolveSelfServerIPs is the one place that turns a server name into addresses
+// this application may act on.
+//
+// The fake-address guard is not belt and braces. A reconnect that happens while
+// the TUN is already up — a mode switch, a routing-rule change — re-resolves the
+// server through an OS resolver that FakeIP is now answering, and the result
+// feeds the server pin, the hosts record and route_exclude_address. Pinning
+// 198.18.x.x there sends the tunnel's own packets back into the tunnel.
+func resolveSelfServerIPs(host string) []string {
+	if ips := realIPv4s(selfLookupIPAddr(host)); len(ips) > 0 {
+		return ips
 	}
-	return addrs[0].IP.String()
+	return selfDoHResolve(host)
 }
 
 // resolveAllServerIPs resolves a domain server to ALL of its IPv4 addresses at
@@ -1297,27 +1388,7 @@ func resolveAllServerIPs(host string) []string {
 	if host == "" || net.ParseIP(host) != nil {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), pinnedResolveTimeout)
-	defer cancel()
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil || len(addrs) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(addrs))
-	var out []string
-	for _, a := range addrs {
-		v4 := a.IP.To4()
-		if v4 == nil {
-			continue
-		}
-		s := v4.String()
-		if _, dup := seen[s]; dup {
-			continue
-		}
-		seen[s] = struct{}{}
-		out = append(out, s)
-	}
-	return out
+	return resolveSelfServerIPs(host)
 }
 
 // captureLiveServerIP fills proxy.ResolvedIP from the live OS socket when the
@@ -1456,6 +1527,7 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 	}
 	engineCfg.RoutingLists = m.routingListSpecsLocked()
 	engineCfg.RoutingOrder = m.routingOrderLocked()
+	m.applyAdaptiveSmartLocked(&engineCfg)
 	// Smart mode needs the censored block-list in the engine config so
 	// buildRoute can tunnel those domains/ranges while everything else goes
 	// direct. Only populated for Smart — Global/Whitelist ignore it.
@@ -2273,6 +2345,42 @@ func (m *Manager) SetTunStack(stack string) {
 	m.tunStack = stack
 }
 
+// SetAdaptiveSmart stores the experimental verdict-engine switches for the
+// next engine start or reload. Call it before Connect the way SetTunStack is
+// called: the switches live in RoutingRules, which Connect does not receive.
+func (m *Manager) SetAdaptiveSmart(enabled, memoryOnly, blockBrowserDoH bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.adaptiveSmart = enabled
+	m.adaptiveSmartMemoryOnly = memoryOnly
+	m.adaptiveSmartBlockDoH = blockBrowserDoH
+}
+
+// applyAdaptiveSmartLocked copies the experimental switches into the engine
+// config being built, and tells the engine which binary is ours.
+//
+// SelfExecutablePath is not optional decoration: buildDNS turns it into the
+// first DNS rule, the one that keeps the app's own lookups — the prober, the
+// updater, the subscription fetch — away from the fake address pool. An empty
+// path silently removes that rule, so failing to resolve it also disables the
+// feature rather than shipping it without its guard.
+//
+// Caller must hold m.mu.
+func (m *Manager) applyAdaptiveSmartLocked(cfg *EngineConfig) {
+	if !m.adaptiveSmart {
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		m.log.Warning("[SMART] Не удалось определить путь к своему exe — адаптивный режим не включён")
+		return
+	}
+	cfg.AdaptiveSmart = true
+	cfg.AdaptiveSmartBlockBrowserDoH = m.adaptiveSmartBlockDoH
+	cfg.SelfExecutablePath = exe
+	cfg.Verdicts = m.verdicts
+}
+
 // SetRoutingLists replaces the resolved routing-list specs used by the next
 // engine start/reload. Stored under m.mu; a copy is taken so the caller may
 // reuse its slice.
@@ -2439,7 +2547,181 @@ func (m *Manager) GetMode() ProxyMode {
 	return m.mode
 }
 
-func (m *Manager) Ping(ip string, port int, proxyType string) PingResultDTO {
+// Ping measures latency to one node the way the user asked for.
+//
+// node carries the full entry because the http_* types have to build a real
+// outbound, which needs URI/Extra/credentials — ip/port/proxyType alone
+// cannot describe a VLESS node. The direct probes still use ip/port, so a
+// missing node only costs the HTTP types.
+func (m *Manager) Ping(ip string, port int, proxyType string, node ProxyConfig, opts PingOptions) PingResultDTO {
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+
+	switch opts.Type {
+	case config.PingTypeHTTPGet, config.PingTypeHTTPHead:
+		return m.pingViaNode(node, proxyType, opts, timeout)
+	case config.PingTypeICMP:
+		return m.withDeadline(timeout, "icmp", func() PingResultDTO {
+			return m.pingICMPOnly(ip, timeout)
+		})
+	default:
+		return m.withDeadline(timeout, "", func() PingResultDTO {
+			return m.pingDirect(ip, port, proxyType)
+		})
+	}
+}
+
+// withDeadline runs probe and abandons it once timeout elapses.
+//
+// The abandoned goroutine is not a leak: every probe below has an internal
+// ceiling of its own and finishes on its own schedule, and the channel is
+// buffered so a late result never blocks the sender. This is what makes the
+// timeout knob work for "auto" without changing the shared probe signatures —
+// which the AUTO sweep and 133 test assignments depend on.
+func (m *Manager) withDeadline(timeout time.Duration, checkType string, probe func() PingResultDTO) PingResultDTO {
+	done := make(chan PingResultDTO, 1)
+	go func() { done <- probe() }()
+	select {
+	case res := <-done:
+		return res
+	case <-time.After(timeout):
+		return PingResultDTO{Reachable: false, Reason: "timeout", CheckType: checkType}
+	}
+}
+
+// pingBudgetMargin is the slice of the outer deadline reserved so an inner
+// probe's own verdict gets back before withDeadline gives up.
+//
+// Without it the two budgets are equal and the outer one always wins, because
+// the inner path pays for a name lookup and a socket first. That is not a
+// cosmetic difference: "this host does not answer echo" and "we stopped
+// waiting" are different facts, and the UI prints only the second one
+// ("Timeout"). Every host that blocks ICMP — which is most of them — was
+// therefore reported as a timeout, hiding the real answer.
+const pingBudgetMargin = 150 * time.Millisecond
+
+// pingResolveShare is how much of one measurement's budget the name lookup may
+// spend before the probe itself is starved.
+//
+// A third, capped at the resolver's own ceiling. Resolving is nearly free in
+// the common case (a literal address returns immediately, a cached one too),
+// so the share only ever matters when the resolver is struggling — which is
+// exactly when it must not consume the probe's turn. Left unbounded it can
+// cost pingResolveTimeout plus dohQueryTimeout per DoH endpoint: 5 seconds,
+// more than any timeout the user is allowed to pick.
+func pingResolveShare(timeout time.Duration) time.Duration {
+	share := timeout / 3
+	if share > pingResolveTimeout {
+		share = pingResolveTimeout
+	}
+	return share
+}
+
+// resolvePingHostBounded is resolvePingHost with a hard ceiling.
+//
+// The lookup keeps running after we walk away — it has ceilings of its own and
+// populates the shared cache, so the next sweep gets the answer this one paid
+// for. The channel is buffered so that late result never blocks its sender.
+func resolvePingHostBounded(host string, budget time.Duration) string {
+	trimmed := strings.TrimSpace(host)
+	// A literal address is already the answer; no goroutine, no clock.
+	if trimmed == "" || net.ParseIP(trimmed) != nil {
+		return trimmed
+	}
+	done := make(chan string, 1)
+	go func() { done <- resolvePingHost(trimmed) }()
+	select {
+	case ip := <-done:
+		return ip
+	case <-time.After(budget):
+		return ""
+	}
+}
+
+// pingICMPOnly answers with ICMP and nothing else. There is deliberately no
+// fallback: the user picked ICMP, and quietly returning a TCP number would
+// misreport what was measured.
+func (m *Manager) pingICMPOnly(ip string, timeout time.Duration) PingResultDTO {
+	deadline := time.Now().Add(timeout)
+
+	dialHost := resolvePingHostBounded(ip, pingResolveShare(timeout))
+	if dialHost == "" {
+		return PingResultDTO{Reachable: false, Reason: "dns_unresolved", CheckType: "dns"}
+	}
+	source := ""
+	m.mu.Lock()
+	tunnelSession := m.connected && m.mode == ProxyModeTunnel
+	m.mu.Unlock()
+	if tunnelSession {
+		if local, err := pickLANBindIPv4(); err == nil && local != nil {
+			source = local.String()
+		}
+	}
+
+	// Whatever the lookup left, minus the margin. A budget already spent means
+	// the host had its chance and said nothing — which is the ICMP verdict,
+	// not a timeout.
+	budget := time.Until(deadline) - pingBudgetMargin
+	if budget <= 0 {
+		return PingResultDTO{Reachable: false, Reason: "icmp_unavailable", CheckType: "icmp"}
+	}
+
+	ms, ok := pingICMPProbe(dialHost, source, budget)
+	if !ok {
+		return PingResultDTO{Reachable: false, Reason: "icmp_unavailable", CheckType: "icmp"}
+	}
+	return PingResultDTO{Reachable: true, LatencyMs: ms, CheckType: "icmp"}
+}
+
+// pingViaNode measures through a throwaway probe engine.
+func (m *Manager) pingViaNode(node ProxyConfig, proxyType string, opts PingOptions, timeout time.Duration) PingResultDTO {
+	checkType := "http_get"
+	method := http.MethodGet
+	if opts.Type == config.PingTypeHTTPHead {
+		checkType, method = "http_head", http.MethodHead
+	}
+
+	pt := strings.ToUpper(strings.TrimSpace(proxyType))
+	if pt == "WIREGUARD" || pt == "AMNEZIAWG" {
+		return PingResultDTO{Reachable: false, Reason: "unsupported_for_protocol", CheckType: checkType}
+	}
+	if strings.TrimSpace(node.IP) == "" {
+		return PingResultDTO{Reachable: false, Reason: "node_not_found", CheckType: checkType}
+	}
+	if err := config.ValidatePingTestURL(opts.URL); err != nil {
+		return PingResultDTO{Reachable: false, Reason: "bad_test_url", CheckType: checkType}
+	}
+
+	// The budget starts AFTER the slot is won. Counting queue time against it
+	// would report a false timeout for every node that merely waited its turn.
+	pingEngineSem <- struct{}{}
+	defer func() { <-pingEngineSem }()
+
+	bindIPv4 := ""
+	m.mu.Lock()
+	tunnelSession := m.connected && m.mode == ProxyModeTunnel
+	m.mu.Unlock()
+	if tunnelSession {
+		if local, err := pickLANBindIPv4(); err == nil && local != nil {
+			bindIPv4 = local.String()
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	ms, ok, reason := pingThroughNodeProbe(ctx, node, method, opts.URL, bindIPv4)
+	if !ok {
+		return PingResultDTO{Reachable: false, Reason: reason, CheckType: checkType}
+	}
+	return PingResultDTO{Reachable: true, LatencyMs: ms, CheckType: checkType}
+}
+
+// pingDirect is the original probe table: a measurement to the node's own
+// address, with the probe picked by protocol. It is what PingTypeAuto runs.
+func (m *Manager) pingDirect(ip string, port int, proxyType string) PingResultDTO {
 	m.mu.Lock()
 	mode := m.mode
 	connected := m.connected
@@ -2892,6 +3174,47 @@ func (m *Manager) Shutdown() {
 	if m.engine != nil && (m.connected || m.engine.IsRunning()) {
 		m.engine.Stop()
 	}
+
+	// Saved last, after the network is back to normal: the write is local and
+	// cheap, but nothing about it is worth delaying the restore of the user's
+	// routes and resolver by even a moment.
+	m.saveVerdictsLocked()
+}
+
+// saveVerdictsLocked persists what was learned, unless the user asked for no
+// residue on disk. Caller must hold m.mu.
+func (m *Manager) saveVerdictsLocked() {
+	if m.verdicts == nil || m.verdictPath == "" || m.adaptiveSmartMemoryOnly {
+		return
+	}
+	if err := m.verdicts.Save(m.verdictPath); err != nil {
+		m.log.Info("[SMART] Не удалось сохранить кэш вердиктов")
+	}
+}
+
+// NotifyNetworkChanged switches the verdict store to the set belonging to the
+// network the machine is on now. Called from the same place the LAN-bind and
+// AUTO caches are invalidated — a roam is exactly when what was learned about
+// the previous link stops being evidence about this one.
+//
+// Nothing is dropped: the previous network's set is still there when the user
+// comes home.
+func (m *Manager) NotifyNetworkChanged() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.verdicts == nil {
+		return
+	}
+	fp := sys.NetworkFingerprint()
+	if fp == "" || fp == m.verdicts.Namespace() {
+		return
+	}
+	// Write out what the previous network taught us before switching away: a
+	// roam is followed often enough by a crash or a force-quit that "we will
+	// save it at shutdown" is not a promise this can keep.
+	m.saveVerdictsLocked()
+	m.verdicts.SetNamespace(fp)
+	m.log.Info("[SMART] Сменилась сеть — переключаю набор вердиктов")
 }
 
 func (m *Manager) GetRouter() *Router {

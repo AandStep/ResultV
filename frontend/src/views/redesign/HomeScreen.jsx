@@ -38,6 +38,7 @@ import {
   parseExtra,
   sortProxiesByOption,
 } from "../../utils/pingSort";
+import { PAGE_HOME, usePageState, useScrollMemory } from "../../hooks/usePageMemory";
 import wailsAPI from "../../utils/wailsAPI";
 import MainPage from "./MainPage";
 import SortMenu from "./SortMenu";
@@ -146,17 +147,28 @@ export default function HomeScreen() {
     isPingPending,
     selectAndConnect,
     toggleConnection,
+    disconnectOnly,
     cancelConnect,
   } = useConnectionContext();
 
-  const [listOpen, setListOpen] = useState(false);
+  /*
+   * Раскрытость списка и выбранный порядок переживают уход на другую
+   * страницу: экран страницы размонтируется целиком, и обычный `useState`
+   * схлопывал раскрытый список на каждом переходе по меню.
+   */
+  const [listOpen, setListOpen] = usePageState(PAGE_HOME, "listOpen", false);
   /*
    * Порядок списка и меню его выбора — те же семь вариантов, что были на
    * старой главной. Своего меню в макете пока нет, см. docs/design/GAPS.md;
    * до него работает старое, только вызванное от кнопки сортировки.
    */
-  const [sortBy, setSortBy] = useState("default");
+  const [sortBy, setSortBy] = usePageState(PAGE_HOME, "sortBy", "default");
+  /* Меню порядка — дело одного нажатия, и запоминать его незачем: вернуться
+     на страницу и застать висящее меню было бы странно. */
   const [sortAnchor, setSortAnchor] = useState(null);
+
+  /* Прокрутка возвращается туда, где её оставили. */
+  const contentRef = useScrollMemory(PAGE_HOME);
 
   /*
    * Задержку авто-группы меряет не проба, а сам движок: он знает, какой узел
@@ -245,6 +257,17 @@ export default function HomeScreen() {
    */
   const canCancel = isResolving || (status === "connecting" && !modeReconnect);
   const powerBusy = isDisconnecting || modeReconnect;
+
+  /*
+   * Красная кнопка гасит, а не запускает заново. После сбоя `isConnected`
+   * уже false, поэтому общий переключатель понимал нажатие как «подключить»
+   * и повторял ту же неудачную попытку к тому же серверу. Между тем сбой
+   * подключения оставляет за собой движок в неопределённом состоянии, и
+   * человеку в этот момент нужно именно «выключить»: disconnectOnly гасит
+   * его, снимает ошибку и возвращает экран в исходное положение. Повторить
+   * попытку или сменить сервер можно двумя кнопками, которые в этом
+   * состоянии стоят на месте плиток скорости.
+   */
 
   /*
    * Показываем тот же сервер, что и раньше: упавший, затем подключённый,
@@ -346,22 +369,40 @@ export default function HomeScreen() {
    * У авто-группы своя строка кита (`autoserver`): вместо флага — значок
    * автовыбора, а бейдж набран «Авто».
    */
-  const toRow = (p) => ({
-    key: String(p.id),
-    variant: isAuto(p) ? "autoserver" : "row",
-    flag: isAuto(p) ? undefined : <FlagIcon code={p.country} className="rv-flag__img" />,
-    badges: protocolBadges(p, t),
-    title: formatProxyDisplayName(p.name, p.country) || p.name,
-    ping: rowPing(p),
-    /* Задержку ещё меряют — на её месте спиннер, а не пустота. */
-    pingBusy: isPingPending(p),
-    favorite: favorites.has(String(p.id)),
-    onFavorite: () => toggleFavorite(p.id),
-    onSelect: () => {
-      selectAndConnect(p);
-      setListOpen(false);
-    },
-  });
+  const toRow = (p) => {
+    /*
+     * Подключённый сервер подсвечен и в списке на главной — теми же цветами,
+     * что и на странице серверов (фрейм 6744:4162). Раньше строки здесь шли
+     * без подсветки вовсе: шапка карточки горела зелёным, а раскрыв список,
+     * человек не видел, какая из строк ей соответствует.
+     *
+     * Пока к выбранному только идёт подключение, строка держит жёлтый — как
+     * шапка и кнопка питания: нажатие на строку не должно проваливаться в
+     * тишину до самого конца запуска.
+     */
+    const target = String(activeProxy?.id) === String(p.id);
+    const current = isConnected && target;
+    const accent = !target ? "default" : busy ? "warning" : current ? "success" : "default";
+
+    return {
+      key: String(p.id),
+      variant: isAuto(p) ? "autoserver" : "row",
+      flag: isAuto(p) ? undefined : <FlagIcon code={p.country} className="rv-flag__img" />,
+      badges: protocolBadges(p, t),
+      title: formatProxyDisplayName(p.name, p.country) || p.name,
+      ping: rowPing(p),
+      /* Задержку ещё меряют — на её месте спиннер, а не пустота. */
+      pingBusy: isPingPending(p),
+      favorite: favorites.has(String(p.id)),
+      active: current,
+      accent,
+      onFavorite: () => toggleFavorite(p.id),
+      onSelect: () => {
+        selectAndConnect(p);
+        setListOpen(false);
+      },
+    };
+  };
 
   /*
    * Список разбит на группы по подпискам, «Мои сервера» идут последними
@@ -416,6 +457,13 @@ export default function HomeScreen() {
     toggleFavorite,
     selectAndConnect,
     t,
+    /* Подсветка подключённой строки живёт этими тремя. Полагаться на то, что
+       вместе с ними меняется `selectAndConnect`, нельзя: в его зависимостях
+       нет ни `isConnecting`, ни `isDisconnecting`, и переход «не подключено»
+       -> «подключаемся» список бы не заметил. */
+    isConnected,
+    activeProxy,
+    busy,
   ]);
 
   const rowCount = serverGroups.reduce((n, g) => n + g.servers.length, 0);
@@ -460,7 +508,7 @@ export default function HomeScreen() {
       time={formatUptime(uptime)}
       mode={settings?.mode === "tunnel" ? "tunnel" : "proxy"}
       onModeChange={onModeChange}
-      onPower={canCancel ? cancelConnect : toggleConnection}
+      onPower={canCancel ? cancelConnect : status === "error" ? disconnectOnly : toggleConnection}
       powerDisabled={powerBusy}
       server={server}
       serverGroups={serverGroups}
@@ -500,6 +548,7 @@ export default function HomeScreen() {
       onSite={() => BrowserOpenURL(WEBSITE_URL)}
       onTelegram={() => BrowserOpenURL(TELEGRAM_URL)}
       sidebar={<AppSidebar />}
+      contentRef={contentRef}
     />
     <SortMenu
       anchor={sortAnchor}

@@ -106,12 +106,15 @@ export default function SmartRulesPage({
      маршруты сам. Кнопка появляется вместе с режимом. */
   onOpenProfiles,
   sidebar,
+  /* Узел, который прокручивается. Страница отдаёт его наружу, чтобы экран мог
+     вернуть прокрутку туда, где её оставили при уходе на другую страницу. */
+  contentRef,
   text = SMART_RULES_TEXT,
 }) {
   return (
     <div className="rv-smart-rules">
       {sidebar}
-      <div className="rv-smart-rules__content rv-scroll">
+      <div ref={contentRef} className="rv-smart-rules__content rv-scroll">
         <PageHeader title={text.title} subtitle={text.subtitle} />
         <div className="rv-smart-rules__body">
           <div className="rv-smart-rules__modes">

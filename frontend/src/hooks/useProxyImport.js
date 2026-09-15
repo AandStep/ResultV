@@ -202,7 +202,9 @@ export default function useProxyImport() {
   const confirm = useCallback(
     async ({ protocol, routing = true } = {}) => {
       const found = preview;
-      if (!found) return;
+      /* Отвечаем, приняли импорт или нет: страница добавления по этому ответу
+         решает, гасить ли набранный черновик. */
+      if (!found) return false;
       setPreview(null);
       setBusy(true);
       try {
@@ -218,7 +220,7 @@ export default function useProxyImport() {
 
         if (!oneSubscription) {
           await handleBulkSaveProxies(named, setActiveTab, protocol);
-          return;
+          return true;
         }
 
         const label = subscriptionLabelFromURL(subURL);
@@ -230,7 +232,7 @@ export default function useProxyImport() {
             break;
           } catch (err) {
             if (isInsecureSubscriptionError(err) && !allowInsecure) {
-              if (!(await askInsecure())) return;
+              if (!(await askInsecure())) return false;
               allowInsecure = true;
               continue;
             }
@@ -255,9 +257,11 @@ export default function useProxyImport() {
         const cfg = await wailsAPI.getConfig();
         if (cfg.subscriptions) setSubscriptions(cfg.subscriptions);
         if (cfg?.routingRules?.routingLists) syncRoutingLists(cfg.routingRules.routingLists);
+        return true;
       } catch (err) {
         console.error("Import failed:", err);
         failed(err, t("add.subscriptionError"));
+        return false;
       } finally {
         setBusy(false);
       }

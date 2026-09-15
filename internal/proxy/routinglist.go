@@ -45,6 +45,15 @@ type RoutingListSpec struct {
 
 // buildRoutingListRuleSets returns a local source-format rule_set per list
 // whose cache file exists and is non-empty.
+//
+// Local, never remote — which is why sing-box 1.14's new "invalidate a remote
+// rule-set cache when its URL changes" does not overlap with anything here.
+// The core's remote rule-set fetches and caches by URL on its own schedule;
+// this client downloads lists itself (see the routing-list updater and the
+// subscription code), writes them to disk, and points the core at the file. The
+// cache under RoutingListCachePath exists for a different reason than the
+// core's: it is what makes a cold start work before any refresh has finished,
+// and it is keyed by list id rather than by URL.
 func buildRoutingListRuleSets(specs []RoutingListSpec) []SBRuleSet {
 	out := make([]SBRuleSet, 0, len(specs))
 	for _, s := range specs {

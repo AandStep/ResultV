@@ -31,6 +31,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useConfigContext } from "../../context/ConfigContext";
+import { PAGE_RULES, useScrollMemory } from "../../hooks/usePageMemory";
 import { PickAppForWhitelist } from "../../../wailsjs/go/main/App";
 import wailsAPI from "../../utils/wailsAPI";
 import SmartRulesPage from "./SmartRulesPage";
@@ -52,6 +53,11 @@ export default function SmartRulesScreen() {
   const isWin =
     platform === "win32" || platform === "windows" || platform === "win64";
   const isSmart = rules.mode === "smart";
+
+  /* Прокрутка возвращается туда, где её оставили: страница длинная, и уход
+     за сервером сбрасывал её в начало. Списки сайтов и приложений хранить не
+     надо — они приходят из настроек и переживают что угодно. */
+  const contentRef = useScrollMemory(PAGE_RULES);
 
   /* --- Профили маршрутизации (только глобальный режим) -------------------- */
 
@@ -309,6 +315,7 @@ export default function SmartRulesScreen() {
       onPickApp={pickApp}
       onOpenProfiles={() => setProfilesOpen(true)}
       sidebar={<AppSidebar />}
+      contentRef={contentRef}
       text={text}
       />
 

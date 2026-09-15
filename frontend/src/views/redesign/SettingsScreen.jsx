@@ -29,6 +29,11 @@ import { useTranslation } from "react-i18next";
 import { useConfigContext } from "../../context/ConfigContext";
 import { encryptWithPassword, decryptWithPassword } from "../../utils/crypto";
 import { rebuildSubscriptionsFromProxies } from "../../utils/proxyParser";
+import {
+  PAGE_SETTINGS,
+  usePageState,
+  useScrollMemory,
+} from "../../hooks/usePageMemory";
 import wailsAPI from "../../utils/wailsAPI";
 import AppSidebar from "./AppSidebar";
 import ConfigPasswordDialog from "./ConfigPasswordDialog";
@@ -64,12 +69,28 @@ export default function SettingsScreen() {
     showAlertDialog,
   } = useConfigContext();
 
-  /* Пустая строка — список пунктов; иначе открыта страница этой группы. */
-  const [section, setSection] = useState("");
+  /* Пустая строка — список пунктов; иначе открыта страница этой группы.
+     Переживает уход на другую страницу: настройки читают, сверяясь с другими
+     разделами приложения, и каждый раз возвращаться к корню списка значило
+     искать тот же пункт заново. */
+  const [section, setSection] = usePageState(PAGE_SETTINGS, "section", "");
   /* `mode` — что делает окно пароля: шифрует выгрузку или открывает файл.
      `data` — зашифрованное содержимое выбранного файла. */
   const [pwdDialog, setPwdDialog] = useState({ mode: "", data: null });
   const [lanIPs, setLanIPs] = useState([]);
+
+  /*
+   * Прокрутка возвращается туда, где её оставили, — и у списка пунктов, и у
+   * каждого раздела своя.
+   *
+   * Ключ поэтому с разделом внутри. Прокручивается ведь один и тот же узел:
+   * с общим ключом раздел открывался бы сразу прокрученным — ровно настолько,
+   * насколько был отмотан список, — а «назад» возвращало бы список туда, где
+   * бросили раздел, то есть обычно в самое начало.
+   */
+  const contentRef = useScrollMemory(
+    section ? `${PAGE_SETTINGS}:${section}` : PAGE_SETTINGS,
+  );
 
   /* Escape уводит со страницы пункта назад к списку — тем же путём, каким
      он закрывает любое окно приложения. */
@@ -132,6 +153,14 @@ export default function SettingsScreen() {
     ipv6: !!settings?.enableIPv6,
     listenLan: !!settings?.listenLan,
     localPort: Number(settings?.localPort || 0),
+    pingType: settings?.pingType || "auto",
+    pingTestUrl: settings?.pingTestUrl || "",
+    pingTimeoutSec: Number(settings?.pingTimeoutSec || 0) || 3,
+    /* Адаптивный Smart живёт в правилах маршрутизации, а не в настройках:
+       это тот же блок конфига, что режим и списки, которыми он управляет. */
+    adaptiveSmart: !!routingRules?.adaptiveSmart,
+    adaptiveSmartMemoryOnly: !!routingRules?.adaptiveSmartMemoryOnly,
+    adaptiveSmartBlockDoH: !!routingRules?.adaptiveSmartBlockBrowserDoH,
   };
 
   const change = (key, value) => {
@@ -180,6 +209,56 @@ export default function SettingsScreen() {
         }
         return updateSetting("localPort", port);
       }
+      case "pingType":
+        return updateSetting("pingType", value);
+      case "pingTestUrl": {
+        const raw = String(value || "").trim();
+        /* Пустое поле — это «вернуть адрес по умолчанию», а не ошибка. */
+        if (raw === "") return updateSetting("pingTestUrl", "");
+        /* Только https, и это не вкус: по http ответ подделывает наш же
+           локальный слушатель, и мёртвый узел засчитался бы живым. */
+        if (!/^https:\/\/[^/\s]+/i.test(raw)) {
+          showAlertDialog({
+            title: t("settings.ping.url_title", "Тестовый адрес"),
+            message: t(
+              "settings.ping.url_invalid",
+              "Нужен адрес https:// — по http ответ подделает локальный слушатель.",
+            ),
+            variant: "danger",
+          });
+          /* `false` — отказ: поле вернёт набранное к сохранённому адресу. */
+          return false;
+        }
+        return updateSetting("pingTestUrl", raw);
+      }
+      case "pingTimeoutSec": {
+        const sec = parseInt(String(value), 10);
+        if (!Number.isFinite(sec)) return false;
+        return updateSetting("pingTimeoutSec", Math.min(10, Math.max(1, sec)));
+      }
+      case "adaptiveSmart":
+        /* Смена правил уходит на бэкенд сама — эффектом на routingRules
+           в useAppConfig, тем же путём, каким сохраняются режим и списки.
+           Выключение гасит и подтумблер: иначе он остался бы включённым
+           в конфиге под неактивным видом. */
+        return setRoutingRules((prev) => ({
+          ...prev,
+          adaptiveSmart: value,
+          adaptiveSmartMemoryOnly: value ? prev.adaptiveSmartMemoryOnly : false,
+          adaptiveSmartBlockBrowserDoH: value
+            ? prev.adaptiveSmartBlockBrowserDoH
+            : false,
+        }));
+      case "adaptiveSmartMemoryOnly":
+        return setRoutingRules((prev) => ({
+          ...prev,
+          adaptiveSmartMemoryOnly: value,
+        }));
+      case "adaptiveSmartBlockDoH":
+        return setRoutingRules((prev) => ({
+          ...prev,
+          adaptiveSmartBlockBrowserDoH: value,
+        }));
       default:
         return undefined;
     }
@@ -364,6 +443,7 @@ export default function SettingsScreen() {
     <>
       <SettingsPage
         sidebar={<AppSidebar />}
+        contentRef={contentRef}
         section={section}
         onOpenSection={setSection}
         onBack={() => setSection("")}
@@ -395,6 +475,8 @@ export default function SettingsScreen() {
             subscriptions: group("subscriptions"),
             security: group("security"),
             network: group("network"),
+            ping: group("ping"),
+            experimental: group("experimental"),
           },
           exportImport: {
             title: t("settings.export_import.title"),
@@ -429,6 +511,17 @@ export default function SettingsScreen() {
               placeholder: t("settings.lan_listen.port_placeholder"),
               addrTitle: t("settings.lan_listen.addr_title"),
             },
+            pingType: row("ping_type"),
+            pingUrl: row("ping_url", {
+              customLabel: t("settings.ping_url.custom_label"),
+              placeholder: t("settings.ping_url.placeholder"),
+              invalid: t("settings.ping_url.invalid"),
+              onlyHTTP: t("settings.ping_url.only_http"),
+            }),
+            pingTimeout: row("ping_timeout"),
+            adaptiveSmart: row("adaptive_smart"),
+            adaptiveSmartMemoryOnly: row("adaptive_smart_memory_only"),
+            adaptiveSmartBlockDoH: row("adaptive_smart_block_doh"),
           },
         }}
       />

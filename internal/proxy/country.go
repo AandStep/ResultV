@@ -146,32 +146,55 @@ func (c *CountryClient) LookupCountryByIP(ctx context.Context, host string) (str
 	return country, nil
 }
 
+// countryLookupIPAddr and countryDoHResolve are the two ways this file can
+// turn a name into an address. They are variables so tests can answer without
+// touching the network.
+var (
+	countryLookupIPAddr = func(ctx context.Context, host string) ([]net.IPAddr, error) {
+		return net.DefaultResolver.LookupIPAddr(ctx, host)
+	}
+	countryDoHResolve = resolveServerIPsViaDoH
+)
+
 // resolveToIP turns a host literal into something MaxMind can read. Pure-IP
 // inputs are returned unchanged. Hostnames are resolved via the system
-// resolver; we prefer the first IPv4 (most subscription servers are still
-// dual-stack with IPv4 primary) and fall back to IPv6 only if no v4 exists.
-// The resolution is bounded by a short timeout so a slow DNS server never
-// stalls a UI render that's waiting on a flag.
+// resolver; we prefer IPv4 (most subscription servers are still dual-stack
+// with IPv4 primary) and fall back to IPv6 only if no v4 exists. The
+// resolution is bounded by a short timeout so a slow DNS server never stalls a
+// UI render that's waiting on a flag.
+//
+// Fake addresses are dropped the same way the pings and the AUTO sweep drop
+// them (see realIPv4s): with adaptive Smart running, a name resolved on
+// Windows comes back out of the fake pool, because the DNS Client service asks
+// on our behalf and the self-exemption rule cannot see whose query it is.
+// MaxMind has no country for 198.18.0.0/15, so passing one through means the
+// row keeps its empty flag for as long as the tunnel is up. When the system
+// answer holds nothing real, DoH answers instead — the same fallback the
+// server pin and the pings already use.
 func resolveToIP(ctx context.Context, host string) (string, error) {
 	if ip := net.ParseIP(host); ip != nil {
 		return ip.String(), nil
 	}
 	resolveCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	addrs, err := (&net.Resolver{}).LookupIPAddr(resolveCtx, host)
+	addrs, err := countryLookupIPAddr(resolveCtx, host)
+	if err == nil {
+		if real := realIPv4s(addrs); len(real) > 0 {
+			return real[0], nil
+		}
+		for _, a := range addrs {
+			if a.IP.To4() == nil && !isFakeIPAddr(a.IP) {
+				return a.IP.String(), nil
+			}
+		}
+	}
+	if ips := countryDoHResolve(host); len(ips) > 0 {
+		return ips[0], nil
+	}
 	if err != nil {
 		return "", fmt.Errorf("resolve %q: %w", host, err)
 	}
-	if len(addrs) == 0 {
-		return "", fmt.Errorf("resolve %q: no addresses", host)
-	}
-	// IPv4-first preference.
-	for _, a := range addrs {
-		if v4 := a.IP.To4(); v4 != nil {
-			return v4.String(), nil
-		}
-	}
-	return addrs[0].IP.String(), nil
+	return "", fmt.Errorf("resolve %q: no usable addresses", host)
 }
 
 // LookupSelfCountry returns the country of the caller (resolved by the API

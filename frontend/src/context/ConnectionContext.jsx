@@ -109,6 +109,9 @@ export const ConnectionProvider = ({ children }) => {
         showAlertDialog,
         pings,
         statusGenerationRef,
+        /* Смену режима выбор сервера перехватывать не должен: её
+           переподключение ведут настройки, а не этот хук. */
+        isApplyingMode,
     );
 
     // A dead node in an AUTO group is a reason to move, not to stop — the group

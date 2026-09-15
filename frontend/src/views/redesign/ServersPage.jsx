@@ -45,6 +45,9 @@ export const SERVERS_PAGE_TEXT = {
   deleteServer: "Удалить сервер",
   favorite: "В избранное",
   empty: "Серверы не найдены",
+  /* Раскрытая группа, в которой нет ни одного сервера. Кадра в макете нет,
+     см. docs/design/GAPS.md. */
+  emptyGroup: "Нет серверов",
 };
 
 /**
@@ -64,6 +67,9 @@ export default function ServersPage({
   groups = [],
   empty = false,
   sidebar,
+  /* Узел, который прокручивается. Страница отдаёт его наружу, чтобы экран мог
+     вернуть прокрутку туда, где её оставили при уходе на другую страницу. */
+  contentRef,
   text = SERVERS_PAGE_TEXT,
   className = "",
   ...rest
@@ -72,7 +78,7 @@ export default function ServersPage({
     <div className={`rv-servers-page ${className}`} {...rest}>
       {sidebar}
 
-      <div className="rv-servers-page__content rv-scroll">
+      <div ref={contentRef} className="rv-servers-page__content rv-scroll">
         <PageHeader
           title={title ?? text.title}
           subtitle={subtitle}
@@ -118,6 +124,7 @@ export default function ServersPage({
             <HomeServerList
               key={group.key}
               open={group.open}
+              emptyText={text.emptyGroup}
               header={
                 <ServerItem
                   variant={group.variant}

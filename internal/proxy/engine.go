@@ -27,7 +27,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
+
+	"resultproxy-wails/internal/verdict"
 )
 
 type ProxyMode string
@@ -147,6 +150,21 @@ type EngineConfig struct {
 	// adapter (returning Rostelecom/MSK-IX addresses instead of the
 	// chosen resolver). Has no effect in Proxy mode.
 	DNSLeakProtection bool
+
+	// AdaptiveSmart turns on the experimental verdict engine. Its first
+	// visible half is FakeIP: with it on, every connection carries the real
+	// domain before any rule is matched (fork route/route.go:422), which is
+	// what lets UDP and HTTP/3 be classified at all.
+	AdaptiveSmart bool
+	// AdaptiveSmartBlockBrowserDoH rejects well-known browser DoH endpoints so
+	// the browser falls back to the system resolver FakeIP can see.
+	AdaptiveSmartBlockBrowserDoH bool
+	// SelfExecutablePath is this application's own binary. Its lookups must
+	// never be answered with a fake address — see buildDNS.
+	SelfExecutablePath string
+	// Verdicts is the store the smart outbound asks. Nil means "decide as if
+	// nothing is known", which is what every config built by a test does.
+	Verdicts *verdict.Store
 }
 
 type Engine interface {
@@ -231,6 +249,12 @@ type SBExperimental struct {
 type SBCacheFile struct {
 	Enabled bool   `json:"enabled,omitempty"`
 	Path    string `json:"path,omitempty"`
+	// StoreFakeIP persists the fake address to domain mapping. Mandatory
+	// whenever a fakeip server is emitted: without it an in-place reload drops
+	// the mapping while clients still hold the addresses, and the fork turns
+	// each such connection into a fatal "missing fakeip record"
+	// (route/route.go:426).
+	StoreFakeIP bool `json:"store_fakeip,omitempty"`
 }
 
 type SBLog struct {
@@ -249,27 +273,93 @@ type SBDNS struct {
 	// no matching server is a hard start failure ("default DNS server not
 	// found"), so only ever set a tag that is registered.
 	Final string `json:"final,omitempty"`
+	// Optimistic trades a little staleness for a resolver that never blocks on
+	// an expired entry — the same bargain the Smart lists already make at
+	// startup. Set by newSBDNS, never by hand.
+	Optimistic *SBDNSOptimistic `json:"optimistic,omitempty"`
+}
+
+// SBDNSOptimistic configures sing-box 1.14's optimistic DNS cache: an expired
+// entry is answered immediately while a refresh runs in the background. The
+// core rejects it alongside disable_cache or disable_expire, neither of which
+// this client emits.
+type SBDNSOptimistic struct {
+	Enabled bool   `json:"enabled,omitempty"`
+	Timeout string `json:"timeout,omitempty"`
+}
+
+// newSBDNS builds the DNS block for a real session, so the options every mode
+// must share cannot be forgotten by one of buildDNS's exits. The ping engine
+// spells out its own tiny DNS block instead and is right not to come here: it
+// serves one static hosts record for the node's own name and lives for the
+// length of a single measurement, so there is nothing for a cache to be
+// optimistic about.
+//
+// The optimistic window is stated rather than defaulted: the core would serve a
+// stale answer for three days, which outlives any network change the user makes
+// — six hours still covers a laptop that slept overnight while a move between
+// Wi-Fi and mobile refreshes well inside it.
+func newSBDNS(servers []SBDNSServer) *SBDNS {
+	return &SBDNS{
+		Servers:    servers,
+		Optimistic: &SBDNSOptimistic{Enabled: true, Timeout: "6h"},
+	}
 }
 
 type SBDNSServer struct {
-	Type            string `json:"type"`
-	Tag             string `json:"tag"`
-	Server          string `json:"server,omitempty"`
-	ServerPort      int    `json:"server_port,omitempty"`
-	Detour          string `json:"detour,omitempty"`
-	AddressStrategy string `json:"address_strategy,omitempty"`
+	Type       string `json:"type"`
+	Tag        string `json:"tag"`
+	Server     string `json:"server,omitempty"`
+	ServerPort int    `json:"server_port,omitempty"`
+	Detour     string `json:"detour,omitempty"`
+	// DomainResolver bootstraps a resolver that is itself addressed by a
+	// hostname. Without a detour to hide behind, sing-box 1.14 refuses to build
+	// the dialer for such a server at all — "missing domain resolver for domain
+	// server address" — so this is not a warning but the difference between an
+	// engine that starts and one that does not. See buildDNS.
+	DomainResolver string `json:"domain_resolver,omitempty"`
 	// Predefined seeds a static "hosts" DNS server: domain → fixed IP list.
 	// Used to pin the proxy server's own domain to its connect-time IPs so
 	// re-resolution never touches the redirected OS resolver (see buildDNS).
 	Predefined map[string][]string `json:"predefined,omitempty"`
+	// Inet4Range/Inet6Range configure a fakeip server's pools. Only a server
+	// of type "fakeip" reads them.
+	Inet4Range string `json:"inet4_range,omitempty"`
+	Inet6Range string `json:"inet6_range,omitempty"`
+
+	// Servers/Strategy/Timeout configure a server of type "fallback": it holds
+	// no address of its own, only the tags of servers to try, in order, each
+	// bounded by Timeout. See tunnelDNSResolver.
+	Servers  []string `json:"servers,omitempty"`
+	Strategy string   `json:"strategy,omitempty"`
+	Timeout  string   `json:"timeout,omitempty"`
+
+	// throughDetour marks a fallback wrapper whose members all route through
+	// this detour. Never serialised — the core reaches members by tag — it
+	// exists so firstDetourServerTag can name the wrapper rather than one of
+	// its legs.
+	throughDetour string `json:"-"`
 }
 
 type SBDNSRule struct {
 	Domain           []string `json:"domain,omitempty"`
+	DomainSuffix     []string `json:"domain_suffix,omitempty"`
 	ProcessPathRegex []string `json:"process_path_regex,omitempty"`
 	RuleSet          []string `json:"rule_set,omitempty"`
-	Server           string   `json:"server,omitempty"`
-	Action           string   `json:"action,omitempty"`
+	// QueryType is no longer a filter that only applies to what the inbound
+	// asks. On sing-box 1.14 an internal resolve — the dial for a
+	// domain-addressed server — reaches dns/router.go lookupWithRules, which
+	// builds real A and AAAA questions, so these rules match there too. Two
+	// consequences before adding another one: the lookup fans A and AAAA out as
+	// two INDEPENDENT rule walks, so a rule scoped to one type splits a single
+	// dial's resolution across two servers; and the only reason the fakeip
+	// catch-all below is harmless is that an internal lookup passes
+	// allowFakeIP=false and the core skips a fakeip transport outright. That
+	// protection comes from the server's type, not from this field.
+	// TestQueryTypeIsOnlyEverUsedForTheFakeIPRule holds the boundary.
+	QueryType []string `json:"query_type,omitempty"`
+	Server    string   `json:"server,omitempty"`
+	Action    string   `json:"action,omitempty"`
 }
 
 type SBInbound struct {
@@ -296,12 +386,39 @@ type SBInbound struct {
 	// captures under such conditions consistently showed lingering
 	// udpnat2.natConn waiters that never resolved.
 	UDPTimeout string `json:"udp_timeout,omitempty"`
-	// EndpointIndependentNat lets multiple destinations share NAT slots for
-	// the same (source IP, source port) pair instead of allocating a slot
-	// per destination. Under browser QUIC connection storms hitting many
-	// CDN IPs from a single ephemeral source port, this reduces total slot
-	// count proportionally.
-	EndpointIndependentNat bool `json:"endpoint_independent_nat,omitempty"`
+	// UDPMapping and UDPFiltering replace endpoint_independent_nat, which
+	// sing-box 1.14 kept in the schema but stopped reading — a silently
+	// ignored knob is worse than a removed one, because the config still
+	// parses and only the behaviour changes. Both take "endpoint_independent",
+	// "address_dependent" or "address_and_port_dependent".
+	//
+	// Endpoint-independent lets multiple destinations share NAT slots for the
+	// same (source IP, source port) pair instead of allocating a slot per
+	// destination: under browser QUIC storms hitting many CDN IPs from one
+	// ephemeral port that cuts the slot count proportionally. It is also the
+	// core's new default, which is the opposite of what 1.13 did when the
+	// field was absent — so both branches in buildTun say it out loud rather
+	// than inherit anything.
+	UDPMapping   string `json:"udp_mapping,omitempty"`
+	UDPFiltering string `json:"udp_filtering,omitempty"`
+	// UDPNATMax caps how many UDP NAT slots the TUN inbound holds at once.
+	// UDPTimeout alone only bounds how long a dead flow lingers; under the DPI
+	// retry storms this client runs in — browsers reopening QUIC handshakes
+	// that get dropped at UDP/443 — the table still grows faster than it
+	// drains, and pprof captures showed udpnat2.natConn waiters piling up. Not
+	// set for WireGuard endpoints: they keep their own session state, and
+	// starving the inbound's table is the same class of mistake that once
+	// collapsed live tunnel traffic.
+	UDPNATMax uint32 `json:"udp_nat_max,omitempty"`
+	// DNSMode says how the TUN interface handles DNS: "disabled", "native"
+	// (set the platform's per-interface DNS, which on Windows means the
+	// adapter's own DNS servers) or "hijack" (native plus intercepting DNS
+	// traffic). sing-box 1.14 defaults to hijack, which is what this client has
+	// always relied on — written down here so a future default cannot move it
+	// silently, the way endpoint_independent_nat did. DNSAddress is left unset
+	// on purpose: the core then derives the hijack address from the TUN address,
+	// which is the behaviour that existed before the option did.
+	DNSMode string `json:"dns_mode,omitempty"`
 }
 
 type SBOutbound struct {
@@ -309,9 +426,15 @@ type SBOutbound struct {
 	Tag        string `json:"tag"`
 	Server     string `json:"server,omitempty"`
 	ServerPort int    `json:"server_port,omitempty"`
-	Username   string `json:"username,omitempty"`
-	Password   string `json:"password,omitempty"`
-	Method     string `json:"method,omitempty"`
+	// DomainResolver names the DNS server that resolves Server when it is a
+	// domain rather than a literal IP. See serverDomainResolverTag for which
+	// tag belongs here and why the field exists at all; left empty for a
+	// literal address, where the core builds no resolve dialer in the first
+	// place.
+	DomainResolver string `json:"domain_resolver,omitempty"`
+	Username       string `json:"username,omitempty"`
+	Password       string `json:"password,omitempty"`
+	Method         string `json:"method,omitempty"`
 	// Plugin/PluginOptions carry SIP003 (obfs-local, v2ray-plugin). A node whose
 	// server runs a plugin does not work without them.
 	Plugin        string `json:"plugin,omitempty"`
@@ -328,8 +451,16 @@ type SBOutbound struct {
 	GlobalPadding       bool   `json:"global_padding,omitempty"`
 	AuthenticatedLength bool   `json:"authenticated_length,omitempty"`
 	Security            string `json:"security,omitempty"`
-	UpMbps              int    `json:"up_mbps,omitempty"`
-	DownMbps            int    `json:"down_mbps,omitempty"`
+	// Inet4BindAddress pins this outbound's own dialing to one local IPv4.
+	//
+	// Only the ping probe engine sets it, and only while a tunnel session is
+	// up: without it the probe's traffic enters the TUN like everything else
+	// and we would be measuring the tunnel through the tunnel. This is the
+	// same correction pingLANProbe/autoProbeDialer already apply to the direct
+	// probes, moved to where sing-box does the dialing.
+	Inet4BindAddress string `json:"inet4_bind_address,omitempty"`
+	UpMbps           int    `json:"up_mbps,omitempty"`
+	DownMbps         int    `json:"down_mbps,omitempty"`
 	// ServerPorts/HopInterval drive Hysteria2 port hopping. sing-quic parses only
 	// "start:end" ranges, so the URI's "10000-20000" spelling is converted before
 	// it gets here — a range it cannot parse aborts outbound creation.
@@ -342,6 +473,11 @@ type SBOutbound struct {
 	Transport *SBOutboundTransport `json:"transport,omitempty"`
 
 	DomainStrategy string `json:"domain_strategy,omitempty"`
+
+	// Outbounds names the members of a group outbound. Only a group reads
+	// it — for us that is the "smart" type, whose two members are the plain
+	// direct and proxy outbounds it chooses between.
+	Outbounds []string `json:"outbounds,omitempty"`
 }
 
 type SBHysteria2Obfs struct {
@@ -371,20 +507,26 @@ type SBOutboundTLS struct {
 }
 
 type SBEndpoint struct {
-	Type          string              `json:"type"`
-	Tag           string              `json:"tag"`
-	Detour        string              `json:"detour,omitempty"`
-	System        bool                `json:"system,omitempty"`
-	Name          string              `json:"name,omitempty"`
-	MTU           int                 `json:"mtu,omitempty"`
-	Address       []string            `json:"address,omitempty"`
-	PrivateKey    string              `json:"private_key,omitempty"`
-	ListenPort    int                 `json:"listen_port,omitempty"`
-	Peers         []SBWireGuardPeer   `json:"peers,omitempty"`
-	UDPTimeout    string              `json:"udp_timeout,omitempty"`
-	Workers       int                 `json:"workers,omitempty"`
-	DisablePauses bool                `json:"disable_pauses,omitempty"`
-	Amnezia       *SBWireGuardAmnezia `json:"amnezia,omitempty"`
+	Type   string `json:"type"`
+	Tag    string `json:"tag"`
+	Detour string `json:"detour,omitempty"`
+	// DomainResolver resolves a peer addressed by a domain. The endpoint dials
+	// through Detour="direct", so without this the peer's address is resolved
+	// by the direct outbound's own resolve dialer — the deprecated
+	// walk-the-rules path. Naming the server here reaches the same answer
+	// without depending on it. See serverDomainResolverTag.
+	DomainResolver string              `json:"domain_resolver,omitempty"`
+	System         bool                `json:"system,omitempty"`
+	Name           string              `json:"name,omitempty"`
+	MTU            int                 `json:"mtu,omitempty"`
+	Address        []string            `json:"address,omitempty"`
+	PrivateKey     string              `json:"private_key,omitempty"`
+	ListenPort     int                 `json:"listen_port,omitempty"`
+	Peers          []SBWireGuardPeer   `json:"peers,omitempty"`
+	UDPTimeout     string              `json:"udp_timeout,omitempty"`
+	Workers        int                 `json:"workers,omitempty"`
+	DisablePauses  bool                `json:"disable_pauses,omitempty"`
+	Amnezia        *SBWireGuardAmnezia `json:"amnezia,omitempty"`
 }
 
 type SBWireGuardPeer struct {
@@ -520,6 +662,14 @@ type SBOutboundTransport struct {
 	Seed             string `json:"seed,omitempty"`
 }
 
+// SBRoute has no DefaultDomainResolver field, and that is the decision rather
+// than an oversight. sing-box 1.14 deprecated resolving a domain-addressed
+// server with no resolver named, but naming one here would send every internal
+// resolve straight to that transport and past dns.rules entirely — and the rule
+// walk is what keeps a blocked domain resolving through the tunnel instead of
+// through the censored local resolver. The node's own dial fields are named
+// instead (serverDomainResolverTag); TestRouteNeverNamesADefaultDomainResolver
+// holds this shut and carries the full reasoning.
 type SBRoute struct {
 	RuleSet     []SBRuleSet   `json:"rule_set,omitempty"`
 	Rules       []SBRouteRule `json:"rules,omitempty"`
@@ -554,6 +704,20 @@ type SBRouteRule struct {
 // use in tunnel mode. Route rules key off it to give probe traffic a path the
 // user's traffic does not inherit.
 const probeInboundTag = "probe-in"
+
+// probeInboundPortValue is the loopback port of the "probe-in" inbound for the
+// engine currently configured. The block prober needs it to send its
+// through-the-node half somewhere, and the port is chosen while the config is
+// built.
+//
+// Zero means there is no such inbound — proxy mode, or nothing started yet — and
+// the prober then refuses to run rather than quietly measuring the direct path
+// twice and calling the result a comparison.
+var probeInboundPortValue atomic.Int64
+
+func setProbeInboundPort(port int) { probeInboundPortValue.Store(int64(port)) }
+
+func probeInboundPort() int { return int(probeInboundPortValue.Load()) }
 
 // quicRejectRule builds the UDP/443 reject that forces a QUIC client back onto
 // TCP. Callers pass the same selector as the route-to-proxy rule it shadows, so
@@ -613,11 +777,81 @@ func quicRejectRule(sel SBRouteRule) SBRouteRule {
 	return sel
 }
 
+// browserDoHDomains are the DoH endpoints browsers ship as built-in providers.
+//
+// Membership has one criterion, the same one blockedDomainFloor uses: the host
+// exists to serve DoH, so a domain_suffix rule on it pulls in nothing else.
+// That is why cloudflare-dns.com is here as a whole domain — every
+// mozilla./chrome./family./security. prefix under it is a resolver — while
+// Quad9 and AdGuard are listed host by host, because their registrable domains
+// also carry the company's website, and this rule rejects rather than reroutes:
+// swallowing quad9.net would take the site off the network.
+//
+// Not covered, and it cannot be: a browser pointed at a custom DoH template,
+// especially one written as a literal IP. Blocking resolver IPs was considered
+// and rejected — the application's own DoH fallback (doh.go) reaches the same
+// addresses, and a rule that cannot tell the two apart would cut the ground
+// out from under the resolver of last resort.
+func browserDoHDomains() []string {
+	return []string{
+		// Chrome, Edge and Firefox all ship Google's endpoint.
+		"dns.google",
+		"dns.google.com",
+		// The whole domain is the resolver product.
+		"cloudflare-dns.com",
+		"one.one.one.one",
+		// Quad9 by host: quad9.net is also their website.
+		"dns.quad9.net",
+		"dns9.quad9.net",
+		"dns10.quad9.net",
+		"dns11.quad9.net",
+		"dns.opendns.com",
+		"doh.opendns.com",
+		"doh.familyshield.opendns.com",
+		"dns.nextdns.io",
+		"doh.xfinity.com",
+		"dns.adguard-dns.com",
+		"unfiltered.adguard-dns.com",
+		"family.adguard-dns.com",
+		"doh.cleanbrowsing.org",
+		"dns.controld.com",
+		"freedns.controld.com",
+	}
+}
+
 func effectiveDataDir(cfg EngineConfig) string {
 	if cfg.DataDir != "" {
 		return cfg.DataDir
 	}
 	return resultProxyDataDir()
+}
+
+// singBoxCacheDBName is the core's own cache file. Named once because the
+// FakeIP mapping has to land in this very file and not beside it.
+const singBoxCacheDBName = "sing-box-cache.db"
+
+// singBoxLogLevel is "error" unless RESULTV_SINGBOX_LOG_LEVEL says otherwise.
+//
+// The default is not a preference, it is a necessity: at "info" the core logs
+// a line per connection and per DNS answer, and the log window is also what
+// the user sends us. But several questions can only be answered by the core's
+// own voice — which service a hanging Close is stuck on (box.Close traces each
+// one with its elapsed time at "trace"), and whether an answer came out of the
+// optimistic cache rather than the network ("optimistic <domain>" at "debug").
+// Leaving a documented way in beats rebuilding a special binary each time.
+func singBoxLogLevel() string {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("RESULTV_SINGBOX_LOG_LEVEL"))) {
+	case "trace":
+		return "trace"
+	case "debug":
+		return "debug"
+	case "info":
+		return "info"
+	case "warn", "warning":
+		return "warn"
+	default:
+		return "error"
+	}
 }
 
 func buildExperimentalCache(dataDir string) *SBExperimental {
@@ -627,7 +861,7 @@ func buildExperimentalCache(dataDir string) *SBExperimental {
 	return &SBExperimental{
 		CacheFile: &SBCacheFile{
 			Enabled: true,
-			Path:    filepath.Join(dataDir, "sing-box-cache.db"),
+			Path:    filepath.Join(dataDir, singBoxCacheDBName),
 		},
 	}
 }
@@ -692,13 +926,18 @@ func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	host, _ := splitHostPort(cfg.ListenAddr, "127.0.0.1", port)
 
 	dd := effectiveDataDir(cfg)
-	endpoints, err := buildEndpoints(cfg.Proxy)
+	// DNS first: in proxy mode the node's own resolver tag is whichever
+	// transport the core would have reached for by itself, so the tag cannot be
+	// named before the server list exists.
+	dns := buildDNS(cfg)
+	nodeResolver := serverDomainResolverTag(cfg.Proxy, ProxyModeProxy, dns)
+	endpoints, err := buildEndpoints(cfg.Proxy, nodeResolver)
 	if err != nil {
 		return SingBoxConfig{}, err
 	}
 	sbCfg := SingBoxConfig{
 		Log:       &SBLog{Level: "error", Disabled: true},
-		DNS:       buildDNS(cfg),
+		DNS:       dns,
 		Endpoints: endpoints,
 		Inbounds: []SBInbound{{
 			Type:       "mixed",
@@ -706,7 +945,7 @@ func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 			Listen:     host,
 			ListenPort: port,
 		}},
-		Outbounds:    buildOutbounds(cfg.Proxy),
+		Outbounds:    buildOutbounds(cfg.Proxy, nodeResolver),
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
 	}
@@ -872,39 +1111,74 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 
 	pt := strings.ToUpper(strings.TrimSpace(cfg.Proxy.Type))
 
+	// Exclude EVERY backend IP the server resolved to (a CDN domain has several,
+	// and sing-box may fail over among them mid-session) so none of the server's
+	// own traffic loops back into the TUN. Domains alone yield nothing here
+	// (net.ParseIP fails on a hostname) — the pinned IP set is what gives
+	// domain-addressed servers their exclude CIDRs.
+	//
+	// WireGuard and AmneziaWG used to be left out of this, and that is what took
+	// the tunnel down on engine 1.14. Without the exclusion the node's own UDP
+	// enters the TUN and is let back out by the routing rule matching the
+	// server's address — the core log says it outright, "inbound packet
+	// connection to <server>:3306" — so every byte the tunnel carries crosses
+	// the inbound twice: once as payload, once as the encrypted packet carrying
+	// it. On 1.13 that only wasted work. sing-tun 0.9 rebuilt both NAT tables
+	// and put a flow dispatcher in front of every packet, and the same loop now
+	// strangles the session.
+	//
+	// Measured on the same node, same engine, back to back (tunrepro bench,
+	// 15.09.2026): without the exclusion, three 25 MB downloads all failed,
+	// every small request timed out, tcp_established never left zero and
+	// rx_bytes crawled from 1516 to 4452 in eighty seconds. With it, the same
+	// three downloads ran at 170, 101 and 142 Mbit/s, small requests answered in
+	// 74-224 ms, and retransmits and resets stayed at zero.
+	//
+	// The exclusion has a cost, and it is the reason this is pinned to resolved
+	// addresses rather than done by name: a node whose CDN moves it to a backend
+	// outside the pinned set would have its handshake routed into the tunnel it
+	// is trying to establish. That risk is identical for every other protocol
+	// here, which has carried this exclusion for months.
 	var routeExclude []string
-	if pt != "WIREGUARD" && pt != "AMNEZIAWG" {
-		// Exclude EVERY backend IP the server resolved to (a CDN domain has
-		// several, and sing-box may fail over among them mid-session) so none of
-		// the server's own traffic loops back into the TUN. Domains alone yield
-		// nothing here (net.ParseIP fails on a hostname) — the pinned IP set is
-		// what gives domain-addressed servers their exclude CIDRs.
-		for _, host := range serverPinnedIPs(cfg.Proxy) {
-			if serverIP := net.ParseIP(host); serverIP != nil {
-				cidr := host + "/32"
-				if serverIP.To4() == nil {
-					cidr = host + "/128"
-				}
-				routeExclude = append(routeExclude, cidr)
+	for _, host := range serverPinnedIPs(cfg.Proxy) {
+		if serverIP := net.ParseIP(host); serverIP != nil {
+			cidr := host + "/32"
+			if serverIP.To4() == nil {
+				cidr = host + "/128"
 			}
+			routeExclude = append(routeExclude, cidr)
 		}
 	}
 
 	dd := effectiveDataDir(cfg)
-	outbounds := buildOutbounds(cfg.Proxy)
+	// In tunnel mode the tag does not depend on the built server list — it
+	// mirrors the DNS rule buildDNS emits for this same domain — so it can be
+	// named before the DNS block exists.
+	nodeResolver := serverDomainResolverTag(cfg.Proxy, ProxyModeTunnel, nil)
+	outbounds := buildOutbounds(cfg.Proxy, nodeResolver)
+	if adaptiveSmartActive(cfg) {
+		outbounds = append(outbounds, SBOutbound{
+			Type:      smartOutboundTag,
+			Tag:       smartOutboundTag,
+			Outbounds: []string{"direct", "proxy"},
+		})
+	}
 
-	endpoints, err := buildEndpoints(cfg.Proxy)
+	endpoints, err := buildEndpoints(cfg.Proxy, nodeResolver)
 	if err != nil {
 		return SingBoxConfig{}, err
 	}
-	// UDPTimeout / EndpointIndependentNat are TUN-inbound NAT knobs aimed at
-	// cleaning up dead UDP flows under DPI-driven QUIC retry storms. They
-	// must NOT be applied when the active protocol is a WireGuard endpoint:
-	// for WG/AWG the TUN inbound feeds packets straight into the endpoint,
-	// which maintains its own session state, and forcing the inbound to
-	// expire NAT slots after 30s tore down live tunnel traffic (handshake
+	// UDPTimeout / UDPMapping / UDPFiltering are TUN-inbound NAT knobs aimed at
+	// cleaning up dead UDP flows under DPI-driven QUIC retry storms. The
+	// timeout must NOT be applied when the active protocol is a WireGuard
+	// endpoint: for WG/AWG the TUN inbound feeds packets straight into the
+	// endpoint, which maintains its own session state, and forcing the inbound
+	// to expire NAT slots after 30s tore down live tunnel traffic (handshake
 	// passes, browser works for ~30s, then every UDP flow inside the tunnel
-	// collapses). Keep inbound defaults (5min, symmetric) for endpoint protos.
+	// collapses). The timeout stays at the inbound default there, but the NAT
+	// behaviour can no longer be left unsaid: sing-box 1.13 defaulted to
+	// symmetric and 1.14 defaults to endpoint-independent, so silence would
+	// now mean the opposite of what this branch intends.
 	tun := SBInbound{
 		Type:                "tun",
 		Tag:                 "tun-in",
@@ -914,10 +1188,22 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 		AutoRoute:           true,
 		StrictRoute:         strictRoute,
 		RouteExcludeAddress: routeExclude,
+		DNSMode:             "hijack",
 	}
 	if pt != "WIREGUARD" && pt != "AMNEZIAWG" {
 		tun.UDPTimeout = "30s"
-		tun.EndpointIndependentNat = true
+		tun.UDPMapping = "endpoint_independent"
+		tun.UDPFiltering = "endpoint_independent"
+		// 8192 is a starting value, not a measured one: it is far above what
+		// ordinary browsing holds open, so the cap only bites during a storm.
+		// If real traffic ever starts hitting it — UDP failing while TCP is
+		// fine — raise it and write down what forced the change.
+		tun.UDPNATMax = 8192
+	} else {
+		// Same NAT behaviour this branch had before 1.14, now stated explicitly
+		// because the core default moved out from under it.
+		tun.UDPMapping = "address_and_port_dependent"
+		tun.UDPFiltering = "address_and_port_dependent"
 	}
 	// Loopback probe inbound: post-start and watchdog health probes go through
 	// this listener instead of the TUN default route. The target hostname
@@ -932,6 +1218,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	if probePort == 0 {
 		probePort = getFreeLocalPort(14081)
 	}
+	setProbeInboundPort(probePort)
 	probeIn := SBInbound{
 		Type:       "mixed",
 		Tag:        probeInboundTag,
@@ -939,7 +1226,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 		ListenPort: probePort,
 	}
 	sbCfg := SingBoxConfig{
-		Log:          &SBLog{Level: "error", Disabled: false},
+		Log:          &SBLog{Level: singBoxLogLevel(), Disabled: false},
 		DNS:          buildDNS(cfg),
 		Endpoints:    endpoints,
 		Inbounds:     []SBInbound{tun, probeIn},
@@ -947,11 +1234,47 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
 	}
+	// A fakeip server without a persistent mapping is a time bomb: see the
+	// comment on SBCacheFile.StoreFakeIP. buildExperimentalCache already emits
+	// that same file for every other reason the core caches things, so this
+	// only has to make sure it exists and carries the flag — a second cache
+	// file would split the mapping away from the rest of the core's state.
+	if adaptiveSmartActive(cfg) {
+		if sbCfg.Experimental == nil {
+			sbCfg.Experimental = &SBExperimental{}
+		}
+		if sbCfg.Experimental.CacheFile == nil {
+			sbCfg.Experimental.CacheFile = &SBCacheFile{}
+		}
+		sbCfg.Experimental.CacheFile.Enabled = true
+		sbCfg.Experimental.CacheFile.StoreFakeIP = true
+		if sbCfg.Experimental.CacheFile.Path == "" {
+			sbCfg.Experimental.CacheFile.Path = filepath.Join(dd, singBoxCacheDBName)
+		}
+	}
 
 	return sbCfg, nil
 }
 
+// effectiveTunStack resolves which TUN stack to run, letting RESULTV_TUN_STACK
+// override the stored setting.
+//
+// The override is here because the stack is the one half of the tunnel the app
+// offers no way to change, and 14.09.2026 put it under suspicion: with the
+// engine on 1.14 the same AmneziaWG node moves 109 Mbit/s in proxy mode with
+// zero retransmits, and collapses within a minute of real throughput in tunnel
+// mode. The endpoint, the WireGuard device and its own gVisor stack are the
+// same objects in both, so what differs is the TUN inbound — and sing-tun 0.9
+// rewrote the system stack, putting a flow dispatcher in front of every packet
+// and replacing both NAT tables. Comparing system against gvisor needs a switch
+// the user can flip without editing an encrypted config.
 func effectiveTunStack(stack string) string {
+	if override := strings.ToLower(strings.TrimSpace(os.Getenv("RESULTV_TUN_STACK"))); override != "" {
+		switch override {
+		case "gvisor", "system":
+			return override
+		}
+	}
 	switch strings.ToLower(strings.TrimSpace(stack)) {
 	case "gvisor":
 		return "gvisor"
@@ -960,7 +1283,11 @@ func effectiveTunStack(stack string) string {
 	}
 }
 
-func buildOutbounds(proxy ProxyConfig) []SBOutbound {
+// buildOutbounds assembles the outbound list. domainResolver is the tag from
+// serverDomainResolverTag and lands on the node's own outbound only: "direct"
+// dials every destination the router sends it and has no single correct
+// resolver, so it stays on the core's rule-walking fallback deliberately.
+func buildOutbounds(proxy ProxyConfig, domainResolver string) []SBOutbound {
 	pt := strings.ToUpper(strings.TrimSpace(proxy.Type))
 	if pt == "WIREGUARD" || pt == "AMNEZIAWG" {
 		return []SBOutbound{
@@ -968,10 +1295,12 @@ func buildOutbounds(proxy ProxyConfig) []SBOutbound {
 			{Type: "block", Tag: "block"},
 		}
 	}
+	proxyOut := buildProxyOutbound(proxy)
+	proxyOut.DomainResolver = domainResolver
 	outbounds := []SBOutbound{
 		{Type: "direct", Tag: "direct"},
 		{Type: "block", Tag: "block"},
-		buildProxyOutbound(proxy),
+		proxyOut,
 	}
 	return outbounds
 }
@@ -1001,6 +1330,46 @@ func serverPinnedIPs(proxy ProxyConfig) []string {
 	}
 	add(proxy.ResolvedIP)
 	return out
+}
+
+// serverDomainResolverTag names the DNS server that must answer for the node's
+// own address, for the `domain_resolver` dial field on the outbound or endpoint
+// that dials it. Empty when the node is a literal IP: there is nothing to
+// resolve and the core builds no resolve dialer at all.
+//
+// Why the field exists. sing-box 1.14 deprecated dialing a domain-addressed
+// server with no resolver named, and scheduled the fallback for removal. On
+// this fork the fallback survives and is in fact the semantics the rest of the
+// config depends on — it walks dns.rules, which is how a blocked domain still
+// leaves through the tunnel — so `route.default_domain_resolver` stays unset on
+// purpose (see SBRoute). The node is the one dial where the right answer is
+// known ahead of any rule, so it is the one that gets spelled out.
+//
+// Which tag. In tunnel mode the answer mirrors the DNS rule buildDNS already
+// emits for the same domain: the static hosts record when connect time pinned
+// the server's IPs, the system resolver when it did not. It must never be a
+// resolver that rides the tunnel — that tunnel is what this dial is opening.
+//
+// Proxy mode has no TUN, so nothing redirects the system resolver and no hosts
+// record is built. Naming "local" there would move the node's own domain off
+// the encrypted resolver it uses today and hand it to the ISP in plaintext, so
+// the tag is whatever the core would have chosen by itself: the first
+// registered transport. Turning the field on then changes nothing but the
+// deprecation.
+func serverDomainResolverTag(proxy ProxyConfig, mode ProxyMode, dns *SBDNS) string {
+	if proxy.IP == "" || net.ParseIP(proxy.IP) != nil {
+		return ""
+	}
+	if mode == ProxyModeTunnel {
+		if len(serverPinnedIPs(proxy)) > 0 {
+			return serverPinDNSTag
+		}
+		return "local"
+	}
+	if dns != nil && len(dns.Servers) > 0 {
+		return dns.Servers[0].Tag
+	}
+	return ""
 }
 
 // serverEndpointUnresolvable reports whether a TUN connect should be aborted up
@@ -1046,18 +1415,188 @@ func smartRuleSetActive(cfg EngineConfig) bool {
 		cfg.SmartRuleSetPath != ""
 }
 
+// osConnectivityProbeDomains are the hostnames the operating system uses to
+// decide whether this machine has internet at all. They are matched as
+// suffixes because each family has several members (ipv6., www., dns.) and
+// Windows has changed which one it asks for between releases.
+var osConnectivityProbeDomains = []string{
+	"msftconnecttest.com",
+	"msftncsi.com",
+}
+
+const (
+	fakeIPTag        = "fakeip"
+	fakeIPInet4Range = "198.18.0.0/15"
+	fakeIPInet6Range = "fc00::/18"
+)
+
+// serverPinDNSTag names the static `hosts` DNS server seeded with the node's
+// connect-time IPs. Both the DNS rule that points at it and the `domain_resolver`
+// dial field that names it spell the tag through this constant, so the two can
+// never drift apart — a dial field naming an unregistered server is a dead
+// engine, not a warning.
+const serverPinDNSTag = "server-pin"
+
+// isFakeIPAddr reports whether an address came out of the fake pool rather than
+// out of the internet.
+//
+// This has to be checked at the point of USE, not prevented at the point of
+// answer: on Windows a name is resolved by the DNS Client service, not by the
+// process that asked, so every lookup reaches the engine wearing svchost's
+// name and the process_path_regex exemption in buildDNS cannot see ours. The
+// application therefore gets fake addresses like everyone else, and the only
+// place that can tell is the code about to dial one.
+//
+// A fake address is harmless while the connection goes through the TUN — the
+// router turns it back into the name before matching a rule. It is fatal the
+// moment we deliberately bypass the TUN, which is exactly what the LAN-bound
+// probes do: 198.18.x.x means nothing on the physical adapter, and the dial
+// sits there until it times out.
+//
+// The ranges are safe to reject unconditionally: 198.18.0.0/15 is RFC 2544
+// benchmarking space and fc00::/18 is ULA — no reachable server lives in
+// either, whatever produced the answer.
+func isFakeIPAddr(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	for _, cidr := range []string{fakeIPInet4Range, fakeIPInet6Range} {
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// realIPv4s keeps the IPv4 addresses in a resolver answer that a socket can
+// actually reach, dropping fakes and duplicates.
+//
+// Every place the application resolves a name for ITS OWN use has to go through
+// this: the pings and the AUTO sweep dial bound to the physical adapter, and
+// the server pin feeds route_exclude_address, so a fake address there does not
+// degrade anything gracefully — it points the tunnel at itself. An empty result
+// is the signal for the caller to fall back to DoH, which every one of them
+// already knows how to do.
+func realIPv4s(addrs []net.IPAddr) []string {
+	seen := make(map[string]struct{}, len(addrs))
+	var out []string
+	for _, a := range addrs {
+		v4 := a.IP.To4()
+		if v4 == nil || isFakeIPAddr(v4) {
+			continue
+		}
+		s := v4.String()
+		if _, dup := seen[s]; dup {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
+// adaptiveSmartActive reports whether the experimental verdict engine is on for
+// this config. One predicate for the whole feature, because every part of it
+// stands or falls together: the fake pool exists to carry a name to the smart
+// outbound, and the smart outbound exists to compare two paths.
+//
+// Proxy mode is excluded: it has no TUN, so nothing would route the fake range
+// anywhere.
+//
+// WireGuard and AmneziaWG are excluded — but NOT for the reason this comment
+// used to give. It claimed a group naming "proxy" would point at a tag the core
+// cannot resolve, because buildOutbounds emits only direct+block for endpoint
+// protocols. That is wrong and was wrong on 1.13 too: OutboundManager.Outbound
+// falls back to endpoint.Get (adapter/outbound/manager.go), so smartOutbound.Start
+// would find the WireGuard endpoint under that tag like any other member.
+//
+// What is true is that nobody has ever run the fake pool and the verdict engine
+// against an endpoint: the smart outbound would be racing a FlowOutbound, whose
+// packets can bypass the connection path entirely, and none of that has been
+// measured. The exclusion stays until it is — as an untested path, not an
+// impossible one.
+//
+// Separately: FakeIP used to be emitted for these nodes anyway, which bought
+// every cost of the fake pool (launchers seeing 198.18.x.x, names with no A
+// record turning into dead connections) and none of the benefit, since with no
+// second member there is nobody to ask what was learned.
+func adaptiveSmartActive(cfg EngineConfig) bool {
+	if !cfg.AdaptiveSmart || cfg.Mode != ProxyModeTunnel || cfg.RoutingMode != ModeSmart {
+		return false
+	}
+	pt := strings.ToUpper(strings.TrimSpace(cfg.Proxy.Type))
+	return pt != "WIREGUARD" && pt != "AMNEZIAWG"
+}
+
 // firstDetourServerTag returns the tag of the first DNS server routed through
 // the given detour. That server is already the de-facto default today: with no
 // dns.final, sing-box uses the first registered transport and reaches the rest
 // only through rules. Pointing Smart mode's tunnel rules at it therefore
 // preserves current behaviour for blocked domains exactly.
 func firstDetourServerTag(servers []SBDNSServer, detour string) string {
+	// A fallback wrapper is what rules must point at: its legs carry the
+	// detour, and naming a leg directly would give up the other one. Wrappers
+	// are emitted after their legs (the core resolves members by tag at
+	// construction, so the legs have to exist first), which is why this scans
+	// for the wrapper before falling back to a plain server.
+	for _, s := range servers {
+		if s.throughDetour == detour && s.Tag != "" {
+			return s.Tag
+		}
+	}
 	for _, s := range servers {
 		if s.Detour == detour && s.Tag != "" {
 			return s.Tag
 		}
 	}
 	return ""
+}
+
+// tunnelDNSResolver emits the servers that carry one resolver through the
+// tunnel: DoH first, plain DNS-over-TCP second, and a "fallback" wrapper that
+// rules point at.
+//
+// It used to be a single DNS-over-TCP server, and on engine 1.14 that stopped
+// answering. sing-box 1.14 put a query multiplexer
+// (dns/transport/multiplexer.go) in front of the tcp, tls and udp transports:
+// once a background probe decides the resolver supports reuse, every query
+// moves onto one shared, long-lived connection whose liveness check is
+// `conn != nil`. Through a proxy outbound that connection wedges.
+//
+// Measured on the user's live tunnel (15.09.2026, core log at debug): 294 of
+// 295 lookups routed to the node never came back — no answer, no error, not
+// one "lookup failed", so they hung until the engine was stopped and the
+// browser never learned a single YouTube address. Ordinary TCP through the
+// same node was healthy the whole time: the connectivity probe answered in
+// 461 ms and 129 connections completed normally. On a stand the failure shows
+// as "write request: EOF" returned in 0-1 ms, query after query.
+//
+// The https transport is the only remote transport the multiplexer does not
+// touch, which is why DoH leads. The tcp leg stays rather than being deleted:
+// a resolver that speaks no DoH would otherwise have no path at all. The
+// wrapper bounds each leg with a timeout, so even a wedged leg now costs one
+// timeout instead of hanging forever the way the bare transport did.
+//
+// port applies to the tcp leg only. DoH is HTTPS and has to reach 443, so a
+// resolver pinned to a non-standard DNS port keeps that port on the tcp leg
+// while DoH tries the standard one and, failing that, hands over.
+func tunnelDNSResolver(tag, server string, port int, detour string) []SBDNSServer {
+	return []SBDNSServer{
+		{Type: "https", Tag: tag + "-doh", Server: server, Detour: detour},
+		{Type: "tcp", Tag: tag + "-tcp", Server: server, ServerPort: port, Detour: detour},
+		{
+			Type:          "fallback",
+			Tag:           tag,
+			Servers:       []string{tag + "-doh", tag + "-tcp"},
+			Strategy:      "sequential",
+			Timeout:       "5s",
+			throughDetour: detour,
+		},
+	}
 }
 
 func buildDNS(cfg EngineConfig) *SBDNS {
@@ -1075,6 +1614,10 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		// the tunnel for all protocols, eliminating the WFP race.
 		detour := "proxy"
 
+		// Every resolver below is emitted by tunnelDNSResolver as a DoH leg, a
+		// DNS-over-TCP leg and the fallback wrapper rules point at. Read its
+		// comment before changing the shape: a bare tcp server is what stopped
+		// answering on engine 1.14.
 		servers := []SBDNSServer{}
 		if len(cfg.DNSServers) > 0 {
 			for i, raw := range cfg.DNSServers {
@@ -1082,28 +1625,16 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 				if server == "" {
 					continue
 				}
-				servers = append(servers, SBDNSServer{
-					Type:       "tcp",
-					Tag:        fmt.Sprintf("custom-%d", i+1),
-					Server:     server,
-					ServerPort: port,
-					Detour:     detour,
-				})
+				servers = append(servers, tunnelDNSResolver(fmt.Sprintf("custom-%d", i+1), server, port, detour)...)
 			}
 			servers = append(servers, SBDNSServer{Type: "local", Tag: "local"})
 		} else {
-			servers = []SBDNSServer{
-				{Type: "tcp", Tag: "google-tcp", Server: "8.8.8.8", Detour: detour},
-				{Type: "tcp", Tag: "cloudflare-tcp", Server: "1.1.1.1", Detour: detour},
-				{Type: "tls", Tag: "google-tls", Server: "8.8.8.8", Detour: detour},
-				{Type: "tls", Tag: "cloudflare-tls", Server: "1.1.1.1", Detour: detour},
-				{Type: "local", Tag: "local"},
-			}
+			servers = append(servers, tunnelDNSResolver("google", "8.8.8.8", 0, detour)...)
+			servers = append(servers, tunnelDNSResolver("cloudflare", "1.1.1.1", 0, detour)...)
+			servers = append(servers, SBDNSServer{Type: "local", Tag: "local"})
 		}
 
-		dns := &SBDNS{
-			Servers: servers,
-		}
+		dns := newSBDNS(servers)
 
 		// Same predicate as the TUN address, so the two halves can never disagree:
 		// AAAA answers with no IPv6 path to use them would be worse than no AAAA.
@@ -1112,6 +1643,38 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		dns.Strategy = "ipv4_only"
 		if tunCarriesIPv6(cfg) {
 			dns.Strategy = "prefer_ipv4"
+		}
+
+		// The application's own lookups must never be answered from the fake
+		// pool: the prober, the updater and the subscription fetch would each
+		// receive a perfectly successful answer of 198.18.x.x and fail in
+		// silence. The project has already paid for the quieter version of this
+		// bug once, when the app's own resolver was killed by its own DNS
+		// override.
+		//
+		// READ THIS BEFORE RELYING ON IT: on Windows this rule almost never
+		// fires, and it is NOT what protects the app. Names are resolved by the
+		// DNS Client service inside svchost, not by the process that asked, so
+		// the engine matches svchost against this regex and misses. Measured on
+		// a live tunnel: resolvePingHost, going through net.DefaultResolver from
+		// our own process, still got example.com = 198.18.0.224 with this rule
+		// in place, and the ping bound to the physical adapter then spent the
+		// full five seconds timing out against it.
+		//
+		// What actually protects the app is the check at the point of use —
+		// isFakeIPAddr and realIPv4s, applied in resolvePingHost,
+		// probeDirectDial, resolveSelfServerIPs and pickIPv4. The rule is kept
+		// because it is free and does fire for a lookup that reaches sing-box
+		// from our process directly, bypassing getaddrinfo; it must never be
+		// counted as the defence. Emitted FIRST because DNS rules are ordered
+		// and everything below would otherwise claim what it does catch.
+		if adaptiveSmartActive(cfg) && cfg.SelfExecutablePath != "" {
+			if rx := appWhitelistPathRegexes([]string{cfg.SelfExecutablePath}); len(rx) > 0 {
+				dns.Rules = append(dns.Rules, SBDNSRule{
+					ProcessPathRegex: rx,
+					Server:           "local",
+				})
+			}
 		}
 
 		// Resolve the server's own hostname. When we pinned its IPs at connect
@@ -1125,12 +1688,12 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			if pinned := serverPinnedIPs(cfg.Proxy); len(pinned) > 0 {
 				dns.Servers = append(dns.Servers, SBDNSServer{
 					Type:       "hosts",
-					Tag:        "server-pin",
+					Tag:        serverPinDNSTag,
 					Predefined: map[string][]string{cfg.Proxy.IP: pinned},
 				})
 				dns.Rules = append(dns.Rules, SBDNSRule{
 					Domain: []string{cfg.Proxy.IP},
-					Server: "server-pin",
+					Server: serverPinDNSTag,
 				})
 			} else {
 				dns.Rules = append(dns.Rules, SBDNSRule{
@@ -1146,6 +1709,27 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		// for SSH/SFTP clients (WinSCP, etc.) this manifests as silent
 		// "Failed to establish connection" because the encrypted DNS detour
 		// to a public resolver is slower than the SSH handshake timeout.
+		//
+		// Same Windows defect as the self-exemption above, and it predates the
+		// adaptive work: getaddrinfo hands the query to the DNS Client service,
+		// so the engine sees svchost and this regex does not match. The rule
+		// therefore does not do the job it was written for — an excluded app's
+		// lookups are still resolved by whatever the rules below decide, not by
+		// this one. It is kept rather than deleted because it is free and it is
+		// correct wherever a process resolves names itself instead of calling
+		// getaddrinfo; it must not be read as a guarantee.
+		//
+		// What the excluded app's lookup actually hits, once this rule misses:
+		// in Smart mode without the adaptive engine, dns.Final = "local" below,
+		// so it lands on the system resolver and the original symptom is gone
+		// by accident. With the adaptive engine on, the fakeip catch-all is the
+		// last rule and claims every A/AAAA, so the app is handed a fake
+		// address — which still works, because the route-level process rule
+		// (buildRoute matches processes on the connection, where Windows does
+		// preserve the owner) sends the connection direct and the direct
+		// outbound resolves the real name. Global mode keeps the original
+		// symptom in full. A real fix needs a selector the Windows resolver
+		// preserves, and the rule language has none today.
 		if rx := appWhitelistPathRegexes(cfg.AppWhitelist); len(rx) > 0 {
 			dns.Rules = append(dns.Rules, SBDNSRule{
 				ProcessPathRegex: rx,
@@ -1185,6 +1769,57 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			}
 		}
 
+		// The OS connectivity probes have to keep getting the truth. A probe
+		// exists to answer "is there a working path", and a fake address makes
+		// it answer yes every time.
+		//
+		// One of them makes the cost visible: ipv6.msftconnecttest.com has AAAA
+		// records and no A record at all. FakeIP answers every A query anyway,
+		// so Windows dialled 198.18.x.x, the router turned that back into the
+		// name, and the direct outbound resolved it for real under ipv4_only —
+		// "lookup ipv6.msftconnecttest.com: empty result" for a probe that had
+		// simply returned nothing before. Sent to the system resolver, it goes
+		// back to returning nothing, and no connection is opened over a name
+		// that was never going to resolve.
+		if adaptiveSmartActive(cfg) {
+			dns.Rules = append(dns.Rules, SBDNSRule{
+				DomainSuffix: append([]string(nil), osConnectivityProbeDomains...),
+				Server:       "local",
+			})
+		}
+
+		// FakeIP goes last: every exemption above has already claimed what it
+		// needs, and what is left is the traffic whose name we actually want to
+		// carry into the router. Scoped to A/AAAA because that is all a fake
+		// answer can stand in for. dns.Final stays a real server — the fork
+		// rejects a fakeip default outright (dns/transport_manager.go:217).
+		//
+		// This rule is also reached by the engine's OWN lookups on 1.14, where
+		// query_type no longer confines a rule to the inbound's questions (see
+		// SBDNSRule.QueryType). It does no harm there only because such a lookup
+		// carries allowFakeIP=false and resolveDNSRoute skips the transport,
+		// falling through to dns.Final — so a dial for a domain-addressed server
+		// never receives 198.18.x.x. Change the server type here and that
+		// protection is gone.
+		if adaptiveSmartActive(cfg) {
+			server := SBDNSServer{
+				Type:       "fakeip",
+				Tag:        fakeIPTag,
+				Inet4Range: fakeIPInet4Range,
+			}
+			if tunCarriesIPv6(cfg) {
+				server.Inet6Range = fakeIPInet6Range
+			}
+			dns.Servers = append(dns.Servers, server)
+			dns.Rules = append(dns.Rules, SBDNSRule{
+				QueryType: []string{"A", "AAAA"},
+				Server:    fakeIPTag,
+			})
+			if dns.Final == "" {
+				dns.Final = "local"
+			}
+		}
+
 		return dns
 	}
 
@@ -1206,12 +1841,25 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			if server == "" {
 				continue
 			}
-			servers = append(servers, SBDNSServer{
+			entry := SBDNSServer{
 				Type:       "udp",
 				Tag:        fmt.Sprintf("custom-%d", i+1),
 				Server:     server,
 				ServerPort: port,
-			})
+			}
+			// A resolver named by hostname has to be resolved by something
+			// before it can answer anything, and nothing here validates that
+			// the user typed an IP. In tunnel mode the detour covers it — the
+			// node resolves the name remotely — but in proxy mode there is no
+			// detour, and sing-box 1.14 refuses to build the dialer at all
+			// rather than guess: "missing domain resolver for domain server
+			// address". That is a dead engine for every node, from one
+			// hostname in a settings field. The system resolver is the only
+			// answer that cannot be circular.
+			if net.ParseIP(server) == nil {
+				entry.DomainResolver = "local"
+			}
+			servers = append(servers, entry)
 		}
 		servers = append(servers, SBDNSServer{Type: "local", Tag: "local"})
 	} else {
@@ -1222,8 +1870,7 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		}
 	}
 
-	dns := &SBDNS{Servers: servers}
-	return dns
+	return newSBDNS(servers)
 }
 
 func splitDNSServer(raw string) (string, int) {
@@ -1261,7 +1908,15 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	// Global/Whitelist keep proxy as the catch-all.
 	final := "proxy"
 	if cfg.RoutingMode == ModeSmart {
+		// Smart mode inverts the default: everything not on the block-list goes
+		// direct. With the adaptive engine on, that default stops being a blind
+		// "direct" and becomes "ask what we know about this one" — every explicit
+		// rule above still fires first and still wins, so what reaches final is
+		// exactly the traffic no list had an opinion about.
 		final = "direct"
+		if adaptiveSmartActive(cfg) {
+			final = smartOutboundTag
+		}
 	}
 	route := &SBRoute{
 		Final:       final,
@@ -1432,6 +2087,30 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		})
 	}
 
+	// Browser DoH, under its own sub-toggle. A browser with Secure DNS on never
+	// asks the system resolver, so FakeIP never sees the name and the
+	// connection arrives at the router as a bare address. The race still works
+	// on it, but what it learns is filed under an address — and a CDN rotates
+	// addresses, so the knowledge is weaker, ages faster and does not
+	// generalise to the domain. Rejecting the endpoint makes the browser fall
+	// back to the system resolver, where FakeIP can name it.
+	//
+	// Placed here deliberately: AFTER the user's own routing lists, app
+	// exclusions and force-VPN rules, so anything the user said explicitly
+	// still wins; BEFORE the block-list, because a DoH endpoint that happens to
+	// be on the list would otherwise be routed to the node and keep working,
+	// which is exactly the outcome this rule exists to prevent.
+	//
+	// Only with the adaptive engine on: without FakeIP the rule costs the user
+	// their DoH and buys nothing.
+	if adaptiveSmartActive(cfg) && cfg.AdaptiveSmartBlockBrowserDoH {
+		rules = append(rules, SBRouteRule{
+			Action:       "reject",
+			Method:       "default",
+			DomainSuffix: browserDoHDomains(),
+		})
+	}
+
 	// Smart mode: tunnel the censored block-list, leave everything else direct
 	// (Final="direct"). Placed BEFORE the whitelist block so a blocked domain
 	// that also sits under a whitelisted suffix still tunnels — matching
@@ -1576,7 +2255,16 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	// cost is HTTP/3 for direct destinations, which drop to TCP; Global mode
 	// already loses h3 the same way (Final="proxy" sends it into the node's
 	// dead UDP path), so this only brings Smart in line.
-	if cfg.RoutingMode == ModeSmart {
+	//
+	// The blanket form is a consequence of not knowing the name: the sniffer
+	// cannot pull SNI out of Chrome's multi-packet QUIC ClientHello, so an
+	// unnamed HTTP/3 request could not be classified and had to be knocked back
+	// onto TCP. FakeIP names the connection before any rule runs, so with the
+	// adaptive engine on the smart outbound decides UDP the same way it decides
+	// TCP and only refuses what it genuinely does not know yet. The targeted
+	// rejects above stay in both cases: those are about UDP being unreliable
+	// through the node, which FakeIP does not change.
+	if cfg.RoutingMode == ModeSmart && !adaptiveSmartActive(cfg) {
 		rules = append(rules, quicRejectRule(SBRouteRule{}))
 	}
 

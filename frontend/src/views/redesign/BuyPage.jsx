@@ -61,6 +61,9 @@ export default function BuyPage({
   onOpenSite,
   onCopyPromo,
   sidebar,
+  /* Узел, который прокручивается. Страница отдаёт его наружу, чтобы экран мог
+     вернуть прокрутку туда, где её оставили при уходе на другую страницу. */
+  contentRef,
   text = BUY_PAGE_TEXT,
   className = "",
   ...rest
@@ -69,7 +72,7 @@ export default function BuyPage({
     <div className={`rv-buy-page ${className}`} {...rest}>
       {sidebar}
 
-      <div className="rv-buy-page__content rv-scroll">
+      <div ref={contentRef} className="rv-buy-page__content rv-scroll">
         <PageHeader title={title ?? text.title} subtitle={subtitle ?? text.subtitle} />
 
         <div className="rv-buy-page__list">

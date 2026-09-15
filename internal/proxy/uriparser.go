@@ -824,6 +824,20 @@ func parseJSONWireGuardOutbound(outbound, settings map[string]interface{}, name,
 					break
 				}
 			}
+			// AmneziaWG 3.1 switches. Carried as the raw string so one reader
+			// (awgBoolFromAny) decides what on/off/true/1 mean, instead of each
+			// parser inventing its own.
+			for _, k := range awg31Keys {
+				for rawKey, rawVal := range am {
+					if normalizeAWGKey(rawKey) != normalizeAWGKey(k) {
+						continue
+					}
+					if v := asString(rawVal); v != "" {
+						amOut[k] = v
+					}
+					break
+				}
+			}
 			if len(amOut) > 0 {
 				extra["amnezia"] = amOut
 				hasAmnezia = true
@@ -1653,6 +1667,17 @@ func parseAmneziaWGURI(uri string) (config.ProxyEntry, error) {
 	// from an .conf vs header_protection_key in JSON-shaped links), so match
 	// on the normalized form.
 	for _, k := range awg3Keys {
+		for rawKey, vals := range params {
+			if len(vals) == 0 || normalizeAWGKey(rawKey) != normalizeAWGKey(k) {
+				continue
+			}
+			if v := strings.TrimSpace(vals[0]); v != "" {
+				amnezia[k] = v
+			}
+			break
+		}
+	}
+	for _, k := range awg31Keys {
 		for rawKey, vals := range params {
 			if len(vals) == 0 || normalizeAWGKey(rawKey) != normalizeAWGKey(k) {
 				continue

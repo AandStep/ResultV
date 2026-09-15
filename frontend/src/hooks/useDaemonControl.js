@@ -47,6 +47,11 @@ export const useDaemonControl = (
     showAlertDialog,
     pings,
     statusGenerationRef,
+    /*
+     * Переподключение под смену режима ведёт не этот хук, а настройки, и
+     * вмешиваться в него отсюда нечем — поэтому о нём надо знать.
+     */
+    isApplyingMode,
 ) => {
     const { t } = useTranslation();
     const { showToast } = useToast();
@@ -82,6 +87,97 @@ export const useDaemonControl = (
     const connectEpochRef = useRef(0);
     const beginConnect = () => (connectEpochRef.current += 1);
     const isStale = (epoch) => epoch !== connectEpochRef.current;
+
+    /*
+     * Перехват идущего запуска.
+     *
+     * Раньше выбор сервера посреди запуска молча проваливался: и
+     * `selectAndConnect`, и `toggleConnection` начинались с «уже что-то
+     * выполняется — выходим», и нажатие не давало ни действия, ни ответа.
+     * Между тем перехватить запуск можно: подбор узла авто-группы и попытки
+     * подключения идут в своих await, и остановить их — это ровно то же
+     * самое, что делает кнопка питания, когда прерывает запуск.
+     *
+     * Пока идёт подготовка — обрыв прежнего запуска и вопрос о правах, —
+     * ведущий один, и это `drivingRef`. Нажатия, попавшие в это окно, своего
+     * обрыва не начинают, а только переписывают цель: иначе быстрый перебор
+     * серверов выстроил бы очередь из обрывов, каждый со своим походом в
+     * ядро, и палец обгонял бы приложение. Ведущий перечитывает цель на
+     * каждой развилке и ведёт к последнему выбору.
+     *
+     * Окно кончается там, где начинается подбор узла: нажатие после этого
+     * места — уже новое решение, и оно перехватывает по-настоящему.
+     */
+    const drivingRef = useRef(false);
+    /* Последний выбор человека. Живёт между вызовами: ставит его нажатие, а
+       читает тот, кто в этот момент ведёт. */
+    const targetRef = useRef(null);
+
+    /*
+     * Номер запуска, которым сейчас занят хук, — или 0, если занят он не
+     * запуском. Совпадает с текущим номером ровно до тех пор, пока этот
+     * запуск и есть то, что выполняется: любой обрыв сдвигает номер, и
+     * совпадение пропадает само.
+     *
+     * Судить о том же по `isConnecting`/`isDisconnecting` нельзя, и это
+     * стоило попапа на ровном месте: переключение с живого сервера сначала
+     * рвёт прежнее соединение, и на экране в этот момент «Отключение...» —
+     * ровно то же, что показывает кнопка «выключить». Отличить одно от
+     * другого может только тот, кто это делает.
+     */
+    const connectOwnerRef = useRef(0);
+    const claimConnect = () => {
+        const epoch = beginConnect();
+        connectOwnerRef.current = epoch;
+        return epoch;
+    };
+    /* Занялись не запуском: перехватывать теперь нечего. */
+    const releaseConnect = () => {
+        connectOwnerRef.current = 0;
+    };
+
+    /* Перехватываем только запуск. Разрыв соединения по воле человека доводим
+       до конца — ядро уже гасит сессию; смену режима ведёт не эта функция. */
+    const canTakeOver = () =>
+        isSwitchingRef.current &&
+        !isApplyingMode &&
+        connectOwnerRef.current !== 0 &&
+        connectOwnerRef.current === connectEpochRef.current;
+
+    /*
+     * Оборвать незаконченный запуск: и на своей стороне, и в ядре.
+     *
+     * Номер запуска двигаем первым делом — с этой секунды обогнанный ход
+     * считается чужим и, выйдя из своего await, уйдёт молча, не тронув ни
+     * одного общего флага (см. `isStale`).
+     *
+     * В ядре одного `CancelConnect` мало: Connect поднимает sing-box на
+     * общем контексте приложения, и отменённый контекст оставил бы движок
+     * запущенным — следующий Connect упал бы с «engine already running».
+     * Поэтому следом идёт полное отключение; на стороне Go `Disconnect`
+     * нарочно зовёт `CancelConnect` ещё до взятия своего замка, чтобы не
+     * ждать полного бюджета пробы.
+     *
+     * Флаги экрана сознательно не трогает — у прерывания по кнопке питания и
+     * у перехвата ради другого сервера они разные, и каждый вызывающий ставит
+     * свои, — кроме одного: подбор узла гасим здесь. Сам замер оборвать
+     * нечем, он доработает в своём await, но ждать его человек уже не должен.
+     */
+    const abortInFlight = async () => {
+        beginConnect();
+        bumpGen();
+        setIsResolving(false);
+        try {
+            await wailsAPI.cancelConnect();
+        } catch (e) {
+            // ignore
+        }
+        try {
+            await wailsAPI.disconnect();
+        } catch (e) {
+            // ignore
+        }
+    };
 
     // Ranking lives in the backend (App.ResolveAutoCandidates) so the tray and
     // the UI cannot drift apart. This used to sort AUTO members by the cached
@@ -184,6 +280,7 @@ export const useDaemonControl = (
 
         try {
             bumpGen();
+            releaseConnect();
             isSwitchingRef.current = true;
             setIsConnecting(false);
             setIsDisconnecting(true);
@@ -237,6 +334,7 @@ export const useDaemonControl = (
             setFailedProxy(null);
 
             if (isConnected) {
+                releaseConnect();
                 setIsConnecting(false);
                 setIsDisconnecting(true);
                 addLog("Отключение...", "info");
@@ -259,7 +357,7 @@ export const useDaemonControl = (
                     return;
                 }
                 const isAuto = targetProxy?.type?.toUpperCase() === "AUTO";
-                epoch = beginConnect();
+                epoch = claimConnect();
 
                 // Tell the UI about the choice BEFORE awaiting the resolve.
                 // For an AUTO group that await runs a two-phase probe over
@@ -294,7 +392,15 @@ export const useDaemonControl = (
                         isAuto ? AUTO_MAX_ATTEMPTS : 1,
                     );
                 } finally {
-                    if (isAuto) setIsResolving(false);
+                    /*
+                     * Гасим этап подбора, только если он ещё наш. Обогнанный
+                     * ход доживает в своём await и выходит сюда уже после
+                     * того, как перехвативший начал свой подбор, — и снимал
+                     * бы индикатор с чужой работы: заголовок «Подбор сервера»
+                     * гас на полуслове, хотя узел всё ещё подбирался. Свой
+                     * этап за обогнанным уже погасил `abortInFlight`.
+                     */
+                    if (isAuto && !isStale(epoch)) setIsResolving(false);
                 }
 
                 // Запуск остановили или начали новый, пока шёл подбор. Общими
@@ -338,7 +444,13 @@ export const useDaemonControl = (
                     // Whether a connect actually succeeded is the most honest
                     // signal about a node, and it used to be discarded. Only
                     // AUTO reports: a single server has nothing to rank against.
-                    if (isAuto) {
+                    //
+                    // Об оборванной попытке не докладываем: её оборвали мы
+                    // сами — прервали запуск кнопкой или перехватили ради
+                    // другого сервера, — и узел тут ни при чём. Записав это
+                    // отказом, мы бы задвинули исправный узел в хвост
+                    // будущего подбора за свои же действия.
+                    if (isAuto && !isStale(epoch)) {
                         await wailsAPI.reportAutoConnectOutcome(
                             targetProxy.id,
                             i,
@@ -441,10 +553,11 @@ export const useDaemonControl = (
 
     const selectAndConnect = useCallback(
         async (proxy, forceReconnect = false, setActiveTab) => {
-            if (isSwitchingRef.current) return;
-            if (!forceReconnect && activeProxy?.id === proxy.id && isConnected)
-                return;
-
+            /*
+             * Дешёвые отказы идут первыми, до всякого перехвата: оборвать
+             * живой запуск и тут же выйти, ничего не начав, — худший из
+             * возможных исходов.
+             */
             if (proxy?.type?.toUpperCase() === "SECTION") {
                 // A toast, not a modal: there is nothing to confirm here, so an
                 // OK button is just an extra click.
@@ -454,15 +567,107 @@ export const useDaemonControl = (
                 });
                 return;
             }
+            if (!forceReconnect && activeProxy?.id === proxy.id && isConnected)
+                return;
 
-            // Замок на время асинхронной проверки — как в toggleConnection.
-            isSwitchingRef.current = true;
-            const allowed = await ensureElevated(proxy);
-            isSwitchingRef.current = false;
-            if (!allowed) return;
+            /*
+             * Что-то уже выполняется. Идущий запуск перехватываем: рвём его и
+             * уходим на выбранный сервер. Остальное доводим до конца — и тогда
+             * говорим об этом вслух, а не отмалчиваемся, как раньше.
+             *
+             * Цель записываем до всех развилок: на неё смотрит и ведущий, и
+             * проверки ниже, и ведёт всегда последний выбор.
+             */
+            targetRef.current = proxy;
+
+            let tookOver = false;
+            if (isSwitchingRef.current) {
+                /* Нажали на тот же сервер, к которому запуск и так идёт:
+                   перезапускать его нечего, ожидание от этого только
+                   удлинилось бы. */
+                if (!forceReconnect && String(activeProxy?.id) === String(proxy.id))
+                    return;
+                /* Подготовку уже кто-то ведёт — он подхватит цель, которую мы
+                   только что записали. Строку зажигаем сразу, чтобы нажатие не
+                   проваливалось в тишину, и молча уходим: своего обрыва не
+                   начинаем и тостом не мешаем перебирать серверы дальше. */
+                if (drivingRef.current) {
+                    setActiveProxy(proxy);
+                    return;
+                }
+                if (!canTakeOver()) {
+                    showToast({ variant: "info", message: t("toast.switchBusy") });
+                    return;
+                }
+            } else if (drivingRef.current) {
+                /* Подготовка без объявленной занятости — окно между взятием
+                   ведения и замком. Сейчас оно замкнуто в один синхронный
+                   участок и сюда не попасть, но ведущий должен остаться
+                   единственным и если участок когда-нибудь разорвут. */
+                setActiveProxy(proxy);
+                return;
+            }
 
             /* Как в toggleConnection: номер запуска нужен и в catch. */
             let epoch = connectEpochRef.current;
+
+            drivingRef.current = true;
+            try {
+                if (isSwitchingRef.current) {
+                    tookOver = true;
+                    addLog(
+                        `Прерываем запуск и переключаемся на ${proxy.name}...`,
+                        "info",
+                    );
+                    /* Выбор виден сразу: строка нового сервера загорается, не
+                       дожидаясь, пока оборвётся прежний запуск. */
+                    setActiveProxy(proxy);
+                    await abortInFlight();
+                    /* Движок погашен, зелёному взяться неоткуда. А жёлтый этап
+                       держим: экран по-прежнему подключается, только уже к
+                       другому серверу, и кнопка питания не должна на этом
+                       месте гаснуть в серое — прервать переключение можно
+                       ровно так же, как и обычный запуск. */
+                    setIsConnected(false);
+                    setIsConnecting(true);
+                    setIsDisconnecting(false);
+                    /* Пока рвали, могли ткнуть ещё раз — ведём к последнему. */
+                    proxy = targetRef.current || proxy;
+                }
+
+                // Замок на время асинхронной проверки — как в toggleConnection.
+                isSwitchingRef.current = true;
+                const allowed = await ensureElevated(proxy);
+                isSwitchingRef.current = false;
+                if (!allowed) {
+                    /* Перехват уже погасил прежний запуск, и молчаливый выход
+                       оставил бы экран подключающимся в никуда. */
+                    if (tookOver) {
+                        setIsConnecting(false);
+                        setActiveProxy(null);
+                        addLog(
+                            "Переключение отменено: нет прав администратора.",
+                            "info",
+                        );
+                    }
+                    return;
+                }
+                /* И пока спрашивали права — тоже. */
+                proxy = targetRef.current || proxy;
+
+                /*
+                 * Номер запуска берём здесь, в последней точке подготовки, а
+                 * не в середине хода. Раньше его брали позже — и обогнанный
+                 * ход, дойдя до того места, забирал номер СЕБЕ, хотя обогнали
+                 * именно его: последнее нажатие оказывалось старее
+                 * предпоследнего, и подключиться можно было не туда, куда
+                 * ткнули. Здесь номер достаётся каждому ходу ровно один раз и
+                 * в порядке нажатий.
+                 */
+                epoch = claimConnect();
+            } finally {
+                drivingRef.current = false;
+            }
 
             try {
                 bumpGen();
@@ -470,8 +675,12 @@ export const useDaemonControl = (
                 setFailedProxy(null);
                 if (setActiveTab) setActiveTab("home");
 
+                /* Что ещё предстоит разорвать. После перехвата — ничего:
+                   движок уже погашен, и повторное отключение добавило бы
+                   только задержку и лишний серый кадр на кнопке питания. */
+                const live = isConnected && !tookOver;
+
                 const isAuto = proxy?.type?.toUpperCase() === "AUTO";
-                epoch = beginConnect();
 
                 // Tell the UI about the choice BEFORE awaiting the resolve.
                 // For an AUTO group that await runs a two-phase probe over
@@ -506,7 +715,15 @@ export const useDaemonControl = (
                         isAuto ? AUTO_MAX_ATTEMPTS : 1,
                     );
                 } finally {
-                    if (isAuto) setIsResolving(false);
+                    /*
+                     * Гасим этап подбора, только если он ещё наш. Обогнанный
+                     * ход доживает в своём await и выходит сюда уже после
+                     * того, как перехвативший начал свой подбор, — и снимал
+                     * бы индикатор с чужой работы: заголовок «Подбор сервера»
+                     * гас на полуслове, хотя узел всё ещё подбирался. Свой
+                     * этап за обогнанным уже погасил `abortInFlight`.
+                     */
+                    if (isAuto && !isStale(epoch)) setIsResolving(false);
                 }
 
                 // Как в toggleConnection: подбор пережил остановку запуска или
@@ -522,7 +739,7 @@ export const useDaemonControl = (
                        поднят: подбор шёл поверх живого соединения, и оставить
                        в шапке несостоявшуюся группу значило бы показывать не
                        то, к чему подключён пользователь. */
-                    setActiveProxy(isConnected ? previousActive ?? null : null);
+                    setActiveProxy(live ? previousActive ?? null : null);
                     reportEmptyAutoGroup(proxy);
                     bumpGen();
                     isSwitchingRef.current = false;
@@ -530,9 +747,18 @@ export const useDaemonControl = (
                 }
                 addLog(`Переключение на: ${proxy.name}...`, "info");
 
-                if (isConnected) {
+                if (live) {
                     setIsDisconnecting(true);
                     await wailsAPI.disconnect();
+                    /* Пока рвали прежнее соединение, нас могли обогнать — и
+                       тогда флаги принадлежат уже не нам. Порядок отключений
+                       в ядре держит замок, так что обогнавший ещё не успел
+                       подключиться, но правило тут общее: устаревший ход не
+                       трогает общих флагов. */
+                    if (isStale(epoch)) {
+                        addLog("Запуск остановлен.", "info");
+                        return;
+                    }
                     setIsConnected(false);
                     setIsDisconnecting(false);
                 }
@@ -561,7 +787,13 @@ export const useDaemonControl = (
                     // Whether a connect actually succeeded is the most honest
                     // signal about a node, and it used to be discarded. Only
                     // AUTO reports: a single server has nothing to rank against.
-                    if (isAuto) {
+                    //
+                    // Об оборванной попытке не докладываем: её оборвали мы
+                    // сами — прервали запуск кнопкой или перехватили ради
+                    // другого сервера, — и узел тут ни при чём. Записав это
+                    // отказом, мы бы задвинули исправный узел в хвост
+                    // будущего подбора за свои же действия.
+                    if (isAuto && !isStale(epoch)) {
                         await wailsAPI.reportAutoConnectOutcome(
                             proxy.id,
                             i,
@@ -655,6 +887,9 @@ export const useDaemonControl = (
             getConnectCandidates,
             reportEmptyAutoGroup,
             ensureElevated,
+            /* Смену режима перехватывать нельзя, а её признак — состояние:
+               без него функция судила бы по прошлому кадру. */
+            isApplyingMode,
         ],
     );
 
@@ -666,6 +901,7 @@ export const useDaemonControl = (
             if (isDeletingActive) {
                 if (isConnected) {
                     bumpGen();
+                    releaseConnect();
                     isSwitchingRef.current = true;
                     setIsConnecting(false);
                     setIsDisconnecting(true);
@@ -700,25 +936,17 @@ export const useDaemonControl = (
     );
 
     const cancelConnect = useCallback(async () => {
-        // Full disconnect on cancel: backend CancelConnect aborts the probe ctx,
-        // and Disconnect additionally stops the engine and clears sys proxy —
-        // without this, sing-box keeps running and the next Connect fails with
-        // "engine already running".
-        beginConnect();
-        bumpGen();
         isSwitchingRef.current = true;
         // Прерывание — это тоже отключение, и экран должен говорить именно так,
-        // а не продолжать обещать подключение. Подбор гасим здесь же: замер
-        // доработает сам, но ждать его человек уже не должен.
-        setIsResolving(false);
+        // а не продолжать обещать подключение. Этим оно и отличается от
+        // перехвата ради другого сервера: там подключение продолжается, и
+        // жёлтый этап держится до конца.
         setIsConnecting(false);
         setIsDisconnecting(true);
-        await wailsAPI.cancelConnect();
-        try {
-            await wailsAPI.disconnect();
-        } catch (e) {
-            // ignore
-        }
+        // Сам обрыв — общий с перехватом: тот же сдвиг номера запуска и то же
+        // полное отключение в ядре (одного CancelConnect мало, см.
+        // abortInFlight).
+        await abortInFlight();
         setIsConnected(false);
         setIsConnecting(false);
         setIsDisconnecting(false);

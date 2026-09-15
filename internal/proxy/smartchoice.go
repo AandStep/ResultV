@@ -1,0 +1,176 @@
+// Copyright (C) 2026 ResultV
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+package proxy
+
+import (
+	"net/netip"
+
+	"resultproxy-wails/internal/verdict"
+)
+
+// smartChoice is what the smart outbound does with one connection.
+type smartChoice uint8
+
+const (
+	// chooseRace means nothing is known about this destination, so both paths
+	// are tried and the outcome is written down. It is the only choice that
+	// teaches the store anything.
+	chooseRace smartChoice = iota
+	chooseDirect
+	chooseProxy
+)
+
+func (c smartChoice) String() string {
+	switch c {
+	case chooseDirect:
+		return "direct"
+	case chooseProxy:
+		return "proxy"
+	default:
+		return "race"
+	}
+}
+
+// smartLookup is the part of verdict.Store the decision needs. Narrow on
+// purpose: the tests hand it a real store, and nothing in this file can reach
+// for anything wider.
+type smartLookup interface {
+	Lookup(host string) (verdict.Record, bool)
+	LookupIP(addr netip.Addr) (verdict.Record, bool)
+}
+
+// decideSmart answers where one connection should go.
+//
+// The name wins over the address whenever there is one: the address is
+// whichever CDN edge answered today, the name is what the user actually asked
+// for, and a verdict filed under the name survives the rotation.
+//
+// raceAllowed is the breaker (spec §6.5). When it is off, an unknown
+// destination goes direct — exactly what the client did before this feature —
+// rather than being tunnelled on a guess made while the network is broken.
+func decideSmart(store smartLookup, host string, addr netip.Addr, raceAllowed bool) smartChoice {
+	rec, ok := lookupSmart(store, host, addr)
+	if !ok {
+		return unknownChoice(raceAllowed)
+	}
+	return choiceFor(rec.Decision, raceAllowed)
+}
+
+// lookupSmart is decideSmart's first half on its own: the record, and whether
+// there was one at all.
+//
+// Two callers need more than the choice. UDP needs to tell "known to work
+// directly" from "nothing is known", which collapse into the same choice. The
+// refresh trigger needs the record's age. Both used to ask the store a second
+// time for it; one lookup answers all three questions.
+func lookupSmart(store smartLookup, host string, addr netip.Addr) (verdict.Record, bool) {
+	if store == nil {
+		return verdict.Record{}, false
+	}
+	if key := verdict.NormalizeHost(host); key != "" {
+		if rec, ok := store.Lookup(key); ok {
+			return rec, true
+		}
+	}
+	if addr.IsValid() {
+		if rec, ok := store.LookupIP(addr); ok {
+			return rec, true
+		}
+	}
+	return verdict.Record{}, false
+}
+
+// choiceFrom is choiceFor for a caller that already has the record, so it does
+// not have to ask the store again just to turn it into a choice.
+func choiceFrom(rec verdict.Record, known bool, raceAllowed bool) smartChoice {
+	if !known {
+		return unknownChoice(raceAllowed)
+	}
+	return choiceFor(rec.Decision, raceAllowed)
+}
+
+func choiceFor(d verdict.Decision, raceAllowed bool) smartChoice {
+	switch d {
+	case verdict.Proxy:
+		return chooseProxy
+	case verdict.Direct:
+		return chooseDirect
+	default:
+		return unknownChoice(raceAllowed)
+	}
+}
+
+func unknownChoice(raceAllowed bool) smartChoice {
+	if raceAllowed {
+		return chooseRace
+	}
+	return chooseDirect
+}
+
+// smartUDPAction is what the smart outbound does with one UDP flow. UDP needs
+// its own answer because it has a third option TCP does not: refusing the flow
+// outright, which costs the client one immediate fallback instead of a timeout.
+type smartUDPAction uint8
+
+const (
+	udpViaDirect smartUDPAction = iota
+	udpViaProxy
+	udpRefuse
+)
+
+func (a smartUDPAction) String() string {
+	switch a {
+	case udpViaProxy:
+		return "proxy"
+	case udpRefuse:
+		return "reject"
+	default:
+		return "direct"
+	}
+}
+
+// decideSmartUDP answers where one UDP flow should go.
+//
+// choice is what decideSmart made of the destination and known says whether
+// that came from an actual record or from the fallback — UDP needs the
+// difference, because "known to work directly" and "nothing is known" both
+// arrive as chooseDirect and only the second has to be refused.
+//
+// nodeUDPAlive is the node's own measured ability to carry UDP (see
+// ProbeUDPRelay). It only ever gates port 443, and that is the whole point of
+// the parameter: on 443 a refusal costs the client one instant fall back to
+// TCP, where the same verdict still sends it through the node, whereas on any
+// other port a refusal is the end of the flow. So HTTP/3 through a node whose
+// UDP was never proven is knocked back — the same thing the route rule does
+// for a name the block-list knows — while a game or a voice flow is still
+// handed to the node, on the reasoning that an unproven node beats a certain
+// failure and a stale measurement must not break what works.
+func decideSmartUDP(choice smartChoice, known bool, port uint16, nodeUDPAlive bool) smartUDPAction {
+	const http3Port = 443
+	if port == http3Port && !known {
+		// Nothing is known yet. Refusing makes the client retry over TCP, the
+		// race there produces a verdict, and the NEXT attempt goes the right
+		// way. One bounce to learn, rather than a permanent ban on HTTP/3.
+		return udpRefuse
+	}
+	if choice != chooseProxy {
+		return udpViaDirect
+	}
+	if port == http3Port && !nodeUDPAlive {
+		return udpRefuse
+	}
+	return udpViaProxy
+}

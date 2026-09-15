@@ -44,6 +44,11 @@ import {
   parseExtra,
   sortProxiesByOption,
 } from "../../utils/pingSort";
+import {
+  PAGE_SERVERS,
+  usePageState,
+  useScrollMemory,
+} from "../../hooks/usePageMemory";
 import wailsAPI from "../../utils/wailsAPI";
 import ServerEditor, { SERVER_EDITOR_TEXT } from "./ServerEditor";
 import ServersPage from "./ServersPage";
@@ -127,10 +132,20 @@ export default function ServersScreen() {
 
   const { showToast } = useToast();
 
-  const [search, setSearch] = useState("");
-  const [sortBy, setSortBy] = useState("default");
+  /*
+   * Поиск, порядок и раскрытые группы переживают уход на другую страницу:
+   * экран размонтируется целиком, и обычный `useState` каждый раз возвращал
+   * страницу в исходное — свёрнутые группы, пустой поиск.
+   */
+  const [search, setSearch] = usePageState(PAGE_SERVERS, "search", "");
+  const [sortBy, setSortBy] = usePageState(PAGE_SERVERS, "sortBy", "default");
+  const [openGroups, setOpenGroups] = usePageState(PAGE_SERVERS, "openGroups", {});
+  /* Меню порядка — дело одного нажатия, его не запоминаем. */
   const [sortAnchor, setSortAnchor] = useState(null);
-  const [openGroups, setOpenGroups] = useState({});
+
+  /* Прокрутка возвращается туда, где её оставили. */
+  const contentRef = useScrollMemory(PAGE_SERVERS);
+
   const [editingSub, setEditingSub] = useState(null);
   /* Сервер, открытый в окне правки. Только свой: узел подписки править
      бессмысленно — ближайшее её обновление вернёт всё как было. */
@@ -499,6 +514,7 @@ export default function ServersScreen() {
     deleteServer: t("serversPage.deleteServer"),
     favorite: t("proxyList.favoriteAria"),
     empty: t("proxyList.noResults"),
+    emptyGroup: t("serversPage.emptyGroup"),
   };
 
   /* Подписи окна правки. Ключи те же, что имена полей формы, — так видно,
@@ -575,6 +591,7 @@ export default function ServersScreen() {
         empty={groups.length === 0}
         text={text}
         sidebar={<AppSidebar />}
+        contentRef={contentRef}
       />
 
       <SortMenu

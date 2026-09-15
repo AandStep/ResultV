@@ -544,6 +544,11 @@ func (a *App) startup(ctx context.Context) {
 	a.netmon.SetInterfaceChangeHandler(func() {
 		proxy.InvalidateLANBindCache()
 		proxy.ResetAutoSweepCache()
+		// Вердикты адаптивного Smart привязаны к сети, а не к машине: здесь
+		// же меняется набор, которым он пользуется.
+		if a.proxy != nil {
+			a.proxy.NotifyNetworkChanged()
+		}
 		if a.log != nil {
 			a.log.Info("[СЕТЬ] Изменился состав сетевых адресов — кэш bind-адреса и подбора AUTO сброшен")
 		}
@@ -746,6 +751,11 @@ func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
 		dnsServers = fromProxy
 	}
 	a.proxy.SetTunStack(cfg.Settings.EffectiveTunStack())
+	a.proxy.SetAdaptiveSmart(
+		rules.AdaptiveSmart,
+		rules.AdaptiveSmartMemoryOnly,
+		rules.AdaptiveSmartBlockBrowserDoH,
+	)
 
 	result := a.proxy.Connect(
 		a.ctx,
@@ -1151,6 +1161,11 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 			modeSwitchDNS = fromProxy
 		}
 		a.proxy.SetTunStack(cfg.Settings.EffectiveTunStack())
+		a.proxy.SetAdaptiveSmart(
+			cfg.RoutingRules.AdaptiveSmart,
+			cfg.RoutingRules.AdaptiveSmartMemoryOnly,
+			cfg.RoutingRules.AdaptiveSmartBlockBrowserDoH,
+		)
 		result := a.proxy.Connect(
 			a.ctx,
 			prevProxy,
@@ -1239,11 +1254,75 @@ func (a *App) GetMode() string {
 	return string(a.proxy.GetMode())
 }
 
-func (a *App) PingProxy(ip string, port int, proxyType string) proxy.PingResultDTO {
+// nodeByID finds one proxy entry and copies it into the shape the engine
+// builders take.
+//
+// The whole entry travels on purpose: the http_* ping types build a real
+// outbound through buildOutbounds, which reads URI, Extra and credentials.
+// Rebuilding the node from ip+port would be guesswork, and it breaks outright
+// on a subscription where several nodes share one address.
+func nodeByID(entries []config.ProxyEntry, id string) (proxy.ProxyConfig, bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return proxy.ProxyConfig{}, false
+	}
+	for i := range entries {
+		if entries[i].ID != id {
+			continue
+		}
+		e := entries[i]
+		return proxy.ProxyConfig{
+			ID:              e.ID,
+			IP:              e.IP,
+			Port:            e.Port,
+			Type:            e.Type,
+			Username:        e.Username,
+			Password:        e.Password,
+			URI:             e.URI,
+			Extra:           e.Extra,
+			SubscriptionURL: e.SubscriptionURL,
+		}, true
+	}
+	return proxy.ProxyConfig{}, false
+}
+
+// pingOptionsFromSettings resolves the stored settings into one measurement's
+// parameters, applying every default and clamp on the way.
+func pingOptionsFromSettings(s config.AppSettings) proxy.PingOptions {
+	pingType := s.EffectivePingType()
+	method := ""
+	switch pingType {
+	case config.PingTypeHTTPGet:
+		method = http.MethodGet
+	case config.PingTypeHTTPHead:
+		method = http.MethodHead
+	}
+	return proxy.PingOptions{
+		Type:    pingType,
+		URL:     s.EffectivePingTestURL(),
+		Method:  method,
+		Timeout: s.EffectivePingTimeout(),
+	}
+}
+
+func (a *App) PingProxy(id string, ip string, port int, proxyType string) proxy.PingResultDTO {
 	if a.proxy == nil {
 		return proxy.PingResultDTO{}
 	}
-	return a.proxy.Ping(ip, port, proxyType)
+	var (
+		opts proxy.PingOptions
+		node proxy.ProxyConfig
+	)
+	if a.config != nil {
+		cfg := a.config.GetConfig()
+		opts = pingOptionsFromSettings(cfg.Settings)
+		// Copy the entry out immediately: GetConfig hands back shared slices
+		// and holding one past this call is not safe.
+		node, _ = nodeByID(cfg.Proxies, id)
+	} else {
+		opts = pingOptionsFromSettings(config.AppSettings{})
+	}
+	return a.proxy.Ping(ip, port, proxyType, node, opts)
 }
 
 func (a *App) GetLogs(page, size int) logger.LogPage {
@@ -1329,6 +1408,16 @@ func (a *App) UpdateRules(rules config.RoutingRules) error {
 	if r := a.proxy.GetRouter(); r != nil {
 		r.SetCustomBlockedDomains(rules.CustomBlockedDomains)
 	}
+	// Адаптивный Smart передаётся отдельно: ReconnectWithRoutingRules берёт
+	// только режим и три списка, а тумблер живёт в том же блоке конфига.
+	// Ставится до проверки подключения, чтобы выключенное приложение ушло в
+	// следующий Connect с тем же значением, что видит пользователь.
+	a.proxy.SetAdaptiveSmart(
+		rules.AdaptiveSmart,
+		rules.AdaptiveSmartMemoryOnly,
+		rules.AdaptiveSmartBlockBrowserDoH,
+	)
+
 	status := a.proxy.GetStatus()
 	if !status.IsConnected || status.CurrentProxy == nil {
 		return nil

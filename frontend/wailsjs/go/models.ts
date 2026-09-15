@@ -62,7 +62,11 @@ export namespace config {
 	    dnsLeakProtection?: boolean;
 	    enableIPv6?: boolean;
 	    routingListUpdateHours?: number;
+	    autoNodeRecheck?: boolean;
 	    lastChangelogVersion?: string;
+	    pingType?: string;
+	    pingTestUrl?: string;
+	    pingTimeoutSec?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppSettings(source);
@@ -89,7 +93,11 @@ export namespace config {
 	        this.dnsLeakProtection = source["dnsLeakProtection"];
 	        this.enableIPv6 = source["enableIPv6"];
 	        this.routingListUpdateHours = source["routingListUpdateHours"];
+	        this.autoNodeRecheck = source["autoNodeRecheck"];
 	        this.lastChangelogVersion = source["lastChangelogVersion"];
+	        this.pingType = source["pingType"];
+	        this.pingTestUrl = source["pingTestUrl"];
+	        this.pingTimeoutSec = source["pingTimeoutSec"];
 	    }
 	}
 	export class ProxyEntry {
@@ -217,6 +225,9 @@ export namespace config {
 	    routingLists: RoutingList[];
 	    routingProfiles: RoutingProfile[];
 	    activeRoutingProfileId: string;
+	    adaptiveSmart: boolean;
+	    adaptiveSmartMemoryOnly: boolean;
+	    adaptiveSmartBlockBrowserDoH: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new RoutingRules(source);
@@ -232,6 +243,9 @@ export namespace config {
 	        this.routingLists = this.convertValues(source["routingLists"], RoutingList);
 	        this.routingProfiles = this.convertValues(source["routingProfiles"], RoutingProfile);
 	        this.activeRoutingProfileId = source["activeRoutingProfileId"];
+	        this.adaptiveSmart = source["adaptiveSmart"];
+	        this.adaptiveSmartMemoryOnly = source["adaptiveSmartMemoryOnly"];
+	        this.adaptiveSmartBlockBrowserDoH = source["adaptiveSmartBlockBrowserDoH"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

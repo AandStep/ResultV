@@ -88,9 +88,17 @@ var autoProbeResolveHost = func(ctx context.Context, host string) (string, bool)
 // it, documented above — can be tested without substituting a global.
 func pickIPv4(addrs []net.IPAddr) (string, bool) {
 	for _, a := range addrs {
-		if v4 := a.IP.To4(); v4 != nil {
-			return v4.String(), true
+		v4 := a.IP.To4()
+		if v4 == nil {
+			continue
 		}
+		// A fake address is not a candidate. The sweep dials bound to the
+		// physical adapter, exactly like the pings, so 198.18.x.x times out on
+		// every candidate and the sweep ends up picking nothing at all.
+		if isFakeIPAddr(v4) {
+			continue
+		}
+		return v4.String(), true
 	}
 	return "", false
 }

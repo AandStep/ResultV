@@ -50,7 +50,7 @@ func TestEngineLogDropsSelfInflictedProbeNoise(t *testing.T) {
 
 	for _, msg := range noise {
 		log := logger.New()
-		w := newSingBoxLogWriter(log, ProxyConfig{})
+		w := newSingBoxLogWriter(log, ProxyConfig{}, nil)
 		w.WriteMessage(sblog.LevelError, msg)
 		if entries := log.GetAll(); len(entries) != 0 {
 			t.Errorf("шум должен быть отброшен, но записалось %q\nисходное: %s", entries[0].Msg, msg)
@@ -71,7 +71,7 @@ func TestEngineLogKeepsActionableErrors(t *testing.T) {
 
 	for _, msg := range actionable {
 		log := logger.New()
-		w := newSingBoxLogWriter(log, ProxyConfig{})
+		w := newSingBoxLogWriter(log, ProxyConfig{}, nil)
 		w.WriteMessage(sblog.LevelError, msg)
 		entries := log.GetAll()
 		if len(entries) != 1 {

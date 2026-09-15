@@ -22,6 +22,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	sys "resultproxy-wails/internal/system"
 )
 
 var pickLANBindIPv4 = cachedPreferLANBindIPv4
@@ -95,16 +97,11 @@ func isEngineTunIPv4(ip net.IP) bool {
 	return ip4[0] == 172 && ip4[1] == 19 && ip4[2] == 0 && ip4[3] <= 3
 }
 
+// The list itself lives in internal/system, because the verdict store's
+// network fingerprint has to skip exactly these adapters and a second copy of
+// the list would eventually disagree with this one.
 func looksLikeTunnelInterface(name string) bool {
-	n := strings.ToLower(name)
-	return strings.Contains(n, "tun") ||
-		strings.Contains(n, "tap") ||
-		strings.Contains(n, "wintun") ||
-		strings.Contains(n, "tailscale") ||
-		strings.Contains(n, "wireguard") ||
-		strings.Contains(n, "nordlynx") ||
-		strings.Contains(n, "zerotier") ||
-		strings.Contains(n, "sing-tun")
+	return sys.VirtualInterfaceName(name)
 }
 
 func isRFC1918(ip net.IP) bool {

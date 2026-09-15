@@ -111,3 +111,33 @@
   .rv-server-item__chevron {
   transform: rotate(180deg);
 }
+
+/*
+ * Раскрытая, но пустая группа. В макете такого кадра нет, см.
+ * docs/design/GAPS.md: пустой бывает своя группа «Мои сервера» у того, кто
+ * ещё не завёл ни одного сервера, и без этой строки раскрытие выглядело
+ * поломкой — шеврон разворачивался, а под ним не появлялось ничего.
+ *
+ * Набрана тем же стилем, что и «ничего не нашлось» на странице серверов
+ * (Regular, белый 50 %), а высотой примерно со строку списка: так карточка
+ * раскрывается тем же движением, что и заполненная, а не приоткрывается на
+ * полоску.
+ */
+.rv-home-server-list__empty {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 106px;
+  margin: 0;
+  padding: var(--rv-space-24);
+  background: var(--rv-black);
+
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-regular-size);
+  font-weight: var(--rv-regular-weight);
+  line-height: var(--rv-regular-leading);
+  text-align: center;
+  color: var(--rv-white-a50);
+}

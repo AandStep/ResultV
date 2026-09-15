@@ -22,7 +22,7 @@ import (
 // and (once AWG 3.0 knobs are wired) header_protection_key in the clear.
 func TestEngineLogRedactsWireGuardKeys(t *testing.T) {
 	log := logger.New()
-	w := newSingBoxLogWriter(log, ProxyConfig{})
+	w := newSingBoxLogWriter(log, ProxyConfig{}, nil)
 
 	const priv = "e8bd3f19a0c74d2b5f6a1c8e93b47d05a2f6c1e84b9d70f3a5c2e6b18d4f90a7"
 	const hdr = "7b1e4c9a2f6d80b3e5a7c14f9d2b6e08a3f5c7d19b4e60a2c8f3d5b7e9a1c04f"

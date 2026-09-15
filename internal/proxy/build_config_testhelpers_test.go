@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/option"
 	singjson "github.com/sagernet/sing/common/json"
 )
@@ -44,7 +43,11 @@ func mustBuildProxyModeConfig(t *testing.T, cfg EngineConfig) SingBoxConfig {
 }
 
 // assertCoreAcceptsConfig hands the built config to the real pinned core exactly
-// the way startInstance does. sing-box decodes options with DisallowUnknownFields
+// the way startInstance does — through the same extended registry, because
+// include.Context alone does not know the "smart" outbound type and would come
+// back with "rejected" for a perfectly correct config.
+//
+// sing-box decodes options with DisallowUnknownFields
 // and validates enums while decoding, so a field or value the engine does not
 // know is not a silently ignored knob — it is a dead engine for every node.
 func assertCoreAcceptsConfig(t *testing.T, cfg SingBoxConfig) {
@@ -54,7 +57,7 @@ func assertCoreAcceptsConfig(t *testing.T, cfg SingBoxConfig) {
 		t.Fatal(err)
 	}
 	var opts option.Options
-	if err := singjson.UnmarshalContext(include.Context(context.Background()), j, &opts); err != nil {
+	if err := singjson.UnmarshalContext(extendedBoxContext(context.Background()), j, &opts); err != nil {
 		t.Fatalf("pinned core rejected the config: %v\nconfig: %s", err, j)
 	}
 }

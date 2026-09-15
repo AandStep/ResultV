@@ -88,10 +88,14 @@ func TestHysteria2QUICShapeSmoke(t *testing.T) {
 }
 
 // TestTunInboundUDPTimeoutShapeSmoke verifies that the tunnel-mode TUN
-// inbound emits udp_timeout + endpoint_independent_nat, AND that sing-box's
+// inbound emits udp_timeout + udp_mapping/udp_filtering, AND that sing-box's
 // strict option decoder accepts those keys. Without this test a typo or a
 // future version drop in our sing-box fork would silently break VPN startup
 // for every user (strict decoder rejects unknown fields).
+//
+// The pair replaced endpoint_independent_nat, which sing-box 1.14 kept in the
+// schema and stopped reading: that one the decoder accepts and ignores, so only
+// a test on the emitted shape can tell the two apart.
 func TestTunInboundUDPTimeoutShapeSmoke(t *testing.T) {
 	extra := map[string]interface{}{
 		"uuid":     "af815621-b245-4149-89da-dd184cfc4b3d",
@@ -111,7 +115,14 @@ func TestTunInboundUDPTimeoutShapeSmoke(t *testing.T) {
 		t.Fatal(err)
 	}
 	js := string(j)
-	for _, want := range []string{`"udp_timeout":"30s"`, `"endpoint_independent_nat":true`, `"type":"tun"`} {
+	for _, want := range []string{
+		`"udp_timeout":"30s"`,
+		`"udp_mapping":"endpoint_independent"`,
+		`"udp_filtering":"endpoint_independent"`,
+		`"udp_nat_max":8192`,
+		`"dns_mode":"hijack"`,
+		`"type":"tun"`,
+	} {
 		if !strings.Contains(js, want) {
 			t.Fatalf("missing %q in tunnel-mode config: %s", want, js)
 		}
@@ -121,6 +132,51 @@ func TestTunInboundUDPTimeoutShapeSmoke(t *testing.T) {
 	if err := singjson.UnmarshalContext(ctx, j, &opt); err != nil {
 		t.Fatalf("strict decode of tunnel-mode config rejected new TUN fields: %v", err)
 	}
+}
+
+// TestTunInboundWireGuardKeepsSymmetricNAT guards the branch that deliberately
+// does NOT share NAT slots. Before sing-box 1.14 that was the inbound default
+// and the code got it by staying silent; in 1.14 the default flipped to
+// endpoint-independent, so silence now means the opposite of what the comment
+// promises. Forcing shared slots on a WireGuard endpoint tore down live tunnel
+// traffic once already: the handshake passed, the browser worked for about
+// thirty seconds, then every UDP flow inside the tunnel collapsed.
+func TestTunInboundWireGuardKeepsSymmetricNAT(t *testing.T) {
+	extra := map[string]interface{}{
+		"address":     []string{"10.0.0.2/32"},
+		"private_key": "priv",
+		"public_key":  "pub",
+		"allowed_ips": []string{"0.0.0.0/0"},
+	}
+	raw, err := json.Marshal(extra)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
+		Proxy:    ProxyConfig{IP: "127.0.0.1", Port: 51820, Type: "WIREGUARD", Extra: raw},
+		Mode:     ProxyModeTunnel,
+		TunStack: "system",
+	})
+	j, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(j)
+	for _, want := range []string{
+		`"udp_mapping":"address_and_port_dependent"`,
+		`"udp_filtering":"address_and_port_dependent"`,
+	} {
+		if !strings.Contains(js, want) {
+			t.Fatalf("missing %q in WireGuard tunnel config: %s", want, js)
+		}
+	}
+	if strings.Contains(js, `"udp_timeout"`) {
+		t.Fatalf("WireGuard TUN inbound must not force a UDP timeout: %s", js)
+	}
+	if strings.Contains(js, `"udp_nat_max"`) {
+		t.Fatalf("WireGuard TUN inbound must not cap the NAT table: %s", js)
+	}
+	assertCoreAcceptsConfig(t, cfg)
 }
 
 // TestServerPinHostsDNSShapeSmoke verifies that a domain-addressed server with
