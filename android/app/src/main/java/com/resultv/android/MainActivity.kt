@@ -65,7 +65,6 @@ import com.resultv.android.ui.screens.CertWizardScreen
 import com.resultv.android.ui.screens.LogsScreen
 import com.resultv.android.ui.screens.ProxiesScreen
 import com.resultv.android.ui.components.RoutingDeepLinkSheet
-import com.resultv.android.ui.screens.RoutingProfilesScreen
 import com.resultv.android.ui.screens.RulesScreen
 import com.resultv.android.ui.screens.SettingsScreen
 import android.widget.Toast
@@ -352,7 +351,6 @@ private fun AppShell(
     // the lightest way to push a detail screen from a settings row.
     var showLogs by rememberSaveable { mutableStateOf(false) }
     var showCertWizard by rememberSaveable { mutableStateOf(false) }
-    var showRoutingProfiles by rememberSaveable { mutableStateOf(false) }
     // SaveableStateHolder retains each tab's `rememberSaveable` state across
     // tab switches, so returning to Proxies keeps the user's scroll position,
     // expanded subscriptions, sort mode and protocol filter instead of
@@ -425,7 +423,6 @@ private fun AppShell(
                     Tab.Settings -> SettingsScreen(
                         onOpenLogs = { showLogs = true },
                         onOpenCertWizard = { showCertWizard = true },
-                        onOpenRoutingProfiles = { showRoutingProfiles = true },
                     )
                 }
             }
@@ -443,11 +440,6 @@ private fun AppShell(
     if (com.resultv.android.BuildConfig.BROWSER_ADBLOCK && showCertWizard) {
         BackHandler { showCertWizard = false }
         CertWizardScreen(dataDir = dataDir, onClose = { showCertWizard = false })
-    }
-
-    if (showRoutingProfiles) {
-        BackHandler { showRoutingProfiles = false }
-        RoutingProfilesScreen(dataDir = dataDir, onClose = { showRoutingProfiles = false })
     }
 
     RoutingImportSheet(dataDir)

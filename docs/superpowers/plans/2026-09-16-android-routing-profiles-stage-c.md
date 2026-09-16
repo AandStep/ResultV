@@ -44,7 +44,7 @@
 | `vpn/SubscriptionRouting.kt` | приём профиля подписки: merge, сборка, удаление вместе с подпиской | 2 |
 | `vpn/DeepLinkImporter.kt`, `ui/screens/AddScreen.kt`, `vpn/SubscriptionRefresher.kt` | вызвать приём на всех трёх путях импорта | 2 |
 | `ui/screens/RoutingProfileEditor.kt` | редактор по макету ПК | 3 |
-| `ui/screens/RoutingProfilesScreen.kt`, `MainActivity.kt` | «Создать профиль», карандаш, маршрут редактора | 4 |
+| `ui/screens/RoutingProfilesSheet.kt`, `MainActivity.kt` | «Создать профиль», карандаш, маршрут редактора | 4 |
 
 ---
 
@@ -1261,14 +1261,14 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ### Task 4: Подключить редактор к экрану профилей
 
 **Files:**
-- Modify: `ui/screens/RoutingProfilesScreen.kt`, `MainActivity.kt`
+- Modify: `ui/screens/RoutingProfilesSheet.kt`, `MainActivity.kt`
 
 - [ ] **Step 1: Карандаш в строке и кнопка «Создать профиль»**
 
-В `RoutingProfilesScreen.kt`:
+В `RoutingProfilesSheet.kt`:
 
-1. `RoutingProfilesScreen` получает `onEdit: (RoutingProfile?) -> Unit`.
-2. `ProfileRow` получает `onEdit: (() -> Unit)?`; карандаш рисуется только
+1. `RoutingProfilesSheetContent` получает `onEdit: (RoutingProfile?) -> Unit`.
+2. `ProfileCard` получает `onEdit: (() -> Unit)?`; карандаш рисуется только
    когда он не `null`:
 
 ```kotlin
@@ -1314,9 +1314,12 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
                 }
 ```
 
-- [ ] **Step 2: Маршрут редактора в `MainActivity`**
+- [ ] **Step 2: Редактор — третья шторка**
 
-Рядом с `showRoutingProfiles`:
+**Не полноэкранный маршрут.** Профили — вложенная шторка над «Правилами»
+(спека, 7.2), и редактор встаёт третьей по тому же правилу: закрылся — и ты
+там, откуда его открыл. Состояние живёт в `SettingsScreen` рядом с
+`routingProfilesOpen`:
 
 ```kotlin
     // null — редактор закрыт; профиль — правка; RoutingProfile пустышка с
@@ -1374,8 +1377,8 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 `RoutingProfilesScreen` получает `onEdit = { p -> editingProfile = p; editorOpen = true }`.
 
-**Порядок рендера важен:** редактор идёт ПОСЛЕ экрана списка, иначе список
-нарисуется поверх него.
+**Порядок рендера важен:** шторка редактора объявляется ПОСЛЕ шторки профилей,
+иначе вторая окажется над ней.
 
 - [ ] **Step 3: Собрать и прогнать обе конфигурации**
 

@@ -71,13 +71,15 @@ private enum class SettingsSubcategory(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(
-    onOpenLogs: () -> Unit = {},
-    onOpenCertWizard: () -> Unit = {},
-    onOpenRoutingProfiles: () -> Unit = {},
-) {
+fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {}) {
     val settings by SettingsRepository.state.collectAsStateWithLifecycle()
     var activeSheet by rememberSaveable { mutableStateOf<SettingsSubcategory?>(null) }
+    // Профили маршрутизации — ВЛОЖЕННАЯ шторка поверх «Правил», а не
+    // отдельный экран. Прошлая версия гасила лист и открывала
+    // полноэкранный маршрут, из-за чего закрытие возвращало в список
+    // настроек, а не туда, откуда её открыли.
+    var routingProfilesOpen by rememberSaveable { mutableStateOf(false) }
+    val routingSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     Column(
@@ -185,17 +187,35 @@ fun SettingsScreen(
                     SettingsSubcategory.Network -> NetworkGroup(settings)
                     SettingsSubcategory.Appearance -> AppearanceGroup(onBeforeRecreate = { activeSheet = null })
                     SettingsSubcategory.Routing -> RulesScreen(
-                        // Гасим лист ПЕРЕД открытием экрана: лист — подокно
-                        // над Scaffold, полноэкранный маршрут его не
-                        // перекрывает (та же причина, что у мастера
-                        // сертификата выше).
-                        onOpenRoutingProfiles = {
-                            activeSheet = null
-                            onOpenRoutingProfiles()
-                        },
+                        // Родительская шторка НЕ гасится: вложенная встаёт
+                        // поверх, и закрытие возвращает сюда же.
+                        onOpenRoutingProfiles = { routingProfilesOpen = true },
                     )
                     null -> {}
                 }
+            }
+        }
+    }
+
+    if (routingProfilesOpen) {
+        ModalBottomSheet(
+            onDismissRequest = { routingProfilesOpen = false },
+            modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
+            sheetState = routingSheetState,
+            containerColor = Brand.Surface,
+            dragHandle = { BottomSheetDefaults.DragHandle() },
+        ) {
+            DarkSheetSystemBars()
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    // Не safe area: её шторка держит сама. Это поле, чтобы
+                    // последняя строка не упиралась в панель навигации.
+                    .padding(bottom = 24.dp),
+            ) {
+                RoutingProfilesSheetContent(dataDir = LocalContext.current.filesDir.absolutePath)
             }
         }
     }
