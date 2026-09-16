@@ -327,3 +327,35 @@ object RoutingProfileRepository {
         }
     }
 }
+
+/**
+ * Список правил как текст для редактора: одно правило на строку.
+ *
+ * Так правит ПК (`RoutingProfileEditor.jsx:242-247`), и это же снимает вопрос
+ * двадцати тысяч токенов: многострочное поле — один элемент, а не 20 000 чипов
+ * в `FlowRow`.
+ */
+fun routingLinesOf(list: List<String>): String = list.joinToString("\n")
+
+/**
+ * Обратно: непустые строки без окружающих пробелов.
+ *
+ * `\r` срезается вместе с ними — список, скопированный из письма или с сайта,
+ * приходит с CRLF, и хвостовой возврат каретки превратил бы каждый токен в
+ * мусор, который потом молча не совпал бы ни с чем.
+ */
+fun routingTokensOf(text: String): List<String> =
+    text.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+
+/**
+ * Порядок разбора правил в форме, которую ждёт Go (`NormalizeRoutingOrder`).
+ *
+ * Неполный или повторяющийся набор даёт пустую строку — «умолчание»: порядок
+ * решает, какое правило выигрывает при нескольких совпадениях, и половинчатое
+ * значение там опаснее отсутствующего.
+ */
+fun normalizeRouteOrder(order: List<String>): String {
+    if (order.size != ROUTING_ACTIONS.size) return ""
+    if (order.toSet() != ROUTING_ACTIONS.toSet()) return ""
+    return order.joinToString("-")
+}

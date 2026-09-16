@@ -32,6 +32,16 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.content.ContextWrapper
 import com.resultv.android.R
 import com.resultv.android.locale.LocaleManager
+import android.widget.Toast
+import androidx.compose.runtime.rememberCoroutineScope
+import com.resultv.android.vpn.RoutingProfile
+import com.resultv.android.vpn.RoutingProfileCompiler
+import com.resultv.android.vpn.RoutingProfileRepository
+import com.resultv.android.vpn.parseRoutingMergeResult
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import mobile.Mobile
 import com.resultv.android.theme.Brand
 import com.resultv.android.ui.components.DarkSheetSystemBars
 import com.resultv.android.ui.components.SettingIcon
@@ -79,6 +89,13 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {
     // полноэкранный маршрут, из-за чего закрытие возвращало в список
     // настроек, а не туда, откуда её открыли.
     var routingProfilesOpen by rememberSaveable { mutableStateOf(false) }
+    // Редактор — ТРЕТЬЯ шторка, поверх профилей: закрылась, и ты в списке,
+    // откуда её открыл. Тот же приём, что уровнем выше.
+    var editorOpen by remember { mutableStateOf(false) }
+    var editorProfile by remember { mutableStateOf<RoutingProfile?>(null) }
+    var editorBusy by remember { mutableStateOf(false) }
+    val editorSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val editorScope = rememberCoroutineScope()
     val routingSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -215,7 +232,74 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {
                     // последняя строка не упиралась в панель навигации.
                     .padding(bottom = 24.dp),
             ) {
-                RoutingProfilesSheetContent(dataDir = LocalContext.current.filesDir.absolutePath)
+                RoutingProfilesSheetContent(
+                    dataDir = LocalContext.current.filesDir.absolutePath,
+                    onEdit = { p ->
+                        editorProfile = p
+                        editorOpen = true
+                    },
+                )
+            }
+        }
+    }
+
+    if (editorOpen) {
+        val ctx = LocalContext.current
+        val dataDir = ctx.filesDir.absolutePath
+        ModalBottomSheet(
+            onDismissRequest = { if (!editorBusy) editorOpen = false },
+            modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
+            sheetState = editorSheetState,
+            containerColor = Brand.Surface,
+            dragHandle = { BottomSheetDefaults.DragHandle() },
+        ) {
+            DarkSheetSystemBars()
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .padding(bottom = 24.dp),
+            ) {
+                RoutingProfileEditorContent(
+                    profile = editorProfile,
+                    busy = editorBusy,
+                    onSave = { edited ->
+                        editorBusy = true
+                        editorScope.launch {
+                            val merged = withContext(Dispatchers.IO) {
+                                runCatching {
+                                    Mobile.mergeRoutingProfile(
+                                        RoutingProfileRepository.storeJson(),
+                                        edited.toJson().toString(),
+                                        false,
+                                    )
+                                }.getOrNull()
+                            }
+                            val state = merged?.let { parseRoutingMergeResult(it) }
+                            if (state == null) {
+                                Toast.makeText(
+                                    ctx,
+                                    ctx.getString(R.string.routing_import_failed, "merge failed"),
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                            } else {
+                                RoutingProfileRepository.replaceAll(state.profiles, state.activeId)
+                                // Ищем по имени и происхождению, а не по id: у
+                                // нового профиля id назначает Go, и до слияния
+                                // его здесь неоткуда взять.
+                                val saved = state.profiles.firstOrNull {
+                                    it.name == edited.name && it.source == edited.source
+                                }
+                                if (saved != null) {
+                                    RoutingProfileCompiler.compile(saved, dataDir)
+                                }
+                                editorOpen = false
+                            }
+                            editorBusy = false
+                        }
+                    },
+                )
             }
         }
     }

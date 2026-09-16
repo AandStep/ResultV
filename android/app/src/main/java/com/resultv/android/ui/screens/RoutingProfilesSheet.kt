@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AltRoute
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -99,7 +100,10 @@ private fun countColor(action: String): Color = when (action) {
 }
 
 @Composable
-fun RoutingProfilesSheetContent(dataDir: String) {
+fun RoutingProfilesSheetContent(
+    dataDir: String,
+    onEdit: (RoutingProfile?) -> Unit = {},
+) {
     val state by RoutingProfileRepository.state.collectAsStateWithLifecycle()
     val generation by RoutingProfileRepository.compileGeneration.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
@@ -165,6 +169,7 @@ fun RoutingProfilesSheetContent(dataDir: String) {
                     busy = busyId == active.id,
                     onSelect = {},
                     onRebuild = { rebuild(active) },
+                    onEdit = editHandler(active, onEdit),
                     onDelete = { confirmDelete = active },
                 )
                 TextButton(
@@ -194,6 +199,7 @@ fun RoutingProfilesSheetContent(dataDir: String) {
                         busy = busyId == profile.id,
                         onSelect = { RoutingProfileRepository.setActive(profile.id) },
                         onRebuild = { rebuild(profile) },
+                        onEdit = editHandler(profile, onEdit),
                         onDelete = { confirmDelete = profile },
                     )
                 }
@@ -211,20 +217,37 @@ fun RoutingProfilesSheetContent(dataDir: String) {
         // «Создать профиль» из макета появится вместе с редактором: кнопка без
         // него обещала бы то, чего нет.
         Section(stringResource(R.string.routing_profiles_actions)) {
-            Button(
-                onClick = { showImport = true },
-                modifier = Modifier.fillMaxWidth().height(52.dp),
-                shape = CardShape,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Brand.Green.copy(alpha = 0.14f),
-                    contentColor = Brand.Green,
-                ),
-            ) {
-                Text(
-                    stringResource(R.string.routing_profiles_import),
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { onEdit(null) },
+                    modifier = Modifier.weight(1f).height(52.dp),
+                    shape = CardShape,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = CardFill,
+                        contentColor = Color.White,
+                    ),
+                ) {
+                    Text(
+                        stringResource(R.string.routing_profiles_create),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                Button(
+                    onClick = { showImport = true },
+                    modifier = Modifier.weight(1f).height(52.dp),
+                    shape = CardShape,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Brand.Green.copy(alpha = 0.14f),
+                        contentColor = Brand.Green,
+                    ),
+                ) {
+                    Text(
+                        stringResource(R.string.routing_profiles_import),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
             }
         }
     }
@@ -260,6 +283,19 @@ fun RoutingProfilesSheetContent(dataDir: String) {
     }
 }
 
+/**
+ * Карандаш даётся не всякой строке — правило ПК (ProfileItem.jsx).
+ *
+ * Профиль из подписки править нечем: его правила приходят готовыми и
+ * перезаписываются следующей синхронизацией, так что правка обещала бы то, что
+ * не переживёт обновления.
+ */
+private fun editHandler(
+    profile: RoutingProfile,
+    onEdit: (RoutingProfile?) -> Unit,
+): (() -> Unit)? =
+    if (profile.source == "subscription") null else ({ onEdit(profile) })
+
 /** Раздел: подпись белым 50 % и содержимое под ней. */
 @Composable
 private fun Section(label: String, content: @Composable () -> Unit) {
@@ -277,6 +313,7 @@ private fun ProfileCard(
     busy: Boolean,
     onSelect: () -> Unit,
     onRebuild: () -> Unit,
+    onEdit: (() -> Unit)?,
     onDelete: () -> Unit,
 ) {
     Row(
@@ -351,8 +388,15 @@ private fun ProfileCard(
                 }
             }
         }
-        // Карандаша пока нет: редактор — этап C, а кнопка обещала бы то, чего
-        // нет. Это и правило ПК: правка есть не у всякой строки.
+        if (onEdit != null) {
+            IconButton(onClick = onEdit, enabled = !busy) {
+                Icon(
+                    Icons.Outlined.Edit,
+                    contentDescription = stringResource(R.string.routing_editor_edit_title),
+                    tint = Muted,
+                )
+            }
+        }
         IconButton(onClick = onDelete, enabled = !busy) {
             Icon(
                 Icons.Outlined.DeleteOutline,

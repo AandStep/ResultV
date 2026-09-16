@@ -386,4 +386,22 @@
     <string name="routing_profiles_import">Импорт профиля</string>
     <string name="routing_profiles_create">Создать профиль</string>
     <string name="action_close">Закрыть</string>
+    <string name="routing_editor_create_title">Добавление профиля</string>
+    <string name="routing_editor_create_subtitle">Создание нового профиля маршрутизации</string>
+    <string name="routing_editor_edit_title">Изменение профиля</string>
+    <string name="routing_editor_edit_subtitle">Редактирование профиля</string>
+    <string name="routing_editor_name">Название</string>
+    <string name="routing_editor_name_hint">Мои правила</string>
+    <string name="routing_editor_direct">Direct (напрямую)</string>
+    <string name="routing_editor_proxy">Proxy (через прокси)</string>
+    <string name="routing_editor_block">Block (блокировать)</string>
+    <string name="routing_editor_domains">Домены</string>
+    <string name="routing_editor_ips">IP адреса</string>
+    <string name="routing_editor_domains_hint">geosite:private\nexample.com\ndomain:nalog.ru</string>
+    <string name="routing_editor_ips_hint">geoip:private\n10.0.0.0/8</string>
+    <string name="routing_editor_strategy">Стратегия</string>
+    <string name="routing_editor_strategy_hint">Порядок разбора правил — нажмите метку, чтобы отправить её в конец</string>
+    <string name="routing_editor_geo">Geo данные</string>
+    <string name="routing_editor_geoip">URL GeoIP</string>
+    <string name="routing_editor_geosite">URL GeoSite</string>
 </resources>

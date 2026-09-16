@@ -422,4 +422,22 @@
     <string name="routing_profiles_import">Import a profile</string>
     <string name="routing_profiles_create">Create a profile</string>
     <string name="action_close">Close</string>
+    <string name="routing_editor_create_title">Add a profile</string>
+    <string name="routing_editor_create_subtitle">Create a new routing profile</string>
+    <string name="routing_editor_edit_title">Edit profile</string>
+    <string name="routing_editor_edit_subtitle">Editing the profile</string>
+    <string name="routing_editor_name">Name</string>
+    <string name="routing_editor_name_hint">My rules</string>
+    <string name="routing_editor_direct">Direct</string>
+    <string name="routing_editor_proxy">Proxy</string>
+    <string name="routing_editor_block">Block</string>
+    <string name="routing_editor_domains">Domains</string>
+    <string name="routing_editor_ips">IP addresses</string>
+    <string name="routing_editor_domains_hint">geosite:private\nexample.com\ndomain:nalog.ru</string>
+    <string name="routing_editor_ips_hint">geoip:private\n10.0.0.0/8</string>
+    <string name="routing_editor_strategy">Strategy</string>
+    <string name="routing_editor_strategy_hint">Rule order — tap a label to move it last</string>
+    <string name="routing_editor_geo">Geo data</string>
+    <string name="routing_editor_geoip">GeoIP URL</string>
+    <string name="routing_editor_geosite">GeoSite URL</string>
 </resources>
