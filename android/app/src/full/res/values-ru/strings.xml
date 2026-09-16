@@ -39,4 +39,15 @@
     <string name="settings_browser_adblock_install">Установить сертификат</string>
     <string name="cert_status_trusted">✓ Сертификат установлен</string>
     <string name="cert_status_untrusted">⚠ Сертификат не установлен</string>
+    <string name="log_browser_adblock_disabled">Блокировка рекламы в браузере перестала работать и была автоматически отключена</string>
+    <string name="log_browser_adblock_cert_untrusted">Сертификат блокировки рекламы не установлен — переустановите его в настройках. Функция отключена.</string>
+    <string name="log_browser_adblock_selftest_inconclusive">Не удалось проверить блокировку рекламы в этом сеансе; оставлено выключенным.</string>
+    <string name="log_adblock_proxy_start_failed">Блокировка рекламы в браузере не запустилась (%1$s) — браузер работает без фильтра.</string>
+    <string name="log_adblock_updated">Базы блокировки обновлены (%1$d/%2$d).</string>
+    <string name="log_adblock_update_failed">Не удалось обновить базы блокировки: %1$s</string>
+    <string name="log_adblock_loaded">Базы блокировки загружены (%1$d/%2$d).</string>
+    <string name="settings_adblock">Блокировка рекламы</string>
+    <string name="settings_adblock_subtitle">Блокировка рекламы и трекеров через DNS, включая рекламные домены YouTube. На некоторых сайтах могут остаться пустые блоки.</string>
+    <string name="settings_group_adblock">Блокировка рекламы</string>
+    <string name="settings_group_adblock_desc">Блокировка баннеров, трекеров и рекламы в браузере</string>
 </resources>

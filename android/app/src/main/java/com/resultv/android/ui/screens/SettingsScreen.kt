@@ -35,7 +35,6 @@ import com.resultv.android.locale.LocaleManager
 import com.resultv.android.theme.Brand
 import com.resultv.android.ui.components.DarkSheetSystemBars
 import com.resultv.android.ui.components.SettingIcon
-import com.resultv.android.vpn.AdBlockRepository
 import com.resultv.android.vpn.SettingsRepository
 
 private data class DnsPreset(val key: String, val label: String, val servers: String)
@@ -64,7 +63,7 @@ private enum class SettingsSubcategory(
     Network(R.string.settings_group_network, R.string.settings_group_network_desc, Icons.Outlined.Public, Brand.Green.copy(alpha = 0.18f), Brand.GreenLight),
     Routing(R.string.tab_rules, R.string.rules_section_smart_subtitle, Icons.Outlined.AltRoute, Color(0xFF3b82f6).copy(alpha = 0.18f), Color(0xFF60a5fa)),
     Security(R.string.settings_group_security, R.string.settings_group_security_desc, Icons.Outlined.Security, Color(0xFFef4444).copy(alpha=0.18f), Color(0xFFf87171)),
-    AdBlock(R.string.settings_group_adblock, R.string.settings_group_adblock_desc, Icons.Outlined.Block, Color(0xFFef4444).copy(alpha=0.18f), Color(0xFFf87171)),
+    AdBlock(AdBlockGroupRes.label, AdBlockGroupRes.desc, Icons.Outlined.Block, Color(0xFFef4444).copy(alpha=0.18f), Color(0xFFf87171)),
     Subscriptions(R.string.settings_group_subscriptions, R.string.settings_group_subscriptions_desc, Icons.Outlined.RssFeed, Color(0xFFf59e0b).copy(alpha=0.18f), Color(0xFFfbbf24)),
     Appearance(R.string.settings_group_appearance, R.string.settings_group_appearance_desc, Icons.Outlined.Palette, Color(0xFF8b5cf6).copy(alpha=0.18f), Color(0xFFa78bfa)),
     Advanced(R.string.settings_group_advanced, R.string.settings_group_advanced_desc, Icons.Outlined.Tune, Color(0xFF64748b).copy(alpha=0.18f), Color(0xFF94a3b8)),
@@ -169,7 +168,7 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {
                     SettingsSubcategory.Advanced -> AdvancedGroup(settings)
                     SettingsSubcategory.Subscriptions -> SubscriptionsGroup(settings)
                     SettingsSubcategory.Security -> SecurityGroup(settings)
-                    SettingsSubcategory.AdBlock -> AdBlockGroup(
+                    SettingsSubcategory.AdBlock -> AdBlockGroupContent(
                         settings,
                         // Dismiss the sheet first, or the wizard opens beneath
                         // it — this sheet is a sub-window layered above the
@@ -281,29 +280,6 @@ private fun AdvancedGroup(settings: com.resultv.android.vpn.SettingsState) {
         checked = settings.ipv6,
         onCheckedChange = { SettingsRepository.setIpv6(it) },
     )
-}
-
-@Composable
-private fun AdBlockGroup(settings: com.resultv.android.vpn.SettingsState, onOpenCertWizard: () -> Unit) {
-    ToggleRow(
-        title = stringResource(R.string.settings_adblock),
-        subtitle = stringResource(R.string.settings_adblock_subtitle),
-        icon = Icons.Outlined.Block,
-        iconBg = Color(0xFFef4444).copy(alpha = 0.18f),
-        iconTint = Color(0xFFf87171),
-        checked = settings.adblock,
-        onCheckedChange = {
-            SettingsRepository.setAdblock(it)
-            // Warm the SRS cache so the next connect references local lists
-            // instead of waiting on sing-box's remote fetch. Safe no-op when
-            // already fresh (24h TTL).
-            if (it) AdBlockRepository.refreshAsync()
-        },
-    )
-    // В Play-сборке функции нет ни в Kotlin (src/play — заглушка этой
-    // секции), ни в .so (тег no_mitm), ни в ресурсах (строки живут в
-    // src/full/res).
-    BrowserAdBlockSection(settings, onOpenCertWizard)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

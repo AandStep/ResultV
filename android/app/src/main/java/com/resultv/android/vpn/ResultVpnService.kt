@@ -19,7 +19,6 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -78,7 +77,15 @@ class ResultVpnService : VpnService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var reloadWatcher: Job? = null
     @Volatile private var killSwitchWatchdog: KillSwitchWatchdog? = null
-    @Volatile private var filterProxyWatchdog: FilterProxyWatchdog? = null
+
+    // Браузерный ad-block живёт в паре src/full / src/play: в play его нет
+    // ни в .so (тег no_mitm), ни в ресурсах. Отдаём туда только то, что нужно:
+    // очередь, время жизни и пересборку конфига активного профиля.
+    private val browserAdBlock by lazy {
+        BrowserAdBlockAttachment(this, worker, scope) {
+            ProfileRepository.state.value.active?.let { buildConfigForReload(it) }
+        }
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // Always-on VPN starts the service directly via the
@@ -98,7 +105,7 @@ class ResultVpnService : VpnService() {
                 AutoSelection.reset()
                 reloadWatcher?.cancel(); reloadWatcher = null
                 stopKillSwitchWatchdog()
-                stopFilterProxyWatchdog()
+                browserAdBlock.stopWatchdog()
                 TrafficWatcher.stop()
                 ConnectionWatcher.stop()
                 // Close the tun fd up front — this drops the system VPN
@@ -263,9 +270,10 @@ class ResultVpnService : VpnService() {
      * AutoSelection's in-memory state) falls back to the group head rather than
      * blocking the reload on a fresh probe sweep.
      *
-     * panic defaults to the LIVE kill-switch state, not false: three callers
-     * (scheduleListReadyReload, attachBrowserAdBlockAsync,
-     * onFilterProxyUnhealthy) never pass panic explicitly, and if the kill
+     * panic defaults to the LIVE kill-switch state, not false: the callers
+     * that reload off the connect path (scheduleListReadyReload and the
+     * browser ad-block attachment, which reaches this through the
+     * reloadConfig lambda) never pass panic explicitly, and if the kill
      * switch is engaged when one of them fires, a reload that silently
      * defaulted to panic=false would rebuild with route.final back to
      * "proxy" — traffic escaping through a proxy the watchdog already judged
@@ -327,7 +335,7 @@ class ResultVpnService : VpnService() {
             // Structured per-host [CONN] lines (domain -> ip:port).
             ConnectionWatcher.start()
             // Attach browser ad-block now that the tunnel is up.
-            attachBrowserAdBlockAsync()
+            browserAdBlock.attach()
             // Fallback: connected before the lists finished warming.
             if (!listsReady) scheduleListReadyReload()
         } catch (t: Throwable) {
@@ -451,141 +459,6 @@ class ResultVpnService : VpnService() {
         }
     }
 
-    /**
-     * Attach the browser ad-block MITM proxy AFTER the tunnel is already up,
-     * off the connect critical path. Starting it (urlfilter engine build + TLS
-     * self-test) takes seconds; doing it before BoxModule.start() used to add
-     * that to every connect. Here we start it on the worker (so it queues
-     * behind the just-finished connect task) and, once the proxy is live, force
-     * an in-place reload so openTun() re-runs and applies setHttpProxy — the
-     * mirror image of onFilterProxyUnhealthy(), which reloads to REMOVE it.
-     *
-     * The tunnel stays up throughout; there's only a brief window right after
-     * connect where the browser isn't yet filtered. The cached urlfilter engine
-     * (Manager reuses it across connects) keeps that window short after the
-     * first connect.
-     *
-     * Самотест CA, ответивший INCONCLUSIVE, повторяется: пауза отсчитывается
-     * вне worker (иначе очередь reload-ов встала бы на всё это время), а сама
-     * попытка снова встаёт в worker. См. [certSelfTestRetryDelayMs] о том,
-     * почему «не знаю» — не повод выключать функцию до конца сессии.
-     */
-    private fun attachBrowserAdBlockAsync(attemptsDone: Int = 0) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
-        if (!SettingsRepository.state.value.browserAdBlock) return
-        worker.execute {
-            val verdict = startBrowserAdBlockIfEnabled()
-            // Only reload if the proxy actually came up (trusted cert + healthy);
-            // startBrowserAdBlockIfEnabled leaves filterProxyRunning=false otherwise.
-            if (BoxModule.filterProxyRunning && BoxModule.isRunning) {
-                val active = ProfileRepository.state.value.active ?: return@execute
-                val cfg = buildConfigForReload(active) ?: return@execute
-                BoxModule.reload(cfg)
-                return@execute
-            }
-            // CERT_UNTRUSTED — это ответ, а не помеха: повторять нечего, пока
-            // пользователь не поставит сертификат. Повтора заслуживает только
-            // INCONCLUSIVE.
-            if (verdict != CertSelfTest.Result.INCONCLUSIVE) return@execute
-            val attempts = attemptsDone + 1
-            val retryIn = certSelfTestRetryDelayMs(attempts)
-            if (retryIn == null) {
-                AppLog.warning(getString(R.string.log_browser_adblock_selftest_inconclusive))
-                return@execute
-            }
-            Log.i(TAG, "CA self-test inconclusive (attempt $attempts) - retrying in ${retryIn}ms")
-            scope.launch {
-                delay(retryIn)
-                if (!BoxModule.isRunning) return@launch
-                attachBrowserAdBlockAsync(attempts)
-            }
-        }
-    }
-
-    /**
-     * Best-effort: browser ad-block is a bonus feature layered on top of
-     * the VPN tunnel, never a reason to fail the whole connect. Runs AFTER
-     * BoxModule.start() (see attachBrowserAdBlockAsync) and MUST leave
-     * BoxModule.filterProxyRunning=false on any failure (no lists downloaded
-     * yet, port in use, etc.) so the follow-up reload's openTun() never applies
-     * setHttpProxy to a dead proxy and breaks Chrome's HTTPS traffic.
-     *
-     * Возвращает вердикт самотеста, чтобы вызывающая сторона отличила «не
-     * знаю» (повторимо) от «не доверен» (нет), либо null, если до самотеста
-     * не дошло.
-     */
-    private fun startBrowserAdBlockIfEnabled(): CertSelfTest.Result? {
-        BoxModule.filterProxyRunning = false
-        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) return null
-        if (!SettingsRepository.state.value.browserAdBlock) return null
-        try {
-            mobile.Mobile.startFilterProxy(filesDir.absolutePath, BROWSER_ADBLOCK_PORT.toLong())
-            val verdict = CertSelfTest.run(BROWSER_ADBLOCK_PORT)
-            when (verdict) {
-                CertSelfTest.Result.PASS -> {
-                    BoxModule.filterProxyRunning = true
-                    SettingsRepository.setCertTrustState(com.resultv.android.vpn.CertTrustState.TRUSTED)
-                    filterProxyWatchdog?.stop()
-                    filterProxyWatchdog = FilterProxyWatchdog(filesDir.absolutePath) {
-                        onFilterProxyUnhealthy()
-                    }.also { it.start() }
-                }
-                CertSelfTest.Result.CERT_UNTRUSTED -> {
-                    // Tear down; leave filterProxyRunning=false so setHttpProxy is NOT applied.
-                    mobile.Mobile.stopFilterProxy()
-                    SettingsRepository.setCertTrustState(com.resultv.android.vpn.CertTrustState.UNTRUSTED)
-                    SettingsRepository.setBrowserAdBlock(false)
-                    AppLog.warning(getString(R.string.log_browser_adblock_cert_untrusted))
-                }
-                CertSelfTest.Result.INCONCLUSIVE -> {
-                    // Don't leave an unused proxy running; keep the toggle for next time.
-                    // certTrustState is deliberately NOT touched here — a transient
-                    // network hiccup must not overwrite the last known-good/known-bad
-                    // determination (see CertTrustState's doc comment).
-                    //
-                    // В журнал пишет вызывающая сторона, и только когда повторы
-                    // кончились: строка «проверить не удалось» на каждой
-                    // попытке выглядела бы отказом там, где ещё идёт ожидание.
-                    mobile.Mobile.stopFilterProxy()
-                }
-            }
-            return verdict
-        } catch (t: Throwable) {
-            BoxModule.filterProxyRunning = false
-            try { mobile.Mobile.stopFilterProxy() } catch (_: Throwable) {}
-            Log.w(TAG, "browser ad-block proxy failed to start; Chrome will use normal routing", t)
-            AppLog.warning(
-                R.string.log_adblock_proxy_start_failed,
-                t.message ?: t.javaClass.simpleName,
-                source = AppLog.resolve(R.string.log_source_adblock),
-            )
-            return null
-        }
-    }
-
-    private fun stopFilterProxyWatchdog() {
-        filterProxyWatchdog?.stop()
-        filterProxyWatchdog = null
-    }
-
-    /**
-     * Called from the watchdog's coroutine when the proxy dies mid-session.
-     * Turns the feature off (so it doesn't silently keep failing on every
-     * future reconnect) and forces a lightweight in-place reload — the same
-     * technique reloadKillSwitch uses — so openTun() re-runs, re-reads
-     * BoxModule.filterProxyRunning (now false), and drops setHttpProxy from
-     * the live Builder. The sing-box config itself doesn't change; this is
-     * purely to force a fresh TUN handover.
-     */
-    private fun onFilterProxyUnhealthy() {
-        BoxModule.filterProxyRunning = false
-        SettingsRepository.setBrowserAdBlock(false)
-        AppLog.warning(getString(R.string.log_browser_adblock_disabled))
-        val active = ProfileRepository.state.value.active ?: return
-        val cfg = buildConfigForReload(active) ?: return
-        worker.execute { BoxModule.reload(cfg) }
-    }
-
     override fun onRevoke() {
         // OS-initiated revoke: another VPN app took over, or the user
         // toggled VPN off in system settings. We MUST stop the tunnel
@@ -602,7 +475,7 @@ class ResultVpnService : VpnService() {
         // Stop the proxy watchdog BEFORE tearing the engine down — otherwise it
         // can see the dying proxy as "unhealthy" mid-revoke and trigger an
         // in-place reload against a VPN the OS has already pulled.
-        stopFilterProxyWatchdog()
+        browserAdBlock.stopWatchdog()
         TrafficWatcher.stop()
         ConnectionWatcher.stop()
         closeTun()
@@ -622,7 +495,7 @@ class ResultVpnService : VpnService() {
     override fun onDestroy() {
         reloadWatcher?.cancel(); reloadWatcher = null
         stopKillSwitchWatchdog()
-        stopFilterProxyWatchdog()
+        browserAdBlock.stopWatchdog()
         TrafficWatcher.stop()
         ConnectionWatcher.stop()
         scope.cancel()
