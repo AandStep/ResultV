@@ -418,6 +418,12 @@ type SubscriptionResponse struct {
 	UserInfo   string          `json:"userInfo,omitempty"` // "upload=…; download=…; total=…; expire=…"
 	Title      string          `json:"title,omitempty"`
 	SupportURL string          `json:"supportUrl,omitempty"`
+	// Routing is the provider's own routing folded into ONE profile, as JSON,
+	// or empty when it declared none. Kotlin only has to stamp its own
+	// subscription id on it and merge — the parsing of both channels (the
+	// Routing-Lists header and the embedded xray rules) lives in Go, and a
+	// second copy of it there would drift from this one.
+	Routing string `json:"routing,omitempty"`
 }
 
 // FetchSubscriptionV2 returns the entries together with subscription
@@ -475,6 +481,7 @@ func FetchSubscriptionV3(subURL, dataDir, optionsJson string) (string, error) {
 		UserInfo:   out.UserInfo,
 		Title:      out.Title,
 		SupportURL: out.SupportURL,
+		Routing:    out.Routing,
 	}
 	data, err := json.Marshal(resp)
 	if err != nil {
@@ -565,11 +572,28 @@ func fetchSubscription(subURL, dataDir string, opts SubscriptionFetchOptions) (s
 	// members[0] at connect time (latency-based selection comes later).
 	visible := buildAutoAwareEntries(entries)
 
+	// Маршрутизация провайдера сворачивается в один профиль здесь, а не на
+	// стороне Kotlin: разбор обоих каналов уже написан на Go, и вторая его
+	// копия разъехалась бы с первой.
+	//
+	// subID пустой не по забывчивости: идентификатор подписки знает только
+	// Kotlin — он же его и проставит перед слиянием. Подделывать его здесь
+	// нечем, а чужой id сломал бы поиск профиля при следующей синхронизации.
+	routing := ""
+	if p, ok := proxy.BuildSubscriptionRoutingProfile(
+		"", primaryRes.Title, false, primaryRes.RoutingHeader, primaryRes.Body,
+	); ok {
+		if blob, merr := json.Marshal(p); merr == nil {
+			routing = string(blob)
+		}
+	}
+
 	return subscriptionResult{
 		Entries:    visible,
 		UserInfo:   primaryRes.UserInfo,
 		Title:      primaryRes.Title,
 		SupportURL: primaryRes.SupportURL,
+		Routing:    routing,
 	}, nil
 }
 
@@ -578,6 +602,7 @@ type subscriptionResult struct {
 	UserInfo   string
 	Title      string
 	SupportURL string
+	Routing    string
 }
 
 // buildAutoAwareEntries reproduces app.go's auto-bundling and extends it
@@ -644,6 +669,12 @@ type subscriptionFetchResult struct {
 	Title      string
 	SupportURL string
 	Diag       string
+	// RoutingHeader и Body нужны разбору маршрутизации: провайдер объявляет её
+	// либо заголовком Routing-Lists, либо ключом routingLists в JSON-теле,
+	// либо встроенными xray-правилами прямо в конфигах. Тело здесь уже
+	// прочитано — второй запрос за тем же ответом был бы лишним.
+	RoutingHeader string
+	Body          string
 }
 
 // subscriptionDeviceHeaders pulls the user-tag headers out of the fetch
@@ -721,11 +752,13 @@ func fetchSubscriptionWithUA(subURL, userAgent, hwid string, extraHeaders map[st
 	// don't set them get empty strings here and the UI hides the
 	// corresponding affordance instead of falling back to a hardcoded value.
 	return subscriptionFetchResult{
-		Entries:    entries,
-		UserInfo:   resp.Header.Get("Subscription-Userinfo"),
-		Title:      resp.Header.Get("Profile-Title"),
-		SupportURL: strings.TrimSpace(resp.Header.Get("Support-Url")),
-		Diag:       diag,
+		Entries:       entries,
+		UserInfo:      resp.Header.Get("Subscription-Userinfo"),
+		Title:         resp.Header.Get("Profile-Title"),
+		SupportURL:    strings.TrimSpace(resp.Header.Get("Support-Url")),
+		Diag:          diag,
+		RoutingHeader: resp.Header.Get("Routing-Lists"),
+		Body:          string(body),
 	}, nil
 }
 
