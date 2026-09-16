@@ -167,25 +167,16 @@ fun RoutingProfilesSheetContent(
                     isActive = true,
                     ready = ready[active.id].orEmpty(),
                     busy = busyId == active.id,
-                    onSelect = {},
+                    // Тап по активному профилю выключает его. Отдельная
+                    // строка «Маршрутизация без профиля» под карточкой была
+                    // вторым способом сделать то же самое — и единственной
+                    // ссылкой в шторке, где всё остальное нажимается
+                    // карточками.
+                    onSelect = { RoutingProfileRepository.setActive("") },
                     onRebuild = { rebuild(active) },
                     onEdit = { onEdit(active) },
                     onDelete = { confirmDelete = active },
                 )
-                TextButton(
-                    onClick = { RoutingProfileRepository.setActive("") },
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                        horizontal = 8.dp, vertical = 0.dp,
-                    ),
-                ) {
-                    // Приглушённо: это выход из состояния, а не действие,
-                    // ради которого сюда пришли.
-                    Text(
-                        stringResource(R.string.routing_profiles_off),
-                        fontSize = 14.sp,
-                        color = Muted,
-                    )
-                }
             }
         }
 
@@ -309,7 +300,7 @@ private fun ProfileCard(
             .clip(CardShape)
             .background(CardFill)
             .border(1.dp, if (isActive) ActiveBorder else CardBorder, CardShape)
-            .clickable(enabled = !busy && !isActive, onClick = onSelect)
+            .clickable(enabled = !busy, onClick = onSelect)
             .padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -375,24 +366,34 @@ private fun ProfileCard(
                 }
             }
         }
-        // Карандаш у каждой строки, включая профиль подписки: на ПК onEdit
-        // тоже передаётся безусловно (RoutingProfilesDialog.jsx:75). Правка
-        // профиля подписки осмысленна — происхождение и ссылки на списки
-        // переживают её (см. UpsertRoutingProfile), — хотя следующая
-        // синхронизация правила перепишет.
-        IconButton(onClick = onEdit, enabled = !busy) {
-            Icon(
-                Icons.Outlined.Edit,
-                contentDescription = stringResource(R.string.routing_editor_edit_title),
-                tint = Muted,
-            )
-        }
-        IconButton(onClick = onDelete, enabled = !busy) {
-            Icon(
-                Icons.Outlined.DeleteOutline,
-                contentDescription = stringResource(R.string.routing_profiles_delete),
-                tint = Muted,
-            )
+        // Две кнопки — одной группой, иначе между ними встаёт шаг строки
+        // (14 dp) поверх собственных полей IconButton, и корзина отъезжает от
+        // карандаша дальше, чем карандаш от текста.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(0.dp),
+        ) {
+            // Карандаш у каждой строки, включая профиль подписки: на ПК onEdit
+            // тоже передаётся безусловно (RoutingProfilesDialog.jsx:75). Правка
+            // профиля подписки осмысленна — происхождение и ссылки на списки
+            // переживают её (см. UpsertRoutingProfile), — хотя следующая
+            // синхронизация правила перепишет.
+            IconButton(onClick = onEdit, enabled = !busy, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    Icons.Outlined.Edit,
+                    contentDescription = stringResource(R.string.routing_editor_edit_title),
+                    tint = Muted,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            IconButton(onClick = onDelete, enabled = !busy, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    Icons.Outlined.DeleteOutline,
+                    contentDescription = stringResource(R.string.routing_profiles_delete),
+                    tint = Muted,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
         }
     }
 }

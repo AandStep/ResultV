@@ -378,7 +378,6 @@
     <string name="routing_profiles_rebuild">Собрать ещё раз</string>
     <string name="routing_profiles_delete">Удалить</string>
     <string name="routing_profiles_delete_confirm">Удалить профиль «%1$s»?</string>
-    <string name="routing_profiles_off">Маршрутизация без профиля</string>
     <string name="routing_profiles_subtitle">Самостоятельно управляйте правилами трафика</string>
     <string name="routing_profiles_active">Активный профиль</string>
     <string name="routing_profiles_all">Все профили</string>

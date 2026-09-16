@@ -62,6 +62,13 @@ import com.resultv.android.vpn.routingTokensOf
  */
 
 private val PanelShape = RoundedCornerShape(16.dp)
+
+/**
+ * Поле правил скруглено сильнее стандартного: оно лежит ВНУТРИ панели на
+ * 16 dp, и прямые углы Material внутри скруглённой коробки читались как
+ * чужая деталь.
+ */
+private val FieldShape = RoundedCornerShape(14.dp)
 private val EditorBorder = Color.White.copy(alpha = 0.06f)
 private val EditorMuted = Color.White.copy(alpha = 0.50f)
 
@@ -341,9 +348,15 @@ private fun RulePanel(
                 value = value,
                 onValueChange = onChange,
                 placeholder = { Text(hint, fontSize = 13.sp) },
+                shape = FieldShape,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 110.dp)
+                    // Потолок высоты, а не рост по содержимому: у профиля
+                    // подписки 115 доменов, и раскрытая панель занимала
+                    // несколько экранов — до «Стратегии» приходилось листать
+                    // мимо всего списка. Выше потолка текст прокручивается
+                    // внутри поля.
+                    .heightIn(min = 110.dp, max = 220.dp)
                     .padding(horizontal = 14.dp)
                     .padding(bottom = 14.dp),
             )
