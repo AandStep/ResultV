@@ -21,6 +21,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.resultv.android.R
 import com.resultv.android.theme.Brand
+import com.resultv.android.vpn.ROUTING_ACTIONS
 import com.resultv.android.vpn.RoutingProfile
 
 /**
@@ -68,15 +69,20 @@ fun RoutingDeepLinkSheet(
                     color = Brand.SecondaryText,
                 )
             }
-            Text(
-                stringResource(
-                    R.string.routing_sheet_counts,
-                    profile.ruleCount("direct"),
-                    profile.ruleCount("proxy"),
-                    profile.ruleCount("block"),
-                ),
-                style = MaterialTheme.typography.bodyMedium,
-            )
+            // Ноль не показывается — то же правило, что у карточки в списке
+            // профилей. Иначе один и тот же профиль выглядит по-разному в двух
+            // соседних окнах: «0 direct · 1 proxy · 0 block» здесь и «1 proxy»
+            // строкой ниже.
+            val parts = ROUTING_ACTIONS.mapNotNull { action ->
+                val n = profile.ruleCount(action)
+                if (n > 0) "$n $action" else null
+            }
+            if (parts.isNotEmpty()) {
+                Text(
+                    parts.joinToString(" · "),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
             if (profile.geositeUrl.isNotEmpty() || profile.geoipUrl.isNotEmpty()) {
                 Text(
                     stringResource(R.string.routing_sheet_geo),
