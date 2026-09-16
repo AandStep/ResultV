@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Строки браузерного ad-block (MITM): функции нет ни в Kotlin
+     (src/play — заглушки), ни в .so (тег no_mitm), поэтому и описания её
+     в play-APK быть не должно. -->
+<resources>
+    <string name="cert_stale_banner_action">Open trusted credentials</string>
+    <string name="cert_stale_banner_body">%1$d leftover \"ResultV AdBlock Root CA\" certificate(s) from a previous install are still in your system trust store. Remove the extras to keep things tidy.</string>
+    <string name="cert_stale_banner_title">Old certificates found</string>
+    <string name="cert_wizard_close">Close</string>
+    <string name="cert_wizard_direct_body">Tap the button below and confirm the install — Android will ask you to name the certificate, and the default name is fine. That\'s the whole setup.</string>
+    <string name="cert_wizard_direct_cta">Install certificate</string>
+    <string name="cert_wizard_direct_title">ResultV certificate</string>
+    <string name="cert_wizard_done_body">Browser ad blocking is active. Banners will disappear as soon as you connect the VPN.</string>
+    <string name="cert_wizard_done_cta">Done</string>
+    <string name="cert_wizard_done_title">Certificate installed</string>
+    <string name="cert_wizard_install_copied">Copied</string>
+    <string name="cert_wizard_install_cta">Open settings</string>
+    <string name="cert_wizard_install_search_term">CA certificate</string>
+    <string name="cert_wizard_install_settings_error">Couldn\'t open Android settings. Open Settings → Security → Encryption &amp; credentials manually.</string>
+    <string name="cert_wizard_install_step1">Copy the text below</string>
+    <string name="cert_wizard_install_step2">Open settings and paste it into the search field</string>
+    <string name="cert_wizard_install_step3">Choose “%1$s” in the results</string>
+    <string name="cert_wizard_install_step4">Accept the security warning — it\'s Android\'s standard warning for any locally installed certificate</string>
+    <string name="cert_wizard_install_step5">Tap the %1$s file to install it</string>
+    <string name="cert_wizard_install_title">Install the certificate</string>
+    <string name="cert_wizard_safety_body">The certificate is generated right here on your phone, and its private key never leaves it. Ads are cut out locally, before the page draws them, while connections to sites stay encrypted. Banking apps, government services, Google and YouTube are excluded and never intercepted.</string>
+    <string name="cert_wizard_safety_cta">Next</string>
+    <string name="cert_wizard_safety_title">Filtering happens on your device</string>
+    <string name="cert_wizard_save_body">Tap “Save certificate” and confirm — the file name and the Downloads folder are already filled in, so there\'s nothing to change. In the next step you\'ll install it from Android settings: Android does not allow apps to do this themselves.</string>
+    <string name="cert_wizard_save_cta">Save certificate</string>
+    <string name="cert_wizard_save_error">Couldn\'t save the certificate to Downloads. Please try again.</string>
+    <string name="cert_wizard_save_title">ResultV certificate</string>
+    <string name="cert_wizard_why_body">Almost every site loads over an encrypted HTTPS connection, and ads and trackers ride along inside it. Without filtering that traffic, banners can\'t be removed from the page.</string>
+    <string name="cert_wizard_why_cta">Continue</string>
+    <string name="cert_wizard_why_title">HTTPS filtering is required to block ads</string>
+    <string name="settings_browser_adblock_cert_error">Couldn\'t prepare the ad-block certificate. Please try again.</string>
+    <string name="settings_browser_adblock">Block banner ads in browser</string>
+    <string name="settings_browser_adblock_subtitle">Requires installing a local certificate (Android will show a warning — this only affects traffic on this device, going through this app). Removes banners in Chrome cleanly instead of leaving empty boxes. Does not affect YouTube.</string>
+    <string name="settings_browser_adblock_install">Install certificate</string>
+    <string name="cert_status_trusted">✓ Certificate installed</string>
+    <string name="cert_status_untrusted">⚠ Certificate not installed</string>
+</resources>

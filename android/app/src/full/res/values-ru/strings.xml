@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Строки браузерного ad-block (MITM): функции нет ни в Kotlin
+     (src/play — заглушки), ни в .so (тег no_mitm), поэтому и описания её
+     в play-APK быть не должно. -->
+<resources>
+    <string name="cert_stale_banner_action">Открыть доверенные сертификаты</string>
+    <string name="cert_stale_banner_body">%1$d старых сертификатов «ResultV AdBlock Root CA» от прошлой установки остались в системном хранилище доверия. Удалите лишние, чтобы не копить их.</string>
+    <string name="cert_stale_banner_title">Найдены старые сертификаты</string>
+    <string name="cert_wizard_close">Закрыть</string>
+    <string name="cert_wizard_direct_body">Нажмите кнопку ниже и подтвердите установку — Android попросит задать имя сертификата, можно оставить предложенное. На этом настройка закончена.</string>
+    <string name="cert_wizard_direct_cta">Установить сертификат</string>
+    <string name="cert_wizard_direct_title">Сертификат ResultV</string>
+    <string name="cert_wizard_done_body">Блокировка рекламы в браузере активна. Баннеры исчезнут, как только вы подключите VPN.</string>
+    <string name="cert_wizard_done_cta">Готово</string>
+    <string name="cert_wizard_done_title">Сертификат установлен</string>
+    <string name="cert_wizard_install_copied">Скопировано</string>
+    <string name="cert_wizard_install_cta">Открыть настройки</string>
+    <string name="cert_wizard_install_search_term">Сертификат ЦС</string>
+    <string name="cert_wizard_install_settings_error">Не удалось открыть настройки Android. Зайдите вручную: Настройки → Безопасность → Шифрование и учётные данные.</string>
+    <string name="cert_wizard_install_step1">Скопируйте текст ниже</string>
+    <string name="cert_wizard_install_step2">Откройте настройки и вставьте его в поле поиска</string>
+    <string name="cert_wizard_install_step3">Выберите «%1$s» в результатах</string>
+    <string name="cert_wizard_install_step4">Примите предупреждение безопасности — Android показывает его для любого локально установленного сертификата</string>
+    <string name="cert_wizard_install_step5">Нажмите на файл %1$s, чтобы установить его</string>
+    <string name="cert_wizard_install_title">Установка сертификата</string>
+    <string name="cert_wizard_safety_body">Сертификат создаётся прямо на телефоне, и его закрытый ключ никогда его не покидает. Реклама вырезается локально, ещё до отрисовки страницы, а соединения с сайтами остаются зашифрованными. Банковские приложения, Госуслуги, Google и YouTube исключены и никогда не перехватываются.</string>
+    <string name="cert_wizard_safety_cta">Далее</string>
+    <string name="cert_wizard_safety_title">Фильтрация проходит на вашем устройстве</string>
+    <string name="cert_wizard_save_body">Нажмите «Сохранить сертификат» и подтвердите — имя файла и папка «Загрузки» уже подставлены, менять ничего не нужно. На следующем шаге вы установите его через настройки Android: сделать это самостоятельно приложениям система не разрешает.</string>
+    <string name="cert_wizard_save_cta">Сохранить сертификат</string>
+    <string name="cert_wizard_save_error">Не удалось сохранить сертификат в «Загрузки». Попробуйте ещё раз.</string>
+    <string name="cert_wizard_save_title">Сертификат ResultV</string>
+    <string name="cert_wizard_why_body">Почти все сайты работают по зашифрованному соединению HTTPS, и реклама с трекерами приходит внутри него. Без фильтрации этого трафика убрать баннеры со страницы невозможно.</string>
+    <string name="cert_wizard_why_cta">Продолжить</string>
+    <string name="cert_wizard_why_title">Для блокировки рекламы нужна HTTPS-фильтрация</string>
+    <string name="settings_browser_adblock_cert_error">Не удалось подготовить сертификат блокировки рекламы. Попробуйте ещё раз.</string>
+    <string name="settings_browser_adblock">Блокировать баннеры в браузере</string>
+    <string name="settings_browser_adblock_subtitle">Требует установки локального сертификата (Android покажет предупреждение — это касается только трафика на этом устройстве через это приложение). Убирает баннеры в Chrome полностью, без пустых блоков. На YouTube не влияет.</string>
+    <string name="settings_browser_adblock_install">Установить сертификат</string>
+    <string name="cert_status_trusted">✓ Сертификат установлен</string>
+    <string name="cert_status_untrusted">⚠ Сертификат не установлен</string>
+</resources>

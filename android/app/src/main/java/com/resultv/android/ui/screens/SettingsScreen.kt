@@ -30,12 +30,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.content.ContextWrapper
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import com.resultv.android.R
 import com.resultv.android.locale.LocaleManager
 import com.resultv.android.theme.Brand
+import com.resultv.android.ui.components.DarkSheetSystemBars
 import com.resultv.android.ui.components.SettingIcon
 import com.resultv.android.vpn.AdBlockRepository
 import com.resultv.android.vpn.SettingsRepository
@@ -139,12 +137,17 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {
             containerColor = Brand.Surface,
             dragHandle = { BottomSheetDefaults.DragHandle() },
         ) {
+            DarkSheetSystemBars()
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp, vertical = 8.dp)
-                    .padding(bottom = 48.dp), // Safe area
+                    // Не safe area: её лист уже держит сам —
+                    // ModalBottomSheet кладёт на содержимое
+                    // BottomSheetDefaults.windowInsets (safeDrawing снизу). Это
+                    // просто поле, чтобы последняя строка не упиралась в панель.
+                    .padding(bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 // Sheet Header
@@ -236,7 +239,7 @@ private fun SubcategoryRow(subcategory: SettingsSubcategory, onClick: () -> Unit
 
 /** A settings row that navigates elsewhere (full screen) instead of opening a sheet. */
 @Composable
-private fun NavRow(
+internal fun NavRow(
     label: String,
     icon: ImageVector,
     iconBg: Color,
@@ -297,78 +300,10 @@ private fun AdBlockGroup(settings: com.resultv.android.vpn.SettingsState, onOpen
             if (it) AdBlockRepository.refreshAsync()
         },
     )
-    // В Play-сборке функции нет ни в Kotlin (src/play — заглушки), ни в .so
-    // (тег no_mitm), поэтому переключателя тоже быть не должно.
-    if (com.resultv.android.BuildConfig.BROWSER_ADBLOCK &&
-        android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
-    ) {
-        HorizontalDivider(color = Brand.SurfaceHigh)
-        BrowserAdBlockRow(settings, onOpenCertWizard)
-    }
-}
-
-@Composable
-private fun BrowserAdBlockRow(
-    settings: com.resultv.android.vpn.SettingsState,
-    onOpenCertWizard: () -> Unit,
-) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val scope = rememberCoroutineScope()
-
-    // The persisted trust state only refreshes on a VPN connect, so it goes
-    // stale the moment the user installs or removes the cert outside the app.
-    // Re-reading the trust store when this section opens keeps the status line
-    // and the "Install certificate" row honest.
-    var certInstalled by remember { mutableStateOf(settings.certTrustState == com.resultv.android.vpn.CertTrustState.TRUSTED) }
-    LaunchedEffect(Unit) {
-        certInstalled = withContext(Dispatchers.IO) {
-            com.resultv.android.vpn.CertStore.isInstalled(context.filesDir.absolutePath)
-        }
-        SettingsRepository.setCertTrustState(
-            if (certInstalled) com.resultv.android.vpn.CertTrustState.TRUSTED
-            else com.resultv.android.vpn.CertTrustState.UNTRUSTED,
-        )
-    }
-
-    ToggleRow(
-        title = stringResource(R.string.settings_browser_adblock),
-        subtitle = stringResource(R.string.settings_browser_adblock_subtitle),
-        icon = Icons.Outlined.Shield,
-        iconBg = Color(0xFF22c55e).copy(alpha = 0.18f),
-        iconTint = Color(0xFF4ade80),
-        checked = settings.browserAdBlock,
-        onCheckedChange = { enabled ->
-            if (enabled) {
-                scope.launch(Dispatchers.IO) {
-                    mobile.Mobile.fetchFilterLists(context.filesDir.absolutePath)
-                }
-                SettingsRepository.setBrowserAdBlock(true)
-                // Turning the feature on without a trusted cert does nothing
-                // useful, so the toggle doubles as the wizard's entry point.
-                if (!certInstalled) onOpenCertWizard()
-            } else {
-                SettingsRepository.setBrowserAdBlock(false)
-            }
-        },
-    )
-    Text(
-        text = stringResource(
-            if (certInstalled) R.string.cert_status_trusted else R.string.cert_status_untrusted,
-        ),
-        style = MaterialTheme.typography.labelSmall,
-        color = if (certInstalled) Brand.GreenLight else Brand.MutedText,
-        modifier = Modifier.padding(start = 62.dp, top = 2.dp),
-    )
-    if (!certInstalled) {
-        HorizontalDivider(color = Brand.SurfaceHigh)
-        NavRow(
-            label = stringResource(R.string.settings_browser_adblock_install),
-            icon = Icons.Outlined.Shield,
-            iconBg = Color(0xFF22c55e).copy(alpha = 0.18f),
-            iconTint = Color(0xFF4ade80),
-            onClick = onOpenCertWizard,
-        )
-    }
+    // В Play-сборке функции нет ни в Kotlin (src/play — заглушка этой
+    // секции), ни в .so (тег no_mitm), ни в ресурсах (строки живут в
+    // src/full/res).
+    BrowserAdBlockSection(settings, onOpenCertWizard)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -564,7 +499,7 @@ private fun AppearanceGroup(onBeforeRecreate: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ToggleRow(
+internal fun ToggleRow(
     title: String,
     subtitle: String,
     icon: ImageVector,
