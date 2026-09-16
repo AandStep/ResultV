@@ -352,6 +352,9 @@
 
     <!-- Persistence read/write error logging -->
     <string name="log_persist_failed">Не удалось сохранить %1$s — изменения могут потеряться после перезапуска.</string>
+    <string name="log_routing_compiled">Профиль маршрутизации «%1$s» собран: %2$d direct, %3$d proxy, %4$d block</string>
+    <string name="log_routing_unresolved">Профиль маршрутизации «%1$s»: не принято правил — %2$d</string>
+    <string name="log_routing_compile_failed">Профиль «%1$s» сохранён, но правила не собраны: %2$s</string>
     <string name="log_read_failed">Не удалось прочитать %1$s — данные сброшены.</string>
     <string name="log_app_rules_allowlist_migrated">Режим приложений «Разрешить» убран; список перенесён во вкладку «В ВПН» (режим Smart)</string>
     <string name="log_app_started">ResultV запущен.</string>
