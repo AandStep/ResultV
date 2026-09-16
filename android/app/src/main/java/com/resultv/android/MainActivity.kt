@@ -162,6 +162,7 @@ class MainActivity : ComponentActivity() {
         com.resultv.android.vpn.SubscriptionRepository.init(applicationContext)
         AppRoutingRepository.init(applicationContext)
         com.resultv.android.vpn.RoutingRulesRepository.init(applicationContext)
+        com.resultv.android.vpn.RoutingProfileRepository.init(applicationContext)
         com.resultv.android.vpn.SettingsRepository.init(applicationContext)
         AppInventory.init(applicationContext)
         // Probe underlying IPv6 reachability early so the effective IPv6 flag is

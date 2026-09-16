@@ -204,6 +204,7 @@ object DeepLinkImporter {
         SubscriptionRepository.init(ctx)
         SettingsRepository.init(ctx)
         RoutingRulesRepository.init(ctx)
+        RoutingProfileRepository.init(ctx)
         AppRoutingRepository.init(ctx)
     }
 

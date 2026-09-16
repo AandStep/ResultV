@@ -209,6 +209,7 @@ class ResultVpnService : VpnService() {
         SubscriptionRepository.init(app)
         SettingsRepository.init(app)
         RoutingRulesRepository.init(app)
+        RoutingProfileRepository.init(app)
         AppRoutingRepository.init(app)
         AppInventory.init(app)
         SmartListRepository.init(app)
@@ -536,11 +537,28 @@ class ResultVpnService : VpnService() {
                 AppRoutingRepository.state,
                 ProfileRepository.state,
                 SettingsRepository.state,
-            ) { rules, app, profiles, settings ->
+                RoutingProfileRepository.state,
+                RoutingProfileRepository.compileGeneration,
+            ) { values ->
+                // combine на пять и более потоков отдаёт Array<*> без типов,
+                // отсюда приведения.
+                val rules = values[0] as RoutingRulesState
+                val app = values[1] as AppRulesState
+                val profiles = values[2] as ProfilesState
+                val settings = values[3] as SettingsState
+                val routing = values[4] as RoutingProfilesState
+                val generation = values[5] as Int
                 // Key on the active profile + everything that changes routing.
                 // From settings we only watch ad-block (it rebuilds the route
                 // rules); other settings keep applying on reconnect.
-                listOf(rules, app, profiles.activeId, settings.adblock)
+                //
+                // The routing profile contributes a KEY, not its whole state:
+                // editing an INACTIVE profile must not tear down a live
+                // connection. See routingReloadKey.
+                listOf(
+                    rules, app, profiles.activeId, settings.adblock,
+                    routingReloadKey(rules.mode, routing.activeId, generation),
+                )
             }
                 .distinctUntilChanged()
                 .drop(1)

@@ -124,6 +124,7 @@ class ResultVTileService : TileService() {
         ProfileRepository.init(app)
         SettingsRepository.init(app)
         RoutingRulesRepository.init(app)
+        RoutingProfileRepository.init(app)
         return ProfileRepository.state.value.active != null
     }
 

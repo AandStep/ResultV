@@ -15,6 +15,7 @@ internal object BuildOptionsBuilder {
     fun currentOptionsJson(panic: Boolean = false): String {
         val settings = SettingsRepository.state.value
         val rules = RoutingRulesRepository.state.value
+        val routingProfiles = RoutingProfileRepository.state.value
         val smartMode = rules.mode == RoutingMode.Smart
         return JSONObject()
             .put("dnsServers", SettingsRepository.resolveDnsServers())
@@ -35,6 +36,16 @@ internal object BuildOptionsBuilder {
             .put("bypassLAN", settings.bypassLan)
             .put("logLevel", settings.logLevel)
             .put("smartMode", smartMode)
+            // Профиль маршрутизации: через JNI едет только его id и порядок
+            // действий. Правила движок находит на диске сам — профиль на
+            // 20 000 токенов иначе означал бы мегабайты на каждый коннект,
+            // ровно ту ошибку, которую Smart-список уже однажды исправлял.
+            //
+            // В Smart не передаётся вовсе. Движок это тоже проверяет
+            // (applyRoutingProfile), а здесь — чтобы в конфиге не было поля,
+            // по которому потом решат, будто профиль работает.
+            .put("routingProfileId", if (smartMode) "" else routingProfiles.activeId)
+            .put("routingOrder", if (smartMode) "" else routingProfiles.active?.routeOrder.orEmpty())
             // The blocked-domain list is NOT sent here. It lives on disk as a
             // compiled binary rule-set (dataDir/smart/smart.srs) that the engine
             // references by path. Inlining ~150k domains made this payload
