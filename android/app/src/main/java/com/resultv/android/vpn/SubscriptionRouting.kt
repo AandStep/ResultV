@@ -26,15 +26,48 @@ fun tagSubscriptionProfile(json: String, subId: String, subName: String): Routin
     val raw = json.trim()
     if (raw.isEmpty()) return null
     val parsed = runCatching { routingProfileFromJson(JSONObject(raw)) }.getOrNull() ?: return null
-    val handle = parsed.originName.ifBlank { parsed.name }.ifBlank { subName.trim() }
+    // Панели отдают Profile-Title как `base64:<UTF-8>`, чтобы безопасно провезти
+    // эмодзи, и Go кладёт заголовок в профиль как есть — про эту условность он
+    // не знает. Без раскодирования в списке стояло бы
+    // «base64:8J+agCBpbXBWUE4…» вместо названия. Раскодируется и имя, и
+    // опознавательный знак: сравнивай их следующая синхронизация в разном виде,
+    // она завела бы второй профиль.
+    val handle = decodePanelTitle(
+        parsed.originName.ifBlank { parsed.name }.ifBlank { subName }
+    ).trim()
     val tagged = parsed.copy(
-        name = parsed.name.ifBlank { handle },
+        name = decodePanelTitle(parsed.name).trim().ifBlank { handle },
         originName = handle,
         source = "subscription",
         subscriptionId = subId,
     )
     val total = ROUTING_ACTIONS.sumOf { tagged.ruleCount(it) }
     return if (total == 0) null else tagged
+}
+
+/**
+ * Привязать входящий профиль подписки к уже сохранённому.
+ *
+ * Опознавательный знак профиля подписки — её `subscriptionId`, а НЕ имя панели.
+ * Имя меняется: панель его переименовывает, а с недавних пор мы ещё и
+ * раскодируем `base64:`-заголовок. Сравнивай синхронизация по имени — и
+ * профиль раздвоился бы ровно в тот момент, когда имя поменялось, то есть у
+ * всех, кто добавил подписку до этой правки.
+ *
+ * Имя берётся свежее, если пользователь его не менял (`name` совпадает с
+ * `originName`), и сохраняется, если менял: подписка обновляет правила, а не
+ * решает, как профиль называется.
+ */
+fun alignSubscriptionProfile(
+    stored: RoutingProfile?,
+    incoming: RoutingProfile,
+): RoutingProfile {
+    if (stored == null) return incoming
+    val renamedByUser = stored.name.isNotBlank() && stored.name != stored.originName
+    return incoming.copy(
+        id = stored.id,
+        name = if (renamedByUser) stored.name else incoming.name,
+    )
 }
 
 /**
@@ -82,11 +115,19 @@ object SubscriptionRouting {
             forget(subId, dataDir)
             return
         }
+        // Привязка к сохранённому профилю этой подписки по её id, а не по
+        // имени: имя панели меняется, id — нет.
+        val aligned = alignSubscriptionProfile(
+            RoutingProfileRepository.state.value.profiles.firstOrNull {
+                it.source == "subscription" && it.subscriptionId == subId
+            },
+            incoming,
+        )
         val merged = withContext(Dispatchers.IO) {
             runCatching {
                 Mobile.mergeRoutingProfile(
                     RoutingProfileRepository.storeJson(),
-                    incoming.toJson().toString(),
+                    aligned.toJson().toString(),
                     activate,
                 )
             }.getOrNull()
