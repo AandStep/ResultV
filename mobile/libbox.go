@@ -804,6 +804,23 @@ type BuildOptions struct {
 	BlockedDomains string `json:"blockedDomains,omitempty"`
 	IntoVpnApps    string `json:"intoVpnApps,omitempty"`
 	BlockedApps    string `json:"blockedApps,omitempty"`
+
+	// RoutingProfileID names the active routing profile. The engine looks up
+	// its compiled rule-sets on disk by this id; the rules themselves never
+	// cross JNI. A profile can carry 20 000 tokens — shipping those on every
+	// connect is the mistake the Smart list already had to undo (see
+	// SmartBlockedDomainsList above).
+	//
+	// Empty means no profile. Ignored in Smart mode: there the client works out
+	// routing itself, and a profile would be pulling against it. That gate
+	// lives in applyRoutingProfile rather than in Kotlin, so it is one place
+	// covered by a test.
+	RoutingProfileID string `json:"routingProfileId,omitempty"`
+	// RoutingOrder is the active profile's RouteOrder, e.g.
+	// "block-proxy-direct". Anything that is not a permutation of the three
+	// actions falls back to DefaultRoutingOrder rather than being guessed at:
+	// the order decides which rule wins when several match.
+	RoutingOrder string `json:"routingOrder,omitempty"`
 }
 
 // BuildSingBoxConfig converts a proxy URI directly into a sing-box JSON
@@ -1611,6 +1628,11 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 			}
 		}
 	}
+
+	// Routing profile: registered and emitted LAST, after the excluded-domain
+	// rules above. See applyRoutingProfile for why that order and not the
+	// desktop's.
+	applyRoutingProfile(&sb, dataDir, opts)
 
 	// `type: local` resolves through the system resolver, which on Android
 	// means /etc/resolv.conf (absent) or 127.0.0.1:53 (no daemon) — every

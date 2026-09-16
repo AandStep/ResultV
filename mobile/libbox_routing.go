@@ -171,3 +171,71 @@ func ExtractSubscriptionRouting(headerVal, body string) (string, error) {
 	}
 	return string(blob), nil
 }
+
+// applyRoutingProfile registers the active profile's compiled rule-sets and
+// appends its route rules.
+//
+// PLACEMENT: last, after the excluded-domain block that
+// buildSingBoxConfigFromEntry appends. That is deliberate and is the one place
+// this diverges from the desktop, where a profile outranks the user's own "out
+// of VPN" domains (engine.go:1976 vs 2171 there). A domain the user typed by
+// hand is a fresher and more specific intent than a provider's list covering
+// half the internet, so it wins here.
+//
+// It also lands after the ad-block rules, which buildRoute emits. That matters
+// on this platform and not on the desktop: here ad-block rejects in DNS too
+// (engine.go:714-739), and a profile allowed to overrule its route half would
+// leave the two halves disagreeing — the route says direct, the resolver
+// answers nothing.
+//
+// Registration and reference live together on purpose: a rule pointing at an
+// unregistered rule_set fails the core's start outright (engine.go:620-625),
+// and splitting the two across files is how that bug gets written.
+func applyRoutingProfile(sb *proxy.SingBoxConfig, dataDir string, opts BuildOptions) {
+	id := strings.TrimSpace(opts.RoutingProfileID)
+	if id == "" || sb == nil || sb.Route == nil {
+		return
+	}
+	// Smart works out routing itself; a profile there would fight the very
+	// thing Smart exists to do. Enforced here rather than trusted to Kotlin.
+	if opts.SmartMode {
+		return
+	}
+	ready := make(map[string]bool, len(proxy.RoutingActions))
+	for _, action := range proxy.RoutingActions {
+		if !proxy.RoutingProfileSRSReady(dataDir, id, action) {
+			continue
+		}
+		ready[action] = true
+		sb.Route.RuleSet = append(sb.Route.RuleSet, proxy.SBRouteRuleSet{
+			Type:   "local",
+			Tag:    proxy.RoutingProfileRuleSetTag(id, action),
+			Format: "binary",
+			Path:   proxy.RoutingProfileSRSPath(dataDir, id, action),
+		})
+	}
+	if len(ready) == 0 {
+		return
+	}
+	order := proxy.DefaultRoutingOrder
+	if strings.TrimSpace(opts.RoutingOrder) != "" {
+		order = proxy.NormalizeRoutingOrder(opts.RoutingOrder)
+	}
+	for _, action := range order {
+		if !ready[action] {
+			continue
+		}
+		rule := proxy.SBRouteRule{RuleSet: []string{proxy.RoutingProfileRuleSetTag(id, action)}}
+		switch action {
+		case "block":
+			rule.Action = "reject"
+		case "proxy":
+			rule.Action = "route"
+			rule.Outbound = "proxy"
+		default: // "direct"
+			rule.Action = "route"
+			rule.Outbound = "direct"
+		}
+		sb.Route.Rules = append(sb.Route.Rules, rule)
+	}
+}
