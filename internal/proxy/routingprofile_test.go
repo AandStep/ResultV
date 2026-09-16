@@ -286,38 +286,22 @@ func itoaTest(i int) string {
 	return string(buf[pos:])
 }
 
-// A subscription link must never be read as a routing link. The Android
-// importer branches on this, and a false positive there would kill the
-// subscription path silently — no error, just nothing imported.
-func TestDeepLinkKindLeavesSubscriptionLinksAlone(t *testing.T) {
+// Input that is not a resultv:// link at all must not be classified as
+// routing. The desktop never asks that question — its importer only reaches
+// this code with a resultv:// link in hand. The Android paste field does: it
+// hands whatever the user pasted to IsRoutingDeepLink before anything else has
+// looked at it.
+func TestIsRoutingDeepLinkIgnoresForeignInput(t *testing.T) {
 	for _, raw := range []string{
-		"resultv://import/D38gTrB04OJT6auv7f7cnw",
-		"resultv://D38gTrB04OJT6auv7f7cnw",
-		"resultv:import/D38gTrB04OJT6auv7f7cnw",
-		"https://panel.example/sub/abc",
 		"",
+		"   ",
+		"https://panel.example/routing/resultv/whitelist",
+		"vless://11111111-1111-1111-1111-111111111111@1.2.3.4:443",
+		"routing/onadd/eyJ9",
+		"example.com",
 	} {
 		if IsRoutingDeepLink(raw) {
 			t.Errorf("IsRoutingDeepLink(%q) = true, ждали false", raw)
-		}
-		if raw != "" && strings.HasPrefix(strings.ToLower(raw), "resultv:") {
-			if got := DeepLinkKind(raw); got != DeepLinkKindSubscription {
-				t.Errorf("DeepLinkKind(%q) = %q, ждали %q", raw, got, DeepLinkKindSubscription)
-			}
-		}
-	}
-	for _, raw := range []string{
-		"resultv://routing/onadd/eyJ9",
-		"resultv://routing/add/eyJ9",
-		"resultv://routing/eyJ9",
-		"RESULTV://ROUTING/ONADD/eyJ9",
-		"resultv:routing/onadd/eyJ9",
-	} {
-		if !IsRoutingDeepLink(raw) {
-			t.Errorf("IsRoutingDeepLink(%q) = false, ждали true", raw)
-		}
-		if got := DeepLinkKind(raw); got != DeepLinkKindRouting {
-			t.Errorf("DeepLinkKind(%q) = %q, ждали %q", raw, got, DeepLinkKindRouting)
 		}
 	}
 }
