@@ -71,7 +71,11 @@ private enum class SettingsSubcategory(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {}) {
+fun SettingsScreen(
+    onOpenLogs: () -> Unit = {},
+    onOpenCertWizard: () -> Unit = {},
+    onOpenRoutingProfiles: () -> Unit = {},
+) {
     val settings by SettingsRepository.state.collectAsStateWithLifecycle()
     var activeSheet by rememberSaveable { mutableStateOf<SettingsSubcategory?>(null) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -180,7 +184,16 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {
                     )
                     SettingsSubcategory.Network -> NetworkGroup(settings)
                     SettingsSubcategory.Appearance -> AppearanceGroup(onBeforeRecreate = { activeSheet = null })
-                    SettingsSubcategory.Routing -> RulesScreen()
+                    SettingsSubcategory.Routing -> RulesScreen(
+                        // Гасим лист ПЕРЕД открытием экрана: лист — подокно
+                        // над Scaffold, полноэкранный маршрут его не
+                        // перекрывает (та же причина, что у мастера
+                        // сертификата выше).
+                        onOpenRoutingProfiles = {
+                            activeSheet = null
+                            onOpenRoutingProfiles()
+                        },
+                    )
                     null -> {}
                 }
             }

@@ -64,15 +64,27 @@ import com.resultv.android.ui.screens.HomeScreen
 import com.resultv.android.ui.screens.CertWizardScreen
 import com.resultv.android.ui.screens.LogsScreen
 import com.resultv.android.ui.screens.ProxiesScreen
+import com.resultv.android.ui.components.RoutingDeepLinkSheet
+import com.resultv.android.ui.screens.RoutingProfilesScreen
 import com.resultv.android.ui.screens.RulesScreen
 import com.resultv.android.ui.screens.SettingsScreen
+import android.widget.Toast
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import mobile.Mobile
 import com.resultv.android.vpn.ACTION_START
 import com.resultv.android.vpn.ACTION_STOP
 import com.resultv.android.vpn.AppInventory
 import com.resultv.android.vpn.AppRoutingRepository
 import com.resultv.android.vpn.DeepLinkImporter
+import com.resultv.android.vpn.PendingRoutingImport
 import com.resultv.android.vpn.PingRepository
 import com.resultv.android.vpn.ProfileRepository
+import com.resultv.android.vpn.RoutingProfileCompiler
+import com.resultv.android.vpn.RoutingProfileRepository
+import com.resultv.android.vpn.parseRoutingMergeResult
 import com.resultv.android.vpn.ResultVpnService
 import com.resultv.android.vpn.VpnState
 import com.resultv.android.vpn.VpnStatus
@@ -340,6 +352,7 @@ private fun AppShell(
     // the lightest way to push a detail screen from a settings row.
     var showLogs by rememberSaveable { mutableStateOf(false) }
     var showCertWizard by rememberSaveable { mutableStateOf(false) }
+    var showRoutingProfiles by rememberSaveable { mutableStateOf(false) }
     // SaveableStateHolder retains each tab's `rememberSaveable` state across
     // tab switches, so returning to Proxies keeps the user's scroll position,
     // expanded subscriptions, sort mode and protocol filter instead of
@@ -412,6 +425,7 @@ private fun AppShell(
                     Tab.Settings -> SettingsScreen(
                         onOpenLogs = { showLogs = true },
                         onOpenCertWizard = { showCertWizard = true },
+                        onOpenRoutingProfiles = { showRoutingProfiles = true },
                     )
                 }
             }
@@ -430,4 +444,78 @@ private fun AppShell(
         BackHandler { showCertWizard = false }
         CertWizardScreen(dataDir = dataDir, onClose = { showCertWizard = false })
     }
+
+    if (showRoutingProfiles) {
+        BackHandler { showRoutingProfiles = false }
+        RoutingProfilesScreen(dataDir = dataDir, onClose = { showRoutingProfiles = false })
+    }
+
+    RoutingImportSheet(dataDir)
+}
+
+/**
+ * Лист «что принесла ссылка маршрутизации».
+ *
+ * Живёт в корне, поверх чего угодно: ссылка могла прийти, пока открыт любой
+ * экран, а intent доходит раньше, чем что-либо отрисовано.
+ *
+ * Согласие делает три вещи по порядку: сливает профиль с хранилищем (правило
+ * замены — в Go, один экземпляр с тестами), сохраняет и собирает правила.
+ * Сборка ходит в сеть, поэтому до её конца кнопки заблокированы: иначе лист
+ * закрылся бы раньше, чем что-то произошло.
+ */
+@Composable
+private fun RoutingImportSheet(dataDir: String) {
+    val pending by PendingRoutingImport.pending.collectAsStateWithLifecycle()
+    var busy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+
+    val profile = pending ?: return
+    RoutingDeepLinkSheet(
+        profile = profile,
+        busy = busy,
+        onDismiss = { if (!busy) PendingRoutingImport.clear() },
+        onAccept = {
+            busy = true
+            scope.launch {
+                val merged = withContext(Dispatchers.IO) {
+                    runCatching {
+                        Mobile.mergeRoutingProfile(
+                            RoutingProfileRepository.storeJson(),
+                            profile.toJson().toString(),
+                            true,
+                        )
+                    }.getOrNull()
+                }
+                val state = merged?.let { parseRoutingMergeResult(it) }
+                if (state == null) {
+                    Toast.makeText(
+                        ctx,
+                        ctx.getString(R.string.routing_import_failed, "merge failed"),
+                        Toast.LENGTH_LONG,
+                    ).show()
+                } else {
+                    RoutingProfileRepository.replaceAll(state.profiles, state.activeId)
+                    val saved = state.active
+                    if (saved != null) {
+                        val outcome = RoutingProfileCompiler.compile(saved, dataDir)
+                        val msg = when {
+                            !outcome.ok ->
+                                ctx.getString(R.string.routing_import_failed, outcome.error)
+                            outcome.unresolved.isNotEmpty() ->
+                                ctx.getString(
+                                    R.string.routing_import_built_partly,
+                                    outcome.unresolved.size,
+                                )
+                            else -> ctx.getString(R.string.routing_import_done, saved.name)
+                        }
+                        Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
+                    }
+                }
+                busy = false
+                PendingRoutingImport.clear()
+            }
+        },
+    )
 }

@@ -29,6 +29,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AltRoute
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.CallSplit
@@ -91,7 +92,7 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RulesScreen() {
+fun RulesScreen(onOpenRoutingProfiles: () -> Unit = {}) {
     val rules by RoutingRulesRepository.state.collectAsStateWithLifecycle()
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
@@ -137,6 +138,20 @@ fun RulesScreen() {
                         if (mode == RoutingMode.Smart) SmartListRepository.refreshAsync()
                     },
                 )
+                // Профиль маршрутизации действует только в Global: в Smart
+                // клиент решает сам, и профиль воевал бы с тем, ради чего
+                // Smart существует. Ряда там нет вовсе — объяснять, почему он
+                // неактивен, не нужно, если его не показывать. Так же на ПК
+                // (SmartRulesPage.jsx:175).
+                if (rules.mode == RoutingMode.Global) {
+                    NavRow(
+                        label = stringResource(R.string.routing_profiles_row),
+                        icon = Icons.Outlined.AltRoute,
+                        iconBg = Color(0xFF3b82f6).copy(alpha = 0.18f),
+                        iconTint = Color(0xFF60a5fa),
+                        onClick = onOpenRoutingProfiles,
+                    )
+                }
             }
         }
 
