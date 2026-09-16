@@ -1,5 +1,9 @@
 # Профили маршрутизации, этап A — Go-ядро и движок
 
+**ИСПОЛНЕН 2026-09-16.** Все задачи закрыты, запись о результате — в спеке,
+раздел 12. Три неточности, вскрывшиеся при исполнении, уже вправлены в текст
+ниже (коммит 382dcdf), плюс четыре отступления записаны в разделе 12 спеки.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** научить Go-слой Android разбирать профиль маршрутизации, разворачивать его правила из geo-баз, компилировать их в бинарный SRS и подмешивать в конфиг sing-box — без единой строки Kotlin.
@@ -75,7 +79,7 @@ go build -tags="$TAGS,no_mitm,no_adblock" ./... && \
 - Consumes: `compressDomainSuffixes` (`blocked_provider.go:364`), `extractDomainFromLine` (`blocked_provider.go:247`), `normalizeDomains` (`router.go:302`), `normalizeCIDRs` (`blocked_cidrs.go:45`)
 - Produces: `type ParsedRoutingList struct { Domains, CIDRs, ExactDomains []string }`, `func ParseRoutingListPayload(raw []byte) ParsedRoutingList`, `func NormalizeRoutingListURL(raw string) string`, `func LooksLikeRoutingListHTML(raw []byte) bool`, `func NormalizeRoutingOrder(raw string) []string`, `var DefaultRoutingOrder = []string{"block", "proxy", "direct"}`, `func plausibleDomains(in []string) []string`, `func looksLikeCIDROrIP(s string) bool`
 
-- [ ] **Step 1: Скопировать файл и тест с ПК**
+- [x] **Step 1: Скопировать файл и тест с ПК**
 
 ```bash
 cd /c/ResultV
@@ -83,7 +87,7 @@ cp /c/ResultVPC/internal/proxy/routinglist.go internal/proxy/routinglist.go
 cp /c/ResultVPC/internal/proxy/routinglist_test.go internal/proxy/routinglist_test.go
 ```
 
-- [ ] **Step 2: Вырезать половину, которая пишет кэш**
+- [x] **Step 2: Вырезать половину, которая пишет кэш**
 
 Удалить из `internal/proxy/routinglist.go`:
 
@@ -114,7 +118,7 @@ import (
 )
 ```
 
-- [ ] **Step 3: Вырезать тесты удалённых функций**
+- [x] **Step 3: Вырезать тесты удалённых функций**
 
 Удалить из `internal/proxy/routinglist_test.go` три функции:
 `TestWriteRoutingListRuleSet`, `TestWriteRoutingListRuleSetEmptyRejected`,
@@ -125,7 +129,7 @@ import (
 становятся неиспользуемыми, остаётся только `testing`. Проверять не глазами, а
 `go vet`: он называет неиспользуемый импорт по имени и строке.
 
-- [ ] **Step 4: Запустить тесты — должны пройти**
+- [x] **Step 4: Запустить тесты — должны пройти**
 
 ```bash
 cd /c/ResultV && TAGS=$(tr -d ' \t\r\n' < scripts/android-build-tags.txt)
@@ -139,7 +143,7 @@ go test -tags="$TAGS" -count=1 ./internal/proxy/ -run 'RoutingList' -v
 `TestParseRoutingListMalformedJSONFallsBackToLines`,
 `TestParseRoutingListPlainTextIPv6CIDR`).
 
-- [ ] **Step 5: Обе конфигурации целиком**
+- [x] **Step 5: Обе конфигурации целиком**
 
 ```bash
 cd /c/ResultV && TAGS=$(tr -d ' \t\r\n' < scripts/android-build-tags.txt)
@@ -149,7 +153,7 @@ go build -tags="$TAGS,no_mitm,no_adblock" ./... && go test -tags="$TAGS,no_mitm,
 
 Ожидается: `ok` по обоим пакетам в обеих конфигурациях.
 
-- [ ] **Step 6: Коммит**
+- [x] **Step 6: Коммит**
 
 ```bash
 git add internal/proxy/routinglist.go internal/proxy/routinglist_test.go
@@ -175,7 +179,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `ParsedRoutingList`, `plausibleDomains`, `looksLikeCIDROrIP` (задача 1); `normalizeDomains`, `normalizeCIDRs`, `compressDomainSuffixes`, `extractDomainFromLine`
 - Produces: `func ParseGeoSiteDat(raw []byte) (map[string][]GeoDomain, int, error)`, `func ParseGeoIPDat(raw []byte) (map[string][]string, []string, error)`, `type GeoDomain struct { Value string; Exact bool }`, `type GeoDatabases struct { Sites map[string][]GeoDomain; IPs map[string][]string; SiteDropped int; InvertedIPs map[string]struct{} }`, `func ResolveGeoTokens(tokens []string, db GeoDatabases) (ParsedRoutingList, GeoResolveReport)`, `type GeoResolveReport struct { Unresolved map[string]string; DroppedFromDB, DroppedAsJunk int }`, `var ErrGeoDatMalformed`
 
-- [ ] **Step 1: Скопировать три файла без изменений**
+- [x] **Step 1: Скопировать три файла без изменений**
 
 ```bash
 cd /c/ResultV
@@ -188,7 +192,7 @@ cp /c/ResultVPC/internal/proxy/geodat_test.go internal/proxy/geodat_test.go
 `net/netip`, `strings`; `georesolve.go` — `fmt`, `sort`, `strings`. Править в
 них нечего.
 
-- [ ] **Step 2: Вырезать два теста, чей предмет ещё не написан**
+- [x] **Step 2: Вырезать два теста, чей предмет ещё не написан**
 
 Удалить из `internal/proxy/geodat_test.go` **ровно две функции**:
 `TestWriteRoutingListRuleSetKeepsExactDomainsApart` и
@@ -204,7 +208,7 @@ cp /c/ResultVPC/internal/proxy/geodat_test.go internal/proxy/geodat_test.go
 После удаления неиспользуемым остаётся импорт `os` — снять его, ориентируясь
 на `go vet`.
 
-- [ ] **Step 3: Запустить тесты — должны пройти**
+- [x] **Step 3: Запустить тесты — должны пройти**
 
 ```bash
 cd /c/ResultV && TAGS=$(tr -d ' \t\r\n' < scripts/android-build-tags.txt)
@@ -218,11 +222,11 @@ go test -tags="$TAGS" -count=1 ./internal/proxy/ -run 'Geo' -v
 (`TestResolveGeoTokensExpandsCategories`, `…ReportsWhatItCannotDo`,
 `…PlainForms`, `…DropsExactCoveredBySuffix`, `…WithoutDatabases`).
 
-- [ ] **Step 4: Обе конфигурации целиком**
+- [x] **Step 4: Обе конфигурации целиком**
 
 Команды из «Global Constraints». Ожидается `ok` по обоим пакетам дважды.
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add internal/proxy/geodat.go internal/proxy/georesolve.go internal/proxy/geodat_test.go
@@ -247,7 +251,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `IsDeepLink` (`deeplink.go:26`), `DeepLinkScheme` (`deeplink.go:19`), `deepLinkSchemeOpaque` (`deeplink.go:23`), `sanitizeBase64` (`deeplink.go:152`), `config.RoutingProfile`
 - Produces: `func IsRoutingDeepLink(rawURL string) bool`, `func DeepLinkKind(rawURL string) string`, `func DecodeRoutingDeepLink(rawURL string) (config.RoutingProfile, error)`, `func ParseRoutingProfileJSON(blob []byte) (config.RoutingProfile, error)`, `func RoutingProfileTokens(p config.RoutingProfile, action string) []string`, `const DeepLinkKindSubscription = "subscription"`, `const DeepLinkKindRouting = "routing"`, `const MaxRoutingProfileTokens = 20000`, `const MaxRoutingProfileNameLen = 200`, `const MaxRoutingDeepLinkPayload = 4 << 20`, `var ErrNotRoutingDeepLink`
 
-- [ ] **Step 1: Скопировать файл и тест без изменений**
+- [x] **Step 1: Скопировать файл и тест без изменений**
 
 ```bash
 cd /c/ResultV
@@ -257,7 +261,7 @@ cp /c/ResultVPC/internal/proxy/routingprofile_test.go internal/proxy/routingprof
 
 Все четыре зависимости на `android` есть — проверено. Править нечего.
 
-- [ ] **Step 2: Запустить тесты — должны пройти**
+- [x] **Step 2: Запустить тесты — должны пройти**
 
 ```bash
 cd /c/ResultV && TAGS=$(tr -d ' \t\r\n' < scripts/android-build-tags.txt)
@@ -266,7 +270,7 @@ go test -tags="$TAGS" -count=1 ./internal/proxy/ -run 'Routing(Profile|DeepLink)
 
 Ожидается: все PASS, ноль FAIL.
 
-- [ ] **Step 3: Добавить тест на чужой вход**
+- [x] **Step 3: Добавить тест на чужой вход**
 
 Проверить сперва, что уже покрыто:
 
@@ -306,7 +310,7 @@ func TestIsRoutingDeepLinkIgnoresForeignInput(t *testing.T) {
 }
 ```
 
-- [ ] **Step 4: Запустить новый тест и проверить его red-green**
+- [x] **Step 4: Запустить новый тест и проверить его red-green**
 
 ```bash
 cd /c/ResultV && TAGS=$(tr -d ' 	
@@ -334,11 +338,11 @@ go test -tags="$TAGS" -count=1 ./internal/proxy/ -run 'TestIsRoutingDeepLinkIgno
 # ждём: ok
 ```
 
-- [ ] **Step 5: Обе конфигурации целиком**
+- [x] **Step 5: Обе конфигурации целиком**
 
 Команды из «Global Constraints».
 
-- [ ] **Step 6: Коммит**
+- [x] **Step 6: Коммит**
 
 ```bash
 git add internal/proxy/routingprofile.go internal/proxy/routingprofile_test.go
@@ -368,7 +372,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `NormalizeRoutingListURL`, `ParsedRoutingList`, `compressDomainSuffixes`, `plausibleDomains`, `normalizeDomains`, `normalizeCIDRs`, `normalizeRule`, `config.RoutingList`
 - Produces: `func ExtractSubscriptionRoutingLists(headerVal, body string) []config.RoutingList`, `func ExtractEmbeddedRoutingLists(body string) map[string]ParsedRoutingList`, `const MaxSubscriptionRoutingLists = 10`
 
-- [ ] **Step 1: Скопировать файл и тест без изменений**
+- [x] **Step 1: Скопировать файл и тест без изменений**
 
 ```bash
 cd /c/ResultV
@@ -376,7 +380,7 @@ cp /c/ResultVPC/internal/proxy/sublists.go      internal/proxy/sublists.go
 cp /c/ResultVPC/internal/proxy/sublists_test.go internal/proxy/sublists_test.go
 ```
 
-- [ ] **Step 2: Запустить тесты**
+- [x] **Step 2: Запустить тесты**
 
 ```bash
 cd /c/ResultV && TAGS=$(tr -d ' \t\r\n' < scripts/android-build-tags.txt)
@@ -385,11 +389,11 @@ go test -tags="$TAGS" -count=1 ./internal/proxy/ -run 'Subscription|Embedded' -v
 
 Ожидается: все PASS.
 
-- [ ] **Step 3: Обе конфигурации целиком**
+- [x] **Step 3: Обе конфигурации целиком**
 
 Команды из «Global Constraints».
 
-- [ ] **Step 4: Коммит**
+- [x] **Step 4: Коммит**
 
 ```bash
 git add internal/proxy/sublists.go internal/proxy/sublists_test.go
@@ -415,7 +419,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `ParsedRoutingList` (задача 1), `validateSRS` (`srs_validate.go:27`)
 - Produces: `func RoutingRuleSetDir(dataDir string) string`, `func RoutingProfileSRSPath(dataDir, profileID, action string) string`, `func RoutingProfileRuleSetTag(profileID, action string) string`, `func CompileRoutingSRS(p ParsedRoutingList, path string) error`, `func RoutingProfileSRSReady(dataDir, profileID, action string) bool`, `func RemoveRoutingProfileSRS(dataDir, profileID string)`, `func ValidRoutingProfileID(id string) bool`, `var RoutingActions = []string{"direct", "proxy", "block"}`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 Создать `internal/proxy/routing_ruleset_test.go`:
 
@@ -543,7 +547,7 @@ func TestRemoveRoutingProfileSRSDeletesAllThree(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Запустить — должен упасть на отсутствии функций**
+- [x] **Step 2: Запустить — должен упасть на отсутствии функций**
 
 ```bash
 cd /c/ResultV && TAGS=$(tr -d ' \t\r\n' < scripts/android-build-tags.txt)
@@ -553,7 +557,7 @@ go test -tags="$TAGS" -count=1 ./internal/proxy/ -run 'RoutingSRS|RoutingProfile
 Ожидается: `undefined: CompileRoutingSRS`, `undefined: RoutingProfileSRSPath` и
 так далее — сборка не проходит.
 
-- [ ] **Step 3: Написать реализацию**
+- [x] **Step 3: Написать реализацию**
 
 Создать `internal/proxy/routing_ruleset.go`:
 
@@ -751,7 +755,7 @@ func RemoveRoutingProfileSRS(dataDir, profileID string) {
 }
 ```
 
-- [ ] **Step 4: Запустить тесты — должны пройти**
+- [x] **Step 4: Запустить тесты — должны пройти**
 
 ```bash
 cd /c/ResultV && TAGS=$(tr -d ' \t\r\n' < scripts/android-build-tags.txt)
@@ -760,7 +764,7 @@ go test -tags="$TAGS" -count=1 ./internal/proxy/ -run 'RoutingSRS|RoutingProfile
 
 Ожидается: 8 тестов PASS.
 
-- [ ] **Step 5: Вернуть два теста, вырезанных в задаче 2**
+- [x] **Step 5: Вернуть два теста, вырезанных в задаче 2**
 
 Дописать в `internal/proxy/routing_ruleset_test.go` — предмет тот же, что у
 `TestWriteRoutingListRuleSetKeepsExactDomainsApart` на ПК, но проверяется через
@@ -794,7 +798,7 @@ func TestCompileRoutingSRSKeepsExactDomainsApart(t *testing.T) {
 }
 ```
 
-- [ ] **Step 6: Добавить `LoadRoutingDomainMatcher`**
+- [x] **Step 6: Добавить `LoadRoutingDomainMatcher`**
 
 Тест шага 5 требует читать SRS обратно. Дописать в
 `internal/proxy/routing_ruleset.go`:
@@ -828,7 +832,7 @@ func LoadRoutingDomainMatcher(path string) (*domain.Matcher, error) {
 
 Добавить в импорты `"github.com/sagernet/sing/common/domain"`.
 
-- [ ] **Step 7: Запустить все тесты файла**
+- [x] **Step 7: Запустить все тесты файла**
 
 ```bash
 cd /c/ResultV && TAGS=$(tr -d ' \t\r\n' < scripts/android-build-tags.txt)
@@ -837,11 +841,11 @@ go test -tags="$TAGS" -count=1 ./internal/proxy/ -run 'RoutingSRS|RoutingProfile
 
 Ожидается: 9 тестов PASS.
 
-- [ ] **Step 8: Обе конфигурации целиком**
+- [x] **Step 8: Обе конфигурации целиком**
 
 Команды из «Global Constraints».
 
-- [ ] **Step 9: Коммит**
+- [x] **Step 9: Коммит**
 
 ```bash
 git add internal/proxy/routing_ruleset.go internal/proxy/routing_ruleset_test.go
@@ -874,7 +878,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `config.RoutingProfile`
 - Produces: `func NewRoutingProfileID() string`, `func SameRoutingProfile(stored, incoming config.RoutingProfile) bool`, `func UpsertRoutingProfile(stored []config.RoutingProfile, incoming config.RoutingProfile, activeID string, makeActive bool) ([]config.RoutingProfile, string, config.RoutingProfile, error)`, `const MaxRoutingProfiles = 50`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 Создать `internal/proxy/routing_merge_test.go`:
 
@@ -1029,7 +1033,7 @@ func TestUpsertDoesNotAliasCallerSlice(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Запустить — должен упасть**
+- [x] **Step 2: Запустить — должен упасть**
 
 ```bash
 cd /c/ResultV && TAGS=$(tr -d ' \t\r\n' < scripts/android-build-tags.txt)
@@ -1038,7 +1042,7 @@ go test -tags="$TAGS" -count=1 ./internal/proxy/ -run 'Upsert' 2>&1 | head -10
 
 Ожидается: `undefined: UpsertRoutingProfile`, `undefined: NewRoutingProfileID`.
 
-- [ ] **Step 3: Написать реализацию**
+- [x] **Step 3: Написать реализацию**
 
 Создать `internal/proxy/routing_merge.go`:
 
@@ -1167,7 +1171,7 @@ func UpsertRoutingProfile(
 }
 ```
 
-- [ ] **Step 4: Запустить тесты — должны пройти**
+- [x] **Step 4: Запустить тесты — должны пройти**
 
 ```bash
 cd /c/ResultV && TAGS=$(tr -d ' \t\r\n' < scripts/android-build-tags.txt)
@@ -1176,11 +1180,11 @@ go test -tags="$TAGS" -count=1 ./internal/proxy/ -run 'Upsert|SameRoutingProfile
 
 Ожидается: 8 тестов PASS.
 
-- [ ] **Step 5: Обе конфигурации целиком**
+- [x] **Step 5: Обе конфигурации целиком**
 
 Команды из «Global Constraints».
 
-- [ ] **Step 6: Коммит**
+- [x] **Step 6: Коммит**
 
 ```bash
 git add internal/proxy/routing_merge.go internal/proxy/routing_merge_test.go
@@ -1208,7 +1212,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `NormalizeRoutingListURL` (задача 1)
 - Produces: `func FetchRoutingPayload(ctx context.Context, rawURL string, allowInsecure bool) ([]byte, error)`, `const routingFetchMaxBytes = 8 << 20`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 Создать `internal/proxy/routing_fetch_test.go`:
 
@@ -1276,7 +1280,7 @@ func TestFetchRoutingPayloadRewritesGitHubBlobURL(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Запустить — должен упасть**
+- [x] **Step 2: Запустить — должен упасть**
 
 ```bash
 cd /c/ResultV && TAGS=$(tr -d ' \t\r\n' < scripts/android-build-tags.txt)
@@ -1285,7 +1289,7 @@ go test -tags="$TAGS" -count=1 ./internal/proxy/ -run 'FetchRoutingPayload' 2>&1
 
 Ожидается: `undefined: FetchRoutingPayload`.
 
-- [ ] **Step 3: Написать реализацию**
+- [x] **Step 3: Написать реализацию**
 
 Создать `internal/proxy/routing_fetch.go`:
 
@@ -1425,7 +1429,7 @@ func tryFetchRoutingPayload(ctx context.Context, client *http.Client, u string) 
 }
 ```
 
-- [ ] **Step 4: Запустить тесты — должны пройти**
+- [x] **Step 4: Запустить тесты — должны пройти**
 
 ```bash
 cd /c/ResultV && TAGS=$(tr -d ' \t\r\n' < scripts/android-build-tags.txt)
@@ -1435,11 +1439,11 @@ go test -tags="$TAGS" -count=1 ./internal/proxy/ -run 'FetchRoutingPayload' -v
 Ожидается: 4 PASS (последний может быть SKIP при наличии сети — это
 предусмотрено тестом).
 
-- [ ] **Step 5: Обе конфигурации целиком**
+- [x] **Step 5: Обе конфигурации целиком**
 
 Команды из «Global Constraints».
 
-- [ ] **Step 6: Коммит**
+- [x] **Step 6: Коммит**
 
 ```bash
 git add internal/proxy/routing_fetch.go internal/proxy/routing_fetch_test.go
@@ -1464,7 +1468,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `FetchRoutingPayload` (7), `ParseRoutingListPayload`, `LooksLikeRoutingListHTML` (1), `ParseGeoSiteDat`, `ParseGeoIPDat`, `ResolveGeoTokens`, `GeoDatabases` (2), `RoutingProfileTokens` (3), `CompileRoutingSRS`, `RoutingProfileSRSPath`, `RemoveRoutingProfileSRS`, `RoutingActions`, `ValidRoutingProfileID` (5), `config.RoutingProfile`
 - Produces: `type RoutingCompileReport struct { Counts map[string]int; Unresolved map[string]string }`, `func CompileRoutingProfile(ctx context.Context, p config.RoutingProfile, dataDir string, refreshGeo bool) (RoutingCompileReport, error)`, `func GeoCachePath(dataDir, kind, url string) string`, `func ProfileNeedsGeo(p config.RoutingProfile) (site, ip bool)`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 Создать `internal/proxy/routing_compile_test.go`:
 
@@ -1636,7 +1640,7 @@ func TestGeoCacheNotWrittenForGarbage(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Запустить — должен упасть**
+- [x] **Step 2: Запустить — должен упасть**
 
 ```bash
 cd /c/ResultV && TAGS=$(tr -d ' \t\r\n' < scripts/android-build-tags.txt)
@@ -1645,7 +1649,7 @@ go test -tags="$TAGS" -count=1 ./internal/proxy/ -run 'CompileRoutingProfile|Pro
 
 Ожидается: `undefined: CompileRoutingProfile` и соседи.
 
-- [ ] **Step 3: Написать реализацию**
+- [x] **Step 3: Написать реализацию**
 
 Создать `internal/proxy/routing_compile.go`:
 
@@ -1931,7 +1935,7 @@ func CompileRoutingProfile(
 }
 ```
 
-- [ ] **Step 4: Запустить тесты — должны пройти**
+- [x] **Step 4: Запустить тесты — должны пройти**
 
 ```bash
 cd /c/ResultV && TAGS=$(tr -d ' \t\r\n' < scripts/android-build-tags.txt)
@@ -1940,11 +1944,11 @@ go test -tags="$TAGS" -count=1 ./internal/proxy/ -run 'CompileRoutingProfile|Pro
 
 Ожидается: 9 тестов PASS.
 
-- [ ] **Step 5: Обе конфигурации целиком**
+- [x] **Step 5: Обе конфигурации целиком**
 
 Команды из «Global Constraints».
 
-- [ ] **Step 6: Коммит**
+- [x] **Step 6: Коммит**
 
 ```bash
 git add internal/proxy/routing_compile.go internal/proxy/routing_compile_test.go
@@ -1973,7 +1977,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: всё из задач 1-8
 - Produces: `func IsRoutingDeepLink(rawURL string) bool`, `func PreviewRoutingDeepLink(rawURL string) (string, error)`, `func MergeRoutingProfile(storedJSON, incomingJSON string, makeActive bool) (string, error)`, `func CompileRoutingProfile(profileJSON, dataDir string, refreshGeo bool) (string, error)`, `func RoutingProfileStatus(dataDir, profileID string) (string, error)`, `func RemoveRoutingProfile(dataDir, profileID string) error`, `func ExtractSubscriptionRouting(headerVal, body string) (string, error)`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 Создать `mobile/libbox_routing_test.go`:
 
@@ -2158,7 +2162,7 @@ func TestExtractSubscriptionRoutingFromJSONBody(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Запустить — должен упасть**
+- [x] **Step 2: Запустить — должен упасть**
 
 ```bash
 cd /c/ResultV && TAGS=$(tr -d ' \t\r\n' < scripts/android-build-tags.txt)
@@ -2167,7 +2171,7 @@ go test -tags="$TAGS" -count=1 ./mobile/ -run 'Routing' 2>&1 | head -10
 
 Ожидается: `undefined: PreviewRoutingDeepLink` и соседи.
 
-- [ ] **Step 3: Написать реализацию**
+- [x] **Step 3: Написать реализацию**
 
 Создать `mobile/libbox_routing.go`:
 
@@ -2334,7 +2338,7 @@ func ExtractSubscriptionRouting(headerVal, body string) (string, error) {
 }
 ```
 
-- [ ] **Step 4: Запустить тесты — должны пройти**
+- [x] **Step 4: Запустить тесты — должны пройти**
 
 ```bash
 cd /c/ResultV && TAGS=$(tr -d ' \t\r\n' < scripts/android-build-tags.txt)
@@ -2343,11 +2347,11 @@ go test -tags="$TAGS" -count=1 ./mobile/ -run 'Routing' -v
 
 Ожидается: 9 тестов PASS.
 
-- [ ] **Step 5: Обе конфигурации целиком**
+- [x] **Step 5: Обе конфигурации целиком**
 
 Команды из «Global Constraints».
 
-- [ ] **Step 6: Коммит**
+- [x] **Step 6: Коммит**
 
 ```bash
 git add mobile/libbox_routing.go mobile/libbox_routing_test.go
@@ -2377,7 +2381,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `proxy.RoutingProfileSRSReady`, `proxy.RoutingProfileSRSPath`, `proxy.RoutingProfileRuleSetTag`, `proxy.NormalizeRoutingOrder`, `proxy.DefaultRoutingOrder`, `proxy.SBRoute`, `proxy.SBRouteRule`, `proxy.SBRouteRuleSet`
 - Produces: `func applyRoutingProfile(sb *proxy.SingBoxConfig, dataDir string, opts BuildOptions)`, поля `BuildOptions.RoutingProfileID`, `BuildOptions.RoutingOrder`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 Создать `mobile/libbox_routing_rules_test.go`:
 
@@ -2656,7 +2660,7 @@ func TestProfileConfigAcceptedByPinnedCore(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Никакой новой функции валидации не писать**
+- [x] **Step 2: Никакой новой функции валидации не писать**
 
 Приём уже применяется в `mobile/browser_adblock_redirect_test.go:206-225` —
 разбор через `singjson.UnmarshalContext` с контекстом `include.Context`. Это
@@ -2731,7 +2735,7 @@ func buildConfigWithProfile(t *testing.T, dir string, opts BuildOptions) map[str
 шага 1, собиравшие конфиг из `entryJson`, заменить на эти: `BuildSingBoxConfigV2`
 короче и это тот же путь, которым уже пользуются соседние тесты.
 
-- [ ] **Step 3: Запустить — должен упасть**
+- [x] **Step 3: Запустить — должен упасть**
 
 ```bash
 cd /c/ResultV && TAGS=$(tr -d ' \t\r\n' < scripts/android-build-tags.txt)
@@ -2740,7 +2744,7 @@ go test -tags="$TAGS" -count=1 ./mobile/ -run 'Profile' 2>&1 | head -10
 
 Ожидается: `unknown field RoutingProfileID in struct literal` — поля ещё нет.
 
-- [ ] **Step 4: Добавить два поля в `BuildOptions`**
+- [x] **Step 4: Добавить два поля в `BuildOptions`**
 
 В `mobile/libbox.go`, в конец структуры `BuildOptions` (после `BlockedApps`):
 
@@ -2762,7 +2766,7 @@ go test -tags="$TAGS" -count=1 ./mobile/ -run 'Profile' 2>&1 | head -10
 	RoutingOrder string `json:"routingOrder,omitempty"`
 ```
 
-- [ ] **Step 5: Дописать эмиссию правил**
+- [x] **Step 5: Дописать эмиссию правил**
 
 В конец `mobile/libbox_routing.go`:
 
@@ -2831,7 +2835,7 @@ func applyRoutingProfile(sb *proxy.SingBoxConfig, dataDir string, opts BuildOpti
 Добавить в импорты `mobile/libbox_routing.go` пакет `proxy` уже есть; `strings`
 уже есть.
 
-- [ ] **Step 6: Вызвать эмиссию в нужном месте**
+- [x] **Step 6: Вызвать эмиссию в нужном месте**
 
 В `mobile/libbox.go`, в `buildSingBoxConfigFromEntry`, сразу **после**
 закрывающей скобки блока исключённых доменов и **до** `if sb.DNS != nil {`
@@ -2848,7 +2852,7 @@ func applyRoutingProfile(sb *proxy.SingBoxConfig, dataDir string, opts BuildOpti
 	// `type: local` resolves through the system resolver, which on Android
 ```
 
-- [ ] **Step 7: Запустить тесты — должны пройти**
+- [x] **Step 7: Запустить тесты — должны пройти**
 
 ```bash
 cd /c/ResultV && TAGS=$(tr -d ' \t\r\n' < scripts/android-build-tags.txt)
@@ -2860,11 +2864,11 @@ go test -tags="$TAGS" -count=1 ./mobile/ -run 'Profile' -v
 попасть в ветку `r.Outbound == "proxy" || r.Outbound == "direct"`, а
 block-правило уже `reject` и не трогается.
 
-- [ ] **Step 8: Обе конфигурации целиком**
+- [x] **Step 8: Обе конфигурации целиком**
 
 Команды из «Global Constraints».
 
-- [ ] **Step 9: Коммит**
+- [x] **Step 9: Коммит**
 
 ```bash
 git add mobile/libbox.go mobile/libbox_routing.go mobile/libbox_routing_rules_test.go
@@ -2903,10 +2907,10 @@ ad-block, и редиректа — структурно, а не по совп�
 
 ## Готовность этапа A
 
-- [ ] `go build` зелёный в обеих конфигурациях
-- [ ] `go test -count=1 ./internal/proxy/... ./mobile/...` зелёный в обеих конфигурациях
-- [ ] Конфиг с правилами профиля принят закреплённым ядром (`TestProfileConfigAcceptedByPinnedCore`)
-- [ ] `internal/proxy/engine.go` не изменён: `git diff --stat main..HEAD -- internal/proxy/engine.go` пуст
-- [ ] Kotlin не изменён: `git diff --stat main..HEAD -- android/` пуст
+- [x] `go build` зелёный в обеих конфигурациях
+- [x] `go test -count=1 ./internal/proxy/... ./mobile/...` зелёный в обеих конфигурациях
+- [x] Конфиг с правилами профиля принят закреплённым ядром (`TestProfileConfigAcceptedByPinnedCore`)
+- [x] `internal/proxy/engine.go` не изменён: `git diff --stat main..HEAD -- internal/proxy/engine.go` пуст
+- [x] Kotlin не изменён: `git diff --stat main..HEAD -- android/` пуст
 
 Этап B (Kotlin, диплинк, экраны) начинается отсюда.
