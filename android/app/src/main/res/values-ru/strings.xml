@@ -359,4 +359,23 @@
     <string name="log_app_rules_allowlist_migrated">Режим приложений «Разрешить» убран; список перенесён во вкладку «В ВПН» (режим Smart)</string>
     <string name="log_app_started">ResultV запущен.</string>
     <string name="log_smart_loaded">Списки Smart загружены (%1$s), записей: %2$d.</string>
+    <string name="routing_sheet_title">Профиль маршрутизации</string>
+    <string name="routing_sheet_publisher">Издатель: %1$s</string>
+    <string name="routing_sheet_counts">%1$d direct \u00b7 %2$d proxy \u00b7 %3$d block</string>
+    <string name="routing_sheet_geo">Базы правил скачаются после подтверждения</string>
+    <string name="routing_sheet_accept">Добавить и включить</string>
+    <string name="routing_sheet_decline">Отмена</string>
+    <string name="routing_import_failed">Не удалось прочитать ссылку маршрутизации: %1$s</string>
+    <string name="routing_import_done">Профиль маршрутизации «%1$s» добавлен</string>
+    <string name="routing_import_built_partly">Профиль добавлен, но не принято правил: %1$d</string>
+    <string name="routing_profiles_title">Профили маршрутизации</string>
+    <string name="routing_profiles_row">Профили маршрутизации</string>
+    <string name="routing_profiles_row_desc">Маршрутизация провайдера или своя</string>
+    <string name="routing_profiles_empty">Профилей пока нет. Откройте ссылку от провайдера, чтобы добавить.</string>
+    <string name="routing_profiles_built">Собран</string>
+    <string name="routing_profiles_not_built">Не собран</string>
+    <string name="routing_profiles_rebuild">Собрать ещё раз</string>
+    <string name="routing_profiles_delete">Удалить</string>
+    <string name="routing_profiles_delete_confirm">Удалить профиль «%1$s»?</string>
+    <string name="routing_profiles_off">Маршрутизация без профиля</string>
 </resources>

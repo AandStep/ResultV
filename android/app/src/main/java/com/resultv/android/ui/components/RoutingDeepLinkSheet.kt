@@ -1,0 +1,100 @@
+package com.resultv.android.ui.components
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.resultv.android.R
+import com.resultv.android.theme.Brand
+import com.resultv.android.vpn.RoutingProfile
+
+/**
+ * Что принесла ссылка — до того, как что-нибудь применится.
+ *
+ * Сеть здесь не трогается: `Mobile.previewRoutingDeepLink` только разбирает
+ * payload. Правила скачиваются после согласия, и про это сказано прямым
+ * текстом — иначе перечисленные geo-базы выглядели бы уже загруженными.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun RoutingDeepLinkSheet(
+    profile: RoutingProfile,
+    busy: Boolean,
+    onAccept: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = { if (!busy) onDismiss() },
+        sheetState = sheetState,
+        containerColor = Brand.Surface,
+        dragHandle = { BottomSheetDefaults.DragHandle() },
+    ) {
+        DarkSheetSystemBars()
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                // Не safe area: её лист держит сам. Это просто поле, чтобы
+                // кнопки не упирались в панель навигации.
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                stringResource(R.string.routing_sheet_title),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(profile.name, style = MaterialTheme.typography.titleMedium)
+            if (profile.publisherName.isNotEmpty()) {
+                Text(
+                    stringResource(R.string.routing_sheet_publisher, profile.publisherName),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Brand.SecondaryText,
+                )
+            }
+            Text(
+                stringResource(
+                    R.string.routing_sheet_counts,
+                    profile.ruleCount("direct"),
+                    profile.ruleCount("proxy"),
+                    profile.ruleCount("block"),
+                ),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (profile.geositeUrl.isNotEmpty() || profile.geoipUrl.isNotEmpty()) {
+                Text(
+                    stringResource(R.string.routing_sheet_geo),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Brand.SecondaryText,
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+            ) {
+                TextButton(onClick = onDismiss, enabled = !busy) {
+                    Text(stringResource(R.string.routing_sheet_decline))
+                }
+                Button(onClick = onAccept, enabled = !busy) {
+                    Text(stringResource(R.string.routing_sheet_accept))
+                }
+            }
+        }
+    }
+}

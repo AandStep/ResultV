@@ -395,4 +395,23 @@
     <string name="log_app_rules_allowlist_migrated">Per-app mode "Allow" was removed; the list moved to "Into VPN" (Smart mode)</string>
     <string name="log_app_started">ResultV started.</string>
     <string name="log_smart_loaded">Smart lists loaded (%1$s): %2$d entries.</string>
+    <string name="routing_sheet_title">Routing profile</string>
+    <string name="routing_sheet_publisher">Published by %1$s</string>
+    <string name="routing_sheet_counts">%1$d direct \u00b7 %2$d proxy \u00b7 %3$d block</string>
+    <string name="routing_sheet_geo">Rule databases will be downloaded after you accept</string>
+    <string name="routing_sheet_accept">Add and enable</string>
+    <string name="routing_sheet_decline">Cancel</string>
+    <string name="routing_import_failed">Could not read the routing link: %1$s</string>
+    <string name="routing_import_done">Routing profile \"%1$s\" added</string>
+    <string name="routing_import_built_partly">Profile added, but %1$d rules could not be applied</string>
+    <string name="routing_profiles_title">Routing profiles</string>
+    <string name="routing_profiles_row">Routing profiles</string>
+    <string name="routing_profiles_row_desc">Your provider\'s routing, or your own</string>
+    <string name="routing_profiles_empty">No routing profiles yet. Open a link from your provider to add one.</string>
+    <string name="routing_profiles_built">Built</string>
+    <string name="routing_profiles_not_built">Not built</string>
+    <string name="routing_profiles_rebuild">Build again</string>
+    <string name="routing_profiles_delete">Delete</string>
+    <string name="routing_profiles_delete_confirm">Delete profile \"%1$s\"?</string>
+    <string name="routing_profiles_off">Routing without a profile</string>
 </resources>

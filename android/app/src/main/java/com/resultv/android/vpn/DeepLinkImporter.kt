@@ -7,6 +7,9 @@ import com.resultv.android.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import mobile.Mobile
@@ -35,6 +38,18 @@ object DeepLinkImporter {
     fun import(context: Context, rawUrl: String) {
         val appCtx = context.applicationContext
         ensureReposReady(appCtx)
+        // Ветка маршрутизации отделяется ДО расшифровки: routing-ссылка не
+        // шифруется (профиль публичен, и требовать ключ RVSUB1 значило бы, что
+        // сторонняя панель не может его опубликовать), поэтому decodeDeepLink
+        // на ней споткнулся бы.
+        //
+        // Разделение делает Go: префиксов три, и копия их списка на Kotlin
+        // разъехалась бы с парсером. Ошибись она в разрешающую сторону — и
+        // импорт подписок умер бы молча.
+        if (runCatching { Mobile.isRoutingDeepLink(rawUrl) }.getOrDefault(false)) {
+            previewRouting(appCtx, rawUrl)
+            return
+        }
         MainScope().launch {
             val decoded = withContext(Dispatchers.IO) {
                 runCatching { Mobile.decodeDeepLink(rawUrl) }
@@ -78,6 +93,31 @@ object DeepLinkImporter {
             return
         }
         MainScope().launch { dispatch(appCtx, trimmed, sourceTag = "") }
+    }
+
+    /**
+     * Показать, что принесла ссылка, и ждать решения.
+     *
+     * Ничего не сохраняется и ничего не качается: `previewRoutingDeepLink`
+     * только разбирает payload. Молча не применяется ничего — это то же
+     * обещание, что даёт документ для панелей.
+     */
+    private fun previewRouting(ctx: Context, rawUrl: String) {
+        val decoded = runCatching { Mobile.previewRoutingDeepLink(rawUrl) }
+        val json = decoded.getOrNull()
+        if (json == null) {
+            val why = decoded.exceptionOrNull()?.message ?: "decode error"
+            Log.w(TAG, "routing preview failed", decoded.exceptionOrNull())
+            toast(ctx, R.string.routing_import_failed, why)
+            AppLog.error(R.string.log_routing_compile_failed, "—", why)
+            return
+        }
+        val profile = runCatching { routingProfileFromJson(JSONObject(json)) }.getOrNull()
+        if (profile == null || profile.name.isBlank()) {
+            toast(ctx, R.string.routing_import_failed, "bad payload")
+            return
+        }
+        PendingRoutingImport.offer(profile)
     }
 
     /**
@@ -211,5 +251,25 @@ object DeepLinkImporter {
     private fun toast(ctx: Context, resId: Int, vararg args: Any) {
         val msg = if (args.isEmpty()) ctx.getString(resId) else ctx.getString(resId, *args)
         Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
+    }
+}
+
+/**
+ * Разобранный профиль маршрутизации, ждущий решения пользователя.
+ *
+ * Отдельным объектом, потому что путь диплинка начинается там, где спрашивать
+ * некому: intent может прийти в сервис или в ещё не отрисованную активность.
+ * MainActivity подписывается и показывает лист, когда сможет.
+ */
+object PendingRoutingImport {
+    private val _pending = MutableStateFlow<RoutingProfile?>(null)
+    val pending: StateFlow<RoutingProfile?> = _pending.asStateFlow()
+
+    fun offer(p: RoutingProfile) {
+        _pending.value = p
+    }
+
+    fun clear() {
+        _pending.value = null
     }
 }
