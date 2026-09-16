@@ -58,6 +58,15 @@ func NewRoutingProfileID() string {
 // the payload offers — the JSON carries no id. Comparing displayed names would
 // fork a profile in two the first time the user renamed it and reopened the
 // link, which is exactly what a re-import is supposed to avoid.
+//
+// A SUBSCRIPTION profile skips the handle entirely: its subscription already is
+// an id, and it is a better one. The desktop compares handles here too, and can
+// afford to — it names the profile after the subscription in its own store. On
+// mobile the name comes off the wire: a panel sends Profile-Title as
+// `base64:<UTF-8>` so an emoji survives the header, this layer stores it as it
+// arrived, and Kotlin decodes it for display. Stored `base64:…` then stops
+// matching the decoded title that arrives next, and the sync would fork the
+// profile precisely when the panel renamed itself.
 func SameRoutingProfile(stored, incoming config.RoutingProfile) bool {
 	if stored.Source != incoming.Source {
 		return false
@@ -65,9 +74,27 @@ func SameRoutingProfile(stored, incoming config.RoutingProfile) bool {
 	if stored.SubscriptionID != incoming.SubscriptionID {
 		return false
 	}
+	if stored.Source == "subscription" && stored.SubscriptionID != "" {
+		return true
+	}
 	return strings.EqualFold(
 		strings.TrimSpace(routingProfileHandle(stored)),
 		strings.TrimSpace(routingProfileHandle(incoming)))
+}
+
+// routingProfileRenamed reports whether the DISPLAYED name is the user's doing.
+//
+// A stored name still equal to the publisher's handle is the publisher's own
+// name, not a choice anyone made — and the publisher is free to change it. Only
+// a name that has drifted from the handle is worth protecting from the next
+// republish.
+func routingProfileRenamed(p config.RoutingProfile) bool {
+	if strings.TrimSpace(p.Name) == "" {
+		return false
+	}
+	return !strings.EqualFold(
+		strings.TrimSpace(p.Name),
+		strings.TrimSpace(routingProfileHandle(p)))
 }
 
 // routingProfileHandle falls back to the displayed name for profiles stored
@@ -140,9 +167,13 @@ func UpsertRoutingProfile(
 			continue
 		}
 		// The user may have renamed it; a republish of the same profile must
-		// not undo that.
+		// not undo that. A stored name that never drifted from the handle is
+		// the publisher's own, so the publisher's new one wins — otherwise a
+		// panel could never rename a profile it had already delivered. An
+		// arriving profile with no name never blanks the visible one.
 		incoming.ID = existing.ID
-		if existing.Name != "" {
+		if existing.Name != "" &&
+			(routingProfileRenamed(existing) || strings.TrimSpace(incoming.Name) == "") {
 			incoming.Name = existing.Name
 		}
 		out[i] = incoming

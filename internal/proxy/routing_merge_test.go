@@ -288,3 +288,105 @@ func TestUpsertWithoutIDStillKeepsUserRename(t *testing.T) {
 		t.Errorf("переименование затёрто публикацией: %q", saved.Name)
 	}
 }
+
+// Профиль подписки опознаётся по её id, а не по имени издателя.
+//
+// На Android имя издателя не стабильно: панель отдаёт Profile-Title как
+// `base64:<UTF-8>`, Go кладёт его в профиль как есть, а раскодирует Kotlin —
+// и сохранённое «base64:…» перестаёт совпадать с пришедшим «🚀 impVPN».
+// Сравнивай слияние имена — и синхронизация завела бы второй профиль ровно
+// тогда, когда панель переименовалась.
+func TestUpsertMatchesSubscriptionByIDNotHandle(t *testing.T) {
+	stored := []config.RoutingProfile{{
+		ID: "sub-prof", Name: "base64:8J+agCBpbX", OriginName: "base64:8J+agCBpbX",
+		Source: "subscription", SubscriptionID: "one",
+		ListURLs: map[string][]string{"proxy": {"https://panel.example/old.txt"}},
+	}}
+	in := config.RoutingProfile{
+		Name: "🚀 impVPN", OriginName: "🚀 impVPN",
+		Source: "subscription", SubscriptionID: "one",
+		ListURLs: map[string][]string{"proxy": {"https://panel.example/new.txt"}},
+	}
+	out, _, saved, err := UpsertRoutingProfile(stored, in, "sub-prof", false)
+	if err != nil {
+		t.Fatalf("UpsertRoutingProfile: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("профиль раздвоился: %d записей", len(out))
+	}
+	if saved.ID != "sub-prof" {
+		t.Errorf("id сменился на %q", saved.ID)
+	}
+	// Имя издателя обязано обновиться: иначе «base64:…» осталось бы в
+	// хранилище навсегда и вечно выглядело переименованием.
+	if saved.OriginName != "🚀 impVPN" {
+		t.Errorf("имя издателя = %q, ждали свежее", saved.OriginName)
+	}
+	// Ссылки на списки принадлежат подписке, а не сохранённой копии: панель
+	// их меняет, и приложение обязано качать новые.
+	if got := saved.ListURLs["proxy"]; len(got) != 1 || got[0] != "https://panel.example/new.txt" {
+		t.Errorf("ссылки proxy = %v, ждали свежие", got)
+	}
+}
+
+// Пользователь не переименовывал — имя берётся свежее. Сохранённое имя,
+// совпадающее с именем издателя, это имя издателя, а не выбор пользователя.
+func TestUpsertTakesFreshNameWhenNeverRenamed(t *testing.T) {
+	stored := []config.RoutingProfile{{
+		ID: "sub-prof", Name: "base64:8J+agCBpbX", OriginName: "base64:8J+agCBpbX",
+		Source: "subscription", SubscriptionID: "one",
+	}}
+	in := config.RoutingProfile{
+		Name: "🚀 impVPN", OriginName: "🚀 impVPN",
+		Source: "subscription", SubscriptionID: "one",
+	}
+	_, _, saved, err := UpsertRoutingProfile(stored, in, "sub-prof", false)
+	if err != nil {
+		t.Fatalf("UpsertRoutingProfile: %v", err)
+	}
+	if saved.Name != "🚀 impVPN" {
+		t.Errorf("имя = %q, ждали свежее от панели", saved.Name)
+	}
+}
+
+// А переименовал — имя его, и синхронизация подписки его не трогает.
+func TestUpsertKeepsSubscriptionRenameAcrossSync(t *testing.T) {
+	stored := []config.RoutingProfile{{
+		ID: "sub-prof", Name: "Моя маршрутизация", OriginName: "impVPN Базовый",
+		Source: "subscription", SubscriptionID: "one",
+	}}
+	in := config.RoutingProfile{
+		Name: "impVPN Премиум", OriginName: "impVPN Премиум",
+		Source: "subscription", SubscriptionID: "one",
+	}
+	_, _, saved, err := UpsertRoutingProfile(stored, in, "sub-prof", false)
+	if err != nil {
+		t.Fatalf("UpsertRoutingProfile: %v", err)
+	}
+	if saved.Name != "Моя маршрутизация" {
+		t.Errorf("переименование затёрто синхронизацией: %q", saved.Name)
+	}
+	// Имя издателя при этом обновляется: оно опознавательный знак, а не
+	// то, что видит пользователь.
+	if saved.OriginName != "impVPN Премиум" {
+		t.Errorf("имя издателя = %q, ждали свежее", saved.OriginName)
+	}
+}
+
+// Пустое имя в пришедшем профиле не должно стирать видимое имя.
+func TestUpsertDoesNotBlankNameOnRepublish(t *testing.T) {
+	stored := []config.RoutingProfile{{
+		ID: "sub-prof", Name: "impVPN", OriginName: "impVPN",
+		Source: "subscription", SubscriptionID: "one",
+	}}
+	in := config.RoutingProfile{
+		Name: "", OriginName: "", Source: "subscription", SubscriptionID: "one",
+	}
+	_, _, saved, err := UpsertRoutingProfile(stored, in, "sub-prof", false)
+	if err != nil {
+		t.Fatalf("UpsertRoutingProfile: %v", err)
+	}
+	if saved.Name != "impVPN" {
+		t.Errorf("имя стёрто: %q", saved.Name)
+	}
+}

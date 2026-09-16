@@ -46,31 +46,6 @@ fun tagSubscriptionProfile(json: String, subId: String, subName: String): Routin
 }
 
 /**
- * Привязать входящий профиль подписки к уже сохранённому.
- *
- * Опознавательный знак профиля подписки — её `subscriptionId`, а НЕ имя панели.
- * Имя меняется: панель его переименовывает, а с недавних пор мы ещё и
- * раскодируем `base64:`-заголовок. Сравнивай синхронизация по имени — и
- * профиль раздвоился бы ровно в тот момент, когда имя поменялось, то есть у
- * всех, кто добавил подписку до этой правки.
- *
- * Имя берётся свежее, если пользователь его не менял (`name` совпадает с
- * `originName`), и сохраняется, если менял: подписка обновляет правила, а не
- * решает, как профиль называется.
- */
-fun alignSubscriptionProfile(
-    stored: RoutingProfile?,
-    incoming: RoutingProfile,
-): RoutingProfile {
-    if (stored == null) return incoming
-    val renamedByUser = stored.name.isNotBlank() && stored.name != stored.originName
-    return incoming.copy(
-        id = stored.id,
-        name = if (renamedByUser) stored.name else incoming.name,
-    )
-}
-
-/**
  * Приём маршрутизации, пришедшей внутри подписки.
  *
  * Профиль уже собран на стороне Go (`BuildSubscriptionRoutingProfile`) и
@@ -115,19 +90,17 @@ object SubscriptionRouting {
             forget(subId, dataDir)
             return
         }
-        // Привязка к сохранённому профилю этой подписки по её id, а не по
-        // имени: имя панели меняется, id — нет.
-        val aligned = alignSubscriptionProfile(
-            RoutingProfileRepository.state.value.profiles.firstOrNull {
-                it.source == "subscription" && it.subscriptionId == subId
-            },
-            incoming,
-        )
+        // Профиль уходит БЕЗ id: это публикация, а не правка. Своё сохранённое
+        // он найдёт по subscriptionId (SameRoutingProfile), и слияние обновит
+        // ему правила и ссылки на списки, сберегая имя, если его меняли руками.
+        // Подсунуть сюда id сохранённого значило бы выдать синхронизацию за
+        // правку — а правка бережёт у сохранённого ровно то, что подписка и
+        // должна обновлять: ссылки на списки и имя издателя.
         val merged = withContext(Dispatchers.IO) {
             runCatching {
                 Mobile.mergeRoutingProfile(
                     RoutingProfileRepository.storeJson(),
-                    aligned.toJson().toString(),
+                    incoming.toJson().toString(),
                     activate,
                 )
             }.getOrNull()
