@@ -119,8 +119,11 @@ import (
 Удалить из `internal/proxy/routinglist_test.go` три функции:
 `TestWriteRoutingListRuleSet`, `TestWriteRoutingListRuleSetEmptyRejected`,
 `TestRoutingListRuleSetTagStable` (строки 160-196 в исходнике). Их предмет
-вернётся в задаче 5 в SRS-виде. Убрать из импортов `os` и `path/filepath`, если
-после удаления они не используются.
+вернётся в задаче 5 в SRS-виде.
+
+Импорты файла после этого — `encoding/json`, `os`, `testing`; первые два
+становятся неиспользуемыми, остаётся только `testing`. Проверять не глазами, а
+`go vet`: он называет неиспользуемый импорт по имени и строке.
 
 - [ ] **Step 4: Запустить тесты — должны пройти**
 
@@ -187,11 +190,19 @@ cp /c/ResultVPC/internal/proxy/geodat_test.go internal/proxy/geodat_test.go
 
 - [ ] **Step 2: Вырезать два теста, чей предмет ещё не написан**
 
-Удалить из `internal/proxy/geodat_test.go` функции
+Удалить из `internal/proxy/geodat_test.go` **ровно две функции**:
 `TestWriteRoutingListRuleSetKeepsExactDomainsApart` и
-`TestWriteRoutingListRuleSetAcceptsExactOnlyList` (строки 350-391 в исходнике).
-В задаче 5 они вернутся, проверяя SRS. Убрать из импортов `os`, `encoding/json`
-и `path/filepath`, если они больше не используются.
+`TestWriteRoutingListRuleSetAcceptsExactOnlyList` (строки 350-389 в исходнике).
+В задаче 5 они вернутся, проверяя SRS.
+
+**Осторожно с хвостом.** Сразу за ними, со строки 390, идут хелперы `keysOf`,
+`sortedEqual`, `sortStringsForTest` — их зовут перенесённые тесты. Резать «от
+первой функции и до конца файла» нельзя: получится `undefined: keysOf`.
+Вырезать надо интервал между началом первой функции и строкой
+`func keysOf(m map[string][]GeoDomain) []string {`.
+
+После удаления неиспользуемым остаётся импорт `os` — снять его, ориентируясь
+на `go vet`.
 
 - [ ] **Step 3: Запустить тесты — должны пройти**
 
@@ -255,58 +266,73 @@ go test -tags="$TAGS" -count=1 ./internal/proxy/ -run 'Routing(Profile|DeepLink)
 
 Ожидается: все PASS, ноль FAIL.
 
-- [ ] **Step 3: Добавить тест на то, что чужой диплинк не перехватывается**
+- [ ] **Step 3: Добавить тест на чужой вход**
 
-Этого теста на ПК нет, а на Android развилка в `DeepLinkImporter` будет
-опираться именно на него: перехвати он `resultv://import/…`, и импорт подписок
-умрёт молча. Дописать в `internal/proxy/routingprofile_test.go`:
+Проверить сперва, что уже покрыто:
+
+```bash
+cd /c/ResultV && grep -n "func Test" internal/proxy/routingprofile_test.go
+```
+
+Перенесённый файл уже содержит `TestRoutingDeepLinkAcceptedSpellings` (восемь
+форм ссылки: `onadd`, `add`, голый `routing/`, опаковая схема, три вида base64,
+завершающий слеш, верхний регистр) и `TestSubscriptionLinksAreNotRouting` (пять
+форм ссылки подписки плюс `ErrNotRoutingDeepLink`). Писать это заново не надо.
+
+Не покрыт ровно один случай: вход, который не является `resultv://`-ссылкой
+вовсе. На ПК такого вопроса не возникает — его импортёр доходит до этого кода
+уже со ссылкой в руках. На Android поле вставки (`AddScreen`, этап C) отдаст
+сюда что угодно. Дописать в `internal/proxy/routingprofile_test.go`:
 
 ```go
-func TestDeepLinkKindLeavesSubscriptionLinksAlone(t *testing.T) {
+// Input that is not a resultv:// link at all must not be classified as
+// routing. The desktop never asks that question — its importer only reaches
+// this code with a resultv:// link in hand. The Android paste field does: it
+// hands whatever the user pasted to IsRoutingDeepLink before anything else has
+// looked at it.
+func TestIsRoutingDeepLinkIgnoresForeignInput(t *testing.T) {
 	for _, raw := range []string{
-		"resultv://import/D38gTrB04OJT6auv7f7cnw",
-		"resultv://D38gTrB04OJT6auv7f7cnw",
-		"resultv:import/D38gTrB04OJT6auv7f7cnw",
-		"https://panel.example/sub/abc",
 		"",
+		"   ",
+		"https://panel.example/routing/resultv/whitelist",
+		"vless://11111111-1111-1111-1111-111111111111@1.2.3.4:443",
+		"routing/onadd/eyJ9",
+		"example.com",
 	} {
 		if IsRoutingDeepLink(raw) {
 			t.Errorf("IsRoutingDeepLink(%q) = true, ждали false", raw)
-		}
-		if raw != "" && strings.HasPrefix(strings.ToLower(raw), "resultv:") {
-			if got := DeepLinkKind(raw); got != DeepLinkKindSubscription {
-				t.Errorf("DeepLinkKind(%q) = %q, ждали %q", raw, got, DeepLinkKindSubscription)
-			}
-		}
-	}
-	for _, raw := range []string{
-		"resultv://routing/onadd/eyJ9",
-		"resultv://routing/add/eyJ9",
-		"resultv://routing/eyJ9",
-		"RESULTV://ROUTING/ONADD/eyJ9",
-		"resultv:routing/onadd/eyJ9",
-	} {
-		if !IsRoutingDeepLink(raw) {
-			t.Errorf("IsRoutingDeepLink(%q) = false, ждали true", raw)
-		}
-		if got := DeepLinkKind(raw); got != DeepLinkKindRouting {
-			t.Errorf("DeepLinkKind(%q) = %q, ждали %q", raw, got, DeepLinkKindRouting)
 		}
 	}
 }
 ```
 
-Если в файле ещё нет импорта `strings` — добавить.
-
-- [ ] **Step 4: Запустить новый тест**
+- [ ] **Step 4: Запустить новый тест и проверить его red-green**
 
 ```bash
-cd /c/ResultV && TAGS=$(tr -d ' \t\r\n' < scripts/android-build-tags.txt)
-go test -tags="$TAGS" -count=1 ./internal/proxy/ -run 'TestDeepLinkKindLeavesSubscriptionLinksAlone' -v
+cd /c/ResultV && TAGS=$(tr -d ' 	
+' < scripts/android-build-tags.txt)
+go test -tags="$TAGS" -count=1 ./internal/proxy/ -run 'TestIsRoutingDeepLinkIgnoresForeignInput' -v
 ```
 
-Ожидается: PASS. Если FAIL на форме `RESULTV://…` — смотреть
-`routingDeepLinkBody`, он приводит к нижнему регистру только для сравнения.
+Ожидается: PASS.
+
+Тест, прошедший сразу, ничего не доказывает, пока не показано, что он умеет
+падать. Здесь одиночной мутации мало: вход отсекают **две** независимые
+проверки в `routingDeepLinkBody` — ранний выход по `IsDeepLink` и ветка
+`default` в разборе схемы. Сломать надо обе сразу:
+
+```bash
+cp internal/proxy/routingprofile.go /tmp/rp.bak
+# в routingDeepLinkBody: "if !IsDeepLink(rawURL) {" -> "if false {"
+#                        "default:
+		return \"\", false" -> "default:
+		body = rawURL"
+go test -tags="$TAGS" -count=1 ./internal/proxy/ -run 'TestIsRoutingDeepLinkIgnoresForeignInput'
+# ждём: FAIL на "routing/onadd/eyJ9" = true
+cp /tmp/rp.bak internal/proxy/routingprofile.go
+go test -tags="$TAGS" -count=1 ./internal/proxy/ -run 'TestIsRoutingDeepLinkIgnoresForeignInput'
+# ждём: ok
+```
 
 - [ ] **Step 5: Обе конфигурации целиком**
 
@@ -318,9 +344,10 @@ go test -tags="$TAGS" -count=1 ./internal/proxy/ -run 'TestDeepLinkKindLeavesSub
 git add internal/proxy/routingprofile.go internal/proxy/routingprofile_test.go
 git commit -m "feat(routing): перенести разбор диплинка профиля
 
-Плюс тест, которого на ПК нет: ссылка подписки не должна опознаваться как
-routing. На Android от этого зависит развилка в DeepLinkImporter — перехвати
-она import/, и импорт подписок умер бы молча.
+Плюс единственный тест, которого на ПК нет: вход, не являющийся
+resultv-ссылкой вовсе. Там его никто не задаёт — настольный импортёр доходит
+до этого кода уже со ссылкой в руках, а поле вставки на Android отдаст сюда
+что угодно.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
