@@ -1,5 +1,8 @@
 # Профили маршрутизации, этап B — Kotlin и диплинк сквозняком
 
+**ИСПОЛНЕН 2026-09-16.** Все задачи закрыты, запись о результате — в спеке,
+раздел 13. Два отступления от плана записаны там же.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** довести профиль маршрутизации до работающего сквозного пути — пользователь открывает ссылку от панели, видит, что в ней, соглашается, и трафик начинает ходить по её правилам.
@@ -82,7 +85,7 @@ done
 **Files:**
 - Regenerate: `android/libs/libbox-play.aar`
 
-- [ ] **Step 1: Собрать**
+- [x] **Step 1: Собрать**
 
 ```bash
 cd /c/ResultV
@@ -93,7 +96,7 @@ DIST=play ./scripts/build-android-aar.sh
 Ожидается: `✅ AAR built successfully`, БЕЗ строки
 `⚠️ SUBSCRIPTION_ENCRYPT_KEY not set`.
 
-- [ ] **Step 2: Убедиться, что биндинги внутри**
+- [x] **Step 2: Убедиться, что биндинги внутри**
 
 gomobile молча пропускает функцию с неподдерживаемой сигнатурой — успешная
 сборка сама по себе ничего не доказывает.
@@ -106,7 +109,7 @@ cd "$(mktemp -d)" && unzip -q /c/ResultV/android/libs/libbox-play.aar classes.ja
 
 Ожидается: не меньше 6.
 
-- [ ] **Step 3: Коммита нет**
+- [x] **Step 3: Коммита нет**
 
 `android/libs` в `.gitignore` (строка 16) — артефакт сборки, в репозиторий не
 попадает. Переходить к задаче 1.
@@ -123,7 +126,7 @@ cd "$(mktemp -d)" && unzip -q /c/ResultV/android/libs/libbox-play.aar classes.ja
 - Consumes: ничего из новых
 - Produces: `data class RoutingProfile(...)`, `fun RoutingProfile.toJson(): JSONObject`, `fun routingProfileFromJson(o: JSONObject): RoutingProfile`, `fun decodeRoutingProfiles(json: String): RoutingProfilesState`, `fun encodeRoutingProfiles(s: RoutingProfilesState): String`, `data class RoutingProfilesState(val profiles: List<RoutingProfile>, val activeId: String)`, `object RoutingProfileRepository`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 Создать `android/app/src/test/java/com/resultv/android/vpn/RoutingProfilesTest.kt`:
 
@@ -237,7 +240,7 @@ class RoutingProfilesTest {
 }
 ```
 
-- [ ] **Step 2: Запустить — должен упасть**
+- [x] **Step 2: Запустить — должен упасть**
 
 ```bash
 cd /c/ResultV/android && ./gradlew :app:testFullDebugUnitTest --tests "*RoutingProfilesTest" --console=plain 2>&1 | tail -20
@@ -245,7 +248,7 @@ cd /c/ResultV/android && ./gradlew :app:testFullDebugUnitTest --tests "*RoutingP
 
 Ожидается: ошибка компиляции — `Unresolved reference: RoutingProfile`.
 
-- [ ] **Step 3: Написать модель и разбор**
+- [x] **Step 3: Написать модель и разбор**
 
 Создать `android/app/src/main/java/com/resultv/android/vpn/RoutingProfiles.kt`:
 
@@ -432,7 +435,7 @@ fun encodeRoutingProfiles(s: RoutingProfilesState): String {
 }
 ```
 
-- [ ] **Step 4: Запустить тесты — должны пройти**
+- [x] **Step 4: Запустить тесты — должны пройти**
 
 ```bash
 cd /c/ResultV/android && ./gradlew :app:testFullDebugUnitTest --tests "*RoutingProfilesTest" --console=plain 2>&1 | tail -10
@@ -440,7 +443,7 @@ cd /c/ResultV/android && ./gradlew :app:testFullDebugUnitTest --tests "*RoutingP
 
 Ожидается: BUILD SUCCESSFUL, 8 тестов.
 
-- [ ] **Step 5: Дописать репозиторий**
+- [x] **Step 5: Дописать репозиторий**
 
 В конец `RoutingProfiles.kt`:
 
@@ -554,7 +557,7 @@ object RoutingProfileRepository {
 }
 ```
 
-- [ ] **Step 6: Обе конфигурации**
+- [x] **Step 6: Обе конфигурации**
 
 ```bash
 cd /c/ResultV/android && ./gradlew :app:testFullDebugUnitTest :app:testPlayDebugUnitTest --console=plain 2>&1 | tail -6
@@ -562,7 +565,7 @@ cd /c/ResultV/android && ./gradlew :app:testFullDebugUnitTest :app:testPlayDebug
 
 Ожидается: BUILD SUCCESSFUL. Счёт: full 92, play 90 (было 84 / 82, добавилось 8).
 
-- [ ] **Step 7: Коммит**
+- [x] **Step 7: Коммит**
 
 ```bash
 cd /c/ResultV
@@ -596,7 +599,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `RoutingProfile`, `RoutingProfileRepository` (задача 1), `Mobile.compileRoutingProfile`, `Mobile.routingProfileStatus`, `Mobile.removeRoutingProfile`
 - Produces: `data class RoutingCompileOutcome(val counts: Map<String, Int>, val unresolved: Map<String, String>, val error: String)`, `fun parseRoutingCompileReport(json: String): RoutingCompileOutcome`, `object RoutingProfileCompiler` с `suspend fun compile(profile: RoutingProfile, dataDir: String, refreshGeo: Boolean = false): RoutingCompileOutcome`, `fun statusOf(dataDir: String, id: String): Map<String, Boolean>`, `fun forget(dataDir: String, id: String)`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 Создать `android/app/src/test/java/com/resultv/android/vpn/RoutingCompileReportTest.kt`:
 
@@ -643,7 +646,7 @@ class RoutingCompileReportTest {
 }
 ```
 
-- [ ] **Step 2: Запустить — должен упасть**
+- [x] **Step 2: Запустить — должен упасть**
 
 ```bash
 cd /c/ResultV/android && ./gradlew :app:testFullDebugUnitTest --tests "*RoutingCompileReportTest" --console=plain 2>&1 | tail -10
@@ -651,7 +654,7 @@ cd /c/ResultV/android && ./gradlew :app:testFullDebugUnitTest --tests "*RoutingC
 
 Ожидается: `Unresolved reference: parseRoutingCompileReport`.
 
-- [ ] **Step 3: Написать реализацию**
+- [x] **Step 3: Написать реализацию**
 
 Создать `android/app/src/main/java/com/resultv/android/vpn/RoutingProfileCompiler.kt`:
 
@@ -788,7 +791,7 @@ object RoutingProfileCompiler {
 }
 ```
 
-- [ ] **Step 4: Добавить строки журнала**
+- [x] **Step 4: Добавить строки журнала**
 
 В `android/app/src/main/res/values/strings.xml` (английский, дефолтный):
 
@@ -806,7 +809,7 @@ object RoutingProfileCompiler {
 <string name="log_routing_compile_failed">Профиль «%1$s» сохранён, но правила не собраны: %2$s</string>
 ```
 
-- [ ] **Step 5: Запустить тесты — должны пройти**
+- [x] **Step 5: Запустить тесты — должны пройти**
 
 ```bash
 cd /c/ResultV/android && ./gradlew :app:testFullDebugUnitTest :app:testPlayDebugUnitTest --console=plain 2>&1 | tail -6
@@ -814,7 +817,7 @@ cd /c/ResultV/android && ./gradlew :app:testFullDebugUnitTest :app:testPlayDebug
 
 Ожидается: BUILD SUCCESSFUL. Счёт: full 96, play 94.
 
-- [ ] **Step 6: Коммит**
+- [x] **Step 6: Коммит**
 
 ```bash
 cd /c/ResultV
@@ -846,7 +849,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `RoutingProfileRepository`, `RoutingMode`
 - Produces: `fun routingReloadKey(mode: RoutingMode, activeId: String, compileGeneration: Int): String`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 Создать `android/app/src/test/java/com/resultv/android/vpn/RoutingReloadKeyTest.kt`:
 
@@ -901,7 +904,7 @@ class RoutingReloadKeyTest {
 }
 ```
 
-- [ ] **Step 2: Запустить — должен упасть**
+- [x] **Step 2: Запустить — должен упасть**
 
 ```bash
 cd /c/ResultV/android && ./gradlew :app:testFullDebugUnitTest --tests "*RoutingReloadKeyTest" --console=plain 2>&1 | tail -10
@@ -909,7 +912,7 @@ cd /c/ResultV/android && ./gradlew :app:testFullDebugUnitTest --tests "*RoutingR
 
 Ожидается: `Unresolved reference: routingReloadKey`.
 
-- [ ] **Step 3: Написать функцию ключа**
+- [x] **Step 3: Написать функцию ключа**
 
 В конец `android/app/src/main/java/com/resultv/android/vpn/RoutingProfiles.kt`:
 
@@ -925,7 +928,7 @@ fun routingReloadKey(mode: RoutingMode, activeId: String, compileGeneration: Int
     if (mode == RoutingMode.Smart) "smart" else "global:$activeId:$compileGeneration"
 ```
 
-- [ ] **Step 4: Передать профиль в движок**
+- [x] **Step 4: Передать профиль в движок**
 
 В `android/app/src/main/java/com/resultv/android/vpn/BuildOptions.kt`, в
 `currentOptionsJson`, после `.put("smartMode", smartMode)`:
@@ -949,7 +952,7 @@ fun routingReloadKey(mode: RoutingMode, activeId: String, compileGeneration: Int
         val routingProfiles = RoutingProfileRepository.state.value
 ```
 
-- [ ] **Step 5: Добавить ключ в сторож перезапуска**
+- [x] **Step 5: Добавить ключ в сторож перезапуска**
 
 В `android/app/src/main/java/com/resultv/android/vpn/ResultVpnService.kt`,
 в `startReloadWatcher` (строки 530-551), заменить четырёхместный `combine` на
@@ -993,7 +996,7 @@ fun routingReloadKey(mode: RoutingMode, activeId: String, compileGeneration: Int
 Импорт `RoutingProfilesState`, `RoutingProfileRepository` и `routingReloadKey`
 не нужен — тот же пакет `com.resultv.android.vpn`.
 
-- [ ] **Step 6: Инициализировать репозиторий**
+- [x] **Step 6: Инициализировать репозиторий**
 
 `RoutingProfileRepository.init(ctx)` добавить всюду, где инициализируются
 соседи. Найти места:
@@ -1004,7 +1007,7 @@ cd /c/ResultV && grep -rn "RoutingRulesRepository.init" --include=*.kt android/a
 
 Добавить рядом с каждым вызовом.
 
-- [ ] **Step 7: Прогнать обе конфигурации**
+- [x] **Step 7: Прогнать обе конфигурации**
 
 ```bash
 cd /c/ResultV/android && ./gradlew :app:testFullDebugUnitTest :app:testPlayDebugUnitTest --console=plain 2>&1 | tail -6
@@ -1012,7 +1015,7 @@ cd /c/ResultV/android && ./gradlew :app:testFullDebugUnitTest :app:testPlayDebug
 
 Ожидается: BUILD SUCCESSFUL. Счёт: full 101, play 99.
 
-- [ ] **Step 9: Коммит**
+- [x] **Step 9: Коммит**
 
 ```bash
 cd /c/ResultV
@@ -1046,7 +1049,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `RoutingProfile`, `routingProfileFromJson`, `RoutingProfileRepository`, `RoutingProfileCompiler`, `Mobile.isRoutingDeepLink`, `Mobile.previewRoutingDeepLink`, `Mobile.mergeRoutingProfile`
 - Produces: `fun parseRoutingMergeResult(json: String): RoutingProfilesState?`, `object PendingRoutingImport` со `StateFlow<RoutingProfile?>`, `@Composable fun RoutingDeepLinkSheet(...)`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 Создать `android/app/src/test/java/com/resultv/android/vpn/RoutingPreviewTest.kt`:
 
@@ -1083,7 +1086,7 @@ class RoutingPreviewTest {
 }
 ```
 
-- [ ] **Step 2: Запустить — должен упасть**
+- [x] **Step 2: Запустить — должен упасть**
 
 ```bash
 cd /c/ResultV/android && ./gradlew :app:testFullDebugUnitTest --tests "*RoutingPreviewTest" --console=plain 2>&1 | tail -10
@@ -1091,7 +1094,7 @@ cd /c/ResultV/android && ./gradlew :app:testFullDebugUnitTest --tests "*RoutingP
 
 Ожидается: `Unresolved reference: parseRoutingMergeResult`.
 
-- [ ] **Step 3: Написать разбор результата merge**
+- [x] **Step 3: Написать разбор результата merge**
 
 В конец `RoutingProfiles.kt`:
 
@@ -1116,7 +1119,7 @@ fun parseRoutingMergeResult(json: String): RoutingProfilesState? {
 }
 ```
 
-- [ ] **Step 4: Добавить строки**
+- [x] **Step 4: Добавить строки**
 
 `values/strings.xml`:
 
@@ -1146,7 +1149,7 @@ fun parseRoutingMergeResult(json: String): RoutingProfilesState? {
 <string name="routing_import_built_partly">Профиль добавлен, но не принято правил: %1$d</string>
 ```
 
-- [ ] **Step 5: Написать лист превью**
+- [x] **Step 5: Написать лист превью**
 
 Создать `android/app/src/main/java/com/resultv/android/ui/components/RoutingDeepLinkSheet.kt`:
 
@@ -1250,7 +1253,7 @@ fun RoutingDeepLinkSheet(
 }
 ```
 
-- [ ] **Step 6: Развилка в `DeepLinkImporter`**
+- [x] **Step 6: Развилка в `DeepLinkImporter`**
 
 В `DeepLinkImporter.kt`:
 
@@ -1314,7 +1317,7 @@ object PendingRoutingImport {
 }
 ```
 
-- [ ] **Step 7: Запустить тесты**
+- [x] **Step 7: Запустить тесты**
 
 ```bash
 cd /c/ResultV/android && ./gradlew :app:testFullDebugUnitTest :app:testPlayDebugUnitTest --console=plain 2>&1 | tail -6
@@ -1322,7 +1325,7 @@ cd /c/ResultV/android && ./gradlew :app:testFullDebugUnitTest :app:testPlayDebug
 
 Ожидается: BUILD SUCCESSFUL. Счёт: full 104, play 102.
 
-- [ ] **Step 8: Проверить ресурсы на опечатки**
+- [x] **Step 8: Проверить ресурсы на опечатки**
 
 ```bash
 cd /c/ResultV/android && ./gradlew :app:assembleFullDebug --console=plain 2>&1 | tail -6
@@ -1331,7 +1334,7 @@ cd /c/ResultV/android && ./gradlew :app:assembleFullDebug --console=plain 2>&1 |
 Ожидается: BUILD SUCCESSFUL. Юнит-тесты ресурсы не собирают — опечатка в
 strings.xml всплывает только здесь, поэтому шаг отдельный.
 
-- [ ] **Step 9: Коммит**
+- [x] **Step 9: Коммит**
 
 ```bash
 cd /c/ResultV
@@ -1371,7 +1374,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: всё из задач 1-4, `NavRow` (`SettingsScreen.kt:241`, `internal`)
 - Produces: `@Composable fun RoutingProfilesScreen(dataDir: String, onClose: () -> Unit)`
 
-- [ ] **Step 1: Добавить строки**
+- [x] **Step 1: Добавить строки**
 
 `values/strings.xml`:
 
@@ -1401,7 +1404,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 <string name="routing_profiles_off">Маршрутизация без профиля</string>
 ```
 
-- [ ] **Step 2: Написать экран списка**
+- [x] **Step 2: Написать экран списка**
 
 Создать `android/app/src/main/java/com/resultv/android/ui/screens/RoutingProfilesScreen.kt`.
 Оболочка — та же, что у мастера сертификата (`CertWizardScreen.kt:97-113`):
@@ -1676,7 +1679,7 @@ private fun RoutingProfileRow(
 }
 ```
 
-- [ ] **Step 3: Ряд в правилах, только в Global**
+- [x] **Step 3: Ряд в правилах, только в Global**
 
 В `RulesScreen.kt`, в первую секцию (после `RoutingModeSelector`), добавить:
 
@@ -1701,7 +1704,7 @@ private fun RoutingProfileRow(
 подокно над `Scaffold`, полноэкранный маршрут его не перекрывает
 (`SettingsScreen.kt:173-180`).
 
-- [ ] **Step 4: Маршрут и приём диплинка в `MainActivity`**
+- [x] **Step 4: Маршрут и приём диплинка в `MainActivity`**
 
 По образцу `showCertWizard` (`MainActivity.kt:341, 428-430`):
 
@@ -1772,7 +1775,7 @@ private fun RoutingProfileRow(
 
 `dataDir` в `MainActivity` уже есть — им пользуется `CertWizardScreen`.
 
-- [ ] **Step 5: Прогнать обе конфигурации**
+- [x] **Step 5: Прогнать обе конфигурации**
 
 ```bash
 cd /c/ResultV/android && ./gradlew :app:testFullDebugUnitTest :app:testPlayDebugUnitTest \
@@ -1782,7 +1785,7 @@ cd /c/ResultV/android && ./gradlew :app:testFullDebugUnitTest :app:testPlayDebug
 Ожидается: BUILD SUCCESSFUL, счёт тестов не изменился с задачи 4
 (full 104, play 102 — UI юнит-тестами не покрывается).
 
-- [ ] **Step 6: Коммит**
+- [x] **Step 6: Коммит**
 
 ```bash
 cd /c/ResultV
@@ -1815,14 +1818,14 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 любое TLS-действие убивает процесс (родительская спека, 4.1), и выглядеть это
 будет как «профиль не собирается».
 
-- [ ] **Step 1: Собрать и поставить**
+- [x] **Step 1: Собрать и поставить**
 
 ```bash
 cd /c/ResultV/android && ./gradlew :app:assembleFullDebug --console=plain 2>&1 | tail -3
 adb install -r app/build/outputs/apk/full/debug/app-full-debug.apk
 ```
 
-- [ ] **Step 2: Подготовить тестовую ссылку**
+- [x] **Step 2: Подготовить тестовую ссылку**
 
 Собрать диплинк из payload по образцу `docs/ROUTING-DEEPLINK.md`. Нужна живая
 `geosite.dat` (см. спеку, раздел 10, пункт 1) либо профиль из обычных доменов —
@@ -1849,7 +1852,7 @@ PY
 adb shell am start -a android.intent.action.VIEW -d '<ссылка>'
 ```
 
-- [ ] **Step 3: Пройти таблицу 8.4 спеки, строки 1-5**
+- [x] **Step 3: Пройти таблицу 8.4 спеки, строки 1-5**
 
 | # | Проверка | Чем доказывается |
 |---|---|---|
@@ -1868,7 +1871,7 @@ adb shell run-as com.resultv.android cat files/last-config.json 2>/dev/null | gr
 Если файла нет — смотреть журнал приложения, где конфиг печатается при
 `logLevel=debug`.
 
-- [ ] **Step 4: Записать результат**
+- [x] **Step 4: Записать результат**
 
 Дописать в спеку раздел «Этап B закрыт» по образцу раздела 12: что получилось,
 чем доказано, что осталось. Коммит с записью.
@@ -1877,7 +1880,7 @@ adb shell run-as com.resultv.android cat files/last-config.json 2>/dev/null | gr
 
 ## Готовность этапа B
 
-- [ ] `testFullDebugUnitTest` и `testPlayDebugUnitTest` зелены
-- [ ] `assembleFullDebug` и `assemblePlayDebug` собираются
-- [ ] Строки 1-5 таблицы 8.4 пройдены на устройстве с доказательствами
-- [ ] Редактор профиля и маршрутизация из подписки НЕ трогались — это этап C
+- [x] `testFullDebugUnitTest` и `testPlayDebugUnitTest` зелены
+- [x] `assembleFullDebug` и `assemblePlayDebug` собираются
+- [x] Строки 1-5 таблицы 8.4 пройдены на устройстве с доказательствами
+- [x] Редактор профиля и маршрутизация из подписки НЕ трогались — это этап C
