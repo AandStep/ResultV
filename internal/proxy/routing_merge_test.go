@@ -194,3 +194,97 @@ func TestNewRoutingProfileIDIsUniqueAndSafe(t *testing.T) {
 		seen[id] = struct{}{}
 	}
 }
+
+// Правка из редактора приходит с УЖЕ известным id, и она обязана мочь сменить
+// имя. Сопоставление по имени издателя, которое бережёт переименование от
+// повторной публикации, для неё не годится: оно вернуло бы прежнее имя, и
+// переименовать профиль стало бы нечем.
+func TestUpsertByIDLetsTheEditorRename(t *testing.T) {
+	stored := []config.RoutingProfile{{
+		ID:         "edit1",
+		Name:       "Старое имя",
+		OriginName: "Panel A",
+		Source:     "deeplink",
+		ProxySites: []string{"old.example"},
+	}}
+	edited := stored[0]
+	edited.Name = "Новое имя"
+	edited.ProxySites = []string{"new.example"}
+
+	out, _, saved, err := UpsertRoutingProfile(stored, edited, "edit1", false)
+	if err != nil {
+		t.Fatalf("UpsertRoutingProfile: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("профилей %d, ждали 1", len(out))
+	}
+	if saved.Name != "Новое имя" {
+		t.Errorf("имя = %q, правка не применилась", saved.Name)
+	}
+	if saved.ProxySites[0] != "new.example" {
+		t.Errorf("правила не обновились: %v", saved.ProxySites)
+	}
+}
+
+// Происхождение редактору не принадлежит: профиль из подписки остаётся её
+// профилем, чтобы следующая синхронизация его узнала. Вместе с ним остаются
+// OriginName и ссылки на списки — их в редакторе нет, и потерять их он не
+// должен.
+func TestUpsertByIDKeepsProvenance(t *testing.T) {
+	stored := []config.RoutingProfile{{
+		ID:             "sub1",
+		Name:           "impVPN",
+		OriginName:     "impVPN",
+		Source:         "subscription",
+		SubscriptionID: "s1",
+		ListURLs:       map[string][]string{"proxy": {"https://panel.example/l.txt"}},
+		AllowInsecure:  true,
+		ProxySites:     []string{"old.example"},
+	}}
+	edited := config.RoutingProfile{
+		ID:         "sub1",
+		Name:       "Моё имя",
+		Source:     "manual", // редактор не знает происхождения
+		ProxySites: []string{"new.example"},
+	}
+
+	_, _, saved, err := UpsertRoutingProfile(stored, edited, "sub1", false)
+	if err != nil {
+		t.Fatalf("UpsertRoutingProfile: %v", err)
+	}
+	if saved.Name != "Моё имя" {
+		t.Errorf("имя не сменилось: %q", saved.Name)
+	}
+	if saved.Source != "subscription" || saved.SubscriptionID != "s1" {
+		t.Errorf("происхождение переписано: %q / %q", saved.Source, saved.SubscriptionID)
+	}
+	if saved.OriginName != "impVPN" {
+		t.Errorf("OriginName переписан: %q", saved.OriginName)
+	}
+	if len(saved.ListURLs["proxy"]) != 1 {
+		t.Errorf("ссылки на списки потеряны: %v", saved.ListURLs)
+	}
+	if !saved.AllowInsecure {
+		t.Error("согласие на plaintext потеряно")
+	}
+}
+
+// А вот повторная публикация приходит БЕЗ id — и там прежнее имя обязано
+// уцелеть. Это две разные операции, и путать их нельзя.
+func TestUpsertWithoutIDStillKeepsUserRename(t *testing.T) {
+	stored := []config.RoutingProfile{{
+		ID: "keepme", Name: "Моя маршрутизация", OriginName: "Panel A", Source: "deeplink",
+		ProxySites: []string{"old.example"},
+	}}
+	republished := config.RoutingProfile{
+		Name: "Panel A", OriginName: "Panel A", Source: "deeplink",
+		ProxySites: []string{"new.example"},
+	}
+	_, _, saved, err := UpsertRoutingProfile(stored, republished, "keepme", false)
+	if err != nil {
+		t.Fatalf("UpsertRoutingProfile: %v", err)
+	}
+	if saved.Name != "Моя маршрутизация" {
+		t.Errorf("переименование затёрто публикацией: %q", saved.Name)
+	}
+}

@@ -81,10 +81,23 @@ func routingProfileHandle(p config.RoutingProfile) string {
 
 // UpsertRoutingProfile stores a profile, replacing the one it matches.
 //
-// Returns the new slice, the new active id, and the profile as stored (with its
-// id filled in). activeID is the caller's current choice; makeActive asks for
-// the incoming profile to take over. A first profile always becomes active —
-// importing one and having nothing happen reads as a failure.
+// TWO OPERATIONS, and confusing them is what this function got wrong once.
+//
+//   - An EDIT arrives carrying the id of a profile already stored. It is the
+//     user speaking, so everything they typed wins — the name included.
+//   - A REPUBLISH arrives with no id, and is matched by the publisher's handle
+//     (SameRoutingProfile). There the stored name is kept: the user may have
+//     renamed the profile, and re-opening the panel's link must not undo that.
+//
+// The desktop keeps these apart as two functions, SaveRoutingProfile and
+// upsertRoutingProfile. Folding them into one and applying the republish rule
+// to both left the editor unable to rename anything: it typed a new name, the
+// merge put the old one back, and nothing appeared to happen.
+//
+// Returns the new slice, the new active id, and the profile as stored. activeID
+// is the caller's current choice; makeActive asks for the incoming profile to
+// take over. A first profile always becomes active — importing one and having
+// nothing happen reads as a failure.
 func UpsertRoutingProfile(
 	stored []config.RoutingProfile,
 	incoming config.RoutingProfile,
@@ -94,6 +107,33 @@ func UpsertRoutingProfile(
 	out := make([]config.RoutingProfile, len(stored))
 	copy(out, stored)
 
+	// An edit: matched by id, the user's text wins.
+	if incoming.ID != "" {
+		for i, existing := range out {
+			if existing.ID != incoming.ID {
+				continue
+			}
+			// Provenance is not the editor's to change: a profile that came
+			// from a subscription stays that profile's, so a later sync still
+			// recognises it. OriginName goes with it — it is the handle a
+			// re-import matches on, and letting a rename move it would break
+			// exactly the case it exists for. Linked lists and the plaintext
+			// consent travel with it too: the editor has no field for them, so
+			// it must not be able to lose them.
+			incoming.Source = existing.Source
+			incoming.SubscriptionID = existing.SubscriptionID
+			incoming.OriginName = existing.OriginName
+			incoming.ListURLs = existing.ListURLs
+			incoming.AllowInsecure = existing.AllowInsecure
+			out[i] = incoming
+			if makeActive {
+				activeID = incoming.ID
+			}
+			return out, activeID, incoming, nil
+		}
+	}
+
+	// A republish: matched by the publisher's handle.
 	replaced := false
 	for i, existing := range out {
 		if !SameRoutingProfile(existing, incoming) {
