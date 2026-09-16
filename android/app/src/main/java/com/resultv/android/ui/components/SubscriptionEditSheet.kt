@@ -120,12 +120,17 @@ fun SubscriptionEditSheet(
         contentColor = MaterialTheme.colorScheme.onSurface,
         dragHandle = { BottomSheetDefaults.DragHandle() },
     ) {
+        DarkSheetSystemBars()
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp)
-                .padding(bottom = 48.dp), // Safe area
+                // Не safe area: её лист уже держит сам —
+                // ModalBottomSheet кладёт на содержимое
+                // BottomSheetDefaults.windowInsets (safeDrawing снизу). Это
+                // просто поле, чтобы последняя строка не упиралась в панель.
+                .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             SheetHeader(displayName = subscription.displayName, onClose = onDismiss)

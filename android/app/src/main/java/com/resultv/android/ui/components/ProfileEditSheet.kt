@@ -90,6 +90,7 @@ fun ProfileEditSheet(
         sheetState = sheetState,
         containerColor = Brand.Surface,
     ) {
+        DarkSheetSystemBars()
         Column(
             modifier = Modifier
                 .fillMaxWidth()

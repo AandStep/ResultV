@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.text.KeyboardOptions
 import com.resultv.android.R
 import com.resultv.android.theme.Brand
+import com.resultv.android.ui.components.DarkSheetSystemBars
 import com.resultv.android.vpn.Profile
 import com.resultv.android.vpn.ProfileRepository
 import mobile.Mobile
@@ -669,6 +670,7 @@ internal fun ProfileFullEditSheet(
     // canFullEdit, but guard anyway.
     if (spec == null) {
         ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = Brand.Surface) {
+            DarkSheetSystemBars()
             Text(
                 text = stringResource(R.string.proxies_edit_unsupported),
                 style = MaterialTheme.typography.bodyMedium,
@@ -721,6 +723,7 @@ internal fun ProfileFullEditSheet(
         sheetState = sheetState,
         containerColor = Brand.Surface,
     ) {
+        DarkSheetSystemBars()
         Column(
             modifier = Modifier
                 .fillMaxWidth()
