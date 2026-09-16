@@ -12,7 +12,16 @@ import javax.net.ssl.SSLHandshakeException
 
 private const val TAG = "ResultV/CertSelfTest"
 private const val PROBE_URL = "https://example.com/"
-private const val TIMEOUT_MS = 5000
+
+/**
+ * Зонд идёт не в локальную сеть: браузер→MITM→SOCKS движка→туннель→удалённый
+ * сервер→example.com. Прежние 5 с были тайм-аутом локального масштаба, и на
+ * первом подключении после установки APK, когда по тому же туннелю ещё
+ * качаются фильтр-листы, регулярно срабатывали раньше ответа. Повтор делает
+ * ResultVpnService (см. certSelfTestRetryDelayMs); здесь — потолок одной
+ * попытки, отдельно на соединение и на чтение.
+ */
+private const val TIMEOUT_MS = 10_000
 
 /**
  * Blocking TLS self-test — must be called from a background/worker thread,

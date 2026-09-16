@@ -19,6 +19,7 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -463,18 +464,40 @@ class ResultVpnService : VpnService() {
      * connect where the browser isn't yet filtered. The cached urlfilter engine
      * (Manager reuses it across connects) keeps that window short after the
      * first connect.
+     *
+     * Самотест CA, ответивший INCONCLUSIVE, повторяется: пауза отсчитывается
+     * вне worker (иначе очередь reload-ов встала бы на всё это время), а сама
+     * попытка снова встаёт в worker. См. [certSelfTestRetryDelayMs] о том,
+     * почему «не знаю» — не повод выключать функцию до конца сессии.
      */
-    private fun attachBrowserAdBlockAsync() {
+    private fun attachBrowserAdBlockAsync(attemptsDone: Int = 0) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
         if (!SettingsRepository.state.value.browserAdBlock) return
         worker.execute {
-            startBrowserAdBlockIfEnabled()
+            val verdict = startBrowserAdBlockIfEnabled()
             // Only reload if the proxy actually came up (trusted cert + healthy);
             // startBrowserAdBlockIfEnabled leaves filterProxyRunning=false otherwise.
             if (BoxModule.filterProxyRunning && BoxModule.isRunning) {
                 val active = ProfileRepository.state.value.active ?: return@execute
                 val cfg = buildConfigForReload(active) ?: return@execute
                 BoxModule.reload(cfg)
+                return@execute
+            }
+            // CERT_UNTRUSTED — это ответ, а не помеха: повторять нечего, пока
+            // пользователь не поставит сертификат. Повтора заслуживает только
+            // INCONCLUSIVE.
+            if (verdict != CertSelfTest.Result.INCONCLUSIVE) return@execute
+            val attempts = attemptsDone + 1
+            val retryIn = certSelfTestRetryDelayMs(attempts)
+            if (retryIn == null) {
+                AppLog.warning(getString(R.string.log_browser_adblock_selftest_inconclusive))
+                return@execute
+            }
+            Log.i(TAG, "CA self-test inconclusive (attempt $attempts) - retrying in ${retryIn}ms")
+            scope.launch {
+                delay(retryIn)
+                if (!BoxModule.isRunning) return@launch
+                attachBrowserAdBlockAsync(attempts)
             }
         }
     }
@@ -486,14 +509,19 @@ class ResultVpnService : VpnService() {
      * BoxModule.filterProxyRunning=false on any failure (no lists downloaded
      * yet, port in use, etc.) so the follow-up reload's openTun() never applies
      * setHttpProxy to a dead proxy and breaks Chrome's HTTPS traffic.
+     *
+     * Возвращает вердикт самотеста, чтобы вызывающая сторона отличила «не
+     * знаю» (повторимо) от «не доверен» (нет), либо null, если до самотеста
+     * не дошло.
      */
-    private fun startBrowserAdBlockIfEnabled() {
+    private fun startBrowserAdBlockIfEnabled(): CertSelfTest.Result? {
         BoxModule.filterProxyRunning = false
-        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) return
-        if (!SettingsRepository.state.value.browserAdBlock) return
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) return null
+        if (!SettingsRepository.state.value.browserAdBlock) return null
         try {
             mobile.Mobile.startFilterProxy(filesDir.absolutePath, BROWSER_ADBLOCK_PORT.toLong())
-            when (CertSelfTest.run(BROWSER_ADBLOCK_PORT)) {
+            val verdict = CertSelfTest.run(BROWSER_ADBLOCK_PORT)
+            when (verdict) {
                 CertSelfTest.Result.PASS -> {
                     BoxModule.filterProxyRunning = true
                     SettingsRepository.setCertTrustState(com.resultv.android.vpn.CertTrustState.TRUSTED)
@@ -514,10 +542,14 @@ class ResultVpnService : VpnService() {
                     // certTrustState is deliberately NOT touched here — a transient
                     // network hiccup must not overwrite the last known-good/known-bad
                     // determination (see CertTrustState's doc comment).
+                    //
+                    // В журнал пишет вызывающая сторона, и только когда повторы
+                    // кончились: строка «проверить не удалось» на каждой
+                    // попытке выглядела бы отказом там, где ещё идёт ожидание.
                     mobile.Mobile.stopFilterProxy()
-                    AppLog.warning(getString(R.string.log_browser_adblock_selftest_inconclusive))
                 }
             }
+            return verdict
         } catch (t: Throwable) {
             BoxModule.filterProxyRunning = false
             try { mobile.Mobile.stopFilterProxy() } catch (_: Throwable) {}
@@ -527,6 +559,7 @@ class ResultVpnService : VpnService() {
                 t.message ?: t.javaClass.simpleName,
                 source = AppLog.resolve(R.string.log_source_adblock),
             )
+            return null
         }
     }
 
