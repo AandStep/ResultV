@@ -29,13 +29,6 @@ class DomainRulesTest {
         assertEquals(listOf("a.ru"), s.outOfVpn)
     }
 
-    @Test fun addRecordsHistoryNewestFirstAndCaps() {
-        var s = DomainRulesState()
-        repeat(DOMAIN_HISTORY_MAX + 5) { s = s.withAction("d$it.ru", RuleAction.OutOfVpn) }
-        assertEquals(DOMAIN_HISTORY_MAX, s.history.size)
-        assertEquals("d${DOMAIN_HISTORY_MAX + 4}.ru", s.history.first())
-    }
-
     @Test fun otherListHoldingFindsCrossTabDomain() {
         val s = DomainRulesState(blocked = listOf("a.ru"))
         assertEquals(RuleAction.Block, s.otherListHolding("a.ru", RuleAction.IntoVpn))
@@ -53,20 +46,21 @@ class DomainRulesTest {
 
     @Test fun codecRoundTrips() {
         val s = DomainRulesState(
-            outOfVpn = listOf("a.ru"), intoVpn = listOf("b.ru"),
-            blocked = listOf("c.ru"), history = listOf("a.ru"),
+            outOfVpn = listOf("a.ru"), intoVpn = listOf("b.ru"), blocked = listOf("c.ru"),
         )
         assertEquals(s, decodeDomainRules(encodeDomainRules(s)))
     }
 
+    // Записи старого формата несут ещё и мёртвый `domainHistory` — он просто
+    // не читается, и следующее сохранение его роняет.
     @Test fun legacyDomainExclusionsMigrateToOutOfVpn() {
         val s = decodeDomainRules(
             """{"mode":"Global","domainExclusions":["*.ru","localhost"],"domainHistory":["*.ru"]}"""
         )
         assertEquals(listOf("*.ru", "localhost"), s.outOfVpn)
-        assertEquals(listOf("*.ru"), s.history)
         assertTrue(s.intoVpn.isEmpty())
         assertTrue(s.blocked.isEmpty())
+        assertTrue("domainHistory" !in encodeDomainRules(s))
     }
 
     // Смена дефолта на Smart копирует ПК (config.go DefaultConfig).

@@ -4,29 +4,14 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Cap on the recorded MRU of typed domains.
- *
- * Nothing surfaces it any more — the "recently used" chips it fed were cut
- * from the Rules screen. The list is still recorded and persisted, so it can
- * be dropped outright (model, JSON key `domainHistory`, tests) whenever that
- * is worth a migration.
- */
-const val DOMAIN_HISTORY_MAX = 24
-
-/**
  * The three domain rule lists. Same asymmetric invariant as [AppRulesState] —
  * see its docs. Lists (not sets): the chip order is user-visible, so insertion
  * order is part of the contract.
- *
- * [history] records what the user typed, shared across tabs because it is about
- * input, not routing. Nothing reads it since the "recently used" chips were
- * cut — see [DOMAIN_HISTORY_MAX].
  */
 data class DomainRulesState(
     val outOfVpn: List<String> = emptyList(),
     val intoVpn: List<String> = emptyList(),
     val blocked: List<String> = emptyList(),
-    val history: List<String> = emptyList(),
 ) {
     fun listFor(action: RuleAction): List<String> = when (action) {
         RuleAction.OutOfVpn -> outOfVpn
@@ -47,14 +32,13 @@ data class DomainRulesState(
     fun withAction(domain: String, action: RuleAction): DomainRulesState {
         val d = domain.trim().lowercase()
         if (d.isEmpty()) return this
-        val nextHistory = (listOf(d) + history.filterNot { it == d }).take(DOMAIN_HISTORY_MAX)
         val s = when (action) {
             RuleAction.Block -> copy(outOfVpn = outOfVpn - d, intoVpn = intoVpn - d)
             RuleAction.OutOfVpn, RuleAction.IntoVpn -> copy(blocked = blocked - d)
         }
         val target = s.listFor(action)
         val added = if (d in target) target else target + d
-        return s.replacing(action, added).copy(history = nextHistory)
+        return s.replacing(action, added)
     }
 
     fun withoutAction(domain: String, action: RuleAction): DomainRulesState =
@@ -68,35 +52,34 @@ data class DomainRulesState(
 }
 
 /**
- * Reads the current format and the legacy `{mode, domainExclusions,
- * domainHistory}` one. `mode` is NOT read here — it stays owned by
- * RoutingRulesRepository. Throws on malformed JSON.
+ * Reads the current format and the legacy `{mode, domainExclusions}` one.
+ * `mode` is NOT read here — it stays owned by RoutingRulesRepository. Throws
+ * on malformed JSON.
+ *
+ * The dead `domainHistory` key that older installs still carry is simply not
+ * read; the next save drops it.
  */
 fun decodeDomainRules(json: String): DomainRulesState {
     val root = JSONObject(json)
-    val history = root.stringList(KEY_HISTORY)
     if (root.has(KEY_OUT_OF_VPN) || root.has(KEY_INTO_VPN) || root.has(KEY_BLOCKED)) {
         return DomainRulesState(
             outOfVpn = root.stringList(KEY_OUT_OF_VPN),
             intoVpn = root.stringList(KEY_INTO_VPN),
             blocked = root.stringList(KEY_BLOCKED),
-            history = history,
         )
     }
-    return DomainRulesState(outOfVpn = root.stringList("domainExclusions"), history = history)
+    return DomainRulesState(outOfVpn = root.stringList("domainExclusions"))
 }
 
 fun encodeDomainRules(state: DomainRulesState): String = JSONObject()
     .put(KEY_OUT_OF_VPN, JSONArray(state.outOfVpn))
     .put(KEY_INTO_VPN, JSONArray(state.intoVpn))
     .put(KEY_BLOCKED, JSONArray(state.blocked))
-    .put(KEY_HISTORY, JSONArray(state.history))
     .toString()
 
 private const val KEY_OUT_OF_VPN = "outOfVpnDomains"
 private const val KEY_INTO_VPN = "intoVpnDomains"
 private const val KEY_BLOCKED = "blockedDomains"
-private const val KEY_HISTORY = "domainHistory"
 
 private fun JSONObject.stringList(key: String): List<String> {
     val arr = optJSONArray(key) ?: return emptyList()

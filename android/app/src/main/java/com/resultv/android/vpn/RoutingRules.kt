@@ -108,11 +108,6 @@ object RoutingRulesRepository {
     fun removeDomain(domain: String, action: RuleAction) =
         mutate { it.copy(domains = it.domains.withoutAction(domain, action)) }
 
-    @Synchronized
-    fun forgetDomainHistory(domain: String) = mutate {
-        it.copy(domains = it.domains.copy(history = it.domains.history.filterNot { d -> d == domain }))
-    }
-
     /** Domains sent to the engine as `domain_suffix` → direct (Global only). */
     fun engineOutOfVpn(): List<String> = _state.value.domains.outOfVpn
 
