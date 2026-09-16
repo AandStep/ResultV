@@ -414,4 +414,11 @@
     <string name="routing_profiles_delete">Delete</string>
     <string name="routing_profiles_delete_confirm">Delete profile \"%1$s\"?</string>
     <string name="routing_profiles_off">Routing without a profile</string>
+    <string name="routing_profiles_subtitle">Manage traffic rules yourself</string>
+    <string name="routing_profiles_active">Active profile</string>
+    <string name="routing_profiles_all">All profiles</string>
+    <string name="routing_profiles_actions">Actions</string>
+    <string name="routing_profiles_import">Import a profile</string>
+    <string name="routing_profiles_create">Create a profile</string>
+    <string name="action_close">Close</string>
 </resources>
