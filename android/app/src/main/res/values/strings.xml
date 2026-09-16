@@ -57,11 +57,6 @@
     <string name="settings_section_about">ABOUT</string>
     <string name="settings_kill_switch">Kill Switch</string>
     <string name="settings_kill_switch_subtitle">Block internet if the proxy drops</string>
-    <string name="settings_adblock">Ad blocking</string>
-    <string name="settings_adblock_subtitle">Block ads and trackers via DNS, including YouTube ad-delivery domains. On some sites empty ad frames may remain.</string>
-    <string name="log_browser_adblock_disabled">Browser ad-block stopped working and was turned off automatically</string>
-    <string name="log_browser_adblock_cert_untrusted">Browser ad-block certificate isn\'t trusted — reinstall it in Settings. Feature turned off.</string>
-    <string name="log_browser_adblock_selftest_inconclusive">Couldn\'t verify browser ad-block this session; left off to avoid breaking browsing.</string>
     <string name="settings_ipv6">IPv6</string>
     <string name="settings_ipv6_subtitle">Route IPv6 traffic through the tunnel (dual-stack)</string>
     <string name="settings_bypass_lan">Bypass LAN</string>
@@ -77,8 +72,6 @@
     <string name="settings_desc">Security and system management</string>
     <string name="settings_back">Back to settings</string>
     <string name="settings_group_advanced">Advanced settings</string>
-    <string name="settings_group_adblock">Ad blocking</string>
-    <string name="settings_group_adblock_desc">Block banners, trackers, and browser ads</string>
 
     <!-- Certificate install wizard -->
     <string name="settings_group_advanced_desc">Startup, TUN and traffic filtering options.</string>
@@ -361,7 +354,6 @@
     <!-- Log source tokens — same Latin category tags the desktop uses; not translated. -->
     <string name="log_source_proxy" translatable="false">PROXY</string>
     <string name="log_source_killswitch" translatable="false">KILL SWITCH</string>
-    <string name="log_source_adblock" translatable="false">ADBLOCK</string>
     <string name="log_source_smart" translatable="false">SMART</string>
     <string name="log_source_config" translatable="false">CONFIG</string>
     <string name="log_connect_timing">Connection timing: total=%1$d ms</string>
@@ -373,7 +365,6 @@
     <string name="log_app_route_failed">Per-app routing: rule for %1$s was not applied.</string>
     <string name="log_protect_failed">Failed to protect an engine socket — possible routing loop.</string>
     <string name="log_awg_knobs_dropped">AmneziaWG: the engine does not support %1$s — connecting without them. Obfuscation is weaker; if the server requires them, the handshake will not complete.</string>
-    <string name="log_adblock_proxy_start_failed">Browser ad-block failed to start (%1$s) — browser uses normal routing.</string>
     <string name="log_traffic_stats_failed">Traffic statistics unavailable this session: %1$s</string>
     <string name="log_auto_selected">AUTO: selected %1$s (%2$s)</string>
     <string name="log_auto_failover">AUTO: node unavailable, trying %1$s</string>
@@ -388,9 +379,7 @@
     <string name="log_import_no_uris">No valid proxy links found in the import.</string>
 
     <!-- Ad-block and Smart list update logging -->
-    <string name="log_adblock_updated">Block lists updated (%1$d/%2$d).</string>
-    <string name="log_adblock_update_failed">Block list update failed: %1$s</string>
-    <string name="log_adblock_cache_reset">Corrupt block-list cache detected — cleared and restarting the engine.</string>
+    <string name="log_ruleset_cache_reset">Corrupt rule-set cache detected — cleared and restarting the engine.</string>
     <string name="log_smart_updated">Smart lists updated (%1$s): %2$d entries.</string>
     <string name="log_smart_cidrs">Smart: %1$d IP ranges (Telegram, Discord voice).</string>
     <string name="log_smart_cidrs_builtin">Smart: using %1$d builtin IP ranges — the remote list is unavailable, so Telegram still routes but Discord voice does not.</string>
@@ -403,5 +392,4 @@
     <string name="log_app_rules_allowlist_migrated">Per-app mode "Allow" was removed; the list moved to "Into VPN" (Smart mode)</string>
     <string name="log_app_started">ResultV started.</string>
     <string name="log_smart_loaded">Smart lists loaded (%1$s): %2$d entries.</string>
-    <string name="log_adblock_loaded">Block lists loaded (%1$d/%2$d).</string>
 </resources>

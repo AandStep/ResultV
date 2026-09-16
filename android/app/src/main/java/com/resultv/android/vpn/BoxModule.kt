@@ -151,8 +151,12 @@ object BoxModule {
         } catch (t: Throwable) {
             if (!EngineErrors.isCorruptRuleSetCacheError(t.message)) throw t
             Log.w(TAG, "corrupt rule-set cache — clearing and retrying start once", t)
-            AppLog.warning(R.string.log_adblock_cache_reset,
-                source = AppLog.resolve(R.string.log_source_adblock))
+            // Источник и текст — про rule-set вообще, а не про ad-block: эта
+            // ветка срабатывает на любой испорченный SRS в кэше sing-box,
+            // включая Smart-списки, которые есть и в play-сборке без всякой
+            // фильтрации рекламы.
+            AppLog.warning(R.string.log_ruleset_cache_reset,
+                source = AppLog.resolve(R.string.log_source_config))
             clearSingBoxCache(ctx)
             server.startOrReloadService(configJson, OverrideOptions())
         }

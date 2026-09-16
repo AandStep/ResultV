@@ -52,11 +52,6 @@
     <string name="settings_section_about">О ПРИЛОЖЕНИИ</string>
     <string name="settings_kill_switch">Kill Switch</string>
     <string name="settings_kill_switch_subtitle">Блокировать интернет при обрыве прокси</string>
-    <string name="settings_adblock">Блокировка рекламы</string>
-    <string name="settings_adblock_subtitle">Блокировка рекламы и трекеров через DNS, включая рекламные домены YouTube. На некоторых сайтах могут остаться пустые блоки.</string>
-    <string name="log_browser_adblock_disabled">Блокировка рекламы в браузере перестала работать и была автоматически отключена</string>
-    <string name="log_browser_adblock_cert_untrusted">Сертификат блокировки рекламы не установлен — переустановите его в настройках. Функция отключена.</string>
-    <string name="log_browser_adblock_selftest_inconclusive">Не удалось проверить блокировку рекламы в этом сеансе; оставлено выключенным.</string>
     <string name="settings_ipv6">IPv6</string>
     <string name="settings_ipv6_subtitle">Маршрутизировать IPv6-трафик через туннель</string>
     <string name="settings_bypass_lan">Прямой LAN</string>
@@ -72,8 +67,6 @@
     <string name="settings_desc">Управление безопасностью и системой</string>
     <string name="settings_back">Назад к настройкам</string>
     <string name="settings_group_advanced">Дополнительные настройки</string>
-    <string name="settings_group_adblock">Блокировка рекламы</string>
-    <string name="settings_group_adblock_desc">Блокировка баннеров, трекеров и рекламы в браузере</string>
 
     <!-- Мастер установки сертификата -->
     <string name="settings_group_advanced_desc">Параметры запуска, TUN и фильтрации трафика.</string>
@@ -337,7 +330,6 @@
     <string name="log_app_route_failed">Маршрутизация приложений: правило для %1$s не применено.</string>
     <string name="log_protect_failed">Не удалось защитить сокет движка — возможна петля маршрутизации.</string>
     <string name="log_awg_knobs_dropped">AmneziaWG: движок не поддерживает %1$s — подключаюсь без них. Обфускация слабее; если сервер их требует, хендшейк не завершится.</string>
-    <string name="log_adblock_proxy_start_failed">Блокировка рекламы в браузере не запустилась (%1$s) — браузер работает без фильтра.</string>
     <string name="log_traffic_stats_failed">Статистика трафика в этом сеансе недоступна: %1$s</string>
     <string name="log_auto_selected">AUTO: выбран %1$s (%2$s)</string>
     <string name="log_auto_failover">AUTO: узел недоступен, пробуем %1$s</string>
@@ -352,8 +344,6 @@
     <string name="log_import_no_uris">В импорте не найдено корректных ссылок на прокси.</string>
 
     <!-- Ad-block and Smart list update logging -->
-    <string name="log_adblock_updated">Базы блокировки обновлены (%1$d/%2$d).</string>
-    <string name="log_adblock_update_failed">Не удалось обновить базы блокировки: %1$s</string>
     <string name="log_smart_updated">Списки Smart обновлены (%1$s), записей: %2$d.</string>
     <string name="log_smart_cidrs">Smart: IP-диапазонов %1$d (Telegram, Discord voice).</string>
     <string name="log_smart_cidrs_builtin">Smart: используются встроенные IP-диапазоны (%1$d) — удалённый список недоступен, поэтому Telegram работает, а Discord voice нет.</string>
@@ -366,5 +356,4 @@
     <string name="log_app_rules_allowlist_migrated">Режим приложений «Разрешить» убран; список перенесён во вкладку «В ВПН» (режим Smart)</string>
     <string name="log_app_started">ResultV запущен.</string>
     <string name="log_smart_loaded">Списки Smart загружены (%1$s), записей: %2$d.</string>
-    <string name="log_adblock_loaded">Базы блокировки загружены (%1$d/%2$d).</string>
 </resources>
