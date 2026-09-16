@@ -190,6 +190,7 @@ cd android && ./gradlew :app:testFullDebugUnitTest --tests '*SettingsStringsTest
 ```xml
 <string name="settings_adblock_subtitle">Реклама и трекеры через DNS, включая YouTube.</string>
 <string name="settings_browser_adblock_subtitle">Баннеры в Chrome. Нужен сертификат; YouTube не затронут.</string>
+<string name="settings_group_adblock_desc">Баннеры, трекеры и реклама в браузере</string>
 ```
 
 В `android/app/src/full/res/values/strings.xml`:
@@ -197,6 +198,7 @@ cd android && ./gradlew :app:testFullDebugUnitTest --tests '*SettingsStringsTest
 ```xml
 <string name="settings_adblock_subtitle">Ads and trackers via DNS, including YouTube.</string>
 <string name="settings_browser_adblock_subtitle">Banners in Chrome. Needs a certificate; not YouTube.</string>
+<string name="settings_group_adblock_desc">Banners, trackers and browser ads</string>
 ```
 
 Подробности из длинной подписи не теряются: их дословно повторяет мастер
@@ -222,7 +224,7 @@ cd android && ./gradlew :app:testFullDebugUnitTest --tests '*SettingsStringsTest
 В `android/app/src/main/res/values/strings.xml`:
 
 ```xml
-<string name="settings_dns_private_warning">Not working? Set Private DNS to Off in Android network settings.</string>
+<string name="settings_dns_private_warning">Not working? Turn off Private DNS in Android settings.</string>
 <string name="settings_cat_connection">Connection and routing</string>
 <string name="settings_cat_security">Security</string>
 <string name="settings_cat_app">App</string>
@@ -939,12 +941,23 @@ cd /c/ResultV && grep -rn "Brand\." --include=*.kt android/app/src/main/java/com
 cd android && ./gradlew :app:assembleFullDebug :app:assemblePlayDebug -Pdebug.abi=arm64-v8a
 ```
 
-Ожидается: BUILD SUCCESSFUL. `SettingIcon` сменил сигнатуру, и вызовы в
-`SettingsScreen.kt`, `RulesScreen.kt`, `SubscriptionEditSheet.kt` теперь не
-компилируются — **это ожидаемо**, и здесь их надо поправить механически:
-`SettingIcon(icon, bg, tint)` → `SettingIcon(icon, RvCategory.<Цвет>)`, подбирая
-имя по таблице цветов в `Tokens.kt`. Полная перекраска этих экранов — задачи 5,
-7 и 8.
+`SettingIcon` сменил сигнатуру, и вызовы в `SettingsScreen.kt`, `RulesScreen.kt`
+и `SubscriptionEditSheet.kt` перестанут компилироваться — это ожидаемо.
+Починить их **минимально**, собрав пару прямо на месте вызова:
+
+```kotlin
+// было
+SettingIcon(subcategory.icon, subcategory.iconBg, subcategory.iconTint)
+// стало
+SettingIcon(subcategory.icon, CategoryTint(subcategory.iconBg, subcategory.iconTint))
+```
+
+Поля `iconBg` / `iconTint` в перечислении и литералы `Color(0x…)` на этих
+экранах **не трогать**: их убирают задачи 5, 7 и 8, и если сделать это здесь,
+те задачи будут переписывать свежий код. Цель шага — зелёная сборка, а не
+перекраска чужих экранов.
+
+Ожидается: BUILD SUCCESSFUL обеих сборок.
 
 - [ ] **Step 6: Коммит**
 
@@ -1224,12 +1237,20 @@ private fun SubcategoryRow(subcategory: SettingsSubcategory, onClick: () -> Unit
 Функции `ToggleRow`, `IntervalRow`, `TextFieldRow` принимают `tint: CategoryTint`
 вместо пары `iconBg`/`iconTint`.
 
-- [ ] **Step 9: Удалить строки, осиротевшие этой задачей**
+- [ ] **Step 9: Довести вызовы `ToggleRow` в сорссете full**
+
+Смена сигнатуры `ToggleRow` на `tint: CategoryTint` ломает
+`full/AdBlockSettings.kt`, который её зовёт, — а эта задача обязана кончиться
+собираемым приложением. Поправить там вызовы **минимально**: заменить пару
+`iconBg` / `iconTint` на `tint = RvCategory.Red` (плитки блокировки рекламы
+красные, см. справочник замен). Остальное в этом файле — задача 9.
+
+- [ ] **Step 10: Удалить строки, осиротевшие этой задачей**
 
 Из обеих локалей `main` удалить `settings_group_advanced`,
 `settings_group_advanced_desc` и `settings_appearance_language_desc`.
 
-- [ ] **Step 10: Запустить тесты ресурсов**
+- [ ] **Step 11: Запустить тесты ресурсов**
 
 ```bash
 cd android && ./gradlew :app:testFullDebugUnitTest --tests '*SettingsStringsTest*'
@@ -1238,7 +1259,7 @@ cd android && ./gradlew :app:testFullDebugUnitTest --tests '*SettingsStringsTest
 Ожидается: BUILD SUCCESSFUL, оба теста PASSED. Если `bothLocalesKnowTheSameSettingsStrings`
 упал — строку удалили из одной локали и забыли в другой.
 
-- [ ] **Step 11: Собрать и посмотреть на телефоне**
+- [ ] **Step 12: Собрать и посмотреть на телефоне**
 
 ```bash
 cd android && ./gradlew :app:assembleFullDebug -Pdebug.abi=arm64-v8a
@@ -1256,13 +1277,13 @@ adb -s e3bacc6b exec-out screencap -p > .../task5-settings.png
 односточный список; раздела «Дополнительные» нет, IPv6 стоит в «Сети»;
 ни одна подпись не занимает больше двух строк.
 
-- [ ] **Step 12: Проверить английскую локаль**
+- [ ] **Step 13: Проверить английскую локаль**
 
 Переключить язык в разделе «Оформление» на English и снять экран настроек
 повторно. Заголовки категорий обязаны стать английскими — до этой задачи они
 оставались русскими при любой локали.
 
-- [ ] **Step 13: Коммит**
+- [ ] **Step 14: Коммит**
 
 ```bash
 cd /c/ResultV && git add android/app/src && git commit -F - <<'EOF'
