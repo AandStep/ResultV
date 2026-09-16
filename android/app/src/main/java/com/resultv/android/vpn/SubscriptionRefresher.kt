@@ -175,6 +175,15 @@ object SubscriptionRefresher {
         ProfileRepository.replaceForSubscription(sub.id, fresh)
         // Desktop parity: «Подписка 'X' обновлена: N серверов».
         val displayName = response.optString("title").ifBlank { sub.name }
+        // activate=false: фоновое обновление профиль обновляет, но активным не
+        // делает — иначе оно перебивало бы выбор, сделанный с тех пор.
+        SubscriptionRouting.accept(
+            routingJson = response.optString("routing"),
+            subId = sub.id,
+            subName = displayName,
+            dataDir = dataDir,
+            activate = false,
+        )
         AppLog.success(R.string.log_sub_refreshed, displayName, fresh.count { !it.isSection })
         // Ping only the servers that just changed, not the whole app's
         // profile list — keeps this as fast/streaming as a manual per-row

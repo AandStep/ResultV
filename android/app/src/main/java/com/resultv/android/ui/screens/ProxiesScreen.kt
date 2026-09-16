@@ -79,6 +79,7 @@ import com.resultv.android.vpn.Subscription
 import com.resultv.android.vpn.AppLog
 import com.resultv.android.vpn.SubscriptionRefresher
 import com.resultv.android.vpn.SubscriptionRepository
+import com.resultv.android.vpn.SubscriptionRouting
 import com.resultv.android.vpn.SubscriptionUsage
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -400,6 +401,11 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
             },
             confirmButton = {
                 TextButton(onClick = {
+                    // Профиль маршрутизации этой подписки уходит вместе с ней:
+                    // держать его значило бы маршрутизировать по правилам
+                    // провайдера, которого больше нет. Кэш правил сносится
+                    // внутри forget, до записи конфига.
+                    SubscriptionRouting.forget(target.id, ctx.filesDir.absolutePath)
                     SubscriptionRepository.delete(target.id)
                     pendingDeleteSub = null
                 }) { Text(stringResource(R.string.action_delete), color = Brand.Danger) }

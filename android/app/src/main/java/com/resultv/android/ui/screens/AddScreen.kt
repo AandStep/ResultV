@@ -75,6 +75,7 @@ import com.resultv.android.vpn.Profile
 import com.resultv.android.vpn.ProfileRepository
 import com.resultv.android.vpn.Subscription
 import com.resultv.android.vpn.SubscriptionRepository
+import com.resultv.android.vpn.SubscriptionRouting
 import com.resultv.android.vpn.WireGuardConfParser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -503,6 +504,7 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
                             sub = sub,
                             selectedKeys = selected.value,
                             sourceTag = "",
+                            dataDir = dataDir,
                         )
                         onDone()
                     },
@@ -581,6 +583,8 @@ private data class FetchedSubscription(
     val title: String,
     val userInfo: String,
     val supportUrl: String,
+    /** Маршрутизация провайдера, уже свёрнутая Go в профиль. Пусто — её нет. */
+    val routingJson: String = "",
 )
 
 // ──────────────────────────── Helpers ──────────────────────────
@@ -663,6 +667,7 @@ private fun doFetch(
                     title = response.optString("title"),
                     userInfo = response.optString("userInfo"),
                     supportUrl = response.optString("supportUrl"),
+                    routingJson = response.optString("routing"),
                 )
             )
         } catch (t: Throwable) {
@@ -704,6 +709,7 @@ private fun importSubscription(
     sub: FetchedSubscription,
     selectedKeys: Set<String>,
     sourceTag: String,
+    dataDir: String,
 ) {
     // Re-importing the same URL updates the existing record in place rather
     // than spawning a duplicate; a fresh URL inserts a new one.
@@ -727,6 +733,15 @@ private fun importSubscription(
         }?.let { p -> if (!p.isSection && p.name in favouriteNames) p.copy(isFavorite = true) else p }
     }
     ProfileRepository.replaceForSubscription(subId, profiles)
+    // Маршрутизация провайдера приехала тем же ответом, что и серверы.
+    // activate=true: пользователь только что сам согласился на эту подписку.
+    SubscriptionRouting.acceptAsync(
+        routingJson = sub.routingJson,
+        subId = subId,
+        subName = sub.title.ifBlank { url },
+        dataDir = dataDir,
+        activate = true,
+    )
 }
 
 private fun defaultSubscriptionName(url: String): String {
@@ -788,9 +803,10 @@ private fun smartClipboardImport(
                     title = response.optString("title"),
                     userInfo = response.optString("userInfo"),
                     supportUrl = response.optString("supportUrl"),
+                    routingJson = response.optString("routing"),
                 )
                 val allKeys = list.filter { !it.isSection }.map { it.key }.toSet()
-                importSubscription(trimmed, sub, allKeys, "")
+                importSubscription(trimmed, sub, allKeys, "", dataDir)
                 onMessage(msgImportedSubscription(allKeys.size))
             } catch (_: Throwable) {
                 onMessage(msgFetchFailed)

@@ -192,6 +192,15 @@ object DeepLinkImporter {
             }
         }
         ProfileRepository.replaceForSubscription(subId, profiles)
+        // Маршрутизация провайдера приехала тем же ответом. activate=true:
+        // пользователь только что сам открыл эту ссылку.
+        SubscriptionRouting.accept(
+            routingJson = response.optString("routing"),
+            subId = subId,
+            subName = title.ifBlank { subUrl },
+            dataDir = dataDir,
+            activate = true,
+        )
         val imported = profiles.count { !it.isSection }
         toast(ctx, R.string.deeplink_imported_subscription, imported)
         AppLog.success(R.string.log_sub_imported,

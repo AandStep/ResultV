@@ -391,6 +391,7 @@
     <string name="log_routing_compiled">Routing profile \"%1$s\" built: %2$d direct, %3$d proxy, %4$d block</string>
     <string name="log_routing_unresolved">Routing profile \"%1$s\": %2$d rules could not be applied</string>
     <string name="log_routing_compile_failed">Routing profile \"%1$s\" was saved, but its rules were not built: %2$s</string>
+    <string name="log_routing_from_subscription">Routing profile received with subscription \"%1$s\"</string>
     <string name="log_read_failed">Failed to read %1$s — starting with empty data.</string>
     <string name="log_app_rules_allowlist_migrated">Per-app mode "Allow" was removed; the list moved to "Into VPN" (Smart mode)</string>
     <string name="log_app_started">ResultV started.</string>
