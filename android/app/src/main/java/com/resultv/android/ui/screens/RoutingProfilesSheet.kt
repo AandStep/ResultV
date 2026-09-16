@@ -169,7 +169,7 @@ fun RoutingProfilesSheetContent(
                     busy = busyId == active.id,
                     onSelect = {},
                     onRebuild = { rebuild(active) },
-                    onEdit = editHandler(active, onEdit),
+                    onEdit = { onEdit(active) },
                     onDelete = { confirmDelete = active },
                 )
                 TextButton(
@@ -199,7 +199,7 @@ fun RoutingProfilesSheetContent(
                         busy = busyId == profile.id,
                         onSelect = { RoutingProfileRepository.setActive(profile.id) },
                         onRebuild = { rebuild(profile) },
-                        onEdit = editHandler(profile, onEdit),
+                        onEdit = { onEdit(profile) },
                         onDelete = { confirmDelete = profile },
                     )
                 }
@@ -283,19 +283,6 @@ fun RoutingProfilesSheetContent(
     }
 }
 
-/**
- * Карандаш даётся не всякой строке — правило ПК (ProfileItem.jsx).
- *
- * Профиль из подписки править нечем: его правила приходят готовыми и
- * перезаписываются следующей синхронизацией, так что правка обещала бы то, что
- * не переживёт обновления.
- */
-private fun editHandler(
-    profile: RoutingProfile,
-    onEdit: (RoutingProfile?) -> Unit,
-): (() -> Unit)? =
-    if (profile.source == "subscription") null else ({ onEdit(profile) })
-
 /** Раздел: подпись белым 50 % и содержимое под ней. */
 @Composable
 private fun Section(label: String, content: @Composable () -> Unit) {
@@ -313,7 +300,7 @@ private fun ProfileCard(
     busy: Boolean,
     onSelect: () -> Unit,
     onRebuild: () -> Unit,
-    onEdit: (() -> Unit)?,
+    onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
     Row(
@@ -388,14 +375,17 @@ private fun ProfileCard(
                 }
             }
         }
-        if (onEdit != null) {
-            IconButton(onClick = onEdit, enabled = !busy) {
-                Icon(
-                    Icons.Outlined.Edit,
-                    contentDescription = stringResource(R.string.routing_editor_edit_title),
-                    tint = Muted,
-                )
-            }
+        // Карандаш у каждой строки, включая профиль подписки: на ПК onEdit
+        // тоже передаётся безусловно (RoutingProfilesDialog.jsx:75). Правка
+        // профиля подписки осмысленна — происхождение и ссылки на списки
+        // переживают её (см. UpsertRoutingProfile), — хотя следующая
+        // синхронизация правила перепишет.
+        IconButton(onClick = onEdit, enabled = !busy) {
+            Icon(
+                Icons.Outlined.Edit,
+                contentDescription = stringResource(R.string.routing_editor_edit_title),
+                tint = Muted,
+            )
         }
         IconButton(onClick = onDelete, enabled = !busy) {
             Icon(
