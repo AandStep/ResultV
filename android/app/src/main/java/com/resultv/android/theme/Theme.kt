@@ -1,80 +1,100 @@
 package com.resultv.android.theme
 
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.graphics.Color
-
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import com.resultv.android.R
 
-// All slots are explicitly set so Material 3 components (Switch, SegmentedButton,
-// Checkbox, NavigationBar indicator, …) can't fall back to the default purple
-// tonal palette for any unset slot.
+/** Benzin Bold. Им набрано слово «ResultV» — и больше ничего. */
+val BenzinBold = FontFamily(Font(R.font.benzin_bold, FontWeight.Bold))
+
+/**
+ * Все слоты выставлены явно: любой незаданный уезжает в фиолетовую тональную
+ * палитру Material по умолчанию, и тогда Switch, SegmentedButton или индикатор
+ * NavigationBar оказываются не нашего цвета.
+ */
 private val ResultVColors = darkColorScheme(
-    primary = Brand.Green,
-    onPrimary = Color.White,
-    primaryContainer = Brand.GreenDark,
-    onPrimaryContainer = Color.White,
-    inversePrimary = Brand.GreenLight,
+    primary = RvColor.Main,
+    onPrimary = RvColor.White,
+    primaryContainer = RvColor.mainA20,
+    onPrimaryContainer = RvColor.Main,
+    inversePrimary = RvColor.Second,
 
-    secondary = Brand.GreenLight,
-    onSecondary = Color.Black,
-    secondaryContainer = Color(0xFF003D1C),
-    onSecondaryContainer = Brand.GreenLight,
+    secondary = RvColor.Second,
+    onSecondary = RvColor.Black,
+    secondaryContainer = RvColor.secondA10,
+    onSecondaryContainer = RvColor.Second,
 
-    tertiary = Brand.Favorite,
-    onTertiary = Color.Black,
-    tertiaryContainer = Color(0xFF3D2E00),
-    onTertiaryContainer = Brand.Favorite,
+    tertiary = RvColor.Warning,
+    onTertiary = RvColor.Black,
+    tertiaryContainer = RvColor.warningA10,
+    onTertiaryContainer = RvColor.Warning,
 
-    error = Brand.Danger,
-    onError = Color.White,
-    errorContainer = Color(0x33F43F5E),
-    onErrorContainer = Brand.Danger,
+    error = RvColor.Errors,
+    onError = RvColor.White,
+    errorContainer = RvColor.errorsA10,
+    onErrorContainer = RvColor.Errors,
 
-    background = Brand.Bg,
-    onBackground = Color(0xFFEDEDEF),
-    surface = Brand.Surface,
-    onSurface = Color(0xFFEDEDEF),
-    surfaceVariant = Brand.SurfaceHigh,
-    onSurfaceVariant = Brand.SecondaryText,
-    surfaceTint = Brand.Green,
+    background = RvColor.Black,
+    onBackground = RvColor.White,
+    surface = RvColor.Grey,
+    onSurface = RvColor.White,
+    surfaceVariant = RvColor.LightGray,
+    onSurfaceVariant = RvColor.whiteA50,
+    surfaceTint = RvColor.Main,
 
-    inverseSurface = Color(0xFFEDEDEF),
-    inverseOnSurface = Brand.Bg,
+    inverseSurface = RvColor.White,
+    inverseOnSurface = RvColor.Black,
 
-    outline = Brand.SurfaceBorder,
-    outlineVariant = Brand.SurfaceHigh,
+    outline = RvColor.whiteA10,
+    outlineVariant = RvColor.whiteA05,
 
-    scrim = Color(0xCC000000),
+    scrim = RvColor.overlay,
 
-    // Material 3 1.2+ surface tonal slots. All clamped to our brand
-    // dark scale so containerised components (NavigationBar, SegmentedButton,
-    // Card with elevation > 0) stay on-brand.
-    surfaceBright = Color(0xFF2A2A2E),
-    surfaceDim = Brand.Bg,
-    surfaceContainerLowest = Color(0xFF050507),
-    surfaceContainerLow = Color(0xFF0E0E11),
-    surfaceContainer = Brand.Surface,
-    surfaceContainerHigh = Color(0xFF1F1F22),
-    surfaceContainerHighest = Brand.SurfaceHigh,
+    surfaceBright = RvColor.LightGray,
+    surfaceDim = RvColor.Black,
+    surfaceContainerLowest = RvColor.Black,
+    surfaceContainerLow = RvColor.DarkGrey,
+    surfaceContainer = RvColor.Grey,
+    surfaceContainerHigh = RvColor.LightGray,
+    surfaceContainerHighest = RvColor.LightGray,
 )
 
+/**
+ * Пять стилей макета разложены по слотам Material, а не живут рядом с ними:
+ * компоненты M3 читают MaterialTheme.typography сами. Слоты, которым в макете
+ * ничего не соответствует, получают ближайший стиль — а не выдуманное значение.
+ */
+private fun style(size: androidx.compose.ui.unit.TextUnit, line: androidx.compose.ui.unit.TextUnit, weight: FontWeight) =
+    TextStyle(fontSize = size, lineHeight = line, fontWeight = weight)
+
+private val H1 = style(RvType.h1Size, RvType.h1Line, FontWeight.Bold)
+private val Title = style(RvType.titleSize, RvType.titleLine, FontWeight.Bold)
+private val Btn = style(RvType.btnSize, RvType.btnLine, FontWeight.Bold)
+private val Regular = style(RvType.regularSize, RvType.regularLine, FontWeight.Medium)
+private val Chip = style(RvType.chipSize, RvType.chipLine, FontWeight.Medium)
+
 private val ResultVTypography = Typography(
-    headlineLarge = TextStyle(fontSize = 30.sp, lineHeight = 38.sp),
-    headlineMedium = TextStyle(fontSize = 26.sp, lineHeight = 34.sp),
-    headlineSmall = TextStyle(fontSize = 22.sp, lineHeight = 30.sp),
-    titleLarge = TextStyle(fontSize = 20.sp, lineHeight = 26.sp),
-    titleMedium = TextStyle(fontSize = 14.sp, lineHeight = 22.sp),
-    titleSmall = TextStyle(fontSize = 12.sp, lineHeight = 18.sp),
-    bodyLarge = TextStyle(fontSize = 14.sp, lineHeight = 22.sp),
-    bodyMedium = TextStyle(fontSize = 12.sp, lineHeight = 18.sp),
-    bodySmall = TextStyle(fontSize = 11.sp, lineHeight = 14.sp),
-    labelLarge = TextStyle(fontSize = 12.sp, lineHeight = 18.sp),
-    labelMedium = TextStyle(fontSize = 11.sp, lineHeight = 14.sp),
-    labelSmall = TextStyle(fontSize = 10.sp, lineHeight = 14.sp),
+    displayLarge = H1, displayMedium = H1, displaySmall = H1,
+    headlineLarge = H1, headlineMedium = Title, headlineSmall = Title,
+    titleLarge = Title, titleMedium = Btn, titleSmall = Btn,
+    bodyLarge = Regular, bodyMedium = Chip, bodySmall = Chip,
+    labelLarge = Btn, labelMedium = Chip, labelSmall = Chip,
+)
+
+private val ResultVShapes = Shapes(
+    extraSmall = RoundedCornerShape(RvRadius.small),
+    small = RoundedCornerShape(RvRadius.chip),
+    medium = RoundedCornerShape(RvRadius.control),
+    large = RoundedCornerShape(RvRadius.card),
+    extraLarge = RoundedCornerShape(RvRadius.panel),
 )
 
 @Composable
@@ -82,6 +102,7 @@ fun ResultVTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = ResultVColors,
         typography = ResultVTypography,
+        shapes = ResultVShapes,
         content = content,
     )
 }

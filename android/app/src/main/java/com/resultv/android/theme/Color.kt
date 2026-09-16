@@ -1,23 +1,30 @@
 package com.resultv.android.theme
 
-import androidx.compose.ui.graphics.Color
-
-/** ResultV brand palette — mirrors `colors_and_type.css` from the design bundle. */
+/**
+ * Псевдонимы на новые токены — строительные леса на время перевода экранов.
+ *
+ * Существуют ровно для того, чтобы все 23 файла продолжали собираться, пока
+ * экраны переводятся по одному, а не разом. Удаляются последней задачей плана,
+ * и это удаление служит доказательством полноты перевода: если `Brand` уходит
+ * и сборка проходит, значит на старые значения не осталось ни одной ссылки.
+ *
+ * НОВЫЙ КОД СЮДА НЕ ПИШЕТСЯ. Берите RvColor.
+ */
+@Deprecated("Строительные леса перевода на RvColor; удаляются в конце", ReplaceWith("RvColor"))
 object Brand {
-    val Green = Color(0xFF007E3A)        // primary, connected
-    val GreenLight = Color(0xFF00A819)    // accents, upload speed
-    val GreenDark = Color(0xFF005C2A)     // hover
+    val Green = RvColor.Main
+    val GreenLight = RvColor.Second
+    val GreenDark = RvColor.mainA50
 
-    val Danger = Color(0xFFF43F5E)        // disconnect, error
-    val Warning = Color(0xFFF59E0B)       // connecting
-    val Favorite = Color(0xFFFBBF24)      // star
+    val Danger = RvColor.Errors
+    val Warning = RvColor.Warning
+    val Favorite = RvColor.Warning
 
-    // Background scale (dark only — design has no light theme).
-    val Bg = Color(0xFF060608)            // app background
-    val Surface = Color(0xFF18181B)       // cards
-    val SurfaceHigh = Color(0xFF27272A)   // hover, elevated
-    val SurfaceBorder = Color(0xFF3F3F46) // divider on hover
+    val Bg = RvColor.Black
+    val Surface = RvColor.Grey
+    val SurfaceHigh = RvColor.LightGray
+    val SurfaceBorder = RvColor.whiteA10
 
-    val MutedText = Color(0xFF71717A)
-    val SecondaryText = Color(0xFFA1A1AA)
+    val MutedText = RvColor.whiteA50
+    val SecondaryText = RvColor.whiteA50
 }
