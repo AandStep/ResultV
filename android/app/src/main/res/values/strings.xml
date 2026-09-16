@@ -58,17 +58,16 @@
     <string name="settings_kill_switch">Kill Switch</string>
     <string name="settings_kill_switch_subtitle">Block internet if the proxy drops</string>
     <string name="settings_ipv6">IPv6</string>
-    <string name="settings_ipv6_subtitle">Route IPv6 traffic through the tunnel (dual-stack)</string>
+    <string name="settings_ipv6_subtitle">IPv6 traffic through the tunnel</string>
     <string name="settings_bypass_lan">Bypass LAN</string>
-    <string name="settings_bypass_lan_subtitle">Keep printers, NAS and router admin reachable while VPN is on</string>
-    <string name="settings_dns_hint">Pick a preset or enter custom servers (comma-separated). If the phone reports “Private DNS unavailable”, set Private DNS to Off in Android network settings.</string>
+    <string name="settings_bypass_lan_subtitle">Printers, NAS and router bypass the VPN</string>
+    <string name="settings_dns_hint">Pick a preset or enter custom servers, comma-separated.</string>
     <string name="settings_dns_custom_placeholder">Custom: 1.1.1.1, 8.8.8.8</string>
     <string name="settings_about_subtitle">Mobile preview · Phase 5+</string>
     <string name="settings_dns_preset_auto">Auto</string>
     <string name="settings_dns_preset_custom">Custom</string>
 
     <!-- Settings — grouped. Text mirrors desktop (frontend/src/locales/ru.json) -->
-    <string name="settings_title">App settings</string>
     <string name="settings_desc">Security and system management</string>
     <string name="settings_back">Back to settings</string>
     <string name="settings_group_advanced">Advanced settings</string>
@@ -82,25 +81,35 @@
     <string name="settings_data_usage_reset">Reset</string>
     <string name="settings_data_usage_reset_confirm">Reset data usage statistics?</string>
     <string name="settings_group_subscriptions">Subscriptions</string>
-    <string name="settings_group_subscriptions_desc">Auto-refresh and the data the app sends to the subscription provider.</string>
+    <string name="settings_group_subscriptions_desc">Refresh and the data sent to the provider.</string>
     <string name="settings_group_security">Security</string>
-    <string name="settings_group_security_desc">Protect the connection against drops and DNS leaks.</string>
+    <string name="settings_group_security_desc">Connection protection when the proxy drops.</string>
     <string name="settings_group_network">Network</string>
-    <string name="settings_group_network_desc">DNS, local access and proxy port.</string>
+    <string name="settings_group_network_desc">DNS, IPv6 and local network.</string>
     <string name="settings_group_appearance">Appearance</string>
     <string name="settings_group_appearance_desc">Interface language.</string>
 
+    <string name="settings_dns_private_warning">Not working? Turn off Private DNS in Android settings.</string>
+    <string name="settings_cat_connection">Connection and routing</string>
+    <string name="settings_cat_security">Security</string>
+    <string name="settings_cat_app">App</string>
+    <string name="settings_group_network_items">• DNS • IPv6 • Bypass LAN</string>
+    <string name="settings_group_routing_items">• Smart mode • Domains • Per-app</string>
+    <string name="settings_group_security_items">• Kill Switch</string>
+    <string name="settings_group_appearance_items">• Language</string>
+    <string name="settings_group_subscriptions_items">• Refresh • HWID • UA</string>
+
     <string name="settings_killswitch_title">Enable Kill Switch</string>
-    <string name="settings_killswitch_desc">Instantly cut internet if the proxy drops.</string>
+    <string name="settings_killswitch_desc">Cuts the internet if the proxy drops.</string>
 
     <string name="settings_sub_auto_update_title">Automatic update</string>
-    <string name="settings_sub_auto_update_desc">Periodically refresh every added subscription.</string>
+    <string name="settings_sub_auto_update_desc">Refresh every subscription on a schedule.</string>
     <string name="settings_sub_interval_title">Update interval</string>
     <string name="settings_sub_interval_desc">How often subscriptions are refreshed, in hours.</string>
     <string name="settings_sub_hwid_title">Send HWID</string>
-    <string name="settings_sub_hwid_desc">Sends the device identifier to the subscription over HTTPS for device-limit checks.</string>
+    <string name="settings_sub_hwid_desc">Device identifier — for the device-limit check.</string>
     <string name="settings_sub_ua_title">User agent</string>
-    <string name="settings_sub_ua_desc">Clear the field to use the default value ResultV/&lt;version&gt;/Android/&lt;OS version&gt;.</string>
+    <string name="settings_sub_ua_desc">Empty field — the default value.</string>
 
     <string name="settings_appearance_language_title">Language</string>
     <string name="settings_appearance_language_desc">Interface language used across the app.</string>

@@ -35,7 +35,7 @@
     <string name="cert_wizard_why_title">Для блокировки рекламы нужна HTTPS-фильтрация</string>
     <string name="settings_browser_adblock_cert_error">Не удалось подготовить сертификат блокировки рекламы. Попробуйте ещё раз.</string>
     <string name="settings_browser_adblock">Блокировать баннеры в браузере</string>
-    <string name="settings_browser_adblock_subtitle">Требует установки локального сертификата (Android покажет предупреждение — это касается только трафика на этом устройстве через это приложение). Убирает баннеры в Chrome полностью, без пустых блоков. На YouTube не влияет.</string>
+    <string name="settings_browser_adblock_subtitle">Баннеры в Chrome. Нужен сертификат; YouTube не затронут.</string>
     <string name="settings_browser_adblock_install">Установить сертификат</string>
     <string name="cert_status_trusted">✓ Сертификат установлен</string>
     <string name="cert_status_untrusted">⚠ Сертификат не установлен</string>
@@ -47,7 +47,8 @@
     <string name="log_adblock_update_failed">Не удалось обновить базы блокировки: %1$s</string>
     <string name="log_adblock_loaded">Базы блокировки загружены (%1$d/%2$d).</string>
     <string name="settings_adblock">Блокировка рекламы</string>
-    <string name="settings_adblock_subtitle">Блокировка рекламы и трекеров через DNS, включая рекламные домены YouTube. На некоторых сайтах могут остаться пустые блоки.</string>
+    <string name="settings_adblock_subtitle">Реклама и трекеры через DNS, включая YouTube.</string>
     <string name="settings_group_adblock">Блокировка рекламы</string>
-    <string name="settings_group_adblock_desc">Блокировка баннеров, трекеров и рекламы в браузере</string>
+    <string name="settings_group_adblock_desc">Баннеры, трекеры и реклама в браузере</string>
+    <string name="settings_group_adblock_items">• DNS-фильтр • Браузер • Сертификат</string>
 </resources>

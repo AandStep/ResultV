@@ -53,17 +53,16 @@
     <string name="settings_kill_switch">Kill Switch</string>
     <string name="settings_kill_switch_subtitle">Блокировать интернет при обрыве прокси</string>
     <string name="settings_ipv6">IPv6</string>
-    <string name="settings_ipv6_subtitle">Маршрутизировать IPv6-трафик через туннель</string>
+    <string name="settings_ipv6_subtitle">IPv6-трафик через туннель</string>
     <string name="settings_bypass_lan">Прямой LAN</string>
-    <string name="settings_bypass_lan_subtitle">Сохранить доступ к принтерам, NAS и роутеру при включённом VPN</string>
-    <string name="settings_dns_hint">Выберите пресет или укажите свои серверы (через запятую). Если телефон пишет «Частный DNS-сервер недоступен», отключите частный DNS в настройках сети Android.</string>
+    <string name="settings_bypass_lan_subtitle">Принтеры, NAS и роутер — мимо VPN</string>
+    <string name="settings_dns_hint">Пресет или свои серверы через запятую.</string>
     <string name="settings_dns_custom_placeholder">Свой: 1.1.1.1, 8.8.8.8</string>
     <string name="settings_about_subtitle">Мобильная превью-сборка · Phase 5+</string>
     <string name="settings_dns_preset_auto">Авто</string>
     <string name="settings_dns_preset_custom">Свой</string>
 
     <!-- Settings — grouped. Тексты дословно с десктопа (frontend/src/locales/ru.json) -->
-    <string name="settings_title">Настройки приложения</string>
     <string name="settings_desc">Управление безопасностью и системой</string>
     <string name="settings_back">Назад к настройкам</string>
     <string name="settings_group_advanced">Дополнительные настройки</string>
@@ -77,25 +76,35 @@
     <string name="settings_data_usage_reset">Сбросить</string>
     <string name="settings_data_usage_reset_confirm">Сбросить статистику трафика?</string>
     <string name="settings_group_subscriptions">Подписки</string>
-    <string name="settings_group_subscriptions_desc">Автообновление и данные, которые приложение отправляет провайдеру подписки.</string>
+    <string name="settings_group_subscriptions_desc">Обновление и данные для провайдера.</string>
     <string name="settings_group_security">Безопасность</string>
-    <string name="settings_group_security_desc">Защита соединения при сбоях и утечках DNS.</string>
+    <string name="settings_group_security_desc">Защита соединения при сбоях.</string>
     <string name="settings_group_network">Сеть</string>
-    <string name="settings_group_network_desc">DNS, локальный доступ и порт прокси.</string>
+    <string name="settings_group_network_desc">DNS, IPv6 и локальная сеть.</string>
     <string name="settings_group_appearance">Оформление</string>
     <string name="settings_group_appearance_desc">Язык интерфейса.</string>
 
+    <string name="settings_dns_private_warning">Не работает? Отключите частный DNS в настройках сети Android.</string>
+    <string name="settings_cat_connection">Соединение и маршрутизация</string>
+    <string name="settings_cat_security">Безопасность</string>
+    <string name="settings_cat_app">Приложение</string>
+    <string name="settings_group_network_items">• DNS • IPv6 • Прямой LAN</string>
+    <string name="settings_group_routing_items">• Умный режим • Домены • По приложениям</string>
+    <string name="settings_group_security_items">• Kill Switch</string>
+    <string name="settings_group_appearance_items">• Язык</string>
+    <string name="settings_group_subscriptions_items">• Обновление • HWID • UA</string>
+
     <string name="settings_killswitch_title">Включить Kill Switch</string>
-    <string name="settings_killswitch_desc">Моментально прервать интернет при падении прокси.</string>
+    <string name="settings_killswitch_desc">Обрыв интернета при падении прокси.</string>
 
     <string name="settings_sub_auto_update_title">Автоматическое обновление</string>
-    <string name="settings_sub_auto_update_desc">Периодически обновлять все добавленные подписки.</string>
+    <string name="settings_sub_auto_update_desc">Обновлять все подписки по расписанию.</string>
     <string name="settings_sub_interval_title">Интервал обновления</string>
     <string name="settings_sub_interval_desc">Как часто обновлять подписки, в часах.</string>
     <string name="settings_sub_hwid_title">Передавать HWID</string>
-    <string name="settings_sub_hwid_desc">Отправлять идентификатор устройства подписке по HTTPS для проверки лимита устройств.</string>
+    <string name="settings_sub_hwid_desc">Идентификатор устройства — для проверки лимита.</string>
     <string name="settings_sub_ua_title">User agent</string>
-    <string name="settings_sub_ua_desc">Очистите поле, чтобы использовать значение по умолчанию ResultV/&lt;версия&gt;/Android/&lt;версия ОС&gt;.</string>
+    <string name="settings_sub_ua_desc">Пустое поле — значение по умолчанию.</string>
 
     <string name="settings_appearance_language_title">Язык</string>
     <string name="settings_appearance_language_desc">Язык интерфейса во всём приложении.</string>
@@ -295,7 +304,7 @@
 
     <!-- Logs -->
     <string name="settings_group_logs">Логи</string>
-    <string name="settings_group_logs_desc">История событий подключения и приложения.</string>
+    <string name="settings_group_logs_desc">События подключения и приложения.</string>
     <string name="logs_title">Логи</string>
     <string name="logs_empty">Событий пока нет.</string>
     <string name="logs_save_cd">Сохранить логи</string>

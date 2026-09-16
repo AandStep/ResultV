@@ -106,13 +106,6 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Text(
-            stringResource(R.string.settings_title),
-            style = MaterialTheme.typography.headlineLarge,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-
         CategoryHeader("Соединение и Маршрутизация")
         SettingsCard {
             SubcategoryRow(SettingsSubcategory.Network) { activeSheet = SettingsSubcategory.Network }
