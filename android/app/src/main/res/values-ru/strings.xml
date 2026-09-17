@@ -340,6 +340,8 @@
     <string name="log_app_route_failed">Маршрутизация приложений: правило для %1$s не применено.</string>
     <string name="log_protect_failed">Не удалось защитить сокет движка — возможна петля маршрутизации.</string>
     <string name="log_awg_knobs_dropped">AmneziaWG: движок не поддерживает %1$s — подключаюсь без них. Обфускация слабее; если сервер их требует, хендшейк не завершится.</string>
+    <string name="log_awg31_applied">AmneziaWG 3.1: применены %1$s.</string>
+    <string name="log_awg31_failed">Параметры AmneziaWG 3.1 не применены: %1$s. Туннель работает по 3.0 — если сервер дописывает случайные хвосты, рукопожатие не завершится.</string>
     <string name="log_traffic_stats_failed">Статистика трафика в этом сеансе недоступна: %1$s</string>
     <string name="log_auto_selected">AUTO: выбран %1$s (%2$s)</string>
     <string name="log_auto_failover">AUTO: узел недоступен, пробуем %1$s</string>

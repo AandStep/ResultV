@@ -1527,6 +1527,9 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 		// and AutoRoute already catches all egress traffic, so DNS bypass
 		// isn't possible the way it is on desktop.
 	}
+	// Узел, на котором ядро вот-вот поднимут. Нужен применению AmneziaWG 3.1
+	// после старта — в конфиг эти ключи не попадают (см. awg31.go).
+	rememberBuiltNode(cfg.Proxy)
 	if opts.DNSServers != "" {
 		for _, p := range strings.Split(opts.DNSServers, ",") {
 			if s := strings.TrimSpace(p); s != "" {

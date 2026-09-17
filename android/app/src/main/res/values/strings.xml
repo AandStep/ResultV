@@ -375,6 +375,8 @@
     <string name="log_app_route_failed">Per-app routing: rule for %1$s was not applied.</string>
     <string name="log_protect_failed">Failed to protect an engine socket — possible routing loop.</string>
     <string name="log_awg_knobs_dropped">AmneziaWG: the engine does not support %1$s — connecting without them. Obfuscation is weaker; if the server requires them, the handshake will not complete.</string>
+    <string name="log_awg31_applied">AmneziaWG 3.1: applied %1$s.</string>
+    <string name="log_awg31_failed">AmneziaWG 3.1 parameters were not applied: %1$s. The tunnel runs with 3.0 behaviour — if the server adds random trailers, the handshake will not complete.</string>
     <string name="log_traffic_stats_failed">Traffic statistics unavailable this session: %1$s</string>
     <string name="log_auto_selected">AUTO: selected %1$s (%2$s)</string>
     <string name="log_auto_failover">AUTO: node unavailable, trying %1$s</string>

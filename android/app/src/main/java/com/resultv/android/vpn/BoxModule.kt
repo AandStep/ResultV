@@ -134,8 +134,43 @@ object BoxModule {
             throw t
         }
         Log.i(TAG, "startOrReloadService=${System.currentTimeMillis() - tStart}ms")
+        applyAwg31(server)
         commandServer = server
         Log.i(TAG, "BoxModule started")
+    }
+
+    /**
+     * Дослать в поднятое устройство параметры AmneziaWG 3.1.
+     *
+     * Через конфиг они недостижимы: в option.WireGuardAmnezia таких полей нет,
+     * а неизвестный ключ под "amnezia" роняет старт ядра целиком. Поэтому
+     * вторым IpcSet и только после старта — устройство до него не существует,
+     * а random_trailers должен совпасть с узлом раньше первого рукопожатия.
+     *
+     * Срыв не фатален: сессия продолжает работать по 3.0, и об этом пишется
+     * строка — молчание здесь означало бы узел, который «почему-то не
+     * подключается».
+     */
+    private fun applyAwg31(server: CommandServer) {
+        val applied = try {
+            mobile.Mobile.applyAWG31(server)
+        } catch (t: Throwable) {
+            Log.w(TAG, "AWG 3.1 not applied", t)
+            AppLog.warning(
+                R.string.log_awg31_failed,
+                t.message ?: t.javaClass.simpleName,
+                source = AppLog.resolve(R.string.log_source_proxy),
+            )
+            return
+        }
+        if (applied.isNotBlank()) {
+            Log.i(TAG, "AWG 3.1 applied: $applied")
+            AppLog.info(
+                R.string.log_awg31_applied,
+                applied,
+                source = AppLog.resolve(R.string.log_source_proxy),
+            )
+        }
     }
 
     /**
@@ -190,6 +225,10 @@ object BoxModule {
         Log.i(TAG, "reload config: ${configJson.length} chars")
 
         server.startOrReloadService(configJson, OverrideOptions())
+        // Устройство пересоздаётся на каждом reload — параметры 3.1 надо
+        // досылать заново, иначе после первой же перезагрузки конфига узел
+        // остаётся на поведении 3.0.
+        applyAwg31(server)
         Log.i(TAG, "BoxModule reloaded")
         AppLog.info(R.string.log_engine_reloaded, source = EngineLog.ENGINE)
     }
