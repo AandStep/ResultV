@@ -2,7 +2,6 @@ package com.resultv.android.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -53,7 +52,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
-import com.resultv.android.theme.Brand
+import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.RvRadius
+import com.resultv.android.theme.RvSpace
+import com.resultv.android.theme.rvBorder
 import com.resultv.android.ui.components.PowerButton
 import com.resultv.android.ui.components.ProfileEditSheet
 import com.resultv.android.ui.components.ProfileSortMenu
@@ -120,12 +122,12 @@ fun HomeScreen(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = RvSpace.nest1, vertical = RvSpace.nest3),
         horizontalAlignment = Alignment.CenterHorizontally,
         // Standardised gap between every block on Home — the toolbar row
         // sits the same distance above the current-server card as the
         // speed cards sit above "Add server".
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
         StatusHeader(status = status, activeProfileName = active?.name)
 
@@ -156,7 +158,7 @@ fun HomeScreen(
                 Icon(
                     imageVector = Icons.Outlined.Bolt,
                     contentDescription = stringResource(R.string.ping_refresh_cd),
-                    tint = Brand.SecondaryText,
+                    tint = RvColor.whiteA50,
                     modifier = Modifier.size(20.dp),
                 )
             }
@@ -168,16 +170,13 @@ fun HomeScreen(
         // the list below highlights itself via [ServerRow.isActive] so the
         // green tint reads as "this is the connected server", not "the whole
         // picker is the connection".
+        val activeProfileShape = RoundedCornerShape(RvRadius.card)
         Card(
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = Brand.Surface),
+            shape = activeProfileShape,
+            colors = CardDefaults.cardColors(containerColor = RvColor.Grey),
             modifier = Modifier
                 .fillMaxWidth()
-                .border(
-                    1.dp,
-                    Color.White.copy(alpha = 0.09f),
-                    RoundedCornerShape(20.dp),
-                ),
+                .rvBorder(activeProfileShape),
         ) {
             ActiveProfileRow(
                 active = active,
@@ -251,12 +250,12 @@ fun HomeScreen(
         AlertDialog(
             onDismissRequest = { pendingDeleteProfile = null },
             title = { Text(stringResource(R.string.proxies_delete_title)) },
-            text = { Text(stringResource(R.string.proxies_delete_message, target.name), color = Brand.SecondaryText) },
+            text = { Text(stringResource(R.string.proxies_delete_message, target.name), color = RvColor.whiteA50) },
             confirmButton = {
                 TextButton(onClick = {
                     ProfileRepository.remove(target.id)
                     pendingDeleteProfile = null
-                }) { Text(stringResource(R.string.action_delete), color = Brand.Danger) }
+                }) { Text(stringResource(R.string.action_delete), color = RvColor.Errors) }
             },
             dismissButton = {
                 TextButton(onClick = { pendingDeleteProfile = null }) { Text(stringResource(R.string.action_cancel)) }
@@ -284,22 +283,22 @@ private fun UptimeChip(connectedAt: Long) {
 
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(RvRadius.chip))
             .background(Color.White.copy(alpha = 0.04f))
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(horizontal = RvSpace.nest2, vertical = RvSpace.xs),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.xs),
     ) {
         Icon(
             imageVector = Icons.Outlined.Schedule,
             contentDescription = null,
-            tint = Brand.SecondaryText,
+            tint = RvColor.whiteA50,
             modifier = Modifier.size(14.dp),
         )
         Text(
             text = formatDuration(elapsedSec),
             style = MaterialTheme.typography.labelMedium,
-            color = Brand.SecondaryText,
+            color = RvColor.whiteA50,
         )
     }
 }
@@ -317,14 +316,14 @@ private fun TrafficStatsRow() {
     val stats by com.resultv.android.vpn.TrafficStats.snapshot.collectAsStateWithLifecycle()
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
         StatCard(
             label = stringResource(R.string.home_stat_download),
             total = formatBytes(stats.downloadBytes),
             speed = formatBps(stats.downloadBps),
             history = stats.downloadHistory.map { it.toFloat() },
-            color = Brand.Green,
+            color = RvColor.Main,
             modifier = Modifier.weight(1f),
         )
         StatCard(
@@ -332,7 +331,7 @@ private fun TrafficStatsRow() {
             total = formatBytes(stats.uploadBytes),
             speed = formatBps(stats.uploadBps),
             history = stats.uploadHistory.map { it.toFloat() },
-            color = Brand.GreenLight,
+            color = RvColor.Second,
             modifier = Modifier.weight(1f),
         )
     }
@@ -349,25 +348,25 @@ private fun StatCard(
 ) {
     Card(
         modifier = modifier,
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = Brand.Surface),
+        shape = RoundedCornerShape(RvRadius.card),
+        colors = CardDefaults.cardColors(containerColor = RvColor.Grey),
     ) {
-        Column(modifier = Modifier.padding(18.dp)) {
+        Column(modifier = Modifier.padding(RvSpace.nest1)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(label, style = MaterialTheme.typography.labelMedium, color = Brand.MutedText)
+                Text(label, style = MaterialTheme.typography.labelMedium, color = RvColor.whiteA50)
                 Text(speed, style = MaterialTheme.typography.labelMedium, color = color)
             }
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(RvSpace.xs))
             Text(
                 total,
                 style = MaterialTheme.typography.headlineSmall,
                 color = color,
             )
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(RvSpace.nest3))
             Sparkline(
                 values = history,
                 color = color,
@@ -405,16 +404,16 @@ private fun ActiveProfileRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onToggle)
-            .padding(horizontal = 18.dp, vertical = 18.dp),
+            .padding(horizontal = RvSpace.nest1, vertical = RvSpace.nest1),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
         Box(
             modifier = Modifier
                 .size(54.dp)
-                .clip(RoundedCornerShape(14.dp))
+                .clip(RoundedCornerShape(RvRadius.chip))
                 .background(
-                    if (connected) Brand.Green.copy(alpha = 0.18f)
+                    if (connected) RvColor.Main.copy(alpha = 0.18f)
                     else Color.White.copy(alpha = 0.07f)
                 ),
             contentAlignment = Alignment.Center,
@@ -425,18 +424,18 @@ private fun ActiveProfileRow(
                 active == null -> Icon(
                     imageVector = Icons.Outlined.Public,
                     contentDescription = null,
-                    tint = Brand.SecondaryText,
+                    tint = RvColor.whiteA50,
                 )
                 isAuto -> Icon(
                     imageVector = Icons.Filled.Bolt,
                     contentDescription = null,
-                    tint = Brand.GreenLight,
+                    tint = RvColor.Second,
                 )
                 country != null -> Text(text = flagFromCountry(country), style = MaterialTheme.typography.headlineSmall)
                 else -> Icon(
                     imageVector = Icons.Outlined.Public,
                     contentDescription = null,
-                    tint = Brand.SecondaryText,
+                    tint = RvColor.whiteA50,
                 )
             }
         }
@@ -445,12 +444,12 @@ private fun ActiveProfileRow(
             Text(
                 text = stringResource(R.string.home_current_server),
                 style = MaterialTheme.typography.labelSmall,
-                color = Brand.MutedText,
+                color = RvColor.whiteA50,
             )
             Text(
                 text = active?.name ?: stringResource(R.string.home_no_profile_selected),
                 style = MaterialTheme.typography.titleMedium,
-                color = if (connected) Brand.GreenLight else MaterialTheme.colorScheme.onBackground,
+                color = if (connected) RvColor.Second else MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -461,7 +460,7 @@ private fun ActiveProfileRow(
             contentDescription = stringResource(
                 if (expanded) R.string.action_collapse else R.string.action_expand,
             ),
-            tint = Brand.SecondaryText,
+            tint = RvColor.whiteA50,
         )
     }
 }
@@ -491,15 +490,15 @@ private fun ProfileDropdown(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+            .padding(RvSpace.nest3),
+        verticalArrangement = Arrangement.spacedBy(RvSpace.xs),
     ) {
         if (groups.isEmpty()) {
             Text(
                 text = stringResource(R.string.home_no_profiles_yet),
                 style = MaterialTheme.typography.bodySmall,
-                color = Brand.MutedText,
-                modifier = Modifier.padding(8.dp),
+                color = RvColor.whiteA50,
+                modifier = Modifier.padding(RvSpace.nest3),
             )
             return@Column
         }
@@ -596,22 +595,22 @@ private fun HomeGroupHeader(group: HomeGroup) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 4.dp, top = 6.dp, bottom = 2.dp),
+            .padding(start = RvSpace.xs, top = RvSpace.xs, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3),
     ) {
         when (group.kind) {
             HomeGroupKind.Favorites -> {
                 Icon(
                     imageVector = Icons.Filled.Star,
                     contentDescription = null,
-                    tint = Brand.Favorite,
+                    tint = RvColor.Warning,
                     modifier = Modifier.size(16.dp),
                 )
                 Text(
                     text = stringResource(R.string.home_favorites),
                     style = MaterialTheme.typography.labelMedium,
-                    color = Brand.MutedText,
+                    color = RvColor.whiteA50,
                 )
             }
             HomeGroupKind.Subscription -> {
@@ -623,7 +622,7 @@ private fun HomeGroupHeader(group: HomeGroup) {
                 Text(
                     text = sub?.displayName.orEmpty().uppercase(),
                     style = MaterialTheme.typography.labelMedium,
-                    color = Brand.MutedText,
+                    color = RvColor.whiteA50,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -632,13 +631,13 @@ private fun HomeGroupHeader(group: HomeGroup) {
                 Icon(
                     imageVector = Icons.Outlined.Bolt,
                     contentDescription = null,
-                    tint = Brand.SecondaryText,
+                    tint = RvColor.whiteA50,
                     modifier = Modifier.size(16.dp),
                 )
                 Text(
                     text = stringResource(R.string.home_group_standalone),
                     style = MaterialTheme.typography.labelMedium,
-                    color = Brand.MutedText,
+                    color = RvColor.whiteA50,
                 )
             }
         }
@@ -647,32 +646,29 @@ private fun HomeGroupHeader(group: HomeGroup) {
 
 @Composable
 private fun AddProfileShortcut(onClick: () -> Unit) {
+    val shape = RoundedCornerShape(RvRadius.card)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
+            .clip(shape)
             .clickable(onClick = onClick)
-            .border(
-                1.dp,
-                Color.White.copy(alpha = 0.12f),
-                RoundedCornerShape(20.dp),
-            )
+            .rvBorder(shape)
             .background(Color.White.copy(alpha = 0.02f))
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = RvSpace.nest2, vertical = RvSpace.nest2),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
         Box(
             modifier = Modifier
                 .size(38.dp)
-                .clip(RoundedCornerShape(11.dp))
+                .clip(RoundedCornerShape(RvRadius.chip))
                 .background(Color.White.copy(alpha = 0.07f)),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = Icons.Outlined.Add,
                 contentDescription = null,
-                tint = Brand.SecondaryText,
+                tint = RvColor.whiteA50,
             )
         }
         Column {
@@ -680,7 +676,7 @@ private fun AddProfileShortcut(onClick: () -> Unit) {
             Text(
                 stringResource(R.string.home_add_server_subtitle),
                 style = MaterialTheme.typography.bodySmall,
-                color = Brand.MutedText,
+                color = RvColor.whiteA50,
             )
         }
     }

@@ -61,7 +61,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
-import com.resultv.android.theme.Brand
+import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.RvRadius
+import com.resultv.android.theme.RvSpace
 import com.resultv.android.ui.components.ProfileEditSheet
 import com.resultv.android.ui.components.ProfileSortMenu
 import com.resultv.android.ui.components.ProfileSortMode
@@ -121,27 +123,27 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
         CountryRepository.resolve(state.profiles, dataDir)
     }
 
-    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
+    Column(modifier = Modifier.fillMaxSize().padding(horizontal = RvSpace.nest1, vertical = RvSpace.nest2)) {
         if (state.profiles.isEmpty() && subscriptions.subs.isEmpty()) {
             EmptyState(onAddPressed)
             return@Column
         }
 
         Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+            modifier = Modifier.fillMaxWidth().padding(bottom = RvSpace.nest3),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 text = stringResource(R.string.proxies_count, state.profiles.count { !it.isSection }),
                 style = MaterialTheme.typography.labelLarge,
-                color = Brand.SecondaryText,
+                color = RvColor.whiteA50,
                 modifier = Modifier.weight(1f),
             )
             IconButton(onClick = { PingRepository.refreshAll(state.profiles) }) {
                 Icon(
                     imageVector = Icons.Outlined.Bolt,
                     contentDescription = stringResource(R.string.ping_refresh_cd),
-                    tint = Brand.SecondaryText,
+                    tint = RvColor.whiteA50,
                 )
             }
             ProfileSortMenu(mode = sortMode, onModeChange = { sortMode = it })
@@ -167,7 +169,7 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
                 protocolFilter = if (code in protocolFilterSet)
                     protocolFilter - code else protocolFilter + code
             },
-            modifier = Modifier.padding(bottom = 8.dp),
+            modifier = Modifier.padding(bottom = RvSpace.nest3),
         )
 
         // Group profiles by subscription. Unaffiliated ("My proxies") go
@@ -216,7 +218,7 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
                     StandaloneHeader(sortedStandalone.size)
                 }
                 items(sortedStandalone, key = { it.id }, contentType = { "standalone-row" }) { p ->
-                    Box(modifier = Modifier.padding(top = 12.dp)) {
+                    Box(modifier = Modifier.padding(top = RvSpace.nest2)) {
                         ProfileCard(
                             profile = p,
                             activeId = state.activeId,
@@ -237,7 +239,7 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
 
                 item("sub-${sub.id}-head", contentType = "sub-head") {
                     SubscriptionHeaderBlock(
-                        modifier = if (needsTopGap) Modifier.padding(top = 12.dp) else Modifier,
+                        modifier = if (needsTopGap) Modifier.padding(top = RvSpace.nest2) else Modifier,
                         subscription = sub,
                         profileCount = subProfiles.count { !it.isSection },
                         collapsed = collapsed,
@@ -314,12 +316,12 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
         AlertDialog(
             onDismissRequest = { pendingDeleteProfile = null },
             title = { Text(stringResource(R.string.proxies_delete_title)) },
-            text = { Text(stringResource(R.string.proxies_delete_message, target.name), color = Brand.SecondaryText) },
+            text = { Text(stringResource(R.string.proxies_delete_message, target.name), color = RvColor.whiteA50) },
             confirmButton = {
                 TextButton(onClick = {
                     ProfileRepository.remove(target.id)
                     pendingDeleteProfile = null
-                }) { Text(stringResource(R.string.action_delete), color = Brand.Danger) }
+                }) { Text(stringResource(R.string.action_delete), color = RvColor.Errors) }
             },
             dismissButton = {
                 TextButton(onClick = { pendingDeleteProfile = null }) { Text(stringResource(R.string.action_cancel)) }
@@ -396,7 +398,7 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
             text = {
                 Text(
                     stringResource(R.string.sub_delete_message, target.displayName, children),
-                    color = Brand.SecondaryText,
+                    color = RvColor.whiteA50,
                 )
             },
             confirmButton = {
@@ -408,7 +410,7 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
                     SubscriptionRouting.forget(target.id, ctx.filesDir.absolutePath)
                     SubscriptionRepository.delete(target.id)
                     pendingDeleteSub = null
-                }) { Text(stringResource(R.string.action_delete), color = Brand.Danger) }
+                }) { Text(stringResource(R.string.action_delete), color = RvColor.Errors) }
             },
             dismissButton = {
                 TextButton(onClick = { pendingDeleteSub = null }) { Text(stringResource(R.string.action_cancel)) }
@@ -421,19 +423,19 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
 private fun StandaloneHeader(count: Int) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.padding(start = 4.dp, bottom = 2.dp, top = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3),
+        modifier = Modifier.padding(start = RvSpace.xs, bottom = 2.dp, top = 2.dp),
     ) {
         Icon(
             imageVector = Icons.Outlined.Bolt,
             contentDescription = null,
-            tint = Brand.SecondaryText,
+            tint = RvColor.whiteA50,
             modifier = Modifier.size(16.dp),
         )
         Text(
             text = stringResource(R.string.proxies_standalone_header, count),
             style = MaterialTheme.typography.labelMedium,
-            color = Brand.MutedText,
+            color = RvColor.whiteA50,
         )
     }
 }
@@ -485,21 +487,21 @@ private fun SubscriptionHeaderBlock(
     val usesImpLogo = remember(subscription.id, subscription.name, subscription.source) {
         subscriptionUsesImpLogo(subscription)
     }
-    val shape = if (collapsed) RoundedCornerShape(20.dp)
-    else RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+    val shape = if (collapsed) RoundedCornerShape(RvRadius.card)
+    else RoundedCornerShape(topStart = RvRadius.card, topEnd = RvRadius.card)
 
     Column(
         modifier = modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(Brand.Surface)
+            .background(RvColor.Grey)
             .clickable(onClick = onToggleCollapsed)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(horizontal = RvSpace.nest2, vertical = RvSpace.nest2),
+        verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3),
         ) {
             ChevronChip(collapsed = collapsed, onClick = onToggleCollapsed)
             SubscriptionLogo(usesImpLogo = usesImpLogo)
@@ -520,13 +522,13 @@ private fun SubscriptionHeaderBlock(
                     CircularProgressIndicator(
                         modifier = Modifier.size(14.dp),
                         strokeWidth = 2.dp,
-                        color = Brand.GreenLight,
+                        color = RvColor.Second,
                     )
                 } else {
                     Icon(
                         imageVector = Icons.Outlined.Refresh,
                         contentDescription = null,
-                        tint = Brand.SecondaryText,
+                        tint = RvColor.whiteA50,
                         modifier = Modifier.size(16.dp),
                     )
                 }
@@ -538,7 +540,7 @@ private fun SubscriptionHeaderBlock(
                 Icon(
                     imageVector = Icons.Outlined.Edit,
                     contentDescription = null,
-                    tint = Brand.SecondaryText,
+                    tint = RvColor.whiteA50,
                     modifier = Modifier.size(16.dp),
                 )
             }
@@ -549,7 +551,7 @@ private fun SubscriptionHeaderBlock(
                 Icon(
                     imageVector = Icons.Outlined.DeleteOutline,
                     contentDescription = null,
-                    tint = Brand.MutedText,
+                    tint = RvColor.whiteA50,
                     modifier = Modifier.size(16.dp),
                 )
             }
@@ -577,8 +579,8 @@ private fun SubscriptionServerRowBlock(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Brand.Surface)
-            .padding(horizontal = 8.dp, vertical = 2.dp),
+            .background(RvColor.Grey)
+            .padding(horizontal = RvSpace.nest3, vertical = 2.dp),
     ) {
         ServerRow(
             name = profile.name,
@@ -602,7 +604,7 @@ private fun SubscriptionSectionRowBlock(name: String) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Brand.Surface),
+            .background(RvColor.Grey),
     ) {
         SectionLabel(name)
     }
@@ -618,8 +620,8 @@ private fun SubscriptionTrailingCap() {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(bottomStart = 20.dp, bottomEnd = 20.dp))
-            .background(Brand.Surface)
+            .clip(RoundedCornerShape(bottomStart = RvRadius.card, bottomEnd = RvRadius.card))
+            .background(RvColor.Grey)
             .height(8.dp),
     )
 }
@@ -663,7 +665,7 @@ private fun ChevronChip(collapsed: Boolean, onClick: () -> Unit) {
             contentDescription = stringResource(
                 if (collapsed) R.string.action_expand else R.string.action_collapse,
             ),
-            tint = Brand.SecondaryText,
+            tint = RvColor.whiteA50,
             modifier = Modifier.size(20.dp),
         )
     }
@@ -730,10 +732,10 @@ private fun UsageInlineStrip(usage: SubscriptionUsage) {
         stringResource(R.string.sub_expires_on, formatted)
     } else ""
     val daysColour = when {
-        !usage.hasExpiry -> Brand.MutedText
-        usage.expired -> Brand.Danger
-        daysLeft <= 7 -> Brand.Warning
-        else -> Brand.SecondaryText
+        !usage.hasExpiry -> RvColor.whiteA50
+        usage.expired -> RvColor.Errors
+        daysLeft <= 7 -> RvColor.Warning
+        else -> RvColor.whiteA50
     }
     val ratio = if (usage.hasQuota && usage.total > 0)
         (usage.used.toFloat() / usage.total.toFloat()).coerceIn(0f, 1f)
@@ -742,7 +744,7 @@ private fun UsageInlineStrip(usage: SubscriptionUsage) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3),
     ) {
         if (usage.hasExpiry) {
             Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
@@ -756,7 +758,7 @@ private fun UsageInlineStrip(usage: SubscriptionUsage) {
                     Text(
                         text = expireOnText,
                         style = MaterialTheme.typography.labelSmall,
-                        color = Brand.MutedText,
+                        color = RvColor.whiteA50,
                         maxLines = 1,
                     )
                 }
@@ -770,13 +772,13 @@ private fun UsageInlineStrip(usage: SubscriptionUsage) {
                     modifier = Modifier
                         .weight(1f)
                         .height(4.dp),
-                    color = if (ratio > 0.9f) Brand.Danger else Brand.GreenLight,
+                    color = if (ratio > 0.9f) RvColor.Errors else RvColor.Second,
                     trackColor = Color.White.copy(alpha = 0.08f),
                 )
                 Text(
                     text = formatBytesPair(usage.used, usage.total),
                     style = MaterialTheme.typography.labelSmall,
-                    color = Brand.SecondaryText,
+                    color = RvColor.whiteA50,
                     maxLines = 1,
                 )
             }
@@ -791,7 +793,7 @@ private fun UsageInlineStrip(usage: SubscriptionUsage) {
                         formatBytesShort(usage.used),
                     ),
                     style = MaterialTheme.typography.labelSmall,
-                    color = Brand.SecondaryText,
+                    color = RvColor.whiteA50,
                     maxLines = 1,
                 )
             }
@@ -834,26 +836,26 @@ private fun SubscriptionFooter(lastFetchedAt: Long, profileCount: Int) {
             Text(
                 text = timestamp,
                 style = MaterialTheme.typography.labelSmall,
-                color = Brand.MutedText,
+                color = RvColor.whiteA50,
             )
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(RvSpace.nest3))
             Box(
                 modifier = Modifier
                     .size(width = 1.dp, height = 10.dp)
                     .background(Color.White.copy(alpha = 0.10f)),
             )
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(RvSpace.nest3))
         }
         Text(
             text = pluralStringResource(R.plurals.sub_footer_servers, profileCount, profileCount),
             style = MaterialTheme.typography.labelSmall,
-            color = Brand.MutedText,
+            color = RvColor.whiteA50,
         )
-        Spacer(Modifier.width(4.dp))
+        Spacer(Modifier.width(RvSpace.xs))
         Icon(
             imageVector = Icons.Outlined.Dns,
             contentDescription = null,
-            tint = Brand.MutedText,
+            tint = RvColor.whiteA50,
             modifier = Modifier.size(12.dp),
         )
     }
@@ -864,20 +866,20 @@ internal fun SectionLabel(text: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 6.dp),
+            .padding(horizontal = RvSpace.nest3, vertical = RvSpace.xs),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3),
     ) {
         Icon(
             imageVector = Icons.Outlined.ListAlt,
             contentDescription = null,
-            tint = Brand.Favorite,
+            tint = RvColor.Warning,
             modifier = Modifier.size(14.dp),
         )
         Text(
             text = text,
             style = MaterialTheme.typography.labelMedium,
-            color = Brand.SecondaryText,
+            color = RvColor.whiteA50,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
@@ -889,7 +891,7 @@ private fun EmptyState(onAddPressed: () -> Unit) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(RvSpace.nest2),
         ) {
             Text(
                 stringResource(R.string.proxies_empty_title),
@@ -899,9 +901,9 @@ private fun EmptyState(onAddPressed: () -> Unit) {
             Text(
                 stringResource(R.string.proxies_empty_subtitle),
                 style = MaterialTheme.typography.bodyMedium,
-                color = Brand.SecondaryText,
+                color = RvColor.whiteA50,
             )
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(RvSpace.xs))
             FilledTonalButton(onClick = onAddPressed) {
                 Icon(Icons.Outlined.Add, contentDescription = null)
                 Spacer(Modifier.fillMaxWidth(0.05f))
