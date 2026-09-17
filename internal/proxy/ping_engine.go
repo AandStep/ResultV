@@ -188,9 +188,11 @@ func pingThroughNode(ctx context.Context, proxy ProxyConfig, method, testURL str
 
 	boxCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	// include.Context, not the extended one: the custom outbound registry
-	// arrives with the adaptive Smart block. When it does, this is the line to
-	// change — the probe must build a node the same way the session does.
+	// include.Context — и другого здесь не будет. Расширенного реестра
+	// аутбаундов на Android не появится: коробку сессии строит libbox, а
+	// реестр зашит в его baseContext (спека §7.0). Адаптивный Smart поэтому
+	// живёт вне ядра, в loopback-реле, и узел проба строит ровно так же, как
+	// его строит сессия.
 	boxCtx = include.Context(boxCtx)
 
 	var options option.Options
