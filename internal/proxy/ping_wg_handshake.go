@@ -296,6 +296,23 @@ func writeAmneziaUAPI(b *strings.Builder, extra map[string]any) {
 			}
 		}
 	}
+	// ── AmneziaWG 3.1 ──
+	// Симметричный random_trailers делает это обязательным, а не приятным:
+	// проба без флага против узла с флагом получает рукопожатия, отброшенные
+	// по размеру, и узел читается как недоступный. Значение проходит через
+	// того же читателя, что и путь конфига (awgBoolFromAny), и печатается в
+	// том виде, который понимает UAPI: strconv.ParseBool не знает on/off.
+	for _, k := range awg31Keys {
+		for rawKey, rawVal := range amRaw {
+			if normalizeAWGKey(rawKey) != normalizeAWGKey(k) {
+				continue
+			}
+			if v := awgBoolFromAny(rawVal); v != nil {
+				fmt.Fprintf(b, "%s=%t\n", k, *v)
+			}
+			break
+		}
+	}
 }
 
 // amneziaKeyHex converts a base64 header-protection key to the lowercase hex

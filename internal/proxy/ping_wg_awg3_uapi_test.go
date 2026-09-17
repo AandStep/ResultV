@@ -181,3 +181,51 @@ func TestBuildWGUAPIKeepsAWG3KnobsInTheDeviceBlock(t *testing.T) {
 		}
 	}
 }
+
+// random_trailers is symmetric: a probe without the flag against a peer that
+// has it on gets every handshake dropped for being the wrong size, and the
+// node reads as unreachable. So the probe has to speak 3.1 too, and in the
+// spelling the UAPI parses — strconv.ParseBool, which does not know on/off.
+func TestWriteAmneziaUAPIEmitsAWG31Switches(t *testing.T) {
+	var b strings.Builder
+	writeAmneziaUAPI(&b, map[string]any{
+		"amnezia": map[string]any{
+			"jc":              8,
+			"random_trailers": "on",
+			"DisableCookies":  "off",
+		},
+	})
+	got := b.String()
+
+	for _, want := range []string{"random_trailers=true\n", "disable_cookies=false\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+// Unstated is not "off": the device default can move, and sending a switch the
+// config never mentioned would make the probe measure a different protocol
+// from the one the tunnel will run.
+func TestWriteAmneziaUAPIOmitsUnsetAWG31Switches(t *testing.T) {
+	var b strings.Builder
+	writeAmneziaUAPI(&b, map[string]any{"amnezia": map[string]any{"jc": 8}})
+	got := b.String()
+
+	for _, unwanted := range []string{"random_trailers", "disable_cookies"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("не заданный %s не должен попадать в UAPI:\n%s", unwanted, got)
+		}
+	}
+}
+
+// An unreadable value is not a switch. The probe must behave like the config
+// path, which refuses it outright — here there is nobody to refuse to, so the
+// switch simply stays unstated rather than becoming a guess.
+func TestWriteAmneziaUAPISkipsUnreadableAWG31(t *testing.T) {
+	var b strings.Builder
+	writeAmneziaUAPI(&b, map[string]any{"amnezia": map[string]any{"random_trailers": "maybe"}})
+	if got := b.String(); strings.Contains(got, "random_trailers") {
+		t.Errorf("нечитаемое значение не должно доезжать до устройства:\n%s", got)
+	}
+}
