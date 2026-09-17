@@ -77,6 +77,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
 import com.resultv.android.theme.Brand
 import com.resultv.android.theme.CategoryTint
+import com.resultv.android.theme.RvCategory
 import com.resultv.android.ui.components.SettingIcon
 import com.resultv.android.ui.components.TagField
 import com.resultv.android.vpn.AppInventory
@@ -148,8 +149,9 @@ fun RulesScreen(onOpenRoutingProfiles: () -> Unit = {}) {
                     NavRow(
                         label = stringResource(R.string.routing_profiles_row),
                         icon = Icons.Outlined.AltRoute,
-                        iconBg = Color(0xFF3b82f6).copy(alpha = 0.18f),
-                        iconTint = Color(0xFF60a5fa),
+                        // Задача 5 схлопнула iconBg/iconTint у NavRow в tint;
+                        // остальная перекраска экрана — задача 7.
+                        tint = RvCategory.Blue,
                         onClick = onOpenRoutingProfiles,
                     )
                 }

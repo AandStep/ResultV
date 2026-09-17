@@ -19,6 +19,7 @@ internal object AdBlockGroupRes {
     // скомпилировался, поэтому указывают на первую попавшуюся живую строку.
     val label = R.string.settings_group_security
     val desc = R.string.settings_group_security_desc
+    val items = R.string.settings_group_security_items
 }
 
 @Composable

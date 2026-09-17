@@ -70,10 +70,8 @@
     <!-- Settings — grouped. Text mirrors desktop (frontend/src/locales/ru.json) -->
     <string name="settings_desc">Security and system management</string>
     <string name="settings_back">Back to settings</string>
-    <string name="settings_group_advanced">Advanced settings</string>
 
     <!-- Certificate install wizard -->
-    <string name="settings_group_advanced_desc">Startup, TUN and traffic filtering options.</string>
     <string name="settings_data_usage_title">Data usage</string>
     <string name="settings_data_usage_desc">Accumulated VPN traffic since install</string>
     <string name="settings_data_usage_download">Downloaded</string>
@@ -112,7 +110,6 @@
     <string name="settings_sub_ua_desc">Empty field — the default value.</string>
 
     <string name="settings_appearance_language_title">Language</string>
-    <string name="settings_appearance_language_desc">Interface language used across the app.</string>
 
     <!-- VPN service notification -->
     <string name="vpn_status_killswitch">Kill switch active — traffic blocked</string>

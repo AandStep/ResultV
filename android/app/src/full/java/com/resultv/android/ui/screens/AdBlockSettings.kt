@@ -15,12 +15,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.resultv.android.R
 import com.resultv.android.theme.Brand
+import com.resultv.android.theme.RvCategory
 import com.resultv.android.vpn.AdBlockRepository
 import com.resultv.android.vpn.CertStore
 import com.resultv.android.vpn.CertTrustState
@@ -40,6 +40,7 @@ import kotlinx.coroutines.withContext
 internal object AdBlockGroupRes {
     val label = R.string.settings_group_adblock
     val desc = R.string.settings_group_adblock_desc
+    val items = R.string.settings_group_adblock_items
 }
 
 /**
@@ -57,8 +58,8 @@ internal fun AdBlockGroupContent(settings: SettingsState, onOpenCertWizard: () -
         title = stringResource(R.string.settings_adblock),
         subtitle = stringResource(R.string.settings_adblock_subtitle),
         icon = Icons.Outlined.Block,
-        iconBg = Color(0xFFef4444).copy(alpha = 0.18f),
-        iconTint = Color(0xFFf87171),
+        // TODO(задача 9): цвет тумблера ещё не переведён на семантику раздела.
+        tint = RvCategory.Red,
         checked = settings.adblock,
         onCheckedChange = {
             SettingsRepository.setAdblock(it)
@@ -103,8 +104,8 @@ private fun BrowserAdBlockSection(settings: SettingsState, onOpenCertWizard: () 
         title = stringResource(R.string.settings_browser_adblock),
         subtitle = stringResource(R.string.settings_browser_adblock_subtitle),
         icon = Icons.Outlined.Shield,
-        iconBg = Color(0xFF22c55e).copy(alpha = 0.18f),
-        iconTint = Color(0xFF4ade80),
+        // TODO(задача 9): цвет тумблера ещё не переведён на семантику раздела.
+        tint = RvCategory.Red,
         checked = settings.browserAdBlock,
         onCheckedChange = { enabled ->
             if (enabled) {
@@ -133,8 +134,8 @@ private fun BrowserAdBlockSection(settings: SettingsState, onOpenCertWizard: () 
         NavRow(
             label = stringResource(R.string.settings_browser_adblock_install),
             icon = Icons.Outlined.Shield,
-            iconBg = Color(0xFF22c55e).copy(alpha = 0.18f),
-            iconTint = Color(0xFF4ade80),
+            // TODO(задача 9): цвет строки ещё не переведён на семантику раздела.
+            tint = RvCategory.Red,
             onClick = onOpenCertWizard,
         )
     }

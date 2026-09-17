@@ -65,10 +65,8 @@
     <!-- Settings — grouped. Тексты дословно с десктопа (frontend/src/locales/ru.json) -->
     <string name="settings_desc">Управление безопасностью и системой</string>
     <string name="settings_back">Назад к настройкам</string>
-    <string name="settings_group_advanced">Дополнительные настройки</string>
 
     <!-- Мастер установки сертификата -->
-    <string name="settings_group_advanced_desc">Параметры запуска, TUN и фильтрации трафика.</string>
     <string name="settings_data_usage_title">Статистика трафика</string>
     <string name="settings_data_usage_desc">Накопленный VPN-трафик с момента установки</string>
     <string name="settings_data_usage_download">Получено</string>
@@ -107,7 +105,6 @@
     <string name="settings_sub_ua_desc">Пустое поле — значение по умолчанию.</string>
 
     <string name="settings_appearance_language_title">Язык</string>
-    <string name="settings_appearance_language_desc">Язык интерфейса во всём приложении.</string>
 
     <string name="vpn_status_killswitch">Kill switch активен — трафик заблокирован</string>
     <string name="vpn_status_connecting">Подключение…</string>

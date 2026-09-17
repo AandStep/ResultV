@@ -21,12 +21,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.content.ContextWrapper
@@ -42,8 +42,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import mobile.Mobile
-import com.resultv.android.theme.Brand
 import com.resultv.android.theme.CategoryTint
+import com.resultv.android.theme.RvCategory
+import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.RvRadius
+import com.resultv.android.theme.RvSpace
+import com.resultv.android.theme.rvBorder
 import com.resultv.android.ui.components.DarkSheetSystemBars
 import com.resultv.android.ui.components.SettingIcon
 import com.resultv.android.vpn.SettingsRepository
@@ -67,17 +71,34 @@ private val Languages = listOf(
 private enum class SettingsSubcategory(
     val labelRes: Int,
     val descRes: Int,
+    val itemsRes: Int,
     val icon: ImageVector,
-    val iconBg: Color,
-    val iconTint: Color
+    val tint: CategoryTint,
 ) {
-    Network(R.string.settings_group_network, R.string.settings_group_network_desc, Icons.Outlined.Public, Brand.Green.copy(alpha = 0.18f), Brand.GreenLight),
-    Routing(R.string.tab_rules, R.string.rules_section_smart_subtitle, Icons.Outlined.AltRoute, Color(0xFF3b82f6).copy(alpha = 0.18f), Color(0xFF60a5fa)),
-    Security(R.string.settings_group_security, R.string.settings_group_security_desc, Icons.Outlined.Security, Color(0xFFef4444).copy(alpha=0.18f), Color(0xFFf87171)),
-    AdBlock(AdBlockGroupRes.label, AdBlockGroupRes.desc, Icons.Outlined.Block, Color(0xFFef4444).copy(alpha=0.18f), Color(0xFFf87171)),
-    Subscriptions(R.string.settings_group_subscriptions, R.string.settings_group_subscriptions_desc, Icons.Outlined.RssFeed, Color(0xFFf59e0b).copy(alpha=0.18f), Color(0xFFfbbf24)),
-    Appearance(R.string.settings_group_appearance, R.string.settings_group_appearance_desc, Icons.Outlined.Palette, Color(0xFF8b5cf6).copy(alpha=0.18f), Color(0xFFa78bfa)),
-    Advanced(R.string.settings_group_advanced, R.string.settings_group_advanced_desc, Icons.Outlined.Tune, Color(0xFF64748b).copy(alpha=0.18f), Color(0xFF94a3b8)),
+    Network(
+        R.string.settings_group_network, R.string.settings_group_network_desc,
+        R.string.settings_group_network_items, Icons.Outlined.Public, RvCategory.Main,
+    ),
+    Routing(
+        R.string.tab_rules, R.string.rules_section_smart_subtitle,
+        R.string.settings_group_routing_items, Icons.Outlined.AltRoute, RvCategory.Blue,
+    ),
+    Security(
+        R.string.settings_group_security, R.string.settings_group_security_desc,
+        R.string.settings_group_security_items, Icons.Outlined.Security, RvCategory.Red,
+    ),
+    AdBlock(
+        AdBlockGroupRes.label, AdBlockGroupRes.desc,
+        AdBlockGroupRes.items, Icons.Outlined.Block, RvCategory.Red,
+    ),
+    Subscriptions(
+        R.string.settings_group_subscriptions, R.string.settings_group_subscriptions_desc,
+        R.string.settings_group_subscriptions_items, Icons.Outlined.RssFeed, RvCategory.Amber,
+    ),
+    Appearance(
+        R.string.settings_group_appearance, R.string.settings_group_appearance_desc,
+        R.string.settings_group_appearance_items, Icons.Outlined.Palette, RvCategory.Violet,
+    ),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -104,38 +125,35 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+            .padding(horizontal = RvSpace.page, vertical = RvSpace.nest2),
+        verticalArrangement = Arrangement.spacedBy(RvSpace.nest1),
     ) {
-        CategoryHeader("Соединение и Маршрутизация")
+        CategoryHeader(stringResource(R.string.settings_cat_connection))
         SettingsCard {
             SubcategoryRow(SettingsSubcategory.Network) { activeSheet = SettingsSubcategory.Network }
-            HorizontalDivider(color = Brand.SurfaceHigh)
+            HorizontalDivider(color = RvColor.whiteA10)
             SubcategoryRow(SettingsSubcategory.Routing) { activeSheet = SettingsSubcategory.Routing }
         }
 
-        CategoryHeader("Безопасность")
+        CategoryHeader(stringResource(R.string.settings_cat_security))
         SettingsCard {
             SubcategoryRow(SettingsSubcategory.Security) { activeSheet = SettingsSubcategory.Security }
             if (com.resultv.android.BuildConfig.DNS_ADBLOCK) {
-                HorizontalDivider(color = Brand.SurfaceHigh)
+                HorizontalDivider(color = RvColor.whiteA10)
                 SubcategoryRow(SettingsSubcategory.AdBlock) { activeSheet = SettingsSubcategory.AdBlock }
             }
         }
 
-        CategoryHeader("Приложение")
+        CategoryHeader(stringResource(R.string.settings_cat_app))
         SettingsCard {
             SubcategoryRow(SettingsSubcategory.Appearance) { activeSheet = SettingsSubcategory.Appearance }
-            HorizontalDivider(color = Brand.SurfaceHigh)
+            HorizontalDivider(color = RvColor.whiteA10)
             SubcategoryRow(SettingsSubcategory.Subscriptions) { activeSheet = SettingsSubcategory.Subscriptions }
-            HorizontalDivider(color = Brand.SurfaceHigh)
-            SubcategoryRow(SettingsSubcategory.Advanced) { activeSheet = SettingsSubcategory.Advanced }
-            HorizontalDivider(color = Brand.SurfaceHigh)
+            HorizontalDivider(color = RvColor.whiteA10)
             NavRow(
                 label = stringResource(R.string.settings_group_logs),
                 icon = Icons.Outlined.Article,
-                iconBg = Color(0xFF06b6d4).copy(alpha = 0.18f),
-                iconTint = Color(0xFF22d3ee),
+                tint = RvCategory.Cyan,
                 onClick = onOpenLogs,
             )
         }
@@ -150,7 +168,7 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {
             onDismissRequest = { activeSheet = null },
             modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
             sheetState = sheetState,
-            containerColor = Brand.Surface,
+            containerColor = RvColor.Grey,
             dragHandle = { BottomSheetDefaults.DragHandle() },
         ) {
             DarkSheetSystemBars()
@@ -169,20 +187,19 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {
                 // Sheet Header
                 activeSheet?.let { sheet ->
                     Row(
-                        modifier = Modifier.padding(bottom = 16.dp),
+                        modifier = Modifier.padding(bottom = RvSpace.nest1),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2)
                     ) {
-                        SettingIcon(sheet.icon, CategoryTint(sheet.iconBg, sheet.iconTint))
+                        SettingIcon(sheet.icon, sheet.tint)
                         Column {
                             Text(stringResource(sheet.labelRes), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                            Text(stringResource(sheet.descRes), style = MaterialTheme.typography.bodyMedium, color = Brand.SecondaryText)
+                            Text(stringResource(sheet.descRes), style = MaterialTheme.typography.bodyMedium, color = RvColor.whiteA50)
                         }
                     }
                 }
 
                 when (activeSheet) {
-                    SettingsSubcategory.Advanced -> AdvancedGroup(settings)
                     SettingsSubcategory.Subscriptions -> SubscriptionsGroup(settings)
                     SettingsSubcategory.Security -> SecurityGroup(settings)
                     SettingsSubcategory.AdBlock -> AdBlockGroupContent(
@@ -213,7 +230,7 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {
             onDismissRequest = { routingProfilesOpen = false },
             modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
             sheetState = routingSheetState,
-            containerColor = Brand.Surface,
+            containerColor = RvColor.Grey,
             dragHandle = { BottomSheetDefaults.DragHandle() },
         ) {
             DarkSheetSystemBars()
@@ -244,7 +261,7 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {
             onDismissRequest = { if (!editorBusy) editorOpen = false },
             modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
             sheetState = editorSheetState,
-            containerColor = Brand.Surface,
+            containerColor = RvColor.Grey,
             dragHandle = { BottomSheetDefaults.DragHandle() },
         ) {
             DarkSheetSystemBars()
@@ -304,17 +321,20 @@ private fun CategoryHeader(title: String) {
     Text(
         text = title,
         style = MaterialTheme.typography.labelMedium,
-        color = Brand.SecondaryText,
-        modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 0.dp)
+        color = RvColor.whiteA50,
+        modifier = Modifier.padding(start = RvSpace.nest1, top = RvSpace.nest3, bottom = 0.dp)
     )
 }
 
 @Composable
 private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
+    val shape = RoundedCornerShape(RvRadius.card)
     Card(
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = Brand.Surface),
-        modifier = Modifier.fillMaxWidth()
+        shape = shape,
+        colors = CardDefaults.cardColors(containerColor = RvColor.Grey),
+        modifier = Modifier
+            .fillMaxWidth()
+            .rvBorder(shape),
     ) {
         Column {
             content()
@@ -328,21 +348,33 @@ private fun SubcategoryRow(subcategory: SettingsSubcategory, onClick: () -> Unit
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 16.dp),
+            .padding(horizontal = RvSpace.nest1, vertical = RvSpace.nest2),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
-        SettingIcon(subcategory.icon, CategoryTint(subcategory.iconBg, subcategory.iconTint))
-        Text(
-            stringResource(subcategory.labelRes),
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Medium,
+        SettingIcon(subcategory.icon, subcategory.tint)
+        Column(
             modifier = Modifier.weight(1f),
-        )
+            verticalArrangement = Arrangement.spacedBy(RvSpace.xs),
+        ) {
+            Text(
+                stringResource(subcategory.labelRes),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            // Одна строка с обрезкой: состав раздела виден без захода внутрь,
+            // а длинный список не разгоняет строку по высоте.
+            Text(
+                stringResource(subcategory.itemsRes),
+                style = MaterialTheme.typography.bodyMedium,
+                color = RvColor.whiteA50,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         Icon(
             imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
             contentDescription = null,
-            tint = Brand.MutedText,
+            tint = RvColor.iconDefault,
         )
     }
 }
@@ -352,19 +384,18 @@ private fun SubcategoryRow(subcategory: SettingsSubcategory, onClick: () -> Unit
 internal fun NavRow(
     label: String,
     icon: ImageVector,
-    iconBg: Color,
-    iconTint: Color,
+    tint: CategoryTint,
     onClick: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 16.dp),
+            .padding(horizontal = RvSpace.nest1, vertical = RvSpace.nest1),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
-        SettingIcon(icon, CategoryTint(iconBg, iconTint))
+        SettingIcon(icon, tint)
         Text(
             label,
             style = MaterialTheme.typography.titleMedium,
@@ -374,23 +405,9 @@ internal fun NavRow(
         Icon(
             imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
             contentDescription = null,
-            tint = Brand.MutedText,
+            tint = RvColor.iconDefault,
         )
     }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun AdvancedGroup(settings: com.resultv.android.vpn.SettingsState) {
-    ToggleRow(
-        title = stringResource(R.string.settings_ipv6),
-        subtitle = stringResource(R.string.settings_ipv6_subtitle),
-        icon = Icons.Outlined.Language,
-        iconBg = Color(0xFF3b82f6).copy(alpha = 0.18f),
-        iconTint = Color(0xFF60a5fa),
-        checked = settings.ipv6,
-        onCheckedChange = { SettingsRepository.setIpv6(it) },
-    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -400,38 +417,34 @@ private fun SubscriptionsGroup(settings: com.resultv.android.vpn.SettingsState) 
         title = stringResource(R.string.settings_sub_auto_update_title),
         subtitle = stringResource(R.string.settings_sub_auto_update_desc),
         icon = Icons.Outlined.Sync,
-        iconBg = Color(0xFF10b981).copy(alpha = 0.18f),
-        iconTint = Color(0xFF34d399),
+        tint = RvCategory.Emerald,
         checked = settings.subscriptionAutoUpdate,
         onCheckedChange = { SettingsRepository.setSubscriptionAutoUpdate(it) },
     )
-    HorizontalDivider(color = Brand.SurfaceHigh)
+    HorizontalDivider(color = RvColor.whiteA10)
     IntervalRow(
         title = stringResource(R.string.settings_sub_interval_title),
         subtitle = stringResource(R.string.settings_sub_interval_desc),
         icon = Icons.Outlined.Timer,
-        iconBg = Color(0xFFf59e0b).copy(alpha = 0.18f),
-        iconTint = Color(0xFFfbbf24),
+        tint = RvCategory.Amber,
         hours = settings.subscriptionUpdateIntervalHours,
         onChange = { SettingsRepository.setSubscriptionUpdateIntervalHours(it) },
     )
-    HorizontalDivider(color = Brand.SurfaceHigh)
+    HorizontalDivider(color = RvColor.whiteA10)
     ToggleRow(
         title = stringResource(R.string.settings_sub_hwid_title),
         subtitle = stringResource(R.string.settings_sub_hwid_desc),
         icon = Icons.Outlined.Fingerprint,
-        iconBg = Color(0xFF8b5cf6).copy(alpha = 0.18f),
-        iconTint = Color(0xFFa78bfa),
+        tint = RvCategory.Violet,
         checked = settings.subscriptionSendHwid,
         onCheckedChange = { SettingsRepository.setSubscriptionSendHwid(it) },
     )
-    HorizontalDivider(color = Brand.SurfaceHigh)
+    HorizontalDivider(color = RvColor.whiteA10)
     TextFieldRow(
         title = stringResource(R.string.settings_sub_ua_title),
         subtitle = stringResource(R.string.settings_sub_ua_desc),
         icon = Icons.Outlined.Badge,
-        iconBg = Color(0xFF64748b).copy(alpha = 0.18f),
-        iconTint = Color(0xFF94a3b8),
+        tint = RvCategory.Slate,
         initialValue = settings.subscriptionUserAgent,
         keyboardType = KeyboardType.Ascii,
         onCommit = { SettingsRepository.setSubscriptionUserAgent(it) },
@@ -445,8 +458,7 @@ private fun SecurityGroup(settings: com.resultv.android.vpn.SettingsState) {
         title = stringResource(R.string.settings_killswitch_title),
         subtitle = stringResource(R.string.settings_killswitch_desc),
         icon = Icons.Outlined.GppBad,
-        iconBg = Color(0xFFef4444).copy(alpha = 0.18f),
-        iconTint = Color(0xFFf87171),
+        tint = RvCategory.Red,
         checked = settings.killSwitch,
         onCheckedChange = { SettingsRepository.setKillSwitch(it) },
     )
@@ -456,28 +468,28 @@ private fun SecurityGroup(settings: com.resultv.android.vpn.SettingsState) {
 @Composable
 private fun NetworkGroup(settings: com.resultv.android.vpn.SettingsState) {
     Column(
-        modifier = Modifier.padding(vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.padding(vertical = RvSpace.nest3),
+        verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
+            horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2)
         ) {
-            SettingIcon(Icons.Outlined.Dns, CategoryTint(Color(0xFF3b82f6).copy(alpha = 0.18f), Color(0xFF60a5fa)))
+            SettingIcon(Icons.Outlined.Dns, RvCategory.Blue)
             Column {
                 Text("DNS", style = MaterialTheme.typography.bodyLarge)
                 Text(
                     stringResource(R.string.settings_dns_hint),
                     style = MaterialTheme.typography.bodySmall,
-                    color = Brand.SecondaryText,
+                    color = RvColor.whiteA50,
                 )
             }
         }
-        
+
         androidx.compose.foundation.layout.FlowRow(
             modifier = Modifier.padding(start = 50.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(RvSpace.xs),
+            verticalArrangement = Arrangement.spacedBy(RvSpace.xs),
         ) {
             dnsPresets().forEach { p ->
                 FilterChip(
@@ -485,8 +497,8 @@ private fun NetworkGroup(settings: com.resultv.android.vpn.SettingsState) {
                     onClick = { SettingsRepository.setDnsPreset(p.key, "") },
                     label = { Text(p.label) },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = Brand.Green.copy(alpha = 0.2f),
-                        selectedLabelColor = Brand.GreenLight,
+                        selectedContainerColor = RvColor.Main.copy(alpha = 0.2f),
+                        selectedLabelColor = RvColor.Second,
                     ),
                 )
             }
@@ -494,20 +506,34 @@ private fun NetworkGroup(settings: com.resultv.android.vpn.SettingsState) {
         OutlinedTextField(
             value = if (settings.dnsPreset == "Custom") settings.dnsCustom else "",
             onValueChange = { SettingsRepository.setDnsPreset("Custom", it) },
-            modifier = Modifier.fillMaxWidth().padding(start = 50.dp, top = 8.dp),
+            modifier = Modifier.fillMaxWidth().padding(start = 50.dp, top = RvSpace.nest3),
             singleLine = true,
             placeholder = { Text(stringResource(R.string.settings_dns_custom_placeholder)) },
         )
+        Text(
+            stringResource(R.string.settings_dns_private_warning),
+            style = MaterialTheme.typography.bodyMedium,
+            color = RvColor.whiteA50,
+            modifier = Modifier.padding(start = 50.dp, top = RvSpace.nest3),
+        )
     }
-    HorizontalDivider(color = Brand.SurfaceHigh, modifier = Modifier.padding(vertical = 8.dp))
+    HorizontalDivider(color = RvColor.whiteA10, modifier = Modifier.padding(vertical = RvSpace.nest3))
     ToggleRow(
         title = stringResource(R.string.settings_bypass_lan),
         subtitle = stringResource(R.string.settings_bypass_lan_subtitle),
         icon = Icons.Outlined.Lan,
-        iconBg = Color(0xFF8b5cf6).copy(alpha = 0.18f),
-        iconTint = Color(0xFFa78bfa),
+        tint = RvCategory.Violet,
         checked = settings.bypassLan,
         onCheckedChange = { SettingsRepository.setBypassLan(it) },
+    )
+    HorizontalDivider(color = RvColor.whiteA10)
+    ToggleRow(
+        title = stringResource(R.string.settings_ipv6),
+        subtitle = stringResource(R.string.settings_ipv6_subtitle),
+        icon = Icons.Outlined.Language,
+        tint = RvCategory.Blue,
+        checked = settings.ipv6,
+        onCheckedChange = { SettingsRepository.setIpv6(it) },
     )
 }
 
@@ -535,25 +561,22 @@ private fun AppearanceGroup(onBeforeRecreate: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .clickable { menuOpen = true }
-            .padding(vertical = 12.dp),
+            .padding(vertical = RvSpace.nest2),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SettingIcon(Icons.Outlined.Translate, CategoryTint(Color(0xFF8b5cf6).copy(alpha = 0.18f), Color(0xFFa78bfa)))
-        Spacer(modifier = Modifier.width(14.dp))
+        SettingIcon(Icons.Outlined.Translate, RvCategory.Violet)
+        Spacer(modifier = Modifier.width(RvSpace.nest2))
         Column(modifier = Modifier.weight(1f)) {
+            // Название «Язык» и текущее значение справа говорят всё сами —
+            // отдельное описание под ним было лишним.
             Text(
                 stringResource(R.string.settings_appearance_language_title),
                 style = MaterialTheme.typography.bodyLarge,
             )
-            Text(
-                stringResource(R.string.settings_appearance_language_desc),
-                style = MaterialTheme.typography.bodySmall,
-                color = Brand.SecondaryText,
-            )
         }
         Box {
             TextButton(onClick = { menuOpen = true }) {
-                Text(currentLang, color = Brand.GreenLight)
+                Text(currentLang, color = RvColor.Second)
             }
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                 Languages.forEach { l ->
@@ -573,7 +596,7 @@ private fun AppearanceGroup(onBeforeRecreate: () -> Unit) {
                                 Icon(
                                     Icons.Outlined.Check,
                                     contentDescription = null,
-                                    tint = Brand.GreenLight,
+                                    tint = RvColor.Second,
                                 )
                             }
                         },
@@ -590,8 +613,7 @@ internal fun ToggleRow(
     title: String,
     subtitle: String,
     icon: ImageVector,
-    iconBg: Color,
-    iconTint: Color,
+    tint: CategoryTint,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     enabled: Boolean = true,
@@ -599,14 +621,14 @@ internal fun ToggleRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp),
+            .padding(vertical = RvSpace.nest3),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
-        SettingIcon(icon, CategoryTint(iconBg, iconTint))
+        SettingIcon(icon, tint)
         Column(modifier = Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Brand.SecondaryText)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = RvColor.whiteA50)
         }
         Switch(
             checked = checked,
@@ -622,8 +644,7 @@ private fun IntervalRow(
     title: String,
     subtitle: String,
     icon: ImageVector,
-    iconBg: Color,
-    iconTint: Color,
+    tint: CategoryTint,
     hours: Int,
     onChange: (Int) -> Unit,
 ) {
@@ -631,14 +652,14 @@ private fun IntervalRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp),
+            .padding(vertical = RvSpace.nest3),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
-        SettingIcon(icon, CategoryTint(iconBg, iconTint))
+        SettingIcon(icon, tint)
         Column(modifier = Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Brand.SecondaryText)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = RvColor.whiteA50)
         }
         OutlinedTextField(
             value = raw,
@@ -661,8 +682,7 @@ private fun TextFieldRow(
     title: String,
     subtitle: String,
     icon: ImageVector,
-    iconBg: Color,
-    iconTint: Color,
+    tint: CategoryTint,
     initialValue: String,
     keyboardType: KeyboardType,
     onCommit: (String) -> Unit,
@@ -674,14 +694,14 @@ private fun TextFieldRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .padding(vertical = RvSpace.nest3),
+        verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
+            horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2)
         ) {
-            SettingIcon(icon, CategoryTint(iconBg, iconTint))
+            SettingIcon(icon, tint)
             Text(title, style = MaterialTheme.typography.bodyLarge)
         }
         OutlinedTextField(
@@ -691,7 +711,7 @@ private fun TextFieldRow(
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
         )
-        Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Brand.SecondaryText, modifier = Modifier.padding(start = 50.dp))
+        Text(subtitle, style = MaterialTheme.typography.bodySmall, color = RvColor.whiteA50, modifier = Modifier.padding(start = 50.dp))
     }
 }
 
@@ -706,13 +726,13 @@ private fun AppInfoCard() {
 
     SettingsCard {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = RvSpace.nest1, vertical = RvSpace.nest1),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
         ) {
             SettingIcon(
                 icon = Icons.Outlined.Info,
-                tint = CategoryTint(Color(0xFF8b5cf6).copy(alpha = 0.18f), Color(0xFFa78bfa)),
+                tint = RvCategory.Violet,
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -723,7 +743,7 @@ private fun AppInfoCard() {
                 Text(
                     "v$versionName",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Brand.SecondaryText,
+                    color = RvColor.whiteA50,
                 )
             }
         }
