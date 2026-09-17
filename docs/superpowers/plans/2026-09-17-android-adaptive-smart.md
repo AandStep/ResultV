@@ -44,6 +44,12 @@ gomobile bind), sing-box 1.14 через libbox, Kotlin/Compose (Android).
   `verdict-direct`.
 - Документы в `docs/superpowers/` коммитятся `git add -f` — папка под
   `.gitignore`.
+- **Имена Go-файлов не должны оканчиваться на `_android`, `_linux`, `_windows`,
+  `_arm64` и прочие GOOS/GOARCH.** Go читает такой суффикс как ограничение
+  сборки по платформе и на машине разработчика (Windows) исключает файл
+  целиком — тест в нём молча не запустится ни разу, а прогон покажет «ok».
+  Проверка: `go list -f '{{range .TestGoFiles}}{{.}} {{end}}' ./пакет/` обязан
+  назвать созданный файл.
 - Сообщения коммитов по-русски, в стиле ветки, с завершающей строкой
   `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
 
@@ -360,7 +366,7 @@ EOF
 - Create: `internal/proxy/blockprobe_limit.go`, `blockprobe_limit_test.go` (копии)
 - Create: `internal/proxy/blockprobe_live.go`, `blockprobe_live_test.go` (копии)
 - Create: `internal/proxy/blockprobe_test.go` (копия)
-- Test: `internal/proxy/blockprobe_android_test.go` (новый)
+- Test: `internal/proxy/blockprobe_mobile_test.go` (новый)
 
 **Interfaces:**
 - Consumes: `verdict` (Task 1).
@@ -425,7 +431,9 @@ func probeInboundPort() int { return int(probeInboundPortValue.Load()) }
 
 - [ ] **Шаг 3: написать падающий тест на прямую половину**
 
-Create `internal/proxy/blockprobe_android_test.go`:
+Create `internal/proxy/blockprobe_mobile_test.go` (имя НЕ `_android_test.go`: Go
+читает суффикс `_android` как ограничение по GOOS и на машине разработчика
+исключил бы файл целиком — тесты молча не запускались бы никогда):
 
 ```go
 package proxy

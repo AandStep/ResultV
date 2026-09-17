@@ -16,9 +16,7 @@
 package proxy
 
 import (
-	"context"
 	"errors"
-	"net"
 	"testing"
 	"time"
 
@@ -86,37 +84,5 @@ func TestNodeFailureAloneTeachesNothing(t *testing.T) {
 	viaNode := probeOutcome{Err: errors.New("connection reset by peer")}
 	if got := classifyProbe(ok200(), viaNode); got != verdict.Unknown {
 		t.Fatalf("got %v, want unknown", got)
-	}
-}
-
-func TestProbeDirectDial_DialsGivenAddressAsIs(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	defer ln.Close()
-	accepted := make(chan struct{}, 1)
-	go func() {
-		c, aErr := ln.Accept()
-		if aErr != nil {
-			return
-		}
-		accepted <- struct{}{}
-		c.Close()
-	}()
-
-	conn, err := probeDirectDial(context.Background(), "tcp", ln.Addr().String())
-	if err != nil {
-		t.Fatalf("probeDirectDial: %v", err)
-	}
-	defer conn.Close()
-	<-accepted
-}
-
-func TestProbeFetch_NoInbound_RefusesNodeHalf(t *testing.T) {
-	setProbeInboundPort(0)
-	out := probeFetch(context.Background(), "https://example.com/", true)
-	if out.Err == nil {
-		t.Fatalf("expected error without inbound, got %+v", out)
 	}
 }
