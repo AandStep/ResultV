@@ -27,6 +27,14 @@ import (
 	"time"
 
 	_ "github.com/sagernet/gomobile" // ensure sagernet's gomobile/bind stays in go.mod for AAR builds
+	// scripts/build-android-aar.sh отдаёт gomobile ДВА пакета: ./mobile и
+	// sing-box/experimental/libbox. Второй не импортирует никто в модуле,
+	// поэтому go mod tidy не видит его зависимостей и вычищает их из go.sum —
+	// а сборка AAR падает на "missing go.sum entry". На 1.13 это сходило с рук,
+	// пока его зависимости были подмножеством наших; 1.14 добавила filippo.io/age,
+	// и подмножество кончилось. Холостой импорт держит их в графе навсегда, как
+	// строчка выше держит сам gomobile.
+	_ "github.com/sagernet/sing-box/experimental/libbox"
 	"resultproxy-wails/internal/config"
 	"resultproxy-wails/internal/proxy"
 )
