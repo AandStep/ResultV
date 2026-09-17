@@ -46,6 +46,12 @@ const (
 	// smartRelayHeaderTimeout — сколько ждём заголовок CONNECT. Клиент здесь
 	// не человек, а аутбаунд ядра: он пишет запрос сразу.
 	smartRelayHeaderTimeout = 10 * time.Second
+	// smartRelayHeaderBudget — потолок на строку CONNECT вместе с заголовками.
+	// Без него единственной границей остаётся десятисекундный дедлайн, а loopback
+	// на Android доступен любому приложению устройства: десять секунд приёма — это
+	// уже заметная память в нашем процессе. Восьми килобайт хватает с запасом:
+	// движок шлёт три строки.
+	smartRelayHeaderBudget = 8 * 1024
 )
 
 // SmartRelayOptions — всё, что реле нужно знать о мире.
@@ -141,6 +147,11 @@ func (r *SmartRelay) Close() error {
 		close(r.closed)
 		err = r.listener.Close()
 		r.wg.Wait()
+		// Соединения, ещё живущие в serve(), намеренно не дожидаются. Через
+		// реле идёт обычный пользовательский трафик — видео живёт минутами, а
+		// Close() зовётся при отключении VPN, и задержка отключения хуже, чем
+		// потеря вердикта: непойманное имя стоит одной гонки при следующем
+		// заходе, тогда как TTL вердикта — часы и сутки.
 		r.persist()
 		setProbeInboundPort(0)
 	})
@@ -241,7 +252,7 @@ func (r *SmartRelay) serve(client net.Conn) {
 		return
 	}
 
-	host, portStr, err := net.SplitHostPort(target)
+	host, _, err := net.SplitHostPort(target)
 	if err != nil {
 		return
 	}
@@ -254,7 +265,7 @@ func (r *SmartRelay) serve(client net.Conn) {
 	case chooseDirect:
 		r.pipeVia(client, reader, target, false)
 	default:
-		r.race(client, reader, target, host, portStr)
+		r.race(client, reader, target, host)
 	}
 }
 
@@ -277,7 +288,7 @@ func (r *SmartRelay) pipeVia(client net.Conn, buffered *bufio.Reader, target str
 }
 
 // race разыгрывает незнакомое назначение.
-func (r *SmartRelay) race(client net.Conn, buffered *bufio.Reader, target, host, portStr string) {
+func (r *SmartRelay) race(client net.Conn, buffered *bufio.Reader, target, host string) {
 	first := make([]byte, smartFirstReadBudget)
 	_ = client.SetReadDeadline(time.Now().Add(smartRaceHeadStart))
 	n, _ := buffered.Read(first)
@@ -302,7 +313,7 @@ func (r *SmartRelay) race(client net.Conn, buffered *bufio.Reader, target, host,
 	// Выигрыш прямого пути — доказательство, что линия жива; выигрыш туннеля —
 	// ещё один сайт, который сам не ответил.
 	r.health.record(host, !res.ViaProxy)
-	r.learn(host, portStr, res.ViaProxy)
+	r.learn(host, res.ViaProxy)
 	if !res.ViaProxy {
 		// Прямой путь победил по байтам. Байты это сайт или стена — вопрос
 		// другой, и отвечает на него только проба.
@@ -316,7 +327,7 @@ func (r *SmartRelay) race(client net.Conn, buffered *bufio.Reader, target, host,
 }
 
 // learn записывает, что доказала гонка.
-func (r *SmartRelay) learn(host, portStr string, viaTunnel bool) {
+func (r *SmartRelay) learn(host string, viaTunnel bool) {
 	if !r.health.healthy() {
 		// Линия лежит. Всё записанное сейчас было бы догадкой сроком до недели.
 		return
@@ -332,8 +343,9 @@ func (r *SmartRelay) learn(host, portStr string, viaTunnel bool) {
 	} else {
 		r.store.Learn(host, d)
 	}
-	_ = portStr
 	if d == verdict.Direct {
+		// После Close() читателя у канала нет, и сигнал пропадёт. Это та самая
+		// принятая потеря, что описана в Close().
 		r.markDirty()
 	}
 }
@@ -383,8 +395,12 @@ func (r *SmartRelay) dialTunnel(ctx context.Context, target string) (net.Conn, e
 //
 // Свой разбор, а не net/http: нам нужно ровно одно поле, а http.ReadRequest
 // потащил бы за собой тело, таймауты и аллокации на каждое соединение.
+//
+// Объём заголовочной фазы ограничен smartRelayHeaderBudget: до этого порта
+// дотянется любое приложение устройства, а неограниченный ReadString растил бы
+// память, пока не истечёт дедлайн.
 func readConnectRequest(reader *bufio.Reader) (string, error) {
-	line, err := reader.ReadString('\n')
+	line, err := readLineLimited(reader, smartRelayHeaderBudget)
 	if err != nil {
 		return "", err
 	}
@@ -392,16 +408,42 @@ func readConnectRequest(reader *bufio.Reader) (string, error) {
 	if len(parts) < 2 || !strings.EqualFold(parts[0], "CONNECT") {
 		return "", errors.New("smart: ожидался CONNECT, получено " + strings.TrimSpace(line))
 	}
+	budget := smartRelayHeaderBudget - len(line)
 	for {
-		h, hErr := reader.ReadString('\n')
+		h, hErr := readLineLimited(reader, budget)
 		if hErr != nil {
 			return "", hErr
 		}
+		budget -= len(h)
 		if strings.TrimSpace(h) == "" {
 			break
 		}
+		if budget <= 0 {
+			return "", errors.New("smart: заголовки CONNECT длиннее допустимого")
+		}
 	}
 	return parts[1], nil
+}
+
+// readLineLimited — ReadString('\n') с потолком. Читает по байту из уже
+// буферизованного читателя, так что непрочитанное остаётся в том же буфере и
+// достаётся splice.
+func readLineLimited(reader *bufio.Reader, limit int) (string, error) {
+	if limit <= 0 {
+		return "", errors.New("smart: заголовки CONNECT длиннее допустимого")
+	}
+	var sb strings.Builder
+	for i := 0; i < limit; i++ {
+		b, err := reader.ReadByte()
+		if err != nil {
+			return "", err
+		}
+		sb.WriteByte(b)
+		if b == '\n' {
+			return sb.String(), nil
+		}
+	}
+	return "", errors.New("smart: строка CONNECT длиннее допустимого")
 }
 
 // splice сводит две стороны. Буфер читателя обязателен: в нём уже могут лежать

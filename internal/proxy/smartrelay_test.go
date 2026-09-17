@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"net"
@@ -197,6 +198,84 @@ func TestSmartRelay_Restart_RehydratesNamesFromFile(t *testing.T) {
 	if _, ok := second.store.Names()["clean.example"]; !ok {
 		t.Fatalf("имя не вернулось в стор после перезапуска: %v", second.store.Names())
 	}
+}
+
+// Мусор вместо CONNECT соединение закрывает, а не роняет реле.
+func TestSmartRelay_GarbageRequest_IsRefused(t *testing.T) {
+	relay, err := StartSmartRelay(SmartRelayOptions{
+		DataDir: t.TempDir(), ListenPort: 0, TunnelPort: 0, MemoryOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("start relay: %v", err)
+	}
+	defer relay.Close()
+
+	c, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", relay.Port()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+	fmt.Fprint(c, "НЕ CONNECT вовсе\r\n\r\n")
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	buf := make([]byte, 64)
+	if n, rErr := c.Read(buf); rErr == nil && n > 0 {
+		t.Fatalf("реле ответило %q на мусор, ожидалось закрытие", buf[:n])
+	}
+	// Реле обязано пережить это и принять следующего.
+	if !relayAccepts(t, relay.Port()) {
+		t.Fatal("реле перестало принимать соединения после мусорного запроса")
+	}
+}
+
+// Заголовок без конца обрывается по потолку, а не копится в памяти до
+// дедлайна: до этого порта дотянется любое приложение устройства.
+func TestSmartRelay_OversizedHeader_IsRefusedBeforeDeadline(t *testing.T) {
+	relay, err := StartSmartRelay(SmartRelayOptions{
+		DataDir: t.TempDir(), ListenPort: 0, TunnelPort: 0, MemoryOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("start relay: %v", err)
+	}
+	defer relay.Close()
+
+	c, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", relay.Port()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+
+	started := time.Now()
+	// Байты без перевода строки. Запись обязана упереться в закрытое реле
+	// задолго до smartRelayHeaderTimeout.
+	junk := bytes.Repeat([]byte("x"), 4096)
+	var wErr error
+	for i := 0; i < 64 && wErr == nil; i++ {
+		_ = c.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		_, wErr = c.Write(junk)
+	}
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	buf := make([]byte, 64)
+	_, _ = c.Read(buf)
+	if elapsed := time.Since(started); elapsed >= smartRelayHeaderTimeout {
+		t.Fatalf("реле держало соединение %v — дольше дедлайна, потолок не сработал", elapsed)
+	}
+	if !relayAccepts(t, relay.Port()) {
+		t.Fatal("реле перестало принимать соединения после переростка")
+	}
+}
+
+// relayAccepts проверяет, что реле живо: обычный CONNECT получает свои 200.
+func relayAccepts(t *testing.T, port int) bool {
+	t.Helper()
+	c, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return false
+	}
+	defer c.Close()
+	fmt.Fprint(c, "CONNECT example.invalid:443 HTTP/1.1\r\nHost: example.invalid:443\r\n\r\n")
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	resp, err := http.ReadResponse(bufio.NewReader(c), &http.Request{Method: "CONNECT"})
+	return err == nil && resp.StatusCode == http.StatusOK
 }
 
 func readAll(t *testing.T, c net.Conn) string {
