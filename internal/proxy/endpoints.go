@@ -31,7 +31,7 @@ const (
 // buildEndpoints собирает эндпоинт узла. domainResolver — тег из
 // serverDomainResolverTag; он нужен, когда адрес узла задан именем, потому
 // что эндпоинт набирает этот адрес сам.
-func buildEndpoints(proxy ProxyConfig, domainResolver string) []SBEndpoint {
+func buildEndpoints(proxy ProxyConfig, domainResolver string, mtuOverride int) []SBEndpoint {
 	pt := strings.ToUpper(strings.TrimSpace(proxy.Type))
 	if pt != "WIREGUARD" && pt != "AMNEZIAWG" {
 		return nil
@@ -78,7 +78,7 @@ func buildEndpoints(proxy ProxyConfig, domainResolver string) []SBEndpoint {
 		DomainResolver: domainResolver,
 		System:        getBoolField(extra, "system"),
 		Name:          getStringField(extra, "name", ""),
-		MTU:           intFromExtra(extra, "mtu", "MTU"),
+		MTU:           wireguardMTU(intFromExtra(extra, "mtu", "MTU"), mtuOverride),
 		Address:       address,
 		PrivateKey:    privateKey,
 		ListenPort:    intFromExtra(extra, "listen_port", "listenPort"),
@@ -278,6 +278,25 @@ func amneziaRangeString(v interface{}) string {
 		return ""
 	}
 	return s
+}
+
+// wireguardMTU returns the endpoint MTU, letting the user's override replace
+// what the node's config asked for.
+//
+// The override exists because MTU is the one WireGuard parameter whose failure
+// mode is invisible from the inside: small packets pass, large ones are dropped
+// somewhere on the path, and the tunnel looks alive while carrying nothing.
+// Answering "is it the packet size" needs one run at a smaller MTU, and the
+// node arrives from a subscription, where it cannot be edited by hand.
+//
+// Out-of-range values are ignored rather than clamped: 576 is the IPv4 minimum
+// any path must carry, and above 1500 the override would create the very
+// problem it is meant to test for.
+func wireguardMTU(configured, override int) int {
+	if override < 576 || override > 1500 {
+		return configured
+	}
+	return override
 }
 
 // wireguardEndpointTag is the tag a WireGuard/AmneziaWG node is given in the

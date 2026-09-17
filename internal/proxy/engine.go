@@ -78,6 +78,15 @@ type EngineConfig struct {
 	// `direct` outbound instead of through the proxy. Lets users access
 	// their printer / NAS / router admin while the VPN is up.
 	BypassLAN bool
+	// WGMTU overrides the MTU a WireGuard/AmneziaWG node asked for. Zero means
+	// "use the node's own value". Diagnostic: see wireguardMTU for why the
+	// failure it exists to find is invisible from the inside.
+	WGMTU int
+	// TunStack picks the TUN inbound stack ("gvisor" / "system"). Empty means
+	// gvisor, which is what Android has always run — and on sing-tun 0.9 the
+	// system stack stopped serving TCP on the phone altogether. The switch is
+	// here to make that comparable, not to offer a choice.
+	TunStack string
 	// LogLevel overrides sing-box's log.level. Empty → "info" in
 	// release-style builds, "debug" only when explicitly requested. The
 	// mobile wrapper used to hardcode debug; that was too chatty for ship.
@@ -601,7 +610,7 @@ func BuildProxyModeConfig(cfg EngineConfig) SingBoxConfig {
 	config := SingBoxConfig{
 		Log:       &SBLog{Level: "error", Disabled: true},
 		DNS:       dns,
-		Endpoints: buildEndpoints(cfg.Proxy, nodeResolver),
+		Endpoints: buildEndpoints(cfg.Proxy, nodeResolver, cfg.WGMTU),
 		Inbounds: []SBInbound{{
 			Type:       "mixed",
 			Tag:        "mixed-in",
@@ -614,6 +623,23 @@ func BuildProxyModeConfig(cfg EngineConfig) SingBoxConfig {
 	}
 
 	return config
+}
+
+// effectiveTunStack resolves which TUN stack to run.
+//
+// Unlike the desktop, the default here is gvisor, not system: that is what
+// Android has always run, and the acceptance of the 1.14 bump showed why it
+// must stay so — on sing-tun 0.9 the system stack stopped opening TCP on the
+// phone at all, with DNS and QUIC still alive. An unknown value falls back to
+// the default rather than being passed to the core, which would refuse the
+// whole config.
+func effectiveTunStack(stack string) string {
+	switch strings.ToLower(strings.TrimSpace(stack)) {
+	case "system":
+		return "system"
+	default:
+		return "gvisor"
+	}
 }
 
 func BuildTunnelModeConfig(cfg EngineConfig) SingBoxConfig {
@@ -633,7 +659,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) SingBoxConfig {
 		}
 		tunAddresses = append(tunAddresses, tunIPv6)
 	}
-	tunStack := "gvisor"
+	tunStack := effectiveTunStack(cfg.TunStack)
 	strictRoute := true
 
 	pt := strings.ToUpper(strings.TrimSpace(cfg.Proxy.Type))
@@ -722,7 +748,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) SingBoxConfig {
 	config := SingBoxConfig{
 		Log:       &SBLog{Level: logLevel, Disabled: false},
 		DNS:       buildDNS(cfg),
-		Endpoints: buildEndpoints(cfg.Proxy, nodeResolver),
+		Endpoints: buildEndpoints(cfg.Proxy, nodeResolver, cfg.WGMTU),
 		Inbounds:  []SBInbound{tun},
 		Outbounds:    outbounds,
 		Route:        buildRoute(cfg),
