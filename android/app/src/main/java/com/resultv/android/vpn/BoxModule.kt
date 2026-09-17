@@ -136,9 +136,6 @@ object BoxModule {
         Log.i(TAG, "startOrReloadService=${System.currentTimeMillis() - tStart}ms")
         applyAwg31(server)
         commandServer = server
-        // Диагностические счётчики: сами решают, надо ли им работать (только
-        // при подробном журнале), поэтому здесь безусловный вызов.
-        WgDiagSampler.start(server)
         Log.i(TAG, "BoxModule started")
     }
 
@@ -239,7 +236,6 @@ object BoxModule {
     @Synchronized
     fun stop() {
         val server = commandServer ?: return
-        WgDiagSampler.stop()
         commandServer = null
         try {
             server.closeService()

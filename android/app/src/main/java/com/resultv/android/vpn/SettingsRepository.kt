@@ -50,14 +50,6 @@ data class SettingsState(
     val bypassLan: Boolean = true,
     /** sing-box log.level — "info" for ship, "debug" for protocol bring-up. */
     val logLevel: String = "info",
-    /**
-     * Стек TUN-инбаунда: "" (как всегда, gvisor) или "system". Диагностика:
-     * на sing-tun 0.9 системный стек на телефоне перестал обслуживать TCP, и
-     * сравнить их было нечем.
-     */
-    val tunStack: String = "",
-    /** Переопределение MTU WireGuard-узла; 0 — значение из профиля. */
-    val wgMtu: Int = 0,
     /** Auto-refresh subscriptions on the timer. */
     val subscriptionAutoUpdate: Boolean = true,
     /** Hours between auto-refresh cycles when [subscriptionAutoUpdate] is on. */
@@ -86,8 +78,6 @@ object SettingsRepository {
     private const val K_IPV6 = "ipv6"
     private const val K_BYPASS_LAN = "bypass_lan"
     private const val K_LOG_LEVEL = "log_level"
-    private const val K_TUN_STACK = "tun_stack"
-    private const val K_WG_MTU = "wg_mtu"
     private const val K_SUB_AUTO = "sub_auto_update"
     private const val K_SUB_INTERVAL = "sub_update_interval_hours"
     private const val K_SUB_HWID = "sub_send_hwid"
@@ -141,8 +131,6 @@ object SettingsRepository {
             ipv6 = prefs.getBoolean(K_IPV6, false),
             bypassLan = prefs.getBoolean(K_BYPASS_LAN, true),
             logLevel = prefs.getString(K_LOG_LEVEL, "info") ?: "info",
-            tunStack = prefs.getString(K_TUN_STACK, "") ?: "",
-            wgMtu = prefs.getInt(K_WG_MTU, 0),
             subscriptionAutoUpdate = prefs.getBoolean(K_SUB_AUTO, true),
             subscriptionUpdateIntervalHours = prefs.getInt(K_SUB_INTERVAL, 6).coerceAtLeast(1),
             subscriptionSendHwid = prefs.getBoolean(K_SUB_HWID, true),
@@ -191,29 +179,6 @@ object SettingsRepository {
     fun setLogLevel(level: String) = mutate {
         prefs.edit().putString(K_LOG_LEVEL, level).apply()
         it.copy(logLevel = level)
-    }
-
-    fun setTunStack(stack: String) = mutate {
-        val sane = if (stack == "system") "system" else ""
-        prefs.edit().putString(K_TUN_STACK, sane).apply()
-        it.copy(tunStack = sane)
-    }
-
-    fun setWgMtu(mtu: Int) = mutate {
-        val sane = if (mtu in 576..1500) mtu else 0
-        prefs.edit().putInt(K_WG_MTU, sane).apply()
-        it.copy(wgMtu = sane)
-    }
-
-    /**
-     * Прочитать введённое значение MTU. Границы те же, что в Go
-     * (internal/proxy/endpoints.go, wireguardMTU): ниже 576 путь IPv4 не
-     * обязан нести ничего, выше 1500 переопределение само создаст ту проблему,
-     * ради проверки которой заведено. Негодное читается как «из профиля».
-     */
-    fun normalizeWgMtu(raw: String): Int {
-        val n = raw.trim().toIntOrNull() ?: return 0
-        return if (n in 576..1500) n else 0
     }
 
     fun setSubscriptionAutoUpdate(enabled: Boolean) = mutate {

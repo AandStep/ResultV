@@ -71,11 +71,6 @@ internal object BuildOptionsBuilder {
             // the watchdog has engaged (proxy down).
             .put("killSwitchArmed", settings.killSwitch)
             .put("killSwitchPanic", panic)
-            // Диагностика движка. Оба применяются при следующем подключении:
-            // reloadWatcher следит только за ad-block, остальные настройки
-            // доезжают на реконнекте.
-            .put("tunStack", settings.tunStack)
-            .put("wgMtu", settings.wgMtu)
             .toString()
     }
 

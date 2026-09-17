@@ -862,15 +862,6 @@ type BuildOptions struct {
 	// actions falls back to DefaultRoutingOrder rather than being guessed at:
 	// the order decides which rule wins when several match.
 	RoutingOrder string `json:"routingOrder,omitempty"`
-
-	// WGMTU overrides the MTU a WireGuard/AmneziaWG node asked for; zero means
-	// the node's own value. Diagnostic knob — the desktop has it as an
-	// environment variable, which on Android is dead: Go copies environ when
-	// the .so loads, long before Kotlin could set anything.
-	WGMTU int `json:"wgMtu,omitempty"`
-	// TunStack picks the TUN inbound stack ("gvisor" / "system"); empty means
-	// gvisor. Same story as WGMTU, and the same reason it is a field.
-	TunStack string `json:"tunStack,omitempty"`
 }
 
 // BuildSingBoxConfig converts a proxy URI directly into a sing-box JSON
@@ -1531,10 +1522,6 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 		// builtin Telegram ranges at worst. Same reasoning as the bundled SRS
 		// seed. FetchSmartList refreshes it in the background of a list update.
 		SmartBlockedCIDRs: smartBlockedCIDRs(opts.SmartMode, dataDir),
-		// Диагностические переключатели движка. На ПК это переменные
-		// окружения; на Android они мертвы, поэтому приезжают настройкой.
-		WGMTU:    opts.WGMTU,
-		TunStack: opts.TunStack,
 		// Desktop's DNSLeakProtection (toggles strict_route) is forced off
 		// on Android — VpnService can't manipulate routes outside its TUN,
 		// and AutoRoute already catches all egress traffic, so DNS bypass

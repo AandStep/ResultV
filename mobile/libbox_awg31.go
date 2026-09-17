@@ -66,21 +66,3 @@ func ApplyAWG31(server *libbox.CommandServer) (string, error) {
 	}
 	return proxy.ApplyAWG31(instance.Box().Endpoint(), builtNode())
 }
-
-// WGDiagLine returns one line of WireGuard device and gVisor stack counters for
-// the running session, or an error when there is no WireGuard endpoint to read
-// — which is the ordinary case for every other protocol.
-//
-// Sampling is driven from Kotlin (WgDiagSampler) rather than by a goroutine
-// here: the desktop writes these into its core log file, and on Android the
-// only sink that reaches the user is the in-app log, which lives in Kotlin.
-func WGDiagLine(server *libbox.CommandServer) (string, error) {
-	if server == nil {
-		return "", fmt.Errorf("счётчики WG: сервер ядра не передан")
-	}
-	instance := server.Instance()
-	if instance == nil || instance.Box() == nil {
-		return "", fmt.Errorf("счётчики WG: ядро не запущено")
-	}
-	return proxy.WGDiagLine(instance.Box().Endpoint())
-}
