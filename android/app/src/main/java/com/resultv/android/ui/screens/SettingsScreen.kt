@@ -538,6 +538,116 @@ private fun NetworkGroup(settings: com.resultv.android.vpn.SettingsState) {
         checked = settings.ipv6,
         onCheckedChange = { SettingsRepository.setIpv6(it) },
     )
+    PingGroup(settings)
+}
+
+/**
+ * Что меряет пинг в списке серверов.
+ *
+ * «Авто» — сегодняшняя проба по протоколу. ICMP меряет путь до адреса узла и
+ * потому применим к любому протоколу. Два http-типа отвечают на другой вопрос
+ * — «узел действительно возит трафик», а не «порт открыт», — и стоят
+ * одноразового движка на узел, поэтому их выбирают осознанно.
+ *
+ * Автоподбор и кил-свитч эту настройку не читают: они работают без человека
+ * на каждом подключении, и движок на узел сделал бы подключение медленнее.
+ */
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun PingGroup(settings: com.resultv.android.vpn.SettingsState) {
+    HorizontalDivider(color = RvColor.whiteA10, modifier = Modifier.padding(vertical = RvSpace.nest3))
+    Column(
+        modifier = Modifier.padding(vertical = RvSpace.nest3),
+        verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
+        ) {
+            SettingIcon(Icons.Outlined.NetworkPing, RvCategory.Cyan)
+            Column {
+                Text(stringResource(R.string.settings_ping), style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    stringResource(R.string.settings_ping_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = RvColor.whiteA50,
+                )
+            }
+        }
+        androidx.compose.foundation.layout.FlowRow(
+            modifier = Modifier.padding(start = 50.dp),
+            horizontalArrangement = Arrangement.spacedBy(RvSpace.xs),
+            verticalArrangement = Arrangement.spacedBy(RvSpace.xs),
+        ) {
+            listOf(
+                "auto" to stringResource(R.string.settings_ping_type_auto),
+                "icmp" to stringResource(R.string.settings_ping_type_icmp),
+                "http_get" to stringResource(R.string.settings_ping_type_http_get),
+                "http_head" to stringResource(R.string.settings_ping_type_http_head),
+            ).forEach { (key, label) ->
+                FilterChip(
+                    selected = settings.pingType == key,
+                    onClick = { SettingsRepository.setPingType(key) },
+                    label = { Text(label) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = RvColor.Main.copy(alpha = 0.2f),
+                        selectedLabelColor = RvColor.Second,
+                    ),
+                )
+            }
+        }
+
+        // Адрес и бюджет показываются всегда, а не только под http-типами:
+        // бюджет действует и на ICMP, и пряча поле, мы бы прятали причину,
+        // по которой проба вернулась именно так.
+        var urlDraft by rememberSaveable(settings.pingTestUrl) { mutableStateOf(settings.pingTestUrl) }
+        val urlInvalid = urlDraft.isNotBlank() && !SettingsRepository.isValidPingTestUrl(urlDraft)
+        OutlinedTextField(
+            value = urlDraft,
+            onValueChange = {
+                urlDraft = it
+                if (it.isBlank() || SettingsRepository.isValidPingTestUrl(it)) {
+                    SettingsRepository.setPingTestUrl(it)
+                }
+            },
+            modifier = Modifier.fillMaxWidth().padding(start = 50.dp),
+            singleLine = true,
+            isError = urlInvalid,
+            label = { Text(stringResource(R.string.settings_ping_url)) },
+            supportingText = {
+                Text(
+                    stringResource(
+                        if (urlInvalid) R.string.settings_ping_url_invalid
+                        else R.string.settings_ping_url_subtitle
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (urlInvalid) RvColor.Errors else RvColor.whiteA50,
+                )
+            },
+        )
+
+        var timeoutDraft by rememberSaveable(settings.pingTimeoutSec) {
+            mutableStateOf(if (settings.pingTimeoutSec == 0) "" else settings.pingTimeoutSec.toString())
+        }
+        OutlinedTextField(
+            value = timeoutDraft,
+            onValueChange = { raw ->
+                timeoutDraft = raw.filter { ch -> ch.isDigit() }.take(2)
+                SettingsRepository.setPingTimeoutSec(SettingsRepository.normalizePingTimeoutSec(timeoutDraft))
+            },
+            modifier = Modifier.fillMaxWidth().padding(start = 50.dp),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            label = { Text(stringResource(R.string.settings_ping_timeout)) },
+            supportingText = {
+                Text(
+                    stringResource(R.string.settings_ping_timeout_subtitle),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = RvColor.whiteA50,
+                )
+            },
+        )
+    }
 }
 
 /**

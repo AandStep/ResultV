@@ -208,6 +208,13 @@ private fun offlineLabel(reason: String): String = stringResource(
         "network_unreachable", "no_route_to_host" -> R.string.ping_unreachable
         "connection_closed" -> R.string.ping_closed
         "error", "probe_error" -> R.string.ping_error
+        // Причины новых типов пробы. «Нет ICMP» — это про сокет, а не про
+        // узел: путать их значит отправить человека чинить не то.
+        "icmp_unavailable" -> R.string.ping_no_icmp
+        "unsupported_for_protocol" -> R.string.ping_not_applicable
+        "bad_test_url" -> R.string.ping_bad_url
+        "proxy_auth_required" -> R.string.ping_auth
+        "engine_start_failed", "engine_config_failed" -> R.string.ping_engine_failed
         else -> R.string.ping_unavailable
     }
 )
