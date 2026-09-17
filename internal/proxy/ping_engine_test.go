@@ -28,7 +28,7 @@ func pingProbeNode() ProxyConfig {
 // Конфиг пробы — это петлевой инбаунд, узел и ничего больше: всё лишнее в нём
 // мерилось бы вместе с узлом.
 func TestPingProbeConfigShape(t *testing.T) {
-	cfg, err := BuildPingProbeConfig(pingProbeNode(), 34567)
+	cfg, err := BuildPingProbeConfig(pingProbeNode(), 34567, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestPingProbeConfigRefusesWireGuard(t *testing.T) {
 			Extra: []byte(`{"private_key":"aAXFScHA5tAA9mUwp1aBDV9cAbHj1mSfwdc1ISTsbm8=",` +
 				`"public_key":"WpE32HIFCmunopfbfcuwwgOqdGxmuu04tdZmFQdTBTE=",` +
 				`"address":["10.0.0.2/32"],"allowed_ips":["0.0.0.0/0"]}`)}
-		if _, err := BuildPingProbeConfig(node, 34567); !errors.Is(err, errPingProbeUnsupported) {
+		if _, err := BuildPingProbeConfig(node, 34567, nil); !errors.Is(err, errPingProbeUnsupported) {
 			t.Errorf("%s: ожидался errPingProbeUnsupported, получено %v", pt, err)
 		}
 	}
@@ -79,7 +79,7 @@ func TestPingProbeConfigRefusesWireGuard(t *testing.T) {
 func TestPingProbeConfigResolvesNamedNode(t *testing.T) {
 	node := pingProbeNode()
 	node.IP = "node.example.com"
-	cfg, err := BuildPingProbeConfig(node, 34567)
+	cfg, err := BuildPingProbeConfig(node, 34567, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,10 +98,40 @@ func TestPingProbeConfigResolvesNamedNode(t *testing.T) {
 	assertCoreAcceptsConfig(t, cfg)
 }
 
+// Разрешённый адрес узла приходит в движок статической записью: своего
+// резолвера у пробы нет — платформенного интерфейса libbox у неё тоже.
+func TestPingProbeConfigPinsResolvedNode(t *testing.T) {
+	node := pingProbeNode()
+	node.IP = "node.example.com"
+	cfg, err := BuildPingProbeConfig(node, 34567, []string{"198.51.100.4"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DNS == nil || len(cfg.DNS.Servers) != 2 {
+		t.Fatalf("ожидались hosts + local, получено %+v", cfg.DNS)
+	}
+	hosts := cfg.DNS.Servers[0]
+	if hosts.Type != "hosts" || hosts.Predefined["node.example.com"][0] != "198.51.100.4" {
+		t.Errorf("статическая запись = %+v", hosts)
+	}
+	if len(cfg.DNS.Rules) != 1 || cfg.DNS.Rules[0].Server != hosts.Tag {
+		t.Errorf("правило не указывает на hosts: %+v", cfg.DNS.Rules)
+	}
+	// Правил мало: в 1.14 аутбаунд с названным резолвером идёт прямо в него и
+	// правил не смотрит вовсе. Пока это был "local", на телефоне каждый
+	// замер умирал на ::1:53 «connection refused», не дойдя до узла.
+	for _, o := range cfg.Outbounds {
+		if o.Tag == "proxy" && o.DomainResolver != hosts.Tag {
+			t.Errorf("аутбаунд смотрит в %q, а не в статическую запись", o.DomainResolver)
+		}
+	}
+	assertCoreAcceptsConfig(t, cfg)
+}
+
 // У узла с литеральным адресом резолвить нечего, и лишний DNS-блок был бы
 // ещё одной движущейся частью в замере.
 func TestPingProbeConfigSkipsDNSForLiteralNode(t *testing.T) {
-	cfg, err := BuildPingProbeConfig(pingProbeNode(), 34567)
+	cfg, err := BuildPingProbeConfig(pingProbeNode(), 34567, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

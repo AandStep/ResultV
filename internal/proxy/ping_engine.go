@@ -32,6 +32,10 @@ var errPingProbeUnsupported = errors.New("protocol carries no proxy outbound")
 // so the JSON is readable in a bug report.
 const pingProbeInboundTag = "ping-probe-in"
 
+// pingProbeHostsTag names the static record that answers the node's own name.
+const pingProbeHostsTag = "ping-probe-hosts"
+
+
 // BuildPingProbeConfig assembles the whole sing-box config for one throwaway
 // measurement: a loopback mixed inbound, the node's own outbound, nothing else.
 //
@@ -51,15 +55,29 @@ const pingProbeInboundTag = "ping-probe-in"
 //     process never enters the tunnel and there is nothing to pin. Adding the
 //     field to SBOutbound just to pass an always-empty value would be dead
 //     weight in the config every node builds.
-//   - No pinned-IP DNS record. The desktop needs one because its own resolver
-//     is unusable during a session; ours is not, for the same reason as above,
-//     so a name-addressed node is resolved by the plain local server.
-func BuildPingProbeConfig(proxy ProxyConfig, listenPort int) (SingBoxConfig, error) {
+//   - A different reason for the pinned-IP DNS record. The desktop needs one
+//     because its own resolver is unusable during a session. Ours needs one
+//     because the throwaway engine has no platform interface: the real engine
+//     resolves through libbox's LocalDNSTransport, which Kotlin implements,
+//     and a "local" server without it has nothing to read — Android has no
+//     /etc/resolv.conf. So the caller resolves the node's name with the Go
+//     resolver (which does work here, same as the WireGuard handshake probe)
+//     and hands the answer in as nodeIPs.
+func BuildPingProbeConfig(proxy ProxyConfig, listenPort int, nodeIPs []string) (SingBoxConfig, error) {
 	// A name-addressed node needs someone to resolve it; a literal one needs
 	// nobody, and serverDomainResolverTag says which case this is by returning
-	// an empty tag. Tunnel mode is asked for deliberately: it is the mode whose
-	// answer is the plain "local" server, which is exactly what the probe has.
+	// an empty tag.
+	//
+	// When the caller already resolved the name, the outbound is pointed
+	// straight at the static record. Naming a server matters in 1.14: an
+	// outbound with domain_resolver set goes to THAT server and never consults
+	// the DNS rules, so leaving it on "local" sent every lookup to a resolver
+	// the probe does not have — on the phone that is ::1:53, and the engine
+	// answered "connection refused" before it ever dialled the node.
 	resolverTag := serverDomainResolverTag(proxy, ProxyModeTunnel, nil)
+	if resolverTag != "" && len(nodeIPs) > 0 {
+		resolverTag = pingProbeHostsTag
+	}
 	outbounds := buildOutbounds(proxy, resolverTag)
 	found := false
 	for i := range outbounds {
@@ -84,9 +102,23 @@ func BuildPingProbeConfig(proxy ProxyConfig, listenPort int) (SingBoxConfig, err
 	// domain strategy sing-box hands the name to the outbound and the node
 	// resolves it. The only name needing an answer is the node's own.
 	if proxy.IP != "" && net.ParseIP(proxy.IP) == nil {
-		cfg.DNS = &SBDNS{
-			Servers: []SBDNSServer{{Type: "local", Tag: "local"}},
-			Final:   "local",
+		if len(nodeIPs) > 0 {
+			cfg.DNS = &SBDNS{
+				Servers: []SBDNSServer{
+					{Type: "hosts", Tag: pingProbeHostsTag, Predefined: map[string][]string{proxy.IP: nodeIPs}},
+					{Type: "local", Tag: "local"},
+				},
+				Rules: []SBDNSRule{{Domain: []string{proxy.IP}, Server: pingProbeHostsTag}},
+				Final: "local",
+			}
+		} else {
+			// Nothing resolved: leave the local server so the config stays
+			// valid, and let the dial fail with its own reason rather than
+			// inventing one here.
+			cfg.DNS = &SBDNS{
+				Servers: []SBDNSServer{{Type: "local", Tag: "local"}},
+				Final:   "local",
+			}
 		}
 	}
 
@@ -106,7 +138,8 @@ const pingProbeEngineCeiling = 5 * time.Second
 const pingEngineMaxConcurrency = 4
 
 // pingEngineSem admits probe engines. Package-level rather than per-caller
-// because the cost it protects — memory and sockets — is the process's.
+// because the cost it protects — memory and sockets — is the process's. Taken
+// by pingViaNode before the measurement budget starts.
 var pingEngineSem = make(chan struct{}, pingEngineMaxConcurrency)
 
 // classifyPingFetch turns one HTTP attempt into a verdict.
@@ -130,22 +163,17 @@ func classifyPingFetch(resp *http.Response, err error) (bool, string) {
 
 // pingThroughNode measures how long the node takes to deliver testURL.
 //
+// It does NOT take the engine seat: the caller does that first, because a
+// budget that counts queue time reports a false timeout for every node that
+// merely waited its turn (see pingViaNode).
+//
 // The clock covers the node handshake, the CONNECT, the TLS session to the
 // target and the wait for response headers — everything the user is actually
 // waiting on. Starting the engine is NOT in the figure: that is our cost, not
 // the node's.
 func pingThroughNode(ctx context.Context, proxy ProxyConfig, method, testURL string) (latencyMs int64, reachable bool, reason string) {
-	// The seat is taken before the config is built and held until the instance
-	// is gone, so the ceiling counts live engines rather than callers.
-	select {
-	case pingEngineSem <- struct{}{}:
-		defer func() { <-pingEngineSem }()
-	case <-ctx.Done():
-		return 0, false, "timeout"
-	}
-
 	port := getFreeLocalPort(0)
-	cfg, err := BuildPingProbeConfig(proxy, port)
+	cfg, err := BuildPingProbeConfig(proxy, port, resolveProbeNodeIPs(ctx, proxy.IP))
 	if err != nil {
 		if errors.Is(err, errPingProbeUnsupported) {
 			return 0, false, "unsupported_for_protocol"
@@ -240,3 +268,31 @@ func closePingProbeBounded(instance *box.Box) {
 	case <-time.After(pingProbeEngineCeiling):
 	}
 }
+
+// resolveProbeNodeIPs answers the node's own name for the probe engine.
+//
+// The engine cannot do it itself: it has no platform interface, so its "local"
+// DNS server has nothing to read on Android. This process can — the Go
+// resolver goes through the system one here, the same way the WireGuard
+// handshake probe resolves its endpoint. An empty answer is not an error: the
+// caller still builds a config, and the dial then fails with a real reason.
+func resolveProbeNodeIPs(ctx context.Context, host string) []string {
+	if host == "" || net.ParseIP(host) != nil {
+		return nil
+	}
+	resolveCtx, cancel := context.WithTimeout(ctx, pingProbeResolveCeiling)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupNetIP(resolveCtx, "ip", host)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(addrs))
+	for _, a := range addrs {
+		out = append(out, a.Unmap().String())
+	}
+	return out
+}
+
+// pingProbeResolveCeiling bounds the name lookup so a silent resolver cannot
+// eat the whole measurement budget before the node is even dialled.
+const pingProbeResolveCeiling = 2 * time.Second

@@ -159,3 +159,41 @@ func TestPingNodeKeyedWGGate(t *testing.T) {
 		t.Errorf("при запрещённой keyed-пробе получено (%d, %v, %q)", ms, ok, checkType)
 	}
 }
+
+// Очередь за движком не должна считаться частью замера. Иначе на списке из
+// тридцати узлов двенадцать из шестнадцати работников получают «Таймаут», ни
+// разу не сходив в сеть, — ровно это и случилось на телефоне, пока место в
+// семафоре бралось внутри бюджета.
+func TestPingNodeDoesNotSpendBudgetQueueing(t *testing.T) {
+	origProbe := pingThroughNodeProbe
+	defer func() { pingThroughNodeProbe = origProbe }()
+	pingThroughNodeProbe = func(context.Context, ProxyConfig, string, string) (int64, bool, string) {
+		return 55, true, ""
+	}
+
+	// Занять все места и освободить одно позже, чем «бюджет» одного замера.
+	for i := 0; i < pingEngineMaxConcurrency; i++ {
+		pingEngineSem <- struct{}{}
+	}
+	freed := make(chan struct{})
+	go func() {
+		time.Sleep(250 * time.Millisecond)
+		<-pingEngineSem
+		close(freed)
+	}()
+	defer func() {
+		<-freed
+		for len(pingEngineSem) > 0 {
+			<-pingEngineSem
+		}
+	}()
+
+	ms, ok, reason, _ := PingNode(
+		pingDispatchEntry(t, "VLESS"),
+		PingOptions{Type: config.PingTypeHTTPGet, TestURL: config.DefaultPingTestURL, Timeout: 100 * time.Millisecond},
+		true,
+	)
+	if !ok || ms != 55 || reason != "" {
+		t.Errorf("ожидание очереди съело бюджет: (%d, %v, %q)", ms, ok, reason)
+	}
+}

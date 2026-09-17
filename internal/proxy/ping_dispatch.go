@@ -76,6 +76,13 @@ func pingViaNode(entry config.ProxyEntry, method, testURL string, timeout time.D
 		// so beats silently measuring something else.
 		return 0, false, "bad_test_url", pingCheckTypeFor(method)
 	}
+	// Место в очереди берётся ДО бюджета. Считать ожидание очереди частью
+	// замера — значит показать ложный «Таймаут» каждому узлу, который всего
+	// лишь дождался своей очереди: список пингуется шестнадцатью работниками,
+	// а движков одновременно живёт четыре.
+	pingEngineSem <- struct{}{}
+	defer func() { <-pingEngineSem }()
+
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	ms, ok, reason := pingThroughNodeProbe(ctx, proxyConfigFromEntry(entry), method, url)
