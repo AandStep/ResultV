@@ -2031,36 +2031,33 @@ func adaptiveSmartActive(opts BuildOptions) bool {
 эту границу:
 
 ```go
-// Правило реле стоит ПОСЛЕ Smart-списка и правил ad-block. Встань оно раньше —
-// реле проглотило бы и список, и режущие правила, то есть отменило бы обе
-// работающие фичи разом.
-func TestAdaptiveSmart_RelayRuleComesAfterBuiltInRules(t *testing.T) {
+// Правило реле обязано быть ПОСЛЕДНИМ в списке. Встань оно раньше Smart-списка
+// или правил ad-block — проглотило бы и список, и режущие правила, то есть
+// отменило бы обе работающие фичи разом.
+//
+// Проверяется именно «последнее», а не «позже вон того»: сравнение с
+// конкретным правилом проходит вхолостую, когда этого правила в конфиге нет
+// (скомпилированного Smart-списка в t.TempDir() заведомо нет), и тест зеленеет,
+// ничего не доказав.
+func TestAdaptiveSmart_RelayRuleIsLast(t *testing.T) {
 	opts := smartOpts()
 	opts.BlockedDomains = "ads.example"
 	cfg := buildAdaptive(t, opts)
 
-	relayIdx, lastBuiltIn := -1, -1
-	for i, r := range cfg.Route.Rules {
-		if r.Outbound == "smart-relay" {
-			relayIdx = i
-		}
-		if r.Action == "reject" || r.Outbound == "proxy" {
-			if i > lastBuiltIn {
-				lastBuiltIn = i
-			}
-		}
+	if len(cfg.Route.Rules) == 0 {
+		t.Fatal("правил нет вовсе")
 	}
-	if relayIdx < 0 {
-		t.Fatalf("правила реле нет: %+v", cfg.Route.Rules)
+	last := cfg.Route.Rules[len(cfg.Route.Rules)-1]
+	if last.Outbound != "smart-relay" {
+		t.Fatalf("последнее правило уходит в %q, ожидался smart-relay; всё: %+v", last.Outbound, cfg.Route.Rules)
 	}
-	if relayIdx < lastBuiltIn {
-		t.Fatalf("реле на позиции %d, а встроенное правило на %d — реле проглотит его", relayIdx, lastBuiltIn)
+	// И сразу перед ним — выученные «прямые»: их решает правило, а не реле.
+	prev := cfg.Route.Rules[len(cfg.Route.Rules)-2]
+	if len(prev.RuleSet) != 1 || prev.RuleSet[0] != "verdict-direct" {
+		t.Fatalf("перед реле стоит %+v, ожидалось правило verdict-direct", prev)
 	}
 }
 ```
-
-Для этого добавить в `adaptiveSmartView` поле `Action` (оно уже есть) и
-убедиться, что `BuildOptions` в тесте заполняется `BlockedDomains`.
 
 - [ ] **Шаг 8: тесты зелёные в обеих конфигурациях**
 
