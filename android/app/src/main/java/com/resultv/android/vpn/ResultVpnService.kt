@@ -547,7 +547,16 @@ class ResultVpnService : VpnService() {
             // Box first — see the ACTION_STOP comment: closing the box drops
             // the tun (and its setHttpProxy) before the MITM proxy goes away.
             BoxModule.stop()
-            mobile.Mobile.stopAdaptiveSmart()
+            // Реле переживает перезагрузку намеренно, в отличие от движка.
+            // triggerReload доходит сюда через stopSelf(), и при включённом
+            // подтумблере «только в памяти» остановка стёрла бы всё выученное
+            // — а перезагрузку дёргают готовность списков и кил-свитч, то есть
+            // на нестабильной сети она частая. Новый экземпляр всё равно зовёт
+            // startAdaptiveSmart, и тот идемпотентен; а если человек выключил
+            // тумблер, startAdaptiveSmartIfEnabled погасит реле сам.
+            if (!reloadInProgress) {
+                mobile.Mobile.stopAdaptiveSmart()
+            }
             mobile.Mobile.stopFilterProxy()
         }
         worker.shutdown()
