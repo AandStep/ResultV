@@ -361,6 +361,7 @@
     <string name="log_traffic_stats_failed">Статистика трафика в этом сеансе недоступна: %1$s</string>
     <string name="log_auto_selected">AUTO: выбран %1$s (%2$s)</string>
     <string name="log_auto_failover">AUTO: узел недоступен, пробуем %1$s</string>
+    <string name="log_adaptive_smart_failed">Адаптивный Smart включён, но реле не поднялось: %1$s. Маршрутизация прежняя, новое не выучится.</string>
 
     <!-- Subscription refresh and deep-link import logging -->
     <string name="log_sub_refreshed">Подписка \'%1$s\' обновлена: %2$d серверов.</string>

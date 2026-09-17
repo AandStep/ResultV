@@ -64,6 +64,14 @@ data class SettingsState(
     val pingTestUrl: String = "",
     /** Бюджет одного замера, 1..10 секунд; 0 — значение по умолчанию (3). */
     val pingTimeoutSec: Int = 0,
+    /**
+     * Адаптивный Smart: движок сам узнаёт, какие сайты не открываются напрямую,
+     * разыгрывая прямой путь против туннеля в loopback-реле и запоминая исход.
+     * Работает только в Smart-режиме — в Global весь трафик и так в туннеле.
+     */
+    val adaptiveSmart: Boolean = false,
+    /** Выученное не переживает перезапуск. */
+    val adaptiveSmartMemoryOnly: Boolean = false,
     /** Auto-refresh subscriptions on the timer. */
     val subscriptionAutoUpdate: Boolean = true,
     /** Hours between auto-refresh cycles when [subscriptionAutoUpdate] is on. */
@@ -98,6 +106,8 @@ object SettingsRepository {
     private const val K_PING_TYPE = "ping_type"
     private const val K_PING_TEST_URL = "ping_test_url"
     private const val K_PING_TIMEOUT = "ping_timeout_sec"
+    private const val K_ADAPTIVE_SMART = "adaptive_smart"
+    private const val K_ADAPTIVE_SMART_MEMORY = "adaptive_smart_memory_only"
     private const val K_SUB_AUTO = "sub_auto_update"
     private const val K_SUB_INTERVAL = "sub_update_interval_hours"
     private const val K_SUB_HWID = "sub_send_hwid"
@@ -154,6 +164,8 @@ object SettingsRepository {
             pingType = prefs.getString(K_PING_TYPE, "auto") ?: "auto",
             pingTestUrl = prefs.getString(K_PING_TEST_URL, "") ?: "",
             pingTimeoutSec = prefs.getInt(K_PING_TIMEOUT, 0),
+            adaptiveSmart = prefs.getBoolean(K_ADAPTIVE_SMART, false),
+            adaptiveSmartMemoryOnly = prefs.getBoolean(K_ADAPTIVE_SMART_MEMORY, false),
             subscriptionAutoUpdate = prefs.getBoolean(K_SUB_AUTO, true),
             subscriptionUpdateIntervalHours = prefs.getInt(K_SUB_INTERVAL, 6).coerceAtLeast(1),
             subscriptionSendHwid = prefs.getBoolean(K_SUB_HWID, true),
@@ -192,6 +204,16 @@ object SettingsRepository {
     fun setIpv6(enabled: Boolean) = mutate {
         prefs.edit().putBoolean(K_IPV6, enabled).apply()
         it.copy(ipv6 = enabled)
+    }
+
+    fun setAdaptiveSmart(enabled: Boolean) = mutate {
+        prefs.edit().putBoolean(K_ADAPTIVE_SMART, enabled).apply()
+        it.copy(adaptiveSmart = enabled)
+    }
+
+    fun setAdaptiveSmartMemoryOnly(enabled: Boolean) = mutate {
+        prefs.edit().putBoolean(K_ADAPTIVE_SMART_MEMORY, enabled).apply()
+        it.copy(adaptiveSmartMemoryOnly = enabled)
     }
 
     fun setBypassLan(enabled: Boolean) = mutate {

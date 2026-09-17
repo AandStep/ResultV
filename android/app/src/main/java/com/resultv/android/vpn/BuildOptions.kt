@@ -67,6 +67,11 @@ internal object BuildOptionsBuilder {
             // redirects browser traffic from the in-tunnel proxy address into
             // the MITM. Same value we hand to StartFilterProxy.
             .put("browserAdBlockPort", BROWSER_ADBLOCK_PORT)
+            // Адаптивный Smart. Тот же флаг поднимает реле в
+            // ResultVpnService: конфиг с аутбаундом, за которым никто не
+            // слушает, проглотит весь трафик, не покрытый другими правилами.
+            .put("adaptiveSmart", settings.adaptiveSmart)
+            .put("adaptiveSmartMemoryOnly", settings.adaptiveSmartMemoryOnly)
             // Kill switch: armed whenever the user enabled it; panic only while
             // the watchdog has engaged (proxy down).
             .put("killSwitchArmed", settings.killSwitch)

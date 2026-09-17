@@ -396,6 +396,7 @@
     <string name="log_traffic_stats_failed">Traffic statistics unavailable this session: %1$s</string>
     <string name="log_auto_selected">AUTO: selected %1$s (%2$s)</string>
     <string name="log_auto_failover">AUTO: node unavailable, trying %1$s</string>
+    <string name="log_adaptive_smart_failed">Adaptive Smart is on, but its relay did not start: %1$s. Routing is unchanged; nothing new will be learned.</string>
 
     <!-- Subscription refresh and deep-link import logging -->
     <string name="log_sub_refreshed">Subscription \'%1$s\' updated: %2$d servers.</string>

@@ -311,6 +311,10 @@ class ResultVpnService : VpnService() {
             // openTun during start() must see filterProxyRunning=false
             // (browser ad-block attaches after, off the critical path).
             BoxModule.filterProxyRunning = false
+            // Реле адаптивного Smart поднимается ДО движка: конфиг уже
+            // содержит аутбаунд, который в него смотрит, и первый же
+            // незнакомый хост пошёл бы в никуда.
+            startAdaptiveSmartIfEnabled()
             BoxModule.start(this@ResultVpnService, config)
             val connectedAt = System.currentTimeMillis()
             // Real end-to-end success — the strongest signal the node ranking
@@ -363,6 +367,35 @@ class ResultVpnService : VpnService() {
             closeTun()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
+        }
+    }
+
+    /**
+     * Поднять реле адаптивного Smart, если тумблер включён.
+     *
+     * Срыв не фатален и не отменяет подключение: движок в этом случае просто
+     * не научится ничему новому. Но молчать нельзя — иначе «фича включена, а
+     * ничего не происходит» будет выглядеть как поломка маршрутизации.
+     */
+    private fun startAdaptiveSmartIfEnabled() {
+        val settings = SettingsRepository.state.value
+        if (!settings.adaptiveSmart) {
+            mobile.Mobile.stopAdaptiveSmart()
+            return
+        }
+        try {
+            mobile.Mobile.startAdaptiveSmart(
+                filesDir.absolutePath,
+                settings.adaptiveSmartMemoryOnly,
+            )
+            Log.i(TAG, "adaptive smart relay started")
+        } catch (t: Throwable) {
+            Log.w(TAG, "adaptive smart relay failed", t)
+            AppLog.warning(
+                R.string.log_adaptive_smart_failed,
+                t.message ?: t.javaClass.simpleName,
+                source = AppLog.resolve(R.string.log_source_proxy),
+            )
         }
     }
 
@@ -487,6 +520,7 @@ class ResultVpnService : VpnService() {
             // Same order as ACTION_STOP: box first (drops the tun + its
             // setHttpProxy), then the MITM proxy.
             BoxModule.stop()
+            mobile.Mobile.stopAdaptiveSmart()
             mobile.Mobile.stopFilterProxy()
         }
         postReconnectPromptNotification()
@@ -513,6 +547,7 @@ class ResultVpnService : VpnService() {
             // Box first — see the ACTION_STOP comment: closing the box drops
             // the tun (and its setHttpProxy) before the MITM proxy goes away.
             BoxModule.stop()
+            mobile.Mobile.stopAdaptiveSmart()
             mobile.Mobile.stopFilterProxy()
         }
         worker.shutdown()
