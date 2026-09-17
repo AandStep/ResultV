@@ -581,15 +581,27 @@ func BuildTunnelModeConfig(cfg EngineConfig) SingBoxConfig {
 		strictRoute = false
 	}
 
+	// Адрес узла исключается из TUN для ЛЮБОГО протокола, включая WireGuard и
+	// AmneziaWG. Раньше они были вычтены из этого правила, и на ядре 1.14 это
+	// клало туннель: без исключения собственный UDP узла входит в TUN и
+	// выпускается обратно правилом, совпадающим с адресом сервера, — ядро
+	// говорит это прямым текстом, "inbound packet connection to <server>:...",
+	// — так что каждый байт пересекает инбаунд дважды: как полезная нагрузка и
+	// как несущий её зашифрованный пакет. На 1.13 это лишь тратило работу;
+	// sing-tun 0.9 перестроил обе таблицы NAT и поставил диспетчер потоков
+	// перед каждым пакетом, и та же петля теперь душит сессию.
+	//
+	// Цена у исключения есть: узел, который CDN увёл бы на бэкенд вне
+	// известного адреса, отправил бы своё рукопожатие в туннель, который сам же
+	// и поднимает. Этот риск идентичен для всех остальных протоколов здесь, и
+	// они живут с этим исключением давно.
 	var routeExclude []string
-	if pt != "WIREGUARD" && pt != "AMNEZIAWG" {
-		if serverIP := net.ParseIP(cfg.Proxy.IP); serverIP != nil {
-			cidr := cfg.Proxy.IP + "/32"
-			if serverIP.To4() == nil {
-				cidr = cfg.Proxy.IP + "/128"
-			}
-			routeExclude = append(routeExclude, cidr)
+	if serverIP := net.ParseIP(cfg.Proxy.IP); serverIP != nil {
+		cidr := cfg.Proxy.IP + "/32"
+		if serverIP.To4() == nil {
+			cidr = cfg.Proxy.IP + "/128"
 		}
+		routeExclude = append(routeExclude, cidr)
 	}
 
 	dd := effectiveDataDir(cfg)
