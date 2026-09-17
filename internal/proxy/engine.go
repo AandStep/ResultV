@@ -189,6 +189,18 @@ type SBDNSServer struct {
 	ServerPort      int    `json:"server_port,omitempty"`
 	Detour          string `json:"detour,omitempty"`
 
+	// Servers/Strategy/Timeout настраивают сервер типа "fallback": своего
+	// адреса у него нет, только теги серверов, которые пробуются по порядку,
+	// каждый в границах Timeout. См. tunnelDNSResolver.
+	Servers  []string `json:"servers,omitempty"`
+	Strategy string   `json:"strategy,omitempty"`
+	Timeout  string   `json:"timeout,omitempty"`
+
+	// throughDetour помечает fallback-обёртку, все ноги которой идут через
+	// этот детур. Никогда не сериализуется — ядро добирается до ног по тегам, —
+	// нужен для того, чтобы поиск по детуру называл обёртку, а не одну из ног.
+	throughDetour string `json:"-"`
+
 	// DomainResolver поднимает резолвер, который сам адресован именем. Без
 	// детура, за которым можно спрятаться, sing-box 1.14 отказывается строить
 	// для такого сервера дайлер вообще — "missing domain resolver for domain
@@ -776,6 +788,43 @@ func smartRuleSetActive(cfg EngineConfig) bool {
 	return cfg.SmartMode && localSmartSRSUsable(SmartSRSPath(effectiveDataDir(cfg)))
 }
 
+// tunnelDNSResolver эмитит серверы, несущие один резолвер через туннель: DoH
+// первым, обычный DNS-over-TCP вторым и обёртку "fallback", на которую
+// указывают правила.
+//
+// Раньше это был один сервер DNS-over-TCP, и на ядре 1.14 он перестал отвечать.
+// sing-box 1.14 поставил мультиплексор запросов (dns/transport/multiplexer.go)
+// перед транспортами tcp, tls и udp: как только фоновая проба решает, что
+// резолвер поддерживает переиспользование, все запросы переезжают на одно общее
+// долгоживущее соединение, чья проверка живости — `conn != nil`. Через
+// прокси-аутбаунд это соединение заклинивает: запросы уходят и не возвращаются
+// — ни ответа, ни ошибки, ни строчки «lookup failed», — пока движок не
+// остановят.
+//
+// Транспорт https — единственный удалённый, которого мультиплексор не касается,
+// поэтому DoH идёт первым. Нога tcp остаётся, а не удаляется: у резолвера, не
+// умеющего DoH, иначе не было бы пути вовсе. Обёртка ограничивает каждую ногу
+// таймаутом, так что даже заклинившая нога стоит одного таймаута, а не вечного
+// ожидания.
+//
+// port относится только к ноге tcp. DoH — это HTTPS, ему нужен 443, поэтому
+// резолвер, прибитый к нестандартному порту DNS, сохраняет этот порт на ноге
+// tcp, пока DoH пробует стандартный и, не преуспев, передаёт ход.
+func tunnelDNSResolver(tag, server string, port int, detour string) []SBDNSServer {
+	return []SBDNSServer{
+		{Type: "https", Tag: tag + "-doh", Server: server, Detour: detour},
+		{Type: "tcp", Tag: tag + "-tcp", Server: server, ServerPort: port, Detour: detour},
+		{
+			Type:          "fallback",
+			Tag:           tag,
+			Servers:       []string{tag + "-doh", tag + "-tcp"},
+			Strategy:      "sequential",
+			Timeout:       "5s",
+			throughDetour: detour,
+		},
+	}
+}
+
 func buildDNS(cfg EngineConfig) *SBDNS {
 	if cfg.Mode == ProxyModeTunnel {
 
@@ -801,28 +850,20 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 				if server == "" {
 					continue
 				}
-				srvType := "udp"
-				if detour != "" {
-					srvType = "tcp"
-				}
-				servers = append(servers, SBDNSServer{
-					Type:       srvType,
-					Tag:        fmt.Sprintf("custom-%d", i+1),
-					Server:     server,
-					ServerPort: port,
-					Detour:     detour,
-				})
+				servers = append(servers,
+					tunnelDNSResolver(fmt.Sprintf("custom-%d", i+1), server, port, detour)...)
 			}
 			servers = append(servers, SBDNSServer{Type: "local", Tag: "local"})
 		} else {
 			if detour != "" {
-				servers = []SBDNSServer{
-					{Type: "tcp", Tag: "google-tcp", Server: "8.8.8.8", Detour: detour},
-					{Type: "tcp", Tag: "cloudflare-tcp", Server: "1.1.1.1", Detour: detour},
-					{Type: "tls", Tag: "google-tls", Server: "8.8.8.8", Detour: detour},
-					{Type: "tls", Tag: "cloudflare-tls", Server: "1.1.1.1", Detour: detour},
-					{Type: "local", Tag: "local"},
-				}
+				// Серверы type: tls отсюда убраны вместе с голым tcp: tls —
+				// тот же мультиплексируемый транспорт, и после появления ноги
+				// DoH он не добавляет пути, только ещё одно место, где запрос
+				// может замолчать.
+				servers = nil
+				servers = append(servers, tunnelDNSResolver("google", "8.8.8.8", 0, detour)...)
+				servers = append(servers, tunnelDNSResolver("cloudflare", "1.1.1.1", 0, detour)...)
+				servers = append(servers, SBDNSServer{Type: "local", Tag: "local"})
 			} else {
 				servers = []SBDNSServer{
 					{Type: "udp", Tag: "udp", Server: "8.8.8.8", Detour: detour},
@@ -987,7 +1028,17 @@ func splitDNSServer(raw string) (string, int) {
 // firstUpstreamDNSTag returns the tag of the first non-local resolver in a
 // tunnel-mode DNS server list. Used to route ad-block bypass domains through
 // a real upstream before the reject rule fires.
+// firstUpstreamDNSTag называет сервер, на который указывают правила,
+// отправляющие домен «вверх по течению». Обёртка fallback предпочитается её
+// ногам: нога — это один транспорт из двух, и правило, указавшее на неё,
+// потеряло бы второй. Откат на первый нелокальный сервер сохранён для
+// конфигураций, где обёртки нет вовсе.
 func firstUpstreamDNSTag(servers []SBDNSServer) string {
+	for _, s := range servers {
+		if s.Type == "fallback" && s.Tag != "" {
+			return s.Tag
+		}
+	}
 	for _, s := range servers {
 		if s.Type != "local" && s.Tag != "" {
 			return s.Tag

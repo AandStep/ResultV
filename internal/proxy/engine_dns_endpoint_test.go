@@ -36,14 +36,12 @@ func TestEndpointDNSGoesThroughTheTunnel(t *testing.T) {
 				DataDir:   t.TempDir(),
 				IsAndroid: true,
 			})
+			byTag := serversByTag(dns.Servers)
 			for _, s := range dns.Servers {
 				if s.Tag == "local" {
 					continue // bootstrap resolver, direct on purpose
 				}
-				if s.Detour != "proxy" {
-					t.Fatalf("DNS server %q (type %s) must be dialled through the tunnel, got detour=%q",
-						s.Tag, s.Type, s.Detour)
-				}
+				assertDialsThroughTunnel(t, byTag, s)
 			}
 		})
 	}
@@ -79,13 +77,12 @@ func TestEndpointCustomDNSGoesThroughTheTunnel(t *testing.T) {
 		IsAndroid:  true,
 		DNSServers: []string{"9.9.9.9"},
 	})
+	byTag := serversByTag(dns.Servers)
 	for _, s := range dns.Servers {
 		if s.Tag == "local" {
 			continue
 		}
-		if s.Detour != "proxy" {
-			t.Fatalf("custom DNS server %q must be dialled through the tunnel, got detour=%q", s.Tag, s.Detour)
-		}
+		assertDialsThroughTunnel(t, byTag, s)
 	}
 }
 
@@ -107,4 +104,44 @@ func TestEndpointServerHostnameResolvesLocally(t *testing.T) {
 		}
 	}
 	t.Fatal("the endpoint's own hostname must resolve through the bootstrap resolver, else the tunnel can never dial its peer")
+}
+
+// serversByTag индексирует список для проверки ног fallback-обёртки.
+func serversByTag(servers []SBDNSServer) map[string]SBDNSServer {
+	byTag := make(map[string]SBDNSServer, len(servers))
+	for _, s := range servers {
+		byTag[s.Tag] = s
+	}
+	return byTag
+}
+
+// assertDialsThroughTunnel требует детур от сервера, который набирает сам, и
+// разворачивает fallback-обёртку до её ног.
+//
+// У обёртки детур пуст намеренно: своего адреса у неё нет, она не набирает
+// ничего, ядро добирается до членов по тегу. Требование «через туннель»
+// относится к ногам, и здесь оно с них и спрашивается — то есть проверка после
+// перехода на DoH стала строже, а не слабее.
+func assertDialsThroughTunnel(t *testing.T, byTag map[string]SBDNSServer, s SBDNSServer) {
+	t.Helper()
+	if s.Type == "fallback" {
+		if len(s.Servers) == 0 {
+			t.Fatalf("fallback %q без ног — направлять запросы некуда", s.Tag)
+		}
+		for _, legTag := range s.Servers {
+			leg, ok := byTag[legTag]
+			if !ok {
+				t.Fatalf("fallback %q ссылается на незарегистрированный сервер %q", s.Tag, legTag)
+			}
+			if leg.Detour != "proxy" {
+				t.Fatalf("нога %q обёртки %q должна набираться через туннель, получено detour=%q",
+					legTag, s.Tag, leg.Detour)
+			}
+		}
+		return
+	}
+	if s.Detour != "proxy" {
+		t.Fatalf("DNS server %q (type %s) must be dialled through the tunnel, got detour=%q",
+			s.Tag, s.Type, s.Detour)
+	}
 }
