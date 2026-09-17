@@ -516,7 +516,12 @@ type SBRouteRuleSet struct {
 }
 
 type SBRouteRule struct {
-	Protocol         []string `json:"protocol,omitempty"`
+	Protocol []string `json:"protocol,omitempty"`
+	// Inbound матчит по тегу инбаунда, через который соединение вошло.
+	// Нужно ровно одному правилу — тому, что выводит туннельную ногу реле
+	// прямо в proxy: без него нога попала бы под общее правило «остальное в
+	// реле» и соединение закольцевалось бы само на себя.
+	Inbound          []string `json:"inbound,omitempty"`
 	Network          []string `json:"network,omitempty"`
 	Port             []int    `json:"port,omitempty"`
 	Domain           []string `json:"domain,omitempty"`

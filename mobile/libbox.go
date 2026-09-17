@@ -48,6 +48,19 @@ import (
 // BROWSER_ADBLOCK_PORT (8130, the MITM HTTP proxy the browser points at).
 const BrowserAdBlockSocksPort = 18130
 
+// SmartRaceInboundPort — loopback-инбаунд, через который туннельная нога реле
+// входит обратно в движок. Отдельный от BrowserAdBlockSocksPort намеренно:
+// трафик того инбаунда маршрутизируется обычными правилами (так задумано для
+// MITM), а нога обязана уходить в proxy безусловно — иначе она вернулась бы в
+// реле и соединение закольцевалось.
+//
+// Он же служит проберу половиной «через узел»: тип mixed отвечает и на SOCKS5,
+// и на HTTP CONNECT.
+const SmartRaceInboundPort = 18131
+
+// SmartRelayPort — порт самого реле. Сюда смотрит аутбаунд smart-relay.
+const SmartRelayPort = 18132
+
 // mobileTunIPv4 is the TUN interface prefix every mobile config is built with.
 // A /30 leaves exactly one other host address, browserAdBlockProxyHost.
 const mobileTunIPv4 = "172.19.0.1/30"
@@ -827,6 +840,18 @@ type BuildOptions struct {
 	// traffic from browserAdBlockProxyHost into the MITM. Zero means
 	// defaultBrowserAdBlockPort.
 	BrowserAdBlockPort int `json:"browserAdBlockPort,omitempty"`
+	// AdaptiveSmart включает обучение: всё, о чём вердикта ещё нет, уходит в
+	// loopback-реле, где прямой путь разыгрывается против туннеля, а исход
+	// запоминается. Работает только вместе со SmartMode — в Global весь
+	// трафик и так в туннеле, и разыгрывать нечего.
+	//
+	// Kotlin обязан поднять реле (Mobile.StartAdaptiveSmart) на том же флаге:
+	// конфиг с аутбаундом, за которым никто не слушает, глушит весь трафик,
+	// не покрытый другими правилами.
+	AdaptiveSmart bool `json:"adaptiveSmart,omitempty"`
+	// AdaptiveSmartMemoryOnly не даёт выученному пережить перезапуск. Пустой
+	// скелет rule-set всё равно пишется: без файла по пути ядро не стартует.
+	AdaptiveSmartMemoryOnly bool `json:"adaptiveSmartMemoryOnly,omitempty"`
 	// KillSwitchArmed wraps the proxy outbound in a single-member urltest
 	// group ("ks-test") and points route.final at it so the Android
 	// KillSwitchWatchdog can health-probe the proxy from inside the engine.
@@ -1004,6 +1029,22 @@ func splitDomainRuleCSV(raw string) []string {
 // sing-box only resolves the owner if some rule asks for it.
 func buildUserRules(opts BuildOptions) []proxy.SBRouteRule {
 	var rules []proxy.SBRouteRule
+	// Туннельная нога реле — первой строкой. Она входит своим инбаундом и
+	// обязана уйти в proxy безусловно: попади она под «остальное в реле»,
+	// соединение закольцевалось бы на себя и страница просто не открылась бы.
+	//
+	// Перед правилами блокировок она стоит намеренно: исходное соединение уже
+	// прошло их до того, как попало в реле, и проверять второй раз нечего.
+	//
+	// Прямой ноги здесь нет и быть не может: она дозванивается из процесса
+	// приложения, исключённого из своего VPN, и в TUN не заходит вовсе.
+	if adaptiveSmartActive(opts) {
+		rules = append(rules, proxy.SBRouteRule{
+			Inbound:  []string{"smart-race-in"},
+			Action:   "route",
+			Outbound: "proxy",
+		})
+	}
 	if apps := splitRuleCSV(opts.BlockedApps); len(apps) > 0 {
 		rules = append(rules, proxy.SBRouteRule{Action: "reject", PackageName: apps})
 	}
@@ -1493,6 +1534,12 @@ func applyKillSwitch(sb *proxy.SingBoxConfig, armed, panicMode bool) {
 	// the group to be route.final.
 }
 
+// adaptiveSmartActive — единственное место, где решается, жива ли фича.
+// Smart-режим обязателен: в Global маршрут и так финалится в proxy.
+func adaptiveSmartActive(opts BuildOptions) bool {
+	return opts.AdaptiveSmart && opts.SmartMode
+}
+
 func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts BuildOptions) (string, error) {
 	if dataDir == "" {
 		return "", fmt.Errorf("dataDir is required on mobile (pass context.filesDir)")
@@ -1580,6 +1627,40 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 			ListenPort: BrowserAdBlockSocksPort,
 		})
 	}
+
+	// Адаптивный Smart: инбаунд для туннельной ноги реле, аутбаунд, смотрящий
+	// на само реле, и rule-set выученных «прямых».
+	//
+	// adaptiveSmartActive, а не opts.AdaptiveSmart: вне Smart-режима фича
+	// нерабочая, и гейт живёт здесь, в одном месте, покрытом тестом, а не в
+	// Kotlin.
+	if adaptiveSmartActive(opts) {
+		sb.Inbounds = append(sb.Inbounds, proxy.SBInbound{
+			Type:       "mixed",
+			Tag:        "smart-race-in",
+			Listen:     "127.0.0.1",
+			ListenPort: SmartRaceInboundPort,
+		})
+		sb.Outbounds = append(sb.Outbounds, proxy.SBOutbound{
+			Type:       "http",
+			Tag:        "smart-relay",
+			Server:     "127.0.0.1",
+			ServerPort: SmartRelayPort,
+		})
+		setPath := proxy.SmartDirectSetPath(dataDir)
+		// Файл создаётся здесь, а не в реле: ядро читает его в конструкторе
+		// rule-set и на отсутствии роняет старт, а порядок «сначала конфиг,
+		// потом реле» задаёт Kotlin.
+		if err := proxy.EnsureSmartDirectSet(setPath); err == nil && sb.Route != nil {
+			sb.Route.RuleSet = append(sb.Route.RuleSet, proxy.SBRouteRuleSet{
+				Type:   "local",
+				Tag:    "verdict-direct",
+				Format: "source",
+				Path:   setPath,
+			})
+		}
+	}
+
 	if sb.Route != nil {
 		var filteredRules []proxy.SBRouteRule
 		for _, r := range sb.Route.Rules {
@@ -1672,6 +1753,27 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 				}
 			}
 		}
+	}
+
+	// Вся суть блока — двумя последними правилами, уже после Smart-списка,
+	// ad-block и исключений. Сперва выученное «ходит напрямую» решается
+	// правилом и мимо реле, потом весь остаток TCP уходит учиться.
+	//
+	// UDP не трогаем: гонки по нему нет, и он по-прежнему проваливается в
+	// final.
+	if adaptiveSmartActive(opts) && sb.Route != nil {
+		sb.Route.Rules = append(sb.Route.Rules,
+			proxy.SBRouteRule{
+				RuleSet:  []string{"verdict-direct"},
+				Action:   "route",
+				Outbound: "direct",
+			},
+			proxy.SBRouteRule{
+				Network:  []string{"tcp"},
+				Action:   "route",
+				Outbound: "smart-relay",
+			},
+		)
 	}
 
 	// Routing profile: registered and emitted LAST, after the excluded-domain
