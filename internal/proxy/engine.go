@@ -155,6 +155,31 @@ type SBDNS struct {
 	// here — so this is only ever set when the traffic split says otherwise.
 	Final    string `json:"final,omitempty"`
 	Strategy string `json:"strategy,omitempty"`
+	// Optimistic меняет немного протухшести на резолвер, который никогда не
+	// блокируется на истёкшей записи. Задаётся только через newSBDNS.
+	Optimistic *SBDNSOptimistic `json:"optimistic,omitempty"`
+}
+
+// SBDNSOptimistic настраивает оптимистичный DNS-кэш sing-box 1.14: истёкшая
+// запись отдаётся сразу, а обновление идёт фоном. Ядро отвергает эту опцию
+// вместе с disable_cache и disable_expire — ни ту, ни другую клиент не эмитит.
+type SBDNSOptimistic struct {
+	Enabled bool   `json:"enabled,omitempty"`
+	Timeout string `json:"timeout,omitempty"`
+}
+
+// newSBDNS собирает блок DNS так, чтобы общие для всех режимов опции нельзя
+// было забыть в одном из выходов buildDNS.
+//
+// Окно названо, а не оставлено на дефолт: ядро отдавало бы протухший ответ трое
+// суток, что переживает любую смену сети, которую делает человек. Шесть часов
+// покрывают ночь со спящим телефоном, а переход между Wi-Fi и мобильной сетью
+// обновляет кэш задолго до исхода окна.
+func newSBDNS(servers []SBDNSServer) *SBDNS {
+	return &SBDNS{
+		Servers:    servers,
+		Optimistic: &SBDNSOptimistic{Enabled: true, Timeout: "6h"},
+	}
 }
 
 type SBDNSServer struct {
@@ -744,9 +769,7 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			}
 		}
 
-		dns := &SBDNS{
-			Servers: servers,
-		}
+		dns := newSBDNS(servers)
 
 		// IPv4-only by default — Android's per-app UID matching is happier
 		// with deterministic v4 resolutions, and the old behaviour locked
@@ -869,7 +892,7 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		}
 	}
 
-	return &SBDNS{Servers: servers}
+	return newSBDNS(servers)
 }
 
 func splitDNSServer(raw string) (string, int) {
