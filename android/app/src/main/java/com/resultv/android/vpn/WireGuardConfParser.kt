@@ -85,7 +85,18 @@ object WireGuardConfParser {
             "max_handshake_attempts" to iface["maxhandshakeattempts"].orEmpty(),
         )
 
-        val isAmnezia = (listOf(jc, jmin, jmax, s1, s2, s3, s4, h1, h2, h3, h4) + awg3.map { it.second })
+        // AmneziaWG 3.1: два выключателя, которых нет в конфиге ядра, — они
+        // доезжают до устройства отдельным IpcSet и до пробы пинга её
+        // собственной UAPI-строкой. Значение передаётся как есть (on/off/
+        // true/1): что оно значит, решает один читатель в Go (awgBoolFromAny),
+        // а не каждый парсер по-своему.
+        val awg31 = listOf(
+            "random_trailers" to iface["randomtrailers"].orEmpty(),
+            "disable_cookies" to iface["disablecookies"].orEmpty(),
+        )
+
+        val isAmnezia = (listOf(jc, jmin, jmax, s1, s2, s3, s4, h1, h2, h3, h4) +
+            awg3.map { it.second } + awg31.map { it.second })
             .any { it.isNotBlank() }
         val scheme = if (isAmnezia) "awg" else "wg"
         val name = if (isAmnezia) "AmneziaWG" else defaultName
@@ -108,6 +119,7 @@ object WireGuardConfParser {
                 "j1" to j1, "j2" to j2, "j3" to j3,
             ).forEach { pairs.add(it) }
             pairs.addAll(awg3)
+            pairs.addAll(awg31)
         }
 
         val query = buildQuery(pairs)

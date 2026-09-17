@@ -98,4 +98,43 @@ class WireGuardConfParserAwg3Test {
         assertFalse(uri, uri.contains("header_protection_key"))
         assertFalse(uri, uri.contains("rekey_after_time"))
     }
+
+    private val awg31Conf = """
+        [Interface]
+        PrivateKey = aAXFScHA5tAA9mUwp1aBDV9cAbHj1mSfwdc1ISTsbm8=
+        Address = 10.8.1.2/24
+        Jc = 8
+        RandomTrailers = on
+        DisableCookies = off
+
+        [Peer]
+        PublicKey = WpE32HIFCmunopfbfcuwwgOqdGxmuu04tdZmFQdTBTE=
+        Endpoint = 203.0.113.7:51820
+        AllowedIPs = 0.0.0.0/0
+    """.trimIndent()
+
+    /**
+     * AmneziaWG 3.1: random_trailers симметричен, узел с хвостами клиенту без
+     * флага не поднимется вовсе. Потерять ключ при импорте — значит получить
+     * профиль, который «почему-то не подключается», без строки в журнале.
+     */
+    @Test fun awg31SwitchesSurviveIntoTheUri() {
+        val uri = WireGuardConfParser.toUri(awg31Conf)
+        assertNotNull(uri)
+        uri!!
+
+        assertTrue("нет random_trailers в $uri", uri.contains("random_trailers=on"))
+        assertTrue("нет disable_cookies в $uri", uri.contains("disable_cookies=off"))
+    }
+
+    /**
+     * Конфиг с одними лишь ключами 3.1 — это всё ещё AmneziaWG: схема должна
+     * стать awg://, иначе они уедут в ветку обычного WireGuard и потеряются.
+     */
+    @Test fun awg31SwitchesAloneMakeItAmnezia() {
+        val conf = awg31Conf.replace("Jc = 8", "")
+        val uri = WireGuardConfParser.toUri(conf)
+        assertNotNull(uri)
+        assertTrue("схема не awg://: $uri", uri!!.startsWith("awg://"))
+    }
 }
