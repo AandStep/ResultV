@@ -28,7 +28,10 @@ const (
 
 
 
-func buildEndpoints(proxy ProxyConfig) []SBEndpoint {
+// buildEndpoints собирает эндпоинт узла. domainResolver — тег из
+// serverDomainResolverTag; он нужен, когда адрес узла задан именем, потому
+// что эндпоинт набирает этот адрес сам.
+func buildEndpoints(proxy ProxyConfig, domainResolver string) []SBEndpoint {
 	pt := strings.ToUpper(strings.TrimSpace(proxy.Type))
 	if pt != "WIREGUARD" && pt != "AMNEZIAWG" {
 		return nil
@@ -69,9 +72,10 @@ func buildEndpoints(proxy ProxyConfig) []SBEndpoint {
 	}
 
 	ep := SBEndpoint{
-		Type:          "wireguard",
-		Tag:           "proxy",
-		Detour:        "direct",
+		Type:           "wireguard",
+		Tag:            "proxy",
+		Detour:         "direct",
+		DomainResolver: domainResolver,
 		System:        getBoolField(extra, "system"),
 		Name:          getStringField(extra, "name", ""),
 		MTU:           intFromExtra(extra, "mtu", "MTU"),

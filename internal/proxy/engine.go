@@ -188,6 +188,13 @@ type SBDNSServer struct {
 	Server          string `json:"server,omitempty"`
 	ServerPort      int    `json:"server_port,omitempty"`
 	Detour          string `json:"detour,omitempty"`
+
+	// DomainResolver поднимает резолвер, который сам адресован именем. Без
+	// детура, за которым можно спрятаться, sing-box 1.14 отказывается строить
+	// для такого сервера дайлер вообще — "missing domain resolver for domain
+	// server address", — так что это не предупреждение, а разница между
+	// движком, который стартует, и движком, который нет.
+	DomainResolver string `json:"domain_resolver,omitempty"`
 }
 
 type SBDNSRule struct {
@@ -248,7 +255,12 @@ type SBOutbound struct {
 	Tag        string           `json:"tag"`
 	Server     string           `json:"server,omitempty"`
 	ServerPort int              `json:"server_port,omitempty"`
-	Username   string           `json:"username,omitempty"`
+	// DomainResolver называет сервер DNS, который резолвит Server, когда тот
+	// домен, а не литерал. Какой именно тег сюда попадает и почему поле вообще
+	// существует — см. serverDomainResolverTag. Для литерального адреса пусто:
+	// ядро тогда не строит resolve-дайлер вовсе.
+	DomainResolver string           `json:"domain_resolver,omitempty"`
+	Username       string           `json:"username,omitempty"`
 	Password   string           `json:"password,omitempty"`
 	Method     string           `json:"method,omitempty"`
 	Version    string           `json:"version,omitempty"`
@@ -315,6 +327,9 @@ type SBEndpoint struct {
 	Type          string              `json:"type"`
 	Tag           string              `json:"tag"`
 	Detour        string              `json:"detour,omitempty"`
+	// DomainResolver — то же требование 1.14, что и у SBOutbound: эндпоинт
+	// набирает свой адрес сам. См. serverDomainResolverTag.
+	DomainResolver string             `json:"domain_resolver,omitempty"`
 	System        bool                `json:"system,omitempty"`
 	Name          string              `json:"name,omitempty"`
 	MTU           int                 `json:"mtu,omitempty"`
@@ -566,17 +581,22 @@ func BuildProxyModeConfig(cfg EngineConfig) SingBoxConfig {
 	host, _ := splitHostPort(cfg.ListenAddr, "127.0.0.1", port)
 
 	dd := effectiveDataDir(cfg)
+	// DNS первым: в proxy-режиме тег резолвера узла — это тот транспорт, к
+	// которому ядро потянулось бы само, поэтому назвать его до списка серверов
+	// нельзя.
+	dns := buildDNS(cfg)
+	nodeResolver := serverDomainResolverTag(cfg.Proxy, ProxyModeProxy, dns)
 	config := SingBoxConfig{
 		Log:       &SBLog{Level: "error", Disabled: true},
-		DNS:       buildDNS(cfg),
-		Endpoints: buildEndpoints(cfg.Proxy),
+		DNS:       dns,
+		Endpoints: buildEndpoints(cfg.Proxy, nodeResolver),
 		Inbounds: []SBInbound{{
 			Type:       "mixed",
 			Tag:        "mixed-in",
 			Listen:     host,
 			ListenPort: port,
 		}},
-		Outbounds:    buildOutbounds(cfg.Proxy),
+		Outbounds:    buildOutbounds(cfg.Proxy, nodeResolver),
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
 	}
@@ -639,7 +659,11 @@ func BuildTunnelModeConfig(cfg EngineConfig) SingBoxConfig {
 	}
 
 	dd := effectiveDataDir(cfg)
-	outbounds := buildOutbounds(cfg.Proxy)
+	// В туннельном режиме тег не зависит от собранного списка серверов — он
+	// повторяет правило, которое buildDNS эмитит для того же домена, — поэтому
+	// его можно назвать до блока DNS.
+	nodeResolver := serverDomainResolverTag(cfg.Proxy, ProxyModeTunnel, nil)
+	outbounds := buildOutbounds(cfg.Proxy, nodeResolver)
 
 	// Default sing-box log level. `error` keeps logcat quiet on ship;
 	// callers (mobile wrapper) can override via cfg.LogLevel for debug
@@ -677,7 +701,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) SingBoxConfig {
 	config := SingBoxConfig{
 		Log:       &SBLog{Level: logLevel, Disabled: false},
 		DNS:       buildDNS(cfg),
-		Endpoints: buildEndpoints(cfg.Proxy),
+		Endpoints: buildEndpoints(cfg.Proxy, nodeResolver),
 		Inbounds:  []SBInbound{tun},
 		Outbounds:    outbounds,
 		Route:        buildRoute(cfg),
@@ -687,7 +711,45 @@ func BuildTunnelModeConfig(cfg EngineConfig) SingBoxConfig {
 	return config
 }
 
-func buildOutbounds(proxy ProxyConfig) []SBOutbound {
+// serverDomainResolverTag называет сервер DNS, который обязан ответить за
+// собственный адрес узла, — для поля domain_resolver на том аутбаунде или
+// эндпоинте, который этот адрес набирает. Пусто, когда узел задан литералом:
+// резолвить нечего, и ядро не строит resolve-дайлер.
+//
+// Зачем поле. sing-box 1.14 объявил удалённым набор домена без названного
+// резолвера. На форке откат ещё жив и, более того, именно на его семантике
+// стоит остальной конфиг: откат идёт по dns.rules, а это и есть то, чем
+// заблокированный домен уходит через туннель. Поэтому
+// route.default_domain_resolver намеренно не задаётся (см.
+// TestRouteNeverNamesADefaultDomainResolver), а узел — единственный набор, где
+// правильный ответ известен до всяких правил, — называется явно.
+//
+// Какой тег. В туннельном режиме ответ повторяет правило, которое buildDNS уже
+// эмитит для этого же домена: системный резолвер "local". Он не должен ехать по
+// туннелю — туннель и открывается этим набором.
+//
+// В proxy-режиме нет TUN, системный резолвер никуда не перенаправлен, и "local"
+// отдал бы домен узла провайдеру открытым текстом. Тег — тот, что ядро выбрало
+// бы само: первый зарегистрированный транспорт. Включение поля там не меняет
+// ничего, кроме снятия deprecation.
+func serverDomainResolverTag(proxy ProxyConfig, mode ProxyMode, dns *SBDNS) string {
+	if proxy.IP == "" || net.ParseIP(proxy.IP) != nil {
+		return ""
+	}
+	if mode == ProxyModeTunnel {
+		return "local"
+	}
+	if dns != nil && len(dns.Servers) > 0 {
+		return dns.Servers[0].Tag
+	}
+	return ""
+}
+
+// buildOutbounds собирает список аутбаундов. domainResolver ложится только на
+// аутбаунд самого узла: "direct" набирает всё, что ему отдаёт роутер, и
+// единственного правильного резолвера у него нет — он осознанно остаётся на
+// обходе правил.
+func buildOutbounds(proxy ProxyConfig, domainResolver string) []SBOutbound {
 	pt := strings.ToUpper(strings.TrimSpace(proxy.Type))
 	if pt == "WIREGUARD" || pt == "AMNEZIAWG" {
 		return []SBOutbound{
@@ -695,10 +757,12 @@ func buildOutbounds(proxy ProxyConfig) []SBOutbound {
 			{Type: "block", Tag: "block"},
 		}
 	}
+	proxyOut := buildProxyOutbound(proxy)
+	proxyOut.DomainResolver = domainResolver
 	outbounds := []SBOutbound{
 		{Type: "direct", Tag: "direct"},
 		{Type: "block", Tag: "block"},
-		buildProxyOutbound(proxy),
+		proxyOut,
 	}
 	return outbounds
 }
