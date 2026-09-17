@@ -59,6 +59,14 @@
     <string name="settings_kill_switch_subtitle">Block internet if the proxy drops</string>
     <string name="settings_ipv6">IPv6</string>
     <string name="settings_ipv6_subtitle">IPv6 traffic through the tunnel</string>
+    <string name="settings_diagnostics">Diagnostics</string>
+    <string name="settings_verbose_log">Verbose log</string>
+    <string name="settings_verbose_log_subtitle">Engine debug level, WireGuard counters</string>
+    <string name="settings_tun_stack">TUN stack</string>
+    <string name="settings_tun_stack_subtitle">gvisor by default; system for comparison only</string>
+    <string name="settings_tun_stack_auto">Default</string>
+    <string name="settings_wg_mtu">WireGuard MTU</string>
+    <string name="settings_wg_mtu_subtitle">576-1500; empty takes it from the profile</string>
     <string name="settings_bypass_lan">Bypass LAN</string>
     <string name="settings_bypass_lan_subtitle">Printers, NAS and router bypass the VPN</string>
     <string name="settings_dns_hint">Pick a preset or enter custom servers, comma-separated.</string>

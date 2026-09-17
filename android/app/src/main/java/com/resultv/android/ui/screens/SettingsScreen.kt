@@ -538,6 +538,113 @@ private fun NetworkGroup(settings: com.resultv.android.vpn.SettingsState) {
         checked = settings.ipv6,
         onCheckedChange = { SettingsRepository.setIpv6(it) },
     )
+    DiagnosticsBlock(settings)
+}
+
+/**
+ * Диагностика: подробный журнал, стек TUN, MTU WireGuard.
+ *
+ * Стек и MTU на ПК переключаются переменными окружения; на телефоне они
+ * мертвы (Go копирует environ при загрузке .so), поэтому это настройки. Все
+ * три применяются при следующем подключении — reloadWatcher следит только за
+ * ad-block, как и для IPv6 с обходом локальной сети.
+ */
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun DiagnosticsBlock(settings: com.resultv.android.vpn.SettingsState) {
+    HorizontalDivider(color = RvColor.whiteA10, modifier = Modifier.padding(vertical = RvSpace.nest3))
+    Text(
+        stringResource(R.string.settings_diagnostics),
+        style = MaterialTheme.typography.titleSmall,
+        color = RvColor.whiteA50,
+    )
+    ToggleRow(
+        title = stringResource(R.string.settings_verbose_log),
+        subtitle = stringResource(R.string.settings_verbose_log_subtitle),
+        icon = Icons.Outlined.BugReport,
+        tint = RvCategory.Amber,
+        checked = settings.logLevel == "debug",
+        onCheckedChange = { SettingsRepository.setLogLevel(if (it) "debug" else "info") },
+    )
+    HorizontalDivider(color = RvColor.whiteA10)
+    Column(
+        modifier = Modifier.padding(vertical = RvSpace.nest3),
+        verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
+        ) {
+            SettingIcon(Icons.Outlined.Layers, RvCategory.Amber)
+            Column {
+                Text(stringResource(R.string.settings_tun_stack), style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    stringResource(R.string.settings_tun_stack_subtitle),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = RvColor.whiteA50,
+                )
+            }
+        }
+        androidx.compose.foundation.layout.FlowRow(
+            modifier = Modifier.padding(start = 50.dp),
+            horizontalArrangement = Arrangement.spacedBy(RvSpace.xs),
+            verticalArrangement = Arrangement.spacedBy(RvSpace.xs),
+        ) {
+            listOf(
+                "" to stringResource(R.string.settings_tun_stack_auto),
+                "system" to "system",
+            ).forEach { (key, label) ->
+                FilterChip(
+                    selected = settings.tunStack == key,
+                    onClick = { SettingsRepository.setTunStack(key) },
+                    label = { Text(label) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = RvColor.Main.copy(alpha = 0.2f),
+                        selectedLabelColor = RvColor.Second,
+                    ),
+                )
+            }
+        }
+    }
+    HorizontalDivider(color = RvColor.whiteA10)
+    Column(
+        modifier = Modifier.padding(vertical = RvSpace.nest3),
+        verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
+        ) {
+            SettingIcon(Icons.Outlined.Straighten, RvCategory.Amber)
+            Column {
+                Text(stringResource(R.string.settings_wg_mtu), style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    stringResource(R.string.settings_wg_mtu_subtitle),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = RvColor.whiteA50,
+                )
+            }
+        }
+        // Черновик поднят к полю, а не читается из состояния напрямую: иначе
+        // недописанное «12» (вне границ) тут же стиралось бы нормализацией.
+        var mtuDraft by rememberSaveable(settings.wgMtu) {
+            mutableStateOf(if (settings.wgMtu == 0) "" else settings.wgMtu.toString())
+        }
+        OutlinedTextField(
+            value = mtuDraft,
+            onValueChange = { raw ->
+                mtuDraft = raw.filter { ch -> ch.isDigit() }.take(4)
+                SettingsRepository.setWgMtu(SettingsRepository.normalizeWgMtu(mtuDraft))
+            },
+            modifier = Modifier.fillMaxWidth().padding(start = 50.dp),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            // Плейсхолдера нет намеренно: диапазон и смысл пустого поля уже
+            // сказаны подписью над ним, а строка с примером значения завела бы
+            // в настройках непереводимый settings_*, на котором падает
+            // SettingsStringsTest.
+        )
+    }
 }
 
 /**

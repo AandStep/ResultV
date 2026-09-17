@@ -54,6 +54,14 @@
     <string name="settings_kill_switch_subtitle">Блокировать интернет при обрыве прокси</string>
     <string name="settings_ipv6">IPv6</string>
     <string name="settings_ipv6_subtitle">IPv6-трафик через туннель</string>
+    <string name="settings_diagnostics">Диагностика</string>
+    <string name="settings_verbose_log">Подробный журнал</string>
+    <string name="settings_verbose_log_subtitle">Отладочный уровень движка, счётчики WireGuard</string>
+    <string name="settings_tun_stack">Стек TUN</string>
+    <string name="settings_tun_stack_subtitle">По умолчанию gvisor; system — для сравнения</string>
+    <string name="settings_tun_stack_auto">По умолчанию</string>
+    <string name="settings_wg_mtu">MTU WireGuard</string>
+    <string name="settings_wg_mtu_subtitle">576-1500; пусто — значение из профиля</string>
     <string name="settings_bypass_lan">Прямой LAN</string>
     <string name="settings_bypass_lan_subtitle">Принтеры, NAS и роутер — мимо VPN</string>
     <string name="settings_dns_hint">Пресет или свои серверы через запятую.</string>
