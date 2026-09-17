@@ -9,6 +9,8 @@ import android.util.Log
 import com.resultv.android.R
 import libbox.CommandServer
 import libbox.CommandServerHandler
+import libbox.BridgeOptions
+import libbox.BridgeSession
 import libbox.ConnectionOwner
 import libbox.InterfaceUpdateListener
 import libbox.Libbox
@@ -16,7 +18,10 @@ import libbox.LocalDNSTransport
 import libbox.NetworkInterfaceIterator
 import libbox.Notification
 import libbox.OverrideOptions
+import libbox.NeighborUpdateListener
 import libbox.PlatformInterface
+import libbox.PlatformUser
+import libbox.ShellSession
 import libbox.SetupOptions
 import libbox.StringIterator
 import libbox.SystemProxyStatus
@@ -255,10 +260,22 @@ private class BoxPlatform(private val service: ResultVpnService) : PlatformInter
 
         // DNS — libbox builds a synthetic in-tunnel DNS server it
         // intercepts itself. Throws if the IPv4 prefix is too narrow.
+        // libbox 1.14 отдаёт здесь итератор, а не одиночное значение: адресов
+        // перехвата может быть несколько (v4 и v6). Если не пришло ни одного —
+        // это тот же отказ, ради которого ниже стоит catch: без записи DNS в
+        // builder запросы уйдут резолверу нижележащей сети мимо туннеля.
         try {
             val dns = options.getDNSServerAddress()
-            if (dns != null && dns.value.isNotEmpty()) {
-                builder.addDnsServer(dns.value)
+            var added = 0
+            while (dns != null && dns.hasNext()) {
+                val addr = dns.next()
+                if (!addr.isNullOrEmpty()) {
+                    builder.addDnsServer(addr)
+                    added++
+                }
+            }
+            if (added == 0) {
+                throw IllegalStateException("libbox не дал ни одного адреса перехвата DNS")
             }
         } catch (t: Throwable) {
             Log.w(TAG, "no DNS hijack address from libbox; falling back to 8.8.8.8", t)
@@ -529,20 +546,59 @@ private class BoxPlatform(private val service: ResultVpnService) : PlatformInter
     override fun underNetworkExtension(): Boolean = false
     override fun includeAllNetworks(): Boolean = false
     override fun readWIFIState(): WIFIState? = null
-    override fun systemCertificates(): StringIterator = EmptyStringIterator
     override fun clearDNSCache() {}
+
+    // Ниже — то, чем libbox 1.14 прирастил PlatformInterface: платформенная
+    // оболочка и SSH-агент для Tailscale SSH, мост и монитор соседей. Ни одну
+    // из этих подсистем клиент не поднимает.
+    //
+    // Разделение намеренное. Там, где ядро сначала спрашивает разрешения
+    // (usePlatformShell, usePlatformBridge), достаточно ответить «нет» — до
+    // самих операций оно тогда не дойдёт. Там, где спросить не у кого, метод
+    // отвечает отказом, а не пустышкой: молчаливый null или пустая строка
+    // выглядели бы для ядра рабочим ответом, и отказ всплыл бы позже и не там.
+    // Мониторы соседей — исключение: это парные подписки, и пустая подписка
+    // здесь означает ровно то же, что пустая подписка на интерфейсы выше.
+    override fun usePlatformShell(): Boolean = false
+    override fun checkPlatformShell() =
+        throw UnsupportedOperationException("платформенная оболочка не поддерживается")
+
+    override fun openShellSession(
+        user: PlatformUser?,
+        term: String?,
+        env: StringIterator?,
+        command: String?,
+        width: Int,
+        height: Int,
+    ): ShellSession = throw UnsupportedOperationException("платформенная оболочка не поддерживается")
+
+    override fun lookupUser(name: String?): PlatformUser =
+        throw UnsupportedOperationException("поиск пользователя не поддерживается")
+
+    override fun readSystemSSHHostKey(): String =
+        throw UnsupportedOperationException("системного ключа SSH нет")
+
+    override fun lookupSFTPServer(): String =
+        throw UnsupportedOperationException("сервера SFTP нет")
+
+    override fun usePlatformBridge(): Boolean = false
+    override fun createBridge(options: BridgeOptions?): BridgeSession =
+        throw UnsupportedOperationException("мост не поддерживается")
+
+    override fun startNeighborMonitor(listener: NeighborUpdateListener?) {}
+    override fun closeNeighborMonitor(listener: NeighborUpdateListener?) {}
+    override fun registerMyInterface(name: String?) {}
+    override fun tailscaleHostname(): String = ""
     override fun sendNotification(notification: Notification?) {}
+    // Парный метод, добавленный в PlatformInterface в 1.14. Уведомлений от
+    // libbox мы не показываем (sendNotification выше — пустышка), отменять
+    // тоже нечего.
+    override fun cancelNotification(identifier: String?, typeID: Int) {}
 }
 
 private object EmptyIterator : NetworkInterfaceIterator {
     override fun hasNext(): Boolean = false
     override fun next() = throw NoSuchElementException()
-}
-
-private object EmptyStringIterator : StringIterator {
-    override fun hasNext(): Boolean = false
-    override fun next(): String = throw NoSuchElementException()
-    override fun len(): Int = 0
 }
 
 private class PackageNameIterator(private val names: Array<String>) : StringIterator {
@@ -557,6 +613,18 @@ private class StubCommandHandler : CommandServerHandler {
     override fun serviceReload() { Log.i(TAG, "cmd: serviceReload") }
     override fun getSystemProxyStatus(): SystemProxyStatus? = null
     override fun setSystemProxyEnabled(enabled: Boolean) {}
+    // connectSSHAgent добавлен в CommandServerHandler в 1.14 ради Tailscale SSH.
+    // Клиент его не поднимает, и вернуть сюда дескриптор нечего — молчаливый 0
+    // ядро приняло бы за рабочий сокет, поэтому отвечаем отказом.
+    // triggerNativeCrash — отладочная ручка ядра: она существует, чтобы уронить
+    // процесс намеренно. Клиент такого пути наружу не даёт, поэтому команда
+    // отклоняется, а не исполняется.
+    override fun triggerNativeCrash() =
+        throw UnsupportedOperationException("намеренное падение не поддерживается")
+
+    override fun connectSSHAgent(): Int =
+        throw UnsupportedOperationException("SSH agent не поддерживается")
+
     override fun writeDebugMessage(message: String?) {
         Log.d(TAG, "libbox: $message")
         // Surface engine activity (connections, warnings, errors) in the

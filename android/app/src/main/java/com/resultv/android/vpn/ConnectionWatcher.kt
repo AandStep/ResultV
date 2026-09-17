@@ -7,6 +7,7 @@ import libbox.CommandClientOptions
 import libbox.ConnectionEvents
 import libbox.Libbox
 import libbox.LogIterator
+import libbox.OutboundGroupItemIterator
 import libbox.OutboundGroupIterator
 import libbox.StatusMessage
 import libbox.StringIterator
@@ -107,6 +108,10 @@ private class ConnectionHandler(private val state: ConnectionLogState) : Command
     override fun setDefaultLogLevel(level: Int) {}
     override fun updateClashMode(newMode: String?) {}
     override fun writeGroups(message: OutboundGroupIterator?) {}
+    // writeOutbounds добавился в CommandClientHandler в libbox 1.14: ядро
+    // шлёт плоский список членов групп отдельно от самих групп. Этому
+    // наблюдателю он не нужен — как и writeGroups выше.
+    override fun writeOutbounds(message: OutboundGroupItemIterator?) {}
     override fun writeLogs(messageList: LogIterator?) {}
     override fun writeStatus(message: StatusMessage?) {}
 }

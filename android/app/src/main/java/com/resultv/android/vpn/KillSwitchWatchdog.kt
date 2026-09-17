@@ -16,6 +16,7 @@ import libbox.CommandClientOptions
 import libbox.ConnectionEvents
 import libbox.Libbox
 import libbox.LogIterator
+import libbox.OutboundGroupItemIterator
 import libbox.OutboundGroupIterator
 import libbox.StatusMessage
 import libbox.StringIterator
@@ -181,4 +182,8 @@ private class GroupHandler(private val onDelay: (Int) -> Unit) : CommandClientHa
     override fun writeConnectionEvents(events: ConnectionEvents?) {}
     override fun writeLogs(messageList: LogIterator?) {}
     override fun writeStatus(message: StatusMessage?) {}
+    // writeOutbounds добавился в CommandClientHandler в libbox 1.14: ядро
+    // шлёт плоский список членов групп отдельно от самих групп. Здесь он не
+    // нужен — здоровье группы читается из writeGroups, где виден нужный член.
+    override fun writeOutbounds(message: OutboundGroupItemIterator?) {}
 }
