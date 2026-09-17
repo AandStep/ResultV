@@ -237,3 +237,38 @@ func TestAdaptiveSmart_RelayRuleIsLast(t *testing.T) {
 		t.Fatalf("перед реле стоит %+v, ожидалось правило verdict-direct", prev)
 	}
 }
+
+// Кил-свитч в состоянии «сработал» обязан перекрыть и путь через реле.
+// Прямая нога реле идёт по настоящей сети пользователя, мимо туннеля: пережив
+// панику, правило реле пустило бы трафик именно тогда, когда его обязано не
+// быть.
+func TestAdaptiveSmart_KillSwitchPanic_RejectsRelayRule(t *testing.T) {
+	opts := smartOpts()
+	opts.KillSwitchArmed = true
+	opts.KillSwitchPanic = true
+	cfg := buildAdaptive(t, opts)
+
+	for i, r := range cfg.Route.Rules {
+		if r.Outbound == "smart-relay" {
+			t.Fatalf("правило %d ведёт в smart-relay при сработавшем кил-свитче: %+v", i, r)
+		}
+	}
+	if cfg.Route.Final != "block" {
+		t.Fatalf("route.final = %q, ожидался block", cfg.Route.Final)
+	}
+}
+
+// А во взведённом, но не сработавшем состоянии реле работает как обычно:
+// взведённый кил-свитч — это только наблюдение, маршрутизацию он не трогает.
+func TestAdaptiveSmart_KillSwitchArmedOnly_KeepsRelayRule(t *testing.T) {
+	opts := smartOpts()
+	opts.KillSwitchArmed = true
+	cfg := buildAdaptive(t, opts)
+
+	for _, r := range cfg.Route.Rules {
+		if r.Outbound == "smart-relay" {
+			return
+		}
+	}
+	t.Fatalf("правила реле нет при взведённом (но не сработавшем) кил-свитче: %+v", cfg.Route.Rules)
+}

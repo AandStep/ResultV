@@ -61,6 +61,11 @@ const SmartRaceInboundPort = 18131
 // SmartRelayPort — порт самого реле. Сюда смотрит аутбаунд smart-relay.
 const SmartRelayPort = 18132
 
+// smartRelayOutboundTag — аутбаунд, в который уходит всё неизвестное. Назван
+// константой, потому что упоминается в двух далёких местах: сборке конфига и
+// кил-свитче, где его обязательно надо гасить вместе с proxy и direct.
+const smartRelayOutboundTag = "smart-relay"
+
 // mobileTunIPv4 is the TUN interface prefix every mobile config is built with.
 // A /30 leaves exactly one other host address, browserAdBlockProxyHost.
 const mobileTunIPv4 = "172.19.0.1/30"
@@ -1514,7 +1519,12 @@ func applyKillSwitch(sb *proxy.SingBoxConfig, armed, panicMode bool) {
 			if r.Outbound == "direct" && len(r.IPCidr) > 0 && r.OverrideAddress == "" {
 				continue // preserve LAN + server-IP bypass
 			}
-			if r.Outbound == "proxy" || r.Outbound == "direct" {
+			// smart-relay гасится наравне с proxy и direct, и это не формальность:
+			// прямая нога реле дозванивается из процесса приложения, исключённого
+			// из собственного VPN, то есть по настоящей сети пользователя. Пережив
+			// панику, правило реле пустило бы трафик мимо кил-свитча — ровно то,
+			// ради чего кил-свитч существует.
+			if r.Outbound == "proxy" || r.Outbound == "direct" || r.Outbound == smartRelayOutboundTag {
 				r.Outbound = ""
 				r.Action = "reject"
 				// The core does accept a leftover override on a reject rule —
@@ -1643,7 +1653,7 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 		})
 		sb.Outbounds = append(sb.Outbounds, proxy.SBOutbound{
 			Type:       "http",
-			Tag:        "smart-relay",
+			Tag:        smartRelayOutboundTag,
 			Server:     "127.0.0.1",
 			ServerPort: SmartRelayPort,
 		})
@@ -1771,7 +1781,7 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 			proxy.SBRouteRule{
 				Network:  []string{"tcp"},
 				Action:   "route",
-				Outbound: "smart-relay",
+				Outbound: smartRelayOutboundTag,
 			},
 		)
 	}
