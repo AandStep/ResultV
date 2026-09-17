@@ -366,6 +366,7 @@
     <string name="log_source_killswitch" translatable="false">KILL SWITCH</string>
     <string name="log_source_smart" translatable="false">SMART</string>
     <string name="log_source_config" translatable="false">CONFIG</string>
+    <string name="log_source_wg" translatable="false">WG</string>
     <string name="log_connect_timing">Connection timing: total=%1$d ms</string>
     <string name="log_engine_stopped">Engine stopped.</string>
     <string name="log_engine_stop_error">Engine shutdown error: %1$s</string>
@@ -377,6 +378,7 @@
     <string name="log_awg_knobs_dropped">AmneziaWG: the engine does not support %1$s — connecting without them. Obfuscation is weaker; if the server requires them, the handshake will not complete.</string>
     <string name="log_awg31_applied">AmneziaWG 3.1: applied %1$s.</string>
     <string name="log_awg31_failed">AmneziaWG 3.1 parameters were not applied: %1$s. The tunnel runs with 3.0 behaviour — if the server adds random trailers, the handshake will not complete.</string>
+    <string name="log_wg_diag_unavailable">WireGuard counters unavailable: %1$s. Sampling stopped for this session.</string>
     <string name="log_traffic_stats_failed">Traffic statistics unavailable this session: %1$s</string>
     <string name="log_auto_selected">AUTO: selected %1$s (%2$s)</string>
     <string name="log_auto_failover">AUTO: node unavailable, trying %1$s</string>
