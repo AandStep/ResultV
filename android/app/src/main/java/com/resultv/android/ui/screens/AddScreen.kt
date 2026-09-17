@@ -66,7 +66,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.resultv.android.R
-import com.resultv.android.theme.Brand
+import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.RvRadius
+import com.resultv.android.theme.RvSpace
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
@@ -156,11 +158,11 @@ fun AddScreen(
                     focusManager.clearFocus()
                 })
             }
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+            .padding(horizontal = RvSpace.nest1, vertical = RvSpace.nest2),
+        verticalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
         // Quick-import shortcuts (clipboard / file / QR).
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3)) {
             QuickAddCard(
                 icon = Icons.Outlined.ContentPaste,
                 title = stringResource(R.string.add_quick_clipboard_title),
@@ -225,7 +227,7 @@ fun AddScreen(
             Text(
                 it,
                 style = MaterialTheme.typography.bodySmall,
-                color = Brand.SecondaryText,
+                color = RvColor.whiteA50,
             )
         }
 
@@ -270,24 +272,24 @@ private fun QuickAddCard(
     ElevatedCard(
         onClick = onClick,
         modifier = modifier.aspectRatio(1f),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.elevatedCardColors(containerColor = Brand.Surface),
+        shape = RoundedCornerShape(RvRadius.card),
+        colors = CardDefaults.elevatedCardColors(containerColor = RvColor.Grey),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
+                .padding(RvSpace.nest2),
+            verticalArrangement = Arrangement.spacedBy(RvSpace.nest3, Alignment.CenterVertically),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Box(
                 modifier = Modifier
                     .size(40.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Brand.SurfaceHigh),
+                    .clip(RoundedCornerShape(RvRadius.chip))
+                    .background(RvColor.LightGray),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(icon, contentDescription = null, tint = Brand.GreenLight)
+                Icon(icon, contentDescription = null, tint = RvColor.Second)
             }
             Text(title, style = MaterialTheme.typography.titleSmall)
         }
@@ -392,17 +394,17 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
     }
 
     Card(
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = Brand.Surface),
+        shape = RoundedCornerShape(RvRadius.card),
+        colors = CardDefaults.cardColors(containerColor = RvColor.Grey),
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.padding(RvSpace.nest1),
+            verticalArrangement = Arrangement.spacedBy(RvSpace.nest2),
         ) {
             Text(
                 stringResource(R.string.add_link_label),
                 style = MaterialTheme.typography.labelLarge,
-                color = Brand.SecondaryText,
+                color = RvColor.whiteA50,
             )
             OutlinedTextField(
                 value = input,
@@ -427,7 +429,7 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
             )
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3),
             ) {
                 FilledTonalButton(
                     onClick = submit,
@@ -437,7 +439,7 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
                         if (loading) Icons.Outlined.CloudDownload else Icons.Outlined.Add,
                         contentDescription = null,
                     )
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(RvSpace.nest3))
                     Text(
                         stringResource(
                             if (loading) R.string.add_sub_fetching else R.string.action_add,
@@ -478,7 +480,7 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
                     Text(
                         text = stringResource(R.string.add_sub_selected, selected.value.size, realCount),
                         style = MaterialTheme.typography.bodySmall,
-                        color = Brand.SecondaryText,
+                        color = RvColor.whiteA50,
                         modifier = Modifier.weight(1f),
                     )
                     TextButton(onClick = {
@@ -510,7 +512,7 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
                     },
                 ) {
                     Icon(Icons.Outlined.Check, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(RvSpace.nest3))
                     Text(stringResource(R.string.add_sub_import, selected.value.size))
                 }
 
@@ -523,8 +525,8 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
                             Text(
                                 text = e.name,
                                 style = MaterialTheme.typography.labelLarge,
-                                color = Brand.SecondaryText,
-                                modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 4.dp),
+                                color = RvColor.whiteA50,
+                                modifier = Modifier.padding(start = RvSpace.xs, top = RvSpace.nest3, bottom = RvSpace.xs),
                             )
                             return@items
                         }
@@ -540,7 +542,7 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
                                     else selected.value - e.key
                                 },
                             )
-                            Column(modifier = Modifier.padding(start = 4.dp)) {
+                            Column(modifier = Modifier.padding(start = RvSpace.xs)) {
                                 Text(
                                     e.name,
                                     style = MaterialTheme.typography.bodyMedium,
@@ -551,7 +553,7 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
                                     Text(
                                         e.preview,
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = Brand.MutedText,
+                                        color = RvColor.whiteA50,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                     )

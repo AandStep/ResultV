@@ -36,7 +36,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
-import com.resultv.android.theme.Brand
+import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.RvSpace
 import com.resultv.android.vpn.AppLog
 import com.resultv.android.vpn.LogEntry
 import com.resultv.android.vpn.LogLevel
@@ -47,10 +48,10 @@ import java.util.Locale
 private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
 
 private fun LogLevel.color(): Color = when (this) {
-    LogLevel.Info -> Brand.SecondaryText
-    LogLevel.Success -> Brand.GreenLight
-    LogLevel.Warning -> Brand.Warning
-    LogLevel.Error -> Brand.Danger
+    LogLevel.Info -> RvColor.whiteA50
+    LogLevel.Success -> RvColor.Second
+    LogLevel.Warning -> RvColor.Warning
+    LogLevel.Error -> RvColor.Errors
 }
 
 /** Render the full buffer oldest-first as `[time] SOURCE message` per line. */
@@ -84,7 +85,7 @@ fun LogsScreen(onBack: () -> Unit) {
     }
 
     Scaffold(
-        containerColor = Brand.Bg,
+        containerColor = RvColor.Black,
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.logs_title), fontWeight = FontWeight.Bold) },
@@ -107,18 +108,18 @@ fun LogsScreen(onBack: () -> Unit) {
                         Icon(
                             Icons.Outlined.SaveAlt,
                             contentDescription = stringResource(R.string.logs_save_cd),
-                            tint = Brand.SecondaryText,
+                            tint = RvColor.whiteA50,
                         )
                     }
                     IconButton(onClick = { AppLog.clear() }) {
                         Icon(
                             Icons.Outlined.DeleteOutline,
                             contentDescription = stringResource(R.string.logs_clear_cd),
-                            tint = Brand.Danger,
+                            tint = RvColor.Errors,
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Brand.Bg),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = RvColor.Black),
             )
         },
     ) { padding ->
@@ -130,17 +131,17 @@ fun LogsScreen(onBack: () -> Unit) {
                 Text(
                     stringResource(R.string.logs_empty),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Brand.MutedText,
+                    color = RvColor.whiteA50,
                 )
             }
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
-                    start = 16.dp,
-                    end = 16.dp,
-                    top = padding.calculateTopPadding() + 4.dp,
-                    bottom = padding.calculateBottomPadding() + 24.dp,
+                    start = RvSpace.nest1,
+                    end = RvSpace.nest1,
+                    top = padding.calculateTopPadding() + RvSpace.xs,
+                    bottom = padding.calculateBottomPadding() + RvSpace.page,
                 ),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
@@ -155,14 +156,14 @@ fun LogsScreen(onBack: () -> Unit) {
 @Composable
 private fun LogRow(entry: LogEntry) {
     Row(
-        modifier = Modifier.padding(vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.padding(vertical = RvSpace.xs),
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3),
     ) {
         Text(
             text = "[${timeFormat.format(Date(entry.timestamp))}]",
             style = MaterialTheme.typography.bodySmall,
             fontFamily = FontFamily.Monospace,
-            color = Brand.MutedText,
+            color = RvColor.whiteA50,
         )
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             if (entry.source.isNotEmpty()) {
@@ -170,7 +171,7 @@ private fun LogRow(entry: LogEntry) {
                     text = entry.source,
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold,
-                    color = Brand.MutedText,
+                    color = RvColor.whiteA50,
                 )
             }
             Text(

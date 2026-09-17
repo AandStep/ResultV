@@ -59,7 +59,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -75,9 +74,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
-import com.resultv.android.theme.Brand
 import com.resultv.android.theme.CategoryTint
 import com.resultv.android.theme.RvCategory
+import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.RvRadius
+import com.resultv.android.theme.RvSpace
 import com.resultv.android.ui.components.SettingIcon
 import com.resultv.android.ui.components.TagField
 import com.resultv.android.vpn.AppInventory
@@ -110,7 +111,7 @@ fun RulesScreen(onOpenRoutingProfiles: () -> Unit = {}) {
             .fillMaxWidth()
             // Match the top breathing room other settings sheets get from their
             // group wrappers, so the sheet header → content gap reads the same.
-            .padding(top = 8.dp)
+            .padding(top = RvSpace.nest3)
             .pointerInput(Unit) {
                 detectTapGestures(onTap = {
                     keyboard?.hide()
@@ -124,8 +125,7 @@ fun RulesScreen(onOpenRoutingProfiles: () -> Unit = {}) {
                 // Distinct from the sheet's "Rules" AltRoute glyph so the two
                 // routing-related headers don't read as duplicates.
                 icon = Icons.Outlined.Hub,
-                iconBg = Color(0xFF3b82f6).copy(alpha = 0.18f),
-                iconTint = Color(0xFF60a5fa),
+                tint = RvCategory.Blue,
                 title = stringResource(R.string.rules_section_smart_title),
                 subtitle = stringResource(R.string.rules_section_smart_subtitle),
             )
@@ -149,8 +149,6 @@ fun RulesScreen(onOpenRoutingProfiles: () -> Unit = {}) {
                     NavRow(
                         label = stringResource(R.string.routing_profiles_row),
                         icon = Icons.Outlined.AltRoute,
-                        // Задача 5 схлопнула iconBg/iconTint у NavRow в tint;
-                        // остальная перекраска экрана — задача 7.
                         tint = RvCategory.Blue,
                         onClick = onOpenRoutingProfiles,
                     )
@@ -158,13 +156,12 @@ fun RulesScreen(onOpenRoutingProfiles: () -> Unit = {}) {
             }
         }
 
-        HorizontalDivider(color = Brand.SurfaceHigh)
+        HorizontalDivider(color = RvColor.LightGray)
 
         Section {
             SectionHeader(
                 icon = Icons.Outlined.Dns,
-                iconBg = Color(0xFF10b981).copy(alpha = 0.18f),
-                iconTint = Color(0xFF34d399),
+                tint = RvCategory.Emerald,
                 title = stringResource(R.string.rules_section_domains_title),
                 subtitle = stringResource(
                     when (rules.mode) {
@@ -178,7 +175,7 @@ fun RulesScreen(onOpenRoutingProfiles: () -> Unit = {}) {
                 Text(
                     stringResource(hintOf(domainTab)),
                     style = MaterialTheme.typography.bodySmall,
-                    color = Brand.SecondaryText,
+                    color = RvColor.whiteA50,
                 )
 
                 val active = rules.domains.listFor(domainTab)
@@ -202,7 +199,7 @@ fun RulesScreen(onOpenRoutingProfiles: () -> Unit = {}) {
                     Text(
                         stringResource(R.string.rules_domain_moved_from, stringResource(labelOf(movedFrom))),
                         style = MaterialTheme.typography.bodySmall,
-                        color = Brand.SecondaryText,
+                        color = RvColor.whiteA50,
                     )
                 }
 
@@ -220,13 +217,12 @@ fun RulesScreen(onOpenRoutingProfiles: () -> Unit = {}) {
             }
         }
 
-        HorizontalDivider(color = Brand.SurfaceHigh)
+        HorizontalDivider(color = RvColor.LightGray)
 
         Section {
             SectionHeader(
                 icon = Icons.Outlined.Apps,
-                iconBg = Color(0xFF8b5cf6).copy(alpha = 0.18f),
-                iconTint = Color(0xFFa78bfa),
+                tint = RvCategory.Violet,
                 title = stringResource(R.string.rules_section_perapp_title),
                 subtitle = stringResource(R.string.rules_section_perapp_subtitle),
             )
@@ -242,7 +238,7 @@ fun RulesScreen(onOpenRoutingProfiles: () -> Unit = {}) {
 private fun Section(content: @Composable () -> Unit) {
     // Заголовок отделён от содержимого только этим зазором — отступа слева у
     // содержимого больше нет, поэтому зазор чуть больше прежних 12.
-    Column(verticalArrangement = Arrangement.spacedBy(18.dp)) { content() }
+    Column(verticalArrangement = Arrangement.spacedBy(RvSpace.nest1)) { content() }
 }
 
 /**
@@ -255,7 +251,7 @@ private fun Section(content: @Composable () -> Unit) {
 @Composable
 private fun SectionBody(content: @Composable ColumnScope.() -> Unit) {
     Column(
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(RvSpace.nest2),
         content = content,
     )
 }
@@ -263,19 +259,18 @@ private fun SectionBody(content: @Composable ColumnScope.() -> Unit) {
 @Composable
 private fun SectionHeader(
     icon: ImageVector,
-    iconBg: Color,
-    iconTint: Color,
+    tint: CategoryTint,
     title: String,
     subtitle: String,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
-        SettingIcon(icon, CategoryTint(iconBg, iconTint))
+        SettingIcon(icon, tint)
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = Brand.SecondaryText)
+            Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = RvColor.whiteA50)
         }
     }
 }
@@ -294,7 +289,7 @@ private fun RoutingModeSelector(
     // Smart первым, как на ПК (SmartRulesPage.jsx): он же режим по умолчанию,
     // и стоять он должен там, куда смотрят первым.
     val modes = listOf(RoutingMode.Smart, RoutingMode.Global)
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(RvSpace.nest3)) {
         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
             modes.forEachIndexed { i, m ->
                 SegmentedButton(
@@ -337,7 +332,7 @@ private fun RoutingModeSelector(
                 },
             ),
             style = MaterialTheme.typography.bodyMedium,
-            color = Brand.SecondaryText,
+            color = RvColor.whiteA50,
         )
     }
 }
@@ -423,7 +418,7 @@ private fun PerAppRoutingSection(mode: RoutingMode) {
         Text(
             stringResource(R.string.rules_apps_needs_q),
             style = MaterialTheme.typography.bodySmall,
-            color = Brand.SecondaryText,
+            color = RvColor.whiteA50,
         )
         return
     }
@@ -476,23 +471,23 @@ private fun PerAppRoutingSection(mode: RoutingMode) {
         }
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(RvSpace.nest2)) {
         RuleTabs(mode = mode, selected = tab, onSelect = { tab = it }, enabled = tabEnabled)
 
         if (!canResolveOwner) {
             Text(
                 stringResource(R.string.rules_apps_needs_q),
                 style = MaterialTheme.typography.bodySmall,
-                color = Brand.SecondaryText,
+                color = RvColor.whiteA50,
             )
         }
         Text(
             stringResource(hintOf(tab)),
             style = MaterialTheme.typography.bodySmall,
-            color = Brand.SecondaryText,
+            color = RvColor.whiteA50,
         )
 
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3)) {
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
@@ -517,11 +512,11 @@ private fun PerAppRoutingSection(mode: RoutingMode) {
         Text(
             stringResource(R.string.rules_app_selected_count, selectedCount),
             style = MaterialTheme.typography.bodySmall,
-            color = Brand.SecondaryText,
+            color = RvColor.whiteA50,
         )
 
         if (loading) {
-            Box(modifier = Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+            Box(modifier = Modifier.fillMaxWidth().padding(RvSpace.nest1), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
         } else {
@@ -588,7 +583,7 @@ private fun AppRow(
         modifier = Modifier
             .fillMaxWidth()
             .toggleable(value = checked, role = Role.Checkbox, onValueChange = { onToggle() })
-            .padding(vertical = 4.dp, horizontal = 4.dp),
+            .padding(vertical = RvSpace.xs, horizontal = RvSpace.xs),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Checkbox(checked = checked, onCheckedChange = null)
@@ -598,39 +593,39 @@ private fun AppRow(
             Box(
                 modifier = Modifier
                     .size(32.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Brand.SurfaceHigh),
+                    .clip(RoundedCornerShape(RvRadius.small))
+                    .background(RvColor.LightGray),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(Icons.Outlined.Public, contentDescription = null, tint = Brand.SecondaryText)
+                Icon(Icons.Outlined.Public, contentDescription = null, tint = RvColor.whiteA50)
             }
         }
-        Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
+        Column(modifier = Modifier.padding(start = RvSpace.nest2).weight(1f)) {
             Text(app.label, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (autoBadge) {
                 Text(
                     "✓ " + stringResource(R.string.rules_badge_auto_vpn),
                     style = MaterialTheme.typography.bodySmall,
-                    color = Brand.GreenLight,
+                    color = RvColor.Second,
                 )
             }
             if (blockedElsewhere) {
                 Text(
                     "⛔ " + stringResource(R.string.rules_badge_blocked),
                     style = MaterialTheme.typography.bodySmall,
-                    color = Brand.SecondaryText,
+                    color = RvColor.whiteA50,
                 )
             }
             Text(
                 app.packageName,
                 style = MaterialTheme.typography.bodySmall,
-                color = Brand.MutedText,
+                color = RvColor.whiteA50,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
         if (app.isSystem) {
-            Text(stringResource(R.string.rules_app_system_tag), style = MaterialTheme.typography.labelSmall, color = Brand.MutedText)
+            Text(stringResource(R.string.rules_app_system_tag), style = MaterialTheme.typography.labelSmall, color = RvColor.whiteA50)
         }
     }
 }

@@ -57,7 +57,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.text.KeyboardOptions
 import com.resultv.android.R
-import com.resultv.android.theme.Brand
+import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.RvRadius
+import com.resultv.android.theme.RvSpace
 import com.resultv.android.ui.components.DarkSheetSystemBars
 import com.resultv.android.vpn.Profile
 import com.resultv.android.vpn.ProfileRepository
@@ -92,22 +94,22 @@ fun ManualPane(onDone: () -> Unit) {
 @Composable
 private fun ProtocolGrid(onPick: (ProtocolSpec) -> Unit) {
     Card(
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = Brand.Surface),
+        shape = RoundedCornerShape(RvRadius.card),
+        colors = CardDefaults.cardColors(containerColor = RvColor.Grey),
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.padding(RvSpace.nest1),
+            verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
         ) {
             Text(
                 stringResource(R.string.manual_choose_protocol),
                 style = MaterialTheme.typography.labelLarge,
-                color = Brand.SecondaryText,
+                color = RvColor.whiteA50,
             )
             LazyVerticalGrid(
                 columns = GridCells.Fixed(3),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
+                horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3),
                 modifier = Modifier.height(280.dp),
             ) {
                 items(Protocols, key = { it.id }) { spec ->
@@ -124,8 +126,8 @@ private fun ProtocolCard(spec: ProtocolSpec, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .height(80.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(Brand.SurfaceHigh)
+            .clip(RoundedCornerShape(RvRadius.control))
+            .background(RvColor.LightGray)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -141,7 +143,7 @@ private fun ProtocolCard(spec: ProtocolSpec, onClick: () -> Unit) {
             Text(
                 spec.scheme,
                 style = MaterialTheme.typography.bodySmall,
-                color = Brand.MutedText,
+                color = RvColor.whiteA50,
             )
         }
     }
@@ -196,12 +198,12 @@ private fun ProtocolForm(
     }
 
     Card(
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = Brand.Surface),
+        shape = RoundedCornerShape(RvRadius.card),
+        colors = CardDefaults.cardColors(containerColor = RvColor.Grey),
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.padding(RvSpace.nest1),
+            verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) {
@@ -210,7 +212,7 @@ private fun ProtocolForm(
                         contentDescription = stringResource(R.string.action_back),
                     )
                 }
-                Spacer(Modifier.width(4.dp))
+                Spacer(Modifier.width(RvSpace.xs))
                 Text(spec.title, style = MaterialTheme.typography.titleMedium)
             }
 
@@ -230,10 +232,10 @@ private fun ProtocolForm(
                 )
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3)) {
                 FilledTonalButton(onClick = submit) {
                     Icon(Icons.Outlined.Check, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(RvSpace.nest3))
                     Text(stringResource(R.string.action_save))
                 }
                 TextButton(onClick = onBack) { Text(stringResource(R.string.action_cancel)) }
@@ -296,13 +298,13 @@ private fun ChoiceField(
 ) {
     var expanded by remember { mutableStateOf(false) }
     Column {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = Brand.SecondaryText)
-        Spacer(Modifier.height(4.dp))
+        Text(label, style = MaterialTheme.typography.labelSmall, color = RvColor.whiteA50)
+        Spacer(Modifier.height(RvSpace.xs))
         Box {
             AssistChip(
                 onClick = { expanded = true },
                 label = { Text(value.ifBlank { "—" }) },
-                colors = AssistChipDefaults.assistChipColors(containerColor = Brand.SurfaceHigh),
+                colors = AssistChipDefaults.assistChipColors(containerColor = RvColor.LightGray),
             )
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 options.forEach { opt ->
@@ -669,13 +671,13 @@ internal fun ProfileFullEditSheet(
     // broken empty form. Shouldn't normally happen: callers gate on
     // canFullEdit, but guard anyway.
     if (spec == null) {
-        ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = Brand.Surface) {
+        ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = RvColor.Grey) {
             DarkSheetSystemBars()
             Text(
                 text = stringResource(R.string.proxies_edit_unsupported),
                 style = MaterialTheme.typography.bodyMedium,
-                color = Brand.SecondaryText,
-                modifier = Modifier.padding(24.dp),
+                color = RvColor.whiteA50,
+                modifier = Modifier.padding(RvSpace.page),
             )
         }
         return
@@ -721,15 +723,15 @@ internal fun ProfileFullEditSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Brand.Surface,
+        containerColor = RvColor.Grey,
     ) {
         DarkSheetSystemBars()
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 4.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+                .padding(horizontal = 20.dp, vertical = RvSpace.xs),
+            verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
         ) {
             Text(
                 text = spec.title,
@@ -755,12 +757,12 @@ internal fun ProfileFullEditSheet(
             }
 
             Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(bottom = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3),
+                modifier = Modifier.padding(bottom = RvSpace.nest2),
             ) {
                 FilledTonalButton(onClick = submit) {
                     Icon(Icons.Outlined.Check, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(RvSpace.nest3))
                     Text(stringResource(R.string.action_save))
                 }
                 TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
