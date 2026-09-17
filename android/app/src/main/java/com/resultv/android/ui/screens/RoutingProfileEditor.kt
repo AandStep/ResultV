@@ -38,8 +38,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.resultv.android.R
-import com.resultv.android.theme.Brand
-import com.resultv.android.theme.CategoryTint
+import com.resultv.android.theme.RvCategory
+import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.RvRadius
+import com.resultv.android.theme.RvSpace
 import com.resultv.android.ui.components.SettingIcon
 import com.resultv.android.vpn.ROUTING_ACTIONS
 import com.resultv.android.vpn.RoutingProfile
@@ -62,14 +64,14 @@ import com.resultv.android.vpn.routingTokensOf
  * вместо одного.
  */
 
-private val PanelShape = RoundedCornerShape(16.dp)
+private val PanelShape = RoundedCornerShape(RvRadius.control)
 
 /**
  * Поле правил скруглено сильнее стандартного: оно лежит ВНУТРИ панели на
  * 16 dp, и прямые углы Material внутри скруглённой коробки читались как
  * чужая деталь.
  */
-private val FieldShape = RoundedCornerShape(14.dp)
+private val FieldShape = RoundedCornerShape(RvRadius.chip)
 private val EditorBorder = Color.White.copy(alpha = 0.06f)
 private val EditorMuted = Color.White.copy(alpha = 0.50f)
 
@@ -80,9 +82,9 @@ private fun actionLabelRes(action: String): Int = when (action) {
 }
 
 private fun actionColor(action: String): Color = when (action) {
-    "direct" -> Brand.Green
-    "proxy" -> Brand.GreenLight
-    else -> Brand.Danger
+    "direct" -> RvColor.Main
+    "proxy" -> RvColor.Second
+    else -> RvColor.Errors
 }
 
 @Composable
@@ -121,15 +123,15 @@ fun RoutingProfileEditorContent(
 
     val empty = fields.values.all { routingTokensOf(it).isEmpty() }
 
-    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(RvSpace.nest1)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
         ) {
             SettingIcon(
                 icon = if (isEdit) Icons.Outlined.Edit else Icons.Outlined.Add,
-                tint = CategoryTint(Brand.Green.copy(alpha = 0.16f), Brand.Green),
+                tint = RvCategory.Main,
             )
             Column {
                 Text(
@@ -146,7 +148,7 @@ fun RoutingProfileEditorContent(
                         else R.string.routing_editor_create_subtitle
                     ),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Brand.SecondaryText,
+                    color = RvColor.whiteA50,
                 )
             }
         }
@@ -162,7 +164,7 @@ fun RoutingProfileEditorContent(
         }
 
         ROUTING_ACTIONS.forEach { action ->
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(RvSpace.nest3)) {
                 Text(
                     stringResource(actionLabelRes(action)),
                     fontSize = 14.sp,
@@ -189,7 +191,7 @@ fun RoutingProfileEditorContent(
         }
 
         EditorSection(stringResource(R.string.routing_editor_strategy)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3)) {
                 order.forEach { action ->
                     Text(
                         action,
@@ -208,7 +210,7 @@ fun RoutingProfileEditorContent(
                                 order.remove(action)
                                 order.add(action)
                             }
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                            .padding(horizontal = RvSpace.nest2, vertical = RvSpace.nest3),
                     )
                 }
             }
@@ -225,8 +227,8 @@ fun RoutingProfileEditorContent(
                     .fillMaxWidth()
                     .clip(PanelShape)
                     .border(1.dp, EditorBorder, PanelShape)
-                    .padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                    .padding(RvSpace.nest2),
+                verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
             ) {
                 Text(
                     stringResource(R.string.routing_editor_geoip),
@@ -285,8 +287,8 @@ fun RoutingProfileEditorContent(
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape = PanelShape,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Brand.Green.copy(alpha = 0.14f),
-                    contentColor = Brand.Green,
+                    containerColor = RvColor.Main.copy(alpha = 0.14f),
+                    contentColor = RvColor.Main,
                 ),
             ) {
                 Text(
@@ -301,7 +303,7 @@ fun RoutingProfileEditorContent(
 
 @Composable
 private fun EditorSection(label: String, content: @Composable () -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(RvSpace.nest3)) {
         Text(label, fontSize = 14.sp, color = EditorMuted)
         content()
     }
@@ -327,7 +329,7 @@ private fun RulePanel(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(onClick = onToggle)
-                .padding(horizontal = 14.dp, vertical = 12.dp),
+                .padding(horizontal = RvSpace.nest2, vertical = RvSpace.nest2),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(label, fontSize = 14.sp, modifier = Modifier.weight(1f))
@@ -340,7 +342,7 @@ private fun RulePanel(
                 if (open) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
                 contentDescription = null,
                 tint = EditorMuted,
-                modifier = Modifier.padding(start = 8.dp),
+                modifier = Modifier.padding(start = RvSpace.nest3),
             )
         }
         AnimatedVisibility(visible = open) {
@@ -357,8 +359,8 @@ private fun RulePanel(
                     // мимо всего списка. Выше потолка текст прокручивается
                     // внутри поля.
                     .heightIn(min = 110.dp, max = 220.dp)
-                    .padding(horizontal = 14.dp)
-                    .padding(bottom = 14.dp),
+                    .padding(horizontal = RvSpace.nest2)
+                    .padding(bottom = RvSpace.nest2),
             )
         }
     }

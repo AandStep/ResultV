@@ -20,7 +20,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.resultv.android.R
-import com.resultv.android.theme.Brand
+import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.RvSpace
 import com.resultv.android.vpn.ROUTING_ACTIONS
 import com.resultv.android.vpn.RoutingProfile
 
@@ -43,18 +44,18 @@ fun RoutingDeepLinkSheet(
     ModalBottomSheet(
         onDismissRequest = { if (!busy) onDismiss() },
         sheetState = sheetState,
-        containerColor = Brand.Surface,
+        containerColor = RvColor.Grey,
         dragHandle = { BottomSheetDefaults.DragHandle() },
     ) {
         DarkSheetSystemBars()
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .padding(horizontal = RvSpace.nest1, vertical = RvSpace.nest3)
                 // Не safe area: её лист держит сам. Это просто поле, чтобы
                 // кнопки не упирались в панель навигации.
-                .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(bottom = RvSpace.page),
+            verticalArrangement = Arrangement.spacedBy(RvSpace.nest2),
         ) {
             Text(
                 stringResource(R.string.routing_sheet_title),
@@ -66,7 +67,7 @@ fun RoutingDeepLinkSheet(
                 Text(
                     stringResource(R.string.routing_sheet_publisher, profile.publisherName),
                     style = MaterialTheme.typography.bodySmall,
-                    color = Brand.SecondaryText,
+                    color = RvColor.whiteA50,
                 )
             }
             // Ноль не показывается — то же правило, что у карточки в списке
@@ -87,12 +88,12 @@ fun RoutingDeepLinkSheet(
                 Text(
                     stringResource(R.string.routing_sheet_geo),
                     style = MaterialTheme.typography.bodySmall,
-                    color = Brand.SecondaryText,
+                    color = RvColor.whiteA50,
                 )
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3, Alignment.End),
             ) {
                 TextButton(onClick = onDismiss, enabled = !busy) {
                     Text(stringResource(R.string.routing_sheet_decline))

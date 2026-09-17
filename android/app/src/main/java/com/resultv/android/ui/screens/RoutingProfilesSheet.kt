@@ -45,8 +45,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
-import com.resultv.android.theme.Brand
-import com.resultv.android.theme.CategoryTint
+import com.resultv.android.theme.RvCategory
+import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.RvRadius
+import com.resultv.android.theme.RvSpace
 import com.resultv.android.ui.components.SettingIcon
 import com.resultv.android.vpn.DeepLinkImporter
 import com.resultv.android.vpn.ROUTING_ACTIONS
@@ -79,13 +81,13 @@ import kotlinx.coroutines.withContext
  * счётчик direct.
  */
 
-private val CardShape = RoundedCornerShape(20.dp)
-private val BadgeShape = RoundedCornerShape(12.dp)
+private val CardShape = RoundedCornerShape(RvRadius.card)
+private val BadgeShape = RoundedCornerShape(RvRadius.chip)
 
 /** Подъём над заливкой шторки — тот же, что у поля-тегов в «Правилах». */
 private val CardFill = Color.White.copy(alpha = 0.04f)
 private val CardBorder = Color.White.copy(alpha = 0.06f)
-private val ActiveBorder = Brand.Green.copy(alpha = 0.45f)
+private val ActiveBorder = RvColor.Main.copy(alpha = 0.45f)
 private val Muted = Color.White.copy(alpha = 0.50f)
 
 /**
@@ -95,9 +97,9 @@ private val Muted = Color.White.copy(alpha = 0.50f)
  * карточки громче названия.
  */
 private fun countColor(action: String): Color = when (action) {
-    "direct" -> Brand.Green.copy(alpha = 0.8f)
-    "proxy" -> Brand.GreenLight.copy(alpha = 0.8f)
-    else -> Brand.Danger.copy(alpha = 0.8f)
+    "direct" -> RvColor.Main.copy(alpha = 0.8f)
+    "proxy" -> RvColor.Second.copy(alpha = 0.8f)
+    else -> RvColor.Errors.copy(alpha = 0.8f)
 }
 
 @Composable
@@ -134,17 +136,17 @@ fun RoutingProfilesSheetContent(
         }
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(RvSpace.nest1)) {
         // Шапка — та же, что у всех шторок настроек: значок 36 dp, заголовок,
         // подпись. Крестика нет: у шторки есть ручка, свайп и «назад».
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
         ) {
             SettingIcon(
                 icon = Icons.Outlined.AltRoute,
-                tint = CategoryTint(Color(0xFF3b82f6).copy(alpha = 0.18f), Color(0xFF60a5fa)),
+                tint = RvCategory.Blue,
             )
             Column {
                 Text(
@@ -155,7 +157,7 @@ fun RoutingProfilesSheetContent(
                 Text(
                     stringResource(R.string.routing_profiles_subtitle),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Brand.SecondaryText,
+                    color = RvColor.whiteA50,
                 )
             }
         }
@@ -208,7 +210,7 @@ fun RoutingProfilesSheetContent(
         // «Создать профиль» из макета появится вместе с редактором: кнопка без
         // него обещала бы то, чего нет.
         Section(stringResource(R.string.routing_profiles_actions)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3)) {
                 Button(
                     onClick = { onEdit(null) },
                     modifier = Modifier.weight(1f).height(52.dp),
@@ -229,8 +231,8 @@ fun RoutingProfilesSheetContent(
                     modifier = Modifier.weight(1f).height(52.dp),
                     shape = CardShape,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Brand.Green.copy(alpha = 0.14f),
-                        contentColor = Brand.Green,
+                        containerColor = RvColor.Main.copy(alpha = 0.14f),
+                        contentColor = RvColor.Main,
                     ),
                 ) {
                     Text(
@@ -265,7 +267,7 @@ fun RoutingProfilesSheetContent(
                     Text(stringResource(R.string.routing_sheet_decline))
                 }
             },
-            containerColor = Brand.Surface,
+            containerColor = RvColor.Grey,
         )
     }
 
@@ -277,7 +279,7 @@ fun RoutingProfilesSheetContent(
 /** Раздел: подпись белым 50 % и содержимое под ней. */
 @Composable
 private fun Section(label: String, content: @Composable () -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(RvSpace.nest3)) {
         Text(label, fontSize = 14.sp, color = Muted)
         content()
     }
@@ -301,16 +303,16 @@ private fun ProfileCard(
             .background(CardFill)
             .border(1.dp, if (isActive) ActiveBorder else CardBorder, CardShape)
             .clickable(enabled = !busy, onClick = onSelect)
-            .padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
+            .padding(start = RvSpace.nest2, end = RvSpace.xs, top = RvSpace.nest2, bottom = RvSpace.nest2),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
         Box(
             modifier = Modifier
                 .size(44.dp)
                 .clip(BadgeShape)
                 .background(
-                    if (isActive) Brand.Green.copy(alpha = 0.16f) else Brand.SurfaceHigh
+                    if (isActive) RvColor.Main.copy(alpha = 0.16f) else RvColor.LightGray
                 ),
             contentAlignment = Alignment.Center,
         ) {
@@ -318,20 +320,20 @@ private fun ProfileCard(
                 CircularProgressIndicator(
                     modifier = Modifier.size(20.dp),
                     strokeWidth = 2.dp,
-                    color = Brand.Green,
+                    color = RvColor.Main,
                 )
             } else {
                 Icon(
                     Icons.Outlined.Public,
                     contentDescription = null,
-                    tint = if (isActive) Brand.Green else Muted,
+                    tint = if (isActive) RvColor.Main else Muted,
                     modifier = Modifier.size(22.dp),
                 )
             }
         }
         Column(
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(3.dp),
+            verticalArrangement = Arrangement.spacedBy(RvSpace.xs),
         ) {
             Text(
                 profile.name,
@@ -343,14 +345,14 @@ private fun ProfileCard(
                 Text(
                     stringResource(R.string.routing_sheet_publisher, profile.publisherName),
                     fontSize = 13.sp,
-                    color = Brand.MutedText,
+                    color = RvColor.whiteA50,
                     maxLines = 1,
                 )
             }
             Counts(profile)
             when {
                 profile.lastError.isNotEmpty() -> {
-                    Text(profile.lastError, fontSize = 13.sp, color = Brand.Danger)
+                    Text(profile.lastError, fontSize = 13.sp, color = RvColor.Errors)
                     RebuildLink(onRebuild, busy)
                 }
                 // «Не собран» показывается только когда правил нет НИ У ОДНОГО
@@ -360,7 +362,7 @@ private fun ProfileCard(
                     Text(
                         stringResource(R.string.routing_profiles_not_built),
                         fontSize = 13.sp,
-                        color = Brand.MutedText,
+                        color = RvColor.whiteA50,
                     )
                     RebuildLink(onRebuild, busy)
                 }
@@ -421,7 +423,7 @@ private fun Counts(profile: RoutingProfile) {
         if (n > 0) action to n else null
     }
     if (parts.isEmpty()) return
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(RvSpace.xs)) {
         parts.forEach { (action, n) ->
             Text(
                 "• $n $action",
@@ -471,6 +473,6 @@ private fun ImportLinkDialog(onDismiss: () -> Unit) {
                 Text(stringResource(R.string.routing_sheet_decline))
             }
         },
-        containerColor = Brand.Surface,
+        containerColor = RvColor.Grey,
     )
 }

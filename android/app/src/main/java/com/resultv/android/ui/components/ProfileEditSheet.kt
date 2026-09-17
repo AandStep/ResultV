@@ -46,7 +46,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.resultv.android.R
-import com.resultv.android.theme.Brand
+import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.RvRadius
+import com.resultv.android.theme.RvSpace
 import com.resultv.android.vpn.Profile
 
 /**
@@ -88,13 +90,13 @@ fun ProfileEditSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Brand.Surface,
+        containerColor = RvColor.Grey,
     ) {
         DarkSheetSystemBars()
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 4.dp),
+                .padding(horizontal = RvSpace.nest3, vertical = RvSpace.xs),
         ) {
             // Header row — profile name in bold so the user knows which
             // server they're editing without scrolling back to the list.
@@ -102,7 +104,7 @@ fun ProfileEditSheet(
                 text = profile.name,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                modifier = Modifier.padding(horizontal = RvSpace.nest1, vertical = RvSpace.nest2),
             )
 
             ActionRow(
@@ -128,8 +130,8 @@ fun ProfileEditSheet(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                            .padding(horizontal = RvSpace.nest1, vertical = RvSpace.nest3),
+                        verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
                     ) {
                         OutlinedTextField(
                             value = name,
@@ -143,7 +145,7 @@ fun ProfileEditSheet(
                         Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                             FilledTonalButton(onClick = save, enabled = saveEnabled) {
                                 Icon(Icons.Outlined.Check, contentDescription = null)
-                                Spacer(Modifier.width(6.dp))
+                                Spacer(Modifier.width(RvSpace.xs))
                                 Text(stringResource(R.string.action_save))
                             }
                         }
@@ -152,7 +154,7 @@ fun ProfileEditSheet(
             }
             ActionRow(
                 icon = if (profile.isFavorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                iconTint = if (profile.isFavorite) Brand.Favorite else Brand.SecondaryText,
+                iconTint = if (profile.isFavorite) RvColor.Warning else RvColor.whiteA50,
                 label = stringResource(
                     if (profile.isFavorite) R.string.proxies_action_unfavorite
                     else R.string.proxies_action_favorite,
@@ -160,17 +162,17 @@ fun ProfileEditSheet(
                 onClick = { onToggleFavorite(); onDismiss() },
             )
             HorizontalDivider(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                modifier = Modifier.padding(horizontal = RvSpace.nest1, vertical = RvSpace.xs),
                 color = Color.White.copy(alpha = 0.08f),
             )
             ActionRow(
                 icon = Icons.Outlined.DeleteOutline,
-                iconTint = Brand.Danger,
-                labelColor = Brand.Danger,
+                iconTint = RvColor.Errors,
+                labelColor = RvColor.Errors,
                 label = stringResource(R.string.action_delete),
                 onClick = { onDelete(); onDismiss() },
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(RvSpace.nest3))
         }
     }
 }
@@ -180,13 +182,13 @@ private fun ActionRow(
     icon: ImageVector,
     label: String,
     onClick: () -> Unit,
-    iconTint: Color = Brand.SecondaryText,
+    iconTint: Color = RvColor.whiteA50,
     labelColor: Color = Color.Unspecified,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(RvRadius.chip))
             .background(Color.Transparent)
             .padding(0.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -202,7 +204,7 @@ private fun ActionRow(
                     tint = iconTint,
                 )
             }
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(RvSpace.nest2))
             Text(
                 text = label,
                 style = MaterialTheme.typography.bodyLarge,

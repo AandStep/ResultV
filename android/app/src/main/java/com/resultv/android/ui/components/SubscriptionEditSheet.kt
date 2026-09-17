@@ -56,8 +56,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.resultv.android.R
-import com.resultv.android.theme.Brand
 import com.resultv.android.theme.CategoryTint
+import com.resultv.android.theme.RvCategory
+import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.RvSpace
 import com.resultv.android.vpn.Subscription
 
 /**
@@ -71,9 +73,9 @@ data class SubscriptionEditResult(
 
 /**
  * Bottom-sheet settings panel for a single [Subscription]. Visual language is
- * taken verbatim from `SettingsScreen`'s sub-category sheets: `Brand.Surface`
+ * taken verbatim from `SettingsScreen`'s sub-category sheets: `RvColor.Grey`
  * container, a drag handle, NO inner cards — every option is a flat row laid
- * out on the sheet background, separated by `Brand.SurfaceHigh`
+ * out on the sheet background, separated by `RvColor.LightGray`
  * [HorizontalDivider]s, with the same `vertical = 8.dp` row rhythm and
  * `spacedBy(12.dp)` column spacing the settings groups ship.
  *
@@ -117,7 +119,7 @@ fun SubscriptionEditSheet(
         onDismissRequest = onDismiss,
         modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
         sheetState = sheetState,
-        containerColor = Brand.Surface,
+        containerColor = RvColor.Grey,
         contentColor = MaterialTheme.colorScheme.onSurface,
         dragHandle = { BottomSheetDefaults.DragHandle() },
     ) {
@@ -126,13 +128,13 @@ fun SubscriptionEditSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .padding(horizontal = RvSpace.nest1, vertical = RvSpace.nest3)
                 // Не safe area: её лист уже держит сам —
                 // ModalBottomSheet кладёт на содержимое
                 // BottomSheetDefaults.windowInsets (safeDrawing снизу). Это
                 // просто поле, чтобы последняя строка не упиралась в панель.
-                .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(bottom = RvSpace.page),
+            verticalArrangement = Arrangement.spacedBy(RvSpace.nest2),
         ) {
             SheetHeader(displayName = subscription.displayName, onClose = onDismiss)
 
@@ -142,26 +144,26 @@ fun SubscriptionEditSheet(
                 onValueChange = { name = it },
             )
 
-            HorizontalDivider(color = Brand.SurfaceHigh)
+            HorizontalDivider(color = RvColor.LightGray)
 
             ToggleRow(
                 title = stringResource(R.string.sub_edit_visibility_toggle),
                 subtitle = stringResource(R.string.sub_edit_visibility_desc),
                 icon = Icons.Outlined.Home,
-                iconBg = Color(0xFF10b981).copy(alpha = 0.18f),
-                iconTint = Color(0xFF34d399),
+                iconBg = RvCategory.Emerald.tile,
+                iconTint = RvCategory.Emerald.glyph,
                 checked = !hiddenOnHome,
                 onCheckedChange = { hiddenOnHome = !it },
             )
 
-            HorizontalDivider(color = Brand.SurfaceHigh)
+            HorizontalDivider(color = RvColor.LightGray)
 
             ToggleRow(
                 title = stringResource(R.string.sub_edit_custom_interval_title),
                 subtitle = stringResource(R.string.sub_edit_custom_interval_desc),
                 icon = Icons.Outlined.Timer,
-                iconBg = Color(0xFFf59e0b).copy(alpha = 0.18f),
-                iconTint = Color(0xFFfbbf24),
+                iconBg = RvCategory.Amber.tile,
+                iconTint = RvCategory.Amber.glyph,
                 checked = customIntervalOn,
                 onCheckedChange = { customIntervalOn = it },
             )
@@ -169,8 +171,8 @@ fun SubscriptionEditSheet(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(start = 50.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(RvSpace.xs),
+                verticalArrangement = Arrangement.spacedBy(RvSpace.xs),
             ) {
                 INTERVAL_CHOICES.forEach { choice ->
                     FilterChip(
@@ -179,8 +181,8 @@ fun SubscriptionEditSheet(
                         enabled = customIntervalOn,
                         label = { Text(stringResource(choice.labelResId)) },
                         colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = Brand.Green.copy(alpha = 0.2f),
-                            selectedLabelColor = Brand.GreenLight,
+                            selectedContainerColor = RvColor.Main.copy(alpha = 0.2f),
+                            selectedLabelColor = RvColor.Second,
                         ),
                     )
                 }
@@ -189,7 +191,7 @@ fun SubscriptionEditSheet(
             // Links — rendered ONLY when the panel response shipped a
             // `Support-Url` header (or anything else we plumb through later).
             if (supportUrl.isNotEmpty()) {
-                HorizontalDivider(color = Brand.SurfaceHigh)
+                HorizontalDivider(color = RvColor.LightGray)
                 LinkRow(
                     title = stringResource(R.string.sub_edit_link_support),
                     onClick = {
@@ -215,14 +217,14 @@ fun SubscriptionEditSheet(
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 8.dp),
+                    .padding(top = RvSpace.nest3),
             ) {
                 Icon(
                     imageVector = Icons.Outlined.Check,
                     contentDescription = null,
                     modifier = Modifier.size(18.dp),
                 )
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(RvSpace.nest3))
                 Text(stringResource(R.string.action_save))
             }
         }
@@ -238,13 +240,13 @@ private fun SheetHeader(displayName: String, onClose: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(bottom = 4.dp),
+            .padding(bottom = RvSpace.xs),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
         SettingIcon(
             icon = Icons.Outlined.RssFeed,
-            tint = CategoryTint(Color(0xFFf59e0b).copy(alpha = 0.18f), Color(0xFFfbbf24)),
+            tint = RvCategory.Amber,
         )
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -256,14 +258,14 @@ private fun SheetHeader(displayName: String, onClose: () -> Unit) {
             Text(
                 text = stringResource(R.string.sub_edit_title),
                 style = MaterialTheme.typography.bodyMedium,
-                color = Brand.SecondaryText,
+                color = RvColor.whiteA50,
             )
         }
         IconButton(onClick = onClose) {
             Icon(
                 imageVector = Icons.Outlined.Close,
                 contentDescription = stringResource(R.string.sub_edit_close_cd),
-                tint = Brand.SecondaryText,
+                tint = RvColor.whiteA50,
             )
         }
     }
@@ -283,16 +285,16 @@ private fun NameRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .padding(vertical = RvSpace.nest3),
+        verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
         ) {
             SettingIcon(
                 icon = Icons.Outlined.DriveFileRenameOutline,
-                tint = CategoryTint(Color(0xFF3b82f6).copy(alpha = 0.18f), Color(0xFF60a5fa)),
+                tint = RvCategory.Blue,
             )
             Text(title, style = MaterialTheme.typography.bodyLarge)
         }
@@ -324,14 +326,14 @@ private fun ToggleRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp),
+            .padding(vertical = RvSpace.nest3),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
         SettingIcon(icon, CategoryTint(iconBg, iconTint))
         Column(modifier = Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Brand.SecondaryText)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = RvColor.whiteA50)
         }
         Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
@@ -343,19 +345,19 @@ private fun LinkRow(title: String, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(vertical = 8.dp),
+            .padding(vertical = RvSpace.nest3),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
         SettingIcon(
             icon = Icons.AutoMirrored.Outlined.HelpOutline,
-            tint = CategoryTint(Brand.Green.copy(alpha = 0.18f), Brand.GreenLight),
+            tint = RvCategory.Main,
         )
         Text(title, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
         Icon(
             imageVector = Icons.Outlined.NorthEast,
             contentDescription = stringResource(R.string.sub_edit_link_open_cd),
-            tint = Brand.SecondaryText,
+            tint = RvColor.whiteA50,
         )
     }
 }
