@@ -67,3 +67,17 @@ func TestTunDNSModeIsStated(t *testing.T) {
 		t.Errorf("dns_mode = %q, ожидалось hijack", in.DNSMode)
 	}
 }
+
+// Потолок ставится только обычным узлам. WG и AWG держат своё состояние сессии,
+// и голодание таблицы инбаунда у них — та же ошибка, что однажды уронила живой
+// туннель таймаутом.
+func TestUDPNATCeilingIsSetForPlainNodesOnly(t *testing.T) {
+	if in := tunInboundFor(t, "VLESS"); in.UDPNATMax != 8192 {
+		t.Errorf("udp_nat_max = %d, ожидалось 8192", in.UDPNATMax)
+	}
+	for _, pt := range []string{"WIREGUARD", "AMNEZIAWG"} {
+		if in := tunInboundFor(t, pt); in.UDPNATMax != 0 {
+			t.Errorf("%s: udp_nat_max = %d, у эндпоинтов потолок не ставится", pt, in.UDPNATMax)
+		}
+	}
+}
