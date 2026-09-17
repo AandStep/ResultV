@@ -70,8 +70,12 @@ func TestAmneziaValidationIgnoresNonAmneziaConfigs(t *testing.T) {
 	if err := validateAmneziaOptions(map[string]interface{}{"private_key": "x"}); err != nil {
 		t.Errorf("plain WireGuard rejected: %v", err)
 	}
+	// h1 стоит выше дефолтов H2-H4 (2,3,4) намеренно: диапазон 1-5 накрывал бы
+	// их, и такой профиль отвергает само устройство форка — проверено прогоном
+	// IpcSet, «headers must not overlap». Проверка диапазонов ловит это раньше
+	// подключения, поэтому здесь нужен профиль, который движок реально поднимет.
 	if err := validateAmneziaOptions(awgExtra(map[string]interface{}{
-		"jc": 8, "s1": 88, "h1": "1-5",
+		"jc": 8, "s1": 88, "h1": "10-20",
 	})); err != nil {
 		t.Errorf("AWG 2.0 profile rejected: %v", err)
 	}
@@ -178,5 +182,58 @@ func TestAmneziaValidationNamesTheBadKnob(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "rekey_timeout") {
 		t.Errorf("error should name the knob, got: %v", err)
+	}
+}
+
+// The engine refuses overlapping packet-type headers inside IpcSet, and that
+// refusal costs the whole connect and arrives with the entire ipcConf attached.
+// Catching it here names the pair instead.
+func TestAWGOverlappingHeadersRejected(t *testing.T) {
+	err := validateAmneziaOptions(awgExtra(map[string]interface{}{"h1": "5", "h2": "3-7"}))
+	if err == nil {
+		t.Fatal("пересекающиеся H1/H2 должны быть отклонены")
+	}
+	if !strings.Contains(err.Error(), "overlap") {
+		t.Errorf("сообщение должно называть пересечение, получено: %v", err)
+	}
+}
+
+// Unset slots keep their protocol defaults (1,2,3,4), so a config that sets
+// only H1 = 3 collides with the H3 the engine will use.
+func TestAWGHeaderCollidesWithDefault(t *testing.T) {
+	if err := validateAmneziaOptions(awgExtra(map[string]interface{}{"h1": "3"})); err == nil {
+		t.Error("H1=3 сталкивается с дефолтным H3=3 — ядро это отвергнет")
+	}
+}
+
+// Defaults on their own must stay valid: an amnezia block without H-values is
+// the common case.
+func TestAWGDefaultHeadersAccepted(t *testing.T) {
+	if err := validateAmneziaOptions(awgExtra(map[string]interface{}{"jc": 4})); err != nil {
+		t.Errorf("конфиг без H-значений должен проходить, получено: %v", err)
+	}
+}
+
+// A 3.1 switch that cannot be read must be refused rather than dropped: with
+// random_trailers mismatched the tunnel never comes up and the log says
+// nothing.
+func TestAWG31UnreadableSwitchRejected(t *testing.T) {
+	err := validateAmneziaOptions(awgExtra(map[string]interface{}{"random_trailers": "maybe"}))
+	if err == nil {
+		t.Fatal("нечитаемое значение random_trailers должно быть отклонено")
+	}
+	if !strings.Contains(err.Error(), "random_trailers") {
+		t.Errorf("сообщение должно называть параметр, получено: %v", err)
+	}
+}
+
+func TestAWG31ReadableSwitchesAccepted(t *testing.T) {
+	for _, block := range []map[string]interface{}{
+		{"random_trailers": "on", "disable_cookies": "off"},
+		{"RandomTrailers": true},
+	} {
+		if err := validateAmneziaOptions(awgExtra(block)); err != nil {
+			t.Errorf("%v должен проходить валидацию, получено: %v", block, err)
+		}
 	}
 }

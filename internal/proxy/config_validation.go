@@ -85,6 +85,13 @@ func validateAmneziaOptions(extra map[string]interface{}) error {
 		}
 	}
 
+	if err := validateAWGHeaderRanges(m); err != nil {
+		return err
+	}
+	if err := validateAWG31Switches(m); err != nil {
+		return err
+	}
+
 	for _, name := range awg3Keys {
 		value := strings.TrimSpace(stringFromExtraValue(m[name]))
 		if value == "" || value == "0" {
@@ -248,6 +255,85 @@ func validateProtocolRequiredFields(proxyCfg ProxyConfig) error {
 		var js map[string]interface{}
 		if err := json.Unmarshal(proxyCfg.Extra, &js); err != nil {
 			return fmt.Errorf("invalid extra json: %w", err)
+		}
+	}
+	return nil
+}
+
+// awgDefaultHeaders are the packet-type values WireGuard uses when H1-H4 say
+// nothing: initiation 1, response 2, cookie 3, transport 4.
+var awgDefaultHeaders = [4]uint64{1, 2, 3, 4}
+
+// validateAWGHeaderRanges rejects H1-H4 that overlap.
+//
+// The engine checks this itself, inside IpcSet (wireguard-go device/uapi.go,
+// mergeWithDevice → "headers must not overlap"), and a failure there aborts the
+// whole connect with the entire ipcConf as its message. The same verdict here
+// names the two headers that collide.
+//
+// Unset slots are checked at their defaults rather than skipped: a config that
+// sets only H1 = 3 collides with the default H3, and the engine would see the
+// collision even though the config never mentions H3.
+func validateAWGHeaderRanges(m map[string]interface{}) error {
+	type headerRange struct {
+		name      string
+		low, high uint64
+	}
+	ranges := make([]headerRange, 0, 4)
+	for i, name := range []string{"h1", "h2", "h3", "h4"} {
+		raw := amneziaHeaderString(m[name])
+		if raw == "" {
+			ranges = append(ranges, headerRange{name: name, low: awgDefaultHeaders[i], high: awgDefaultHeaders[i]})
+			continue
+		}
+		if err := validateAWGRange(raw); err != nil {
+			return fmt.Errorf("amneziawg %s: %w", name, err)
+		}
+		lowRaw, highRaw, isRange := strings.Cut(raw, "-")
+		low, err := strconv.ParseUint(strings.TrimSpace(lowRaw), 10, 32)
+		if err != nil {
+			return fmt.Errorf("amneziawg %s: invalid value %q", name, raw)
+		}
+		high := low
+		if isRange {
+			high, err = strconv.ParseUint(strings.TrimSpace(highRaw), 10, 32)
+			if err != nil {
+				return fmt.Errorf("amneziawg %s: invalid value %q", name, raw)
+			}
+		}
+		ranges = append(ranges, headerRange{name: name, low: low, high: high})
+	}
+	for i := 0; i < len(ranges); i++ {
+		for j := i + 1; j < len(ranges); j++ {
+			if ranges[i].low <= ranges[j].high && ranges[j].low <= ranges[i].high {
+				return fmt.Errorf("amneziawg %s and %s overlap: the engine rejects overlapping packet-type headers",
+					ranges[i].name, ranges[j].name)
+			}
+		}
+	}
+	return nil
+}
+
+// validateAWG31Switches rejects a stated-but-unreadable random_trailers or
+// disable_cookies.
+//
+// Silence would be worse than a refusal here. random_trailers has to match the
+// peer — with it off against a peer that has it on, every handshake the peer
+// sends is dropped for being the wrong size, and the session simply never comes
+// up, with nothing in the log to say why. A config that means to set it must
+// either be understood or rejected out loud.
+func validateAWG31Switches(m map[string]interface{}) error {
+	for _, name := range awg31Keys {
+		for rawKey, rawVal := range m {
+			if normalizeAWGKey(rawKey) != normalizeAWGKey(name) {
+				continue
+			}
+			if rawVal == nil {
+				continue
+			}
+			if awgBoolFromAny(rawVal) == nil {
+				return fmt.Errorf("amneziawg %s: unreadable value %v, expected on/off", name, rawVal)
+			}
 		}
 	}
 	return nil
