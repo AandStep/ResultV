@@ -19,8 +19,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.resultv.android.R
-import com.resultv.android.theme.Brand
 import com.resultv.android.theme.RvCategory
+import com.resultv.android.theme.RvColor
 import com.resultv.android.vpn.AdBlockRepository
 import com.resultv.android.vpn.CertStore
 import com.resultv.android.vpn.CertTrustState
@@ -80,7 +80,7 @@ internal fun AdBlockGroupContent(settings: SettingsState, onOpenCertWizard: () -
 @Composable
 private fun BrowserAdBlockSection(settings: SettingsState, onOpenCertWizard: () -> Unit) {
     if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) return
-    HorizontalDivider(color = Brand.SurfaceHigh)
+    HorizontalDivider(color = RvColor.LightGray)
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -124,11 +124,11 @@ private fun BrowserAdBlockSection(settings: SettingsState, onOpenCertWizard: () 
             if (certInstalled) R.string.cert_status_trusted else R.string.cert_status_untrusted,
         ),
         style = MaterialTheme.typography.labelSmall,
-        color = if (certInstalled) Brand.GreenLight else Brand.MutedText,
+        color = if (certInstalled) RvColor.Second else RvColor.whiteA50,
         modifier = Modifier.padding(start = 62.dp, top = 2.dp),
     )
     if (!certInstalled) {
-        HorizontalDivider(color = Brand.SurfaceHigh)
+        HorizontalDivider(color = RvColor.LightGray)
         NavRow(
             label = stringResource(R.string.settings_browser_adblock_install),
             icon = Icons.Outlined.Shield,

@@ -42,7 +42,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.resultv.android.R
-import com.resultv.android.theme.Brand
+import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.RvRadius
+import com.resultv.android.theme.RvSpace
 import com.resultv.android.vpn.CERT_FILE_NAME
 import com.resultv.android.vpn.CertExporter
 import com.resultv.android.vpn.CertInstaller
@@ -95,7 +97,7 @@ fun CertWizardScreen(dataDir: String, onClose: () -> Unit) {
     }
 
     Scaffold(
-        containerColor = Brand.Bg,
+        containerColor = RvColor.Black,
         snackbarHost = { SnackbarHost(snackbarHost) },
         topBar = {
             TopAppBar(
@@ -108,7 +110,7 @@ fun CertWizardScreen(dataDir: String, onClose: () -> Unit) {
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Brand.Bg),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = RvColor.Black),
             )
         },
     ) { padding ->
@@ -263,19 +265,19 @@ private fun StaleCertBanner(dataDir: String) {
         ),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(Modifier.padding(16.dp)) {
+        Column(Modifier.padding(RvSpace.nest1)) {
             Text(
                 text = stringResource(R.string.cert_stale_banner_title),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onErrorContainer,
             )
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(RvSpace.xs))
             Text(
                 text = stringResource(R.string.cert_stale_banner_body, count),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onErrorContainer,
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(RvSpace.nest3))
             TextButton(onClick = {
                 runCatching {
                     context.startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))
@@ -327,7 +329,7 @@ private fun IntroStep(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 24.dp)
+            .padding(horizontal = RvSpace.page)
             .padding(bottom = 32.dp),
     ) {
         Column(
@@ -336,18 +338,18 @@ private fun IntroStep(
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(RvSpace.page))
             Box(
                 modifier = Modifier
                     .size(96.dp)
                     .clip(RoundedCornerShape(28.dp))
-                    .background(Brand.Green.copy(alpha = 0.16f)),
+                    .background(RvColor.Main.copy(alpha = 0.16f)),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     icon,
                     contentDescription = null,
-                    tint = Brand.GreenLight,
+                    tint = RvColor.Second,
                     modifier = Modifier.size(48.dp),
                 )
             }
@@ -358,20 +360,20 @@ private fun IntroStep(
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
             )
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(RvSpace.nest1))
             Text(
                 body,
                 style = MaterialTheme.typography.bodyLarge,
-                color = Brand.SecondaryText,
+                color = RvColor.whiteA50,
                 textAlign = TextAlign.Center,
             )
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(RvSpace.page))
         }
         Button(
             onClick = onCta,
             modifier = Modifier.fillMaxWidth().height(52.dp),
-            shape = RoundedCornerShape(14.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Brand.Green),
+            shape = RoundedCornerShape(RvRadius.chip),
+            colors = ButtonDefaults.buttonColors(containerColor = RvColor.Main),
         ) {
             Text(cta, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
         }
@@ -390,7 +392,7 @@ private fun ManualInstallStep(savedFileName: String, snackbarHost: SnackbarHostS
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 24.dp)
+            .padding(horizontal = RvSpace.page)
             .padding(bottom = 32.dp),
     ) {
         Column(
@@ -408,9 +410,9 @@ private fun ManualInstallStep(savedFileName: String, snackbarHost: SnackbarHostS
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Brand.Surface)
-                    .padding(start = 16.dp, end = 4.dp),
+                    .clip(RoundedCornerShape(RvRadius.chip))
+                    .background(RvColor.Grey)
+                    .padding(start = RvSpace.nest1, end = RvSpace.xs),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
@@ -430,7 +432,7 @@ private fun ManualInstallStep(savedFileName: String, snackbarHost: SnackbarHostS
                     Icon(
                         Icons.Outlined.ContentCopy,
                         contentDescription = copied,
-                        tint = Brand.GreenLight,
+                        tint = RvColor.Second,
                     )
                 }
             }
@@ -461,8 +463,8 @@ private fun ManualInstallStep(savedFileName: String, snackbarHost: SnackbarHostS
                 }
             },
             modifier = Modifier.fillMaxWidth().height(52.dp),
-            shape = RoundedCornerShape(14.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Brand.Green),
+            shape = RoundedCornerShape(RvRadius.chip),
+            colors = ButtonDefaults.buttonColors(containerColor = RvColor.Main),
         ) {
             Text(
                 stringResource(R.string.cert_wizard_install_cta),
@@ -475,11 +477,11 @@ private fun ManualInstallStep(savedFileName: String, snackbarHost: SnackbarHostS
 
 @Composable
 private fun NumberedStep(number: Int, text: String) {
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2)) {
         Text(
             "$number.",
             style = MaterialTheme.typography.bodyLarge,
-            color = Brand.MutedText,
+            color = RvColor.whiteA50,
         )
         Text(text, style = MaterialTheme.typography.bodyLarge)
     }
