@@ -58,7 +58,6 @@ internal fun AdBlockGroupContent(settings: SettingsState, onOpenCertWizard: () -
         title = stringResource(R.string.settings_adblock),
         subtitle = stringResource(R.string.settings_adblock_subtitle),
         icon = Icons.Outlined.Block,
-        // TODO(задача 9): цвет тумблера ещё не переведён на семантику раздела.
         tint = RvCategory.Red,
         checked = settings.adblock,
         onCheckedChange = {
@@ -104,8 +103,7 @@ private fun BrowserAdBlockSection(settings: SettingsState, onOpenCertWizard: () 
         title = stringResource(R.string.settings_browser_adblock),
         subtitle = stringResource(R.string.settings_browser_adblock_subtitle),
         icon = Icons.Outlined.Shield,
-        // TODO(задача 9): цвет тумблера ещё не переведён на семантику раздела.
-        tint = RvCategory.Red,
+        tint = RvCategory.Emerald,
         checked = settings.browserAdBlock,
         onCheckedChange = { enabled ->
             if (enabled) {
@@ -134,8 +132,7 @@ private fun BrowserAdBlockSection(settings: SettingsState, onOpenCertWizard: () 
         NavRow(
             label = stringResource(R.string.settings_browser_adblock_install),
             icon = Icons.Outlined.Shield,
-            // TODO(задача 9): цвет строки ещё не переведён на семантику раздела.
-            tint = RvCategory.Red,
+            tint = RvCategory.Emerald,
             onClick = onOpenCertWizard,
         )
     }
