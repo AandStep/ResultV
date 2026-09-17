@@ -19,9 +19,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 )
 
 var ErrDecryptFailed = errors.New("не удалось расшифровать конфигурацию")
@@ -277,6 +280,29 @@ type AppSettings struct {
 	// one, since a brand-new install is seeded on first run (see
 	// Manager.WasCreatedFresh).
 	LastChangelogVersion string `json:"lastChangelogVersion,omitempty"`
+
+	// PingType selects what the visible ping measures. Empty (the value every
+	// config written before this field existed carries) means "auto" — the
+	// behaviour where the probe is picked by node protocol. A plain string
+	// rather than a pointer precisely because the zero value is already the
+	// wanted answer, as with EnableIPv6.
+	//
+	// "icmp" forces an ICMP echo; "http_get"/"http_head" fetch PingTestURL
+	// THROUGH the node itself via a throwaway probe engine. Only the ping the
+	// user is looking at reads this — on Android that is PingRepository, the
+	// server list; the AUTO sweep (resolveAutoCandidates) and the kill-switch
+	// watchdog keep their own tuning, because they run unattended on every
+	// connect and a per-node probe engine there would make connecting several
+	// times slower.
+	PingType string `json:"pingType,omitempty"`
+
+	// PingTestURL is the endpoint the http_* types fetch through the node.
+	// HTTPS only — see ValidatePingTestURL for why that is a correctness
+	// requirement and not a preference.
+	PingTestURL string `json:"pingTestUrl,omitempty"`
+
+	// PingTimeoutSec bounds one measurement, 1..10, 0/absent → 3.
+	PingTimeoutSec int `json:"pingTimeoutSec,omitempty"`
 }
 
 // EffectiveDNSLeakProtection returns true unless the user has explicitly
@@ -626,4 +652,93 @@ func ensureDefaults(cfg AppConfig) AppConfig {
 		cfg.Settings.Theme = "dark"
 	}
 	return cfg
+}
+
+
+// Ping types. The zero value ("") means PingTypeAuto so an upgraded config
+// keeps today's behaviour without a migration.
+const (
+	PingTypeAuto     = "auto"
+	PingTypeICMP     = "icmp"
+	PingTypeHTTPGet  = "http_get"
+	PingTypeHTTPHead = "http_head"
+)
+
+// DefaultPingTestURL matches what every other client defaults to, and answers
+// 204 with an empty body — the cheapest possible proof of reachability.
+const DefaultPingTestURL = "https://www.gstatic.com/generate_204"
+
+// Ping timeout bounds. The floor keeps a mistyped 0 from meaning "never wait";
+// the ceiling keeps one unreachable node from stalling a whole sweep.
+const (
+	minPingTimeoutSec     = 1
+	maxPingTimeoutSec     = 10
+	defaultPingTimeoutSec = 3
+)
+
+// ValidatePingTestURL reports whether raw is usable as the ping test endpoint.
+//
+// HTTPS is required, and that is a correctness rule rather than a preference.
+// A plain-HTTP probe goes through our own local inbound, which answers any
+// upstream failure with a locally forged "502 Bad Gateway" — so a dead node
+// would come back as a live one. Over HTTPS the request is a CONNECT and the
+// certificate is verified inside our process, which is also what lets the
+// probe accept any status code as proof that the bytes reached the real host.
+func ValidatePingTestURL(raw string) error {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return errors.New("ping test URL is empty")
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil {
+		return fmt.Errorf("ping test URL is not a URL: %w", err)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("ping test URL must be https, got %q", u.Scheme)
+	}
+	if u.Host == "" {
+		return errors.New("ping test URL has no host")
+	}
+	return nil
+}
+
+// EffectivePingType returns the configured type, or PingTypeAuto for anything
+// empty or unrecognised.
+func (s AppSettings) EffectivePingType() string {
+	switch strings.TrimSpace(s.PingType) {
+	case PingTypeICMP:
+		return PingTypeICMP
+	case PingTypeHTTPGet:
+		return PingTypeHTTPGet
+	case PingTypeHTTPHead:
+		return PingTypeHTTPHead
+	default:
+		return PingTypeAuto
+	}
+}
+
+// EffectivePingTestURL returns the configured endpoint, falling back to the
+// default whenever the stored value would not work. Degrading to a working
+// default beats failing every ping over a setting the user cannot see.
+func (s AppSettings) EffectivePingTestURL() string {
+	trimmed := strings.TrimSpace(s.PingTestURL)
+	if ValidatePingTestURL(trimmed) != nil {
+		return DefaultPingTestURL
+	}
+	return trimmed
+}
+
+// EffectivePingTimeout clamps the stored seconds into the supported range.
+func (s AppSettings) EffectivePingTimeout() time.Duration {
+	sec := s.PingTimeoutSec
+	if sec <= 0 {
+		sec = defaultPingTimeoutSec
+	}
+	if sec < minPingTimeoutSec {
+		sec = minPingTimeoutSec
+	}
+	if sec > maxPingTimeoutSec {
+		sec = maxPingTimeoutSec
+	}
+	return time.Duration(sec) * time.Second
 }
