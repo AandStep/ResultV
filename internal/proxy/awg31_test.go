@@ -9,8 +9,11 @@ package proxy
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
+
+	wgprotocol "github.com/sagernet/sing-box/protocol/wireguard"
 )
 
 // AmneziaWG writes these as on/off in its config files, JSON subscriptions send
@@ -90,6 +93,63 @@ func TestAWG31DescribeUsesUAPINames(t *testing.T) {
 	knobs := awg31Knobs{RandomTrailers: awgBoolPtr(true), DisableCookies: awgBoolPtr(false)}
 	if got := knobs.describe(); got != "random_trailers=on, disable_cookies=off" {
 		t.Errorf("описание = %q", got)
+	}
+}
+
+// The path ApplyAWG31 walks is made of unexported fields, so it cannot be
+// checked by the compiler. This test is the guard: it fails on the next engine
+// bump that renames or retypes any step, which is the moment to re-check the
+// route — not months later, in a user's log, as "3.1 not applied".
+func TestAWG31DeviceFieldsStillExist(t *testing.T) {
+	protocolEndpoint := reflect.TypeOf(wgprotocol.Endpoint{})
+	field, found := protocolEndpoint.FieldByName("endpoint")
+	if !found {
+		t.Fatal("protocol/wireguard.Endpoint потерял поле endpoint — путь к устройству надо искать заново")
+	}
+	transportEndpoint := field.Type
+	if transportEndpoint.Kind() != reflect.Pointer {
+		t.Fatalf("ожидался указатель на transport-эндпоинт, получено %s", transportEndpoint)
+	}
+	deviceField, found := transportEndpoint.Elem().FieldByName("device")
+	if !found {
+		t.Fatal("transport/wireguard.Endpoint потерял поле device")
+	}
+	if !deviceField.Type.Implements(reflect.TypeOf((*ipcSetter)(nil)).Elem()) {
+		t.Fatalf("устройство %s больше не принимает IpcSet", deviceField.Type)
+	}
+}
+
+// Nothing stated means nothing sent: a node that says nothing about 3.1 must
+// not have its device touched at all — and must not be an error either.
+func TestAWG31EmptyKnobsDoNothing(t *testing.T) {
+	applied, err := ApplyAWG31(nil, ProxyConfig{Type: "amneziawg", Extra: []byte(`{"amnezia":{"jc":4}}`)})
+	if err != nil {
+		t.Errorf("пустой набор не должен быть ошибкой: %v", err)
+	}
+	if applied != "" {
+		t.Errorf("применять было нечего, получено описание %q", applied)
+	}
+}
+
+// Every failure on the way to the device is reported, never panicked: a session
+// with 3.0 behaviour is worth more than a crash on connect.
+func TestAWG31ReportsMissingManager(t *testing.T) {
+	_, err := ApplyAWG31(nil, ProxyConfig{Type: "amneziawg", Extra: []byte(`{"amnezia":{"random_trailers":"on"}}`)})
+	if err == nil {
+		t.Error("отсутствие менеджера эндпоинтов должно быть ошибкой")
+	}
+}
+
+// A zero-value endpoint has no device yet — the state a domain-addressed peer
+// is in until the post-start stage. It must read as "not ready", not as a
+// broken engine.
+func TestAWG31DeviceNotReady(t *testing.T) {
+	_, err := awg31Device(&wgprotocol.Endpoint{})
+	if err == nil {
+		t.Fatal("ожидалась ошибка для эндпоинта без устройства")
+	}
+	if !strings.Contains(err.Error(), "ещё не создано") {
+		t.Errorf("ошибка должна называть состояние, получено: %v", err)
 	}
 }
 

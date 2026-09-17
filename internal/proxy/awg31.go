@@ -8,8 +8,14 @@
 package proxy
 
 import (
+	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
+	"unsafe"
+
+	"github.com/sagernet/sing-box/adapter"
+	wgprotocol "github.com/sagernet/sing-box/protocol/wireguard"
 )
 
 // AmneziaWG 3.1 adds two device-wide switches on top of 3.0:
@@ -163,3 +169,124 @@ func awg31KnobsFor(proxy ProxyConfig) awg31Knobs {
 type awg31Error struct{ what string }
 
 func (e *awg31Error) Error() string { return e.what }
+
+// ipcSetter is the one method needed off the core's WireGuard device. Declared
+// here rather than imported so this file does not pull wireguard-go in for a
+// single signature.
+type ipcSetter interface {
+	IpcSet(string) error
+}
+
+// ApplyAWG31 pushes a node's 3.1 switches into the running device.
+//
+// Why this is reached through unexported fields: the core builds the UAPI
+// string itself inside transport/wireguard.Endpoint.Start and exposes neither
+// the device nor a hook, so the only seam left is the object graph —
+// protocol/wireguard.Endpoint.endpoint → transport/wireguard.Endpoint.device.
+// Every step is verified by name and type, and a mismatch is reported instead
+// of panicking: an engine bump that renames a field must degrade to "3.1 not
+// applied" with a line in the log, never to a crash on connect. The guard that
+// catches such a bump early is TestAWG31DeviceFieldsStillExist.
+//
+// The manager comes in as a parameter rather than out of a context because on
+// Android nobody in Go owns the box: libbox starts it, and the binding hands us
+// its endpoint manager (mobile/libbox_awg31.go).
+//
+// Returns the description of what was applied, empty when the node states
+// nothing at all.
+func ApplyAWG31(manager adapter.EndpointManager, proxyCfg ProxyConfig) (string, error) {
+	knobs := awg31KnobsFor(proxyCfg)
+	if knobs.empty() {
+		return "", nil
+	}
+	wgEndpoint, err := wgEndpointFrom(manager)
+	if err != nil {
+		return "", err
+	}
+	device, err := awg31Device(wgEndpoint)
+	if err != nil {
+		return "", err
+	}
+	if err := device.IpcSet(knobs.ipcLines()); err != nil {
+		return "", &awg31Error{"ядро отклонило параметры: " + err.Error()}
+	}
+	return knobs.describe(), nil
+}
+
+// wgEndpointFrom resolves the WireGuard endpoint the session is running on.
+func wgEndpointFrom(manager adapter.EndpointManager) (*wgprotocol.Endpoint, error) {
+	if manager == nil {
+		return nil, &awg31Error{"ядро не отдало менеджер эндпоинтов"}
+	}
+	ep, loaded := manager.Get(wireguardEndpointTag)
+	if !loaded {
+		return nil, &awg31Error{"эндпоинт " + wireguardEndpointTag + " не найден"}
+	}
+	wgEndpoint, ok := ep.(*wgprotocol.Endpoint)
+	if !ok {
+		return nil, &awg31Error{"узел не WireGuard"}
+	}
+	return wgEndpoint, nil
+}
+
+// awg31Device walks the endpoint down to the wireguard-go device.
+func awg31Device(wgEndpoint *wgprotocol.Endpoint) (ipcSetter, error) {
+	deviceValue, err := awg31DeviceInterface(wgEndpoint)
+	if err != nil {
+		return nil, err
+	}
+	device, ok := deviceValue.(ipcSetter)
+	if !ok {
+		return nil, &awg31Error{fmt.Sprintf("устройство не принимает UAPI (%T)", deviceValue)}
+	}
+	return device, nil
+}
+
+// awg31DeviceInterface exposes the device as an untyped value so both the 3.1
+// writer and the stats reader can ask it for their own interface.
+func awg31DeviceInterface(wgEndpoint *wgprotocol.Endpoint) (any, error) {
+	transportEndpoint, err := unexportedField(reflect.ValueOf(wgEndpoint), "endpoint")
+	if err != nil {
+		return nil, &awg31Error{"protocol/wireguard.Endpoint: " + err.Error()}
+	}
+	if transportEndpoint.Kind() == reflect.Pointer && transportEndpoint.IsNil() {
+		return nil, &awg31Error{"устройство WireGuard ещё не создано"}
+	}
+	deviceValue, err := unexportedField(transportEndpoint, "device")
+	if err != nil {
+		return nil, &awg31Error{"transport/wireguard.Endpoint: " + err.Error()}
+	}
+	if !deviceValue.IsValid() || deviceValue.IsZero() {
+		return nil, &awg31Error{"устройство WireGuard ещё не создано"}
+	}
+	return deviceValue.Interface(), nil
+}
+
+// unexportedField reads an unexported struct field by name.
+//
+// reflect refuses to hand over unexported values through Interface(), so the
+// field is re-created at its own address — the standard escape hatch, and the
+// reason every caller here checks the field exists first instead of trusting
+// the layout.
+func unexportedField(v reflect.Value, name string) (reflect.Value, error) {
+	if !v.IsValid() {
+		return reflect.Value{}, fmt.Errorf("нет значения для поля %s", name)
+	}
+	if v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return reflect.Value{}, fmt.Errorf("нулевой указатель вместо структуры с полем %s", name)
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return reflect.Value{}, fmt.Errorf("%s: ожидалась структура, получено %s", name, v.Kind())
+	}
+	field := v.FieldByName(name)
+	if !field.IsValid() {
+		return reflect.Value{}, fmt.Errorf("поле %s исчезло из ядра", name)
+	}
+	if !field.CanAddr() {
+		return reflect.Value{}, fmt.Errorf("поле %s недоступно по адресу", name)
+	}
+	return reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem(), nil
+}
