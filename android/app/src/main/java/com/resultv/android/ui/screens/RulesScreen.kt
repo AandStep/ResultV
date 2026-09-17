@@ -173,7 +173,7 @@ fun RulesScreen(onOpenRoutingProfiles: () -> Unit = {}) {
             SectionBody {
                 RuleTabs(mode = rules.mode, selected = domainTab, onSelect = { domainTab = it })
                 Text(
-                    stringResource(hintOf(domainTab)),
+                    stringResource(domainHintOf(domainTab)),
                     style = MaterialTheme.typography.bodySmall,
                     color = RvColor.whiteA50,
                 )
@@ -353,10 +353,23 @@ private fun labelOf(action: RuleAction): Int = when (action) {
     RuleAction.Block -> R.string.rules_tab_block
 }
 
-private fun hintOf(action: RuleAction): Int = when (action) {
+/**
+ * Подписи под переключателем действия. Их две пары, и это не дублирование:
+ * один и тот же переключатель стоит в разделе доменов и в разделе приложений,
+ * а речь под ним идёт о разном. Пока функция была одна, домены брали текст
+ * про приложения — «Эти приложения всегда идут через туннель» под списком
+ * сайтов.
+ */
+private fun appHintOf(action: RuleAction): Int = when (action) {
     RuleAction.OutOfVpn -> R.string.rules_tab_out_of_vpn_hint
     RuleAction.IntoVpn -> R.string.rules_tab_into_vpn_hint
     RuleAction.Block -> R.string.rules_tab_block_hint
+}
+
+private fun domainHintOf(action: RuleAction): Int = when (action) {
+    RuleAction.OutOfVpn -> R.string.rules_tab_out_of_vpn_hint_domains
+    RuleAction.IntoVpn -> R.string.rules_tab_into_vpn_hint_domains
+    RuleAction.Block -> R.string.rules_tab_block_hint_domains
 }
 
 @Composable
@@ -482,7 +495,7 @@ private fun PerAppRoutingSection(mode: RoutingMode) {
             )
         }
         Text(
-            stringResource(hintOf(tab)),
+            stringResource(appHintOf(tab)),
             style = MaterialTheme.typography.bodySmall,
             color = RvColor.whiteA50,
         )

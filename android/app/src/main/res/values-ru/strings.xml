@@ -75,6 +75,7 @@
     <string name="settings_data_usage_reset_confirm">Сбросить статистику трафика?</string>
     <string name="settings_group_subscriptions">Подписки</string>
     <string name="settings_group_subscriptions_desc">Обновление и данные для провайдера.</string>
+    <string name="settings_group_routing_desc">Режим туннеля и исключения из него.</string>
     <string name="settings_group_security">Безопасность</string>
     <string name="settings_group_security_desc">Защита соединения при сбоях.</string>
     <string name="settings_group_network">Сеть</string>
@@ -294,6 +295,9 @@
     <string name="rules_domain_moved_from">Перенесён сюда из «%1$s»</string>
     <string name="rules_tab_out_of_vpn_hint">Эти приложения идут мимо туннеля.</string>
     <string name="rules_tab_into_vpn_hint">Эти приложения всегда идут через туннель.</string>
+    <string name="rules_tab_out_of_vpn_hint_domains">Эти сайты идут мимо туннеля.</string>
+    <string name="rules_tab_into_vpn_hint_domains">Эти сайты всегда идут через туннель.</string>
+    <string name="rules_tab_block_hint_domains">Эти сайты не открываются, пока VPN включён.</string>
     <string name="rules_tab_block_hint">Эти приложения остаются без сети, пока VPN включён.</string>
     <string name="rules_app_search">Поиск приложений</string>
     <string name="rules_app_selected_count">Выбрано: %1$d</string>

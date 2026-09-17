@@ -79,8 +79,11 @@ private enum class SettingsSubcategory(
         R.string.settings_group_network, R.string.settings_group_network_desc,
         R.string.settings_group_network_items, Icons.Outlined.Public, RvCategory.Main,
     ),
+    // Описание своё, а не `rules_section_smart_subtitle`: тот же текст стоит
+    // заголовком первого раздела ВНУТРИ шторки, и одна и та же фраза читалась
+    // дважды подряд — в шапке и строкой ниже.
     Routing(
-        R.string.tab_rules, R.string.rules_section_smart_subtitle,
+        R.string.tab_rules, R.string.settings_group_routing_desc,
         R.string.settings_group_routing_items, Icons.Outlined.AltRoute, RvCategory.Blue,
     ),
     Security(

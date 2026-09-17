@@ -80,6 +80,7 @@
     <string name="settings_data_usage_reset_confirm">Reset data usage statistics?</string>
     <string name="settings_group_subscriptions">Subscriptions</string>
     <string name="settings_group_subscriptions_desc">Refresh and the data sent to the provider.</string>
+    <string name="settings_group_routing_desc">Tunnel mode and the exceptions to it.</string>
     <string name="settings_group_security">Security</string>
     <string name="settings_group_security_desc">Connection protection when the proxy drops.</string>
     <string name="settings_group_network">Network</string>
@@ -324,6 +325,9 @@
     <string name="rules_domain_moved_from">Moved here from “%1$s”</string>
     <string name="rules_tab_out_of_vpn_hint">These apps skip the tunnel entirely.</string>
     <string name="rules_tab_into_vpn_hint">These apps always go through the tunnel.</string>
+    <string name="rules_tab_out_of_vpn_hint_domains">These sites skip the tunnel entirely.</string>
+    <string name="rules_tab_into_vpn_hint_domains">These sites always go through the tunnel.</string>
+    <string name="rules_tab_block_hint_domains">These sites do not open while the VPN is on.</string>
     <string name="rules_tab_block_hint">These apps get no network while the VPN is on.</string>
     <string name="rules_app_search">Search apps</string>
     <string name="rules_app_selected_count">%1$d selected</string>
