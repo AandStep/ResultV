@@ -50,6 +50,20 @@ data class SettingsState(
     val bypassLan: Boolean = true,
     /** sing-box log.level — "info" for ship, "debug" for protocol bring-up. */
     val logLevel: String = "info",
+    /**
+     * Что меряет пинг в списке серверов: "" / "auto" — проба по протоколу
+     * (как было), "icmp" — эхо до адреса узла, "http_get" / "http_head" —
+     * настоящий запрос через сам узел. Последние два отвечают на вопрос «узел
+     * возит трафик», а не «порт открыт», и стоят одноразового движка.
+     *
+     * Автоподбор и кил-свитч эту настройку не читают: они идут без участия
+     * человека на каждом подключении.
+     */
+    val pingType: String = "auto",
+    /** Адрес, который http-типы тянут через узел; пусто — встроенный. */
+    val pingTestUrl: String = "",
+    /** Бюджет одного замера, 1..10 секунд; 0 — значение по умолчанию (3). */
+    val pingTimeoutSec: Int = 0,
     /** Auto-refresh subscriptions on the timer. */
     val subscriptionAutoUpdate: Boolean = true,
     /** Hours between auto-refresh cycles when [subscriptionAutoUpdate] is on. */
@@ -68,6 +82,9 @@ data class SettingsState(
 )
 
 object SettingsRepository {
+    /** Типы пробы пинга; имена совпадают с константами в `internal/config`. */
+    val PING_TYPES = listOf("auto", "icmp", "http_get", "http_head")
+
     private const val PREFS = "resultv_settings"
     private const val K_DNS_PRESET = "dns_preset"
     private const val K_DNS_CUSTOM = "dns_custom"
@@ -78,6 +95,9 @@ object SettingsRepository {
     private const val K_IPV6 = "ipv6"
     private const val K_BYPASS_LAN = "bypass_lan"
     private const val K_LOG_LEVEL = "log_level"
+    private const val K_PING_TYPE = "ping_type"
+    private const val K_PING_TEST_URL = "ping_test_url"
+    private const val K_PING_TIMEOUT = "ping_timeout_sec"
     private const val K_SUB_AUTO = "sub_auto_update"
     private const val K_SUB_INTERVAL = "sub_update_interval_hours"
     private const val K_SUB_HWID = "sub_send_hwid"
@@ -131,6 +151,9 @@ object SettingsRepository {
             ipv6 = prefs.getBoolean(K_IPV6, false),
             bypassLan = prefs.getBoolean(K_BYPASS_LAN, true),
             logLevel = prefs.getString(K_LOG_LEVEL, "info") ?: "info",
+            pingType = prefs.getString(K_PING_TYPE, "auto") ?: "auto",
+            pingTestUrl = prefs.getString(K_PING_TEST_URL, "") ?: "",
+            pingTimeoutSec = prefs.getInt(K_PING_TIMEOUT, 0),
             subscriptionAutoUpdate = prefs.getBoolean(K_SUB_AUTO, true),
             subscriptionUpdateIntervalHours = prefs.getInt(K_SUB_INTERVAL, 6).coerceAtLeast(1),
             subscriptionSendHwid = prefs.getBoolean(K_SUB_HWID, true),
@@ -179,6 +202,64 @@ object SettingsRepository {
     fun setLogLevel(level: String) = mutate {
         prefs.edit().putString(K_LOG_LEVEL, level).apply()
         it.copy(logLevel = level)
+    }
+
+    fun setPingType(type: String) = mutate {
+        val sane = if (type in PING_TYPES) type else "auto"
+        prefs.edit().putString(K_PING_TYPE, sane).apply()
+        it.copy(pingType = sane)
+    }
+
+    fun setPingTestUrl(url: String) = mutate {
+        val trimmed = url.trim()
+        prefs.edit().putString(K_PING_TEST_URL, trimmed).apply()
+        it.copy(pingTestUrl = trimmed)
+    }
+
+    fun setPingTimeoutSec(sec: Int) = mutate {
+        val sane = if (sec in 1..10) sec else 0
+        prefs.edit().putInt(K_PING_TIMEOUT, sane).apply()
+        it.copy(pingTimeoutSec = sane)
+    }
+
+    /**
+     * Прочитать введённый бюджет замера. Границы те же, что в Go
+     * (`internal/config`, EffectivePingTimeout): ноль значит «по умолчанию»,
+     * а не «не ждать вовсе», а потолок не даёт одному мёртвому узлу растянуть
+     * весь обход списка. Негодное читается как «по умолчанию».
+     */
+    fun normalizePingTimeoutSec(raw: String): Int {
+        val n = raw.trim().toIntOrNull() ?: return 0
+        return if (n in 1..10) n else 0
+    }
+
+    /**
+     * Только https, и это требование корректности, а не вкуса: по plain-HTTP
+     * запрос идёт через петлевой инбаунд пробы, который на мёртвый узел
+     * отвечает собственным 502 — и мёртвый узел прочитался бы как живой.
+     */
+    fun isValidPingTestUrl(raw: String): Boolean {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return false
+        val uri = runCatching { java.net.URI(trimmed) }.getOrNull() ?: return false
+        return uri.scheme == "https" && !uri.host.isNullOrBlank()
+    }
+
+    /** Настройки пинга для биндинга: ключи те же, что в общем конфиге. */
+    fun pingOptionsJson(): String {
+        val s = _state.value
+        return pingOptionsJson(s.pingType, s.pingTestUrl, s.pingTimeoutSec)
+    }
+
+    /**
+     * Пустые значения в JSON не кладутся вовсе: отсутствие ключа значит «как по
+     * умолчанию», и именно это надо сказать движку.
+     */
+    fun pingOptionsJson(type: String, testUrl: String, timeoutSec: Int): String {
+        val json = org.json.JSONObject().put("pingType", if (type.isBlank()) "auto" else type)
+        if (testUrl.isNotBlank()) json.put("pingTestUrl", testUrl)
+        if (timeoutSec in 1..10) json.put("pingTimeoutSec", timeoutSec)
+        return json.toString()
     }
 
     fun setSubscriptionAutoUpdate(enabled: Boolean) = mutate {

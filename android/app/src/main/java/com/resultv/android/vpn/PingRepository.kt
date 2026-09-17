@@ -251,9 +251,14 @@ object PingRepository {
         }
         val raw = try {
             // pingEntry carries the full ProxyEntry JSON, which WireGuard /
-            // AmneziaWG need for a real handshake-RTT probe; other protocols
-            // fall back to ip/port internally.
-            Mobile.pingEntry(t.entryJson)
+            // AmneziaWG need for a real handshake-RTT probe and the http_*
+            // types need to build a real outbound; other protocols fall back
+            // to ip/port internally.
+            //
+            // Настройки читаются на каждый замер, а не кэшируются: человек
+            // меняет тип в настройках и ждёт, что следующий же обход списка
+            // померит по-новому.
+            Mobile.pingEntry(t.entryJson, SettingsRepository.pingOptionsJson())
         } catch (e: Throwable) {
             Log.w(TAG, "ping ${t.ip}:${t.port} (${t.type}) failed: ${e.message}")
             return@withContext Sample(latencyMs = 0, reachable = false, reason = "probe_error")
