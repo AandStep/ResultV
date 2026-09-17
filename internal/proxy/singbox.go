@@ -33,6 +33,7 @@ import (
 	"github.com/sagernet/sing-box/include"
 	sblog "github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/bufio"
 	singjson "github.com/sagernet/sing/common/json"
 	N "github.com/sagernet/sing/common/network"
@@ -200,6 +201,10 @@ func (w *singBoxLogWriter) WriteMessage(level sblog.Level, message string) {
 }
 
 
+
+// Пломба контракта: следующая смена adapter.ConnectionTracker в ядре упрётся
+// в компиляцию здесь, а не в рантайм у пользователя.
+var _ adapter.ConnectionTracker = (*trafficTracker)(nil)
 
 type trafficTracker struct {
 	upload   *atomic.Int64
@@ -486,6 +491,66 @@ func (t *trafficTracker) RoutedPacketConnection(
 	t.logConnection(metadata, matchOutbound)
 	return bufio.NewInt64CounterPacketConn(conn, []*atomic.Int64{t.download}, nil, []*atomic.Int64{t.upload}, nil)
 }
+
+// RoutedFlow — третий метод, который sing-box 1.14 добавил в
+// adapter.ConnectionTracker. Он про трафик, который роутер отдаёт аутбаунду
+// сырым L3-потоком, а не соединением, и для этого клиента это не угол: TUN
+// спрашивает роутер о каждом новом потоке (Router.PreMatch), а
+// WireGuard-эндпоинт — а WG- и AWG-узлы у нас именно эндпоинты под тегом
+// "proxy" — отвечает PreMatchFlow для любой сети и реализует tun.Port. На таких
+// узлах пакеты форвардятся на L3 и никогда не становятся net.Conn:
+// RoutedConnection и RoutedPacketConnection просто не вызываются, и nil отсюда
+// оставил бы индикатор скорости и traffic veto вотчдога на нуле всю сессию.
+// Обычные аутбаунды (VLESS, Trojan, hysteria2) не FlowOutbound и идут прежним
+// путём.
+//
+// ICMP исключён намеренно: `direct` — FlowOutbound исключительно ради ICMP, так
+// что сюда приходил бы каждый пинг. В эти счётчики байты пингов не попадали и
+// до 1.14, и начинать не должны.
+func (t *trafficTracker) RoutedFlow(
+	_ context.Context,
+	metadata adapter.InboundContext,
+	_ adapter.Rule,
+	matchOutbound adapter.Outbound,
+) tun.FlowTracker {
+	if metadata.Network == N.NetworkICMP {
+		return nil
+	}
+	// Как в RoutedPacketConnection: logConnection зовётся ради журнала, а
+	// счётчики здесь всегда общие — разделения на «трафик узла» и «весь
+	// трафик» на этой ветке нет.
+	t.logConnection(metadata, matchOutbound)
+	return &flowCounter{
+		down: []*atomic.Int64{t.download},
+		up:   []*atomic.Int64{t.upload},
+	}
+}
+
+// flowCounter записывает форварднутый поток в те же счётчики, что и обёрнутое
+// соединение. Forward — это клиент→сервер (выгрузка), reverse — обратно; так же
+// их трактует собственный flowLogger ядра (route/flow_tracker.go).
+type flowCounter struct {
+	down []*atomic.Int64
+	up   []*atomic.Int64
+}
+
+func (f *flowCounter) AttachFlow(tun.FlowHandle) {}
+
+func (f *flowCounter) CountForward(n int) {
+	for _, c := range f.up {
+		c.Add(int64(n))
+	}
+}
+
+func (f *flowCounter) CountReverse(n int) {
+	for _, c := range f.down {
+		c.Add(int64(n))
+	}
+}
+
+func (f *flowCounter) FlowEstablished() {}
+
+func (f *flowCounter) CloseFlow(tun.FlowCloseReason) {}
 
 func (t *trafficTracker) logConnection(metadata adapter.InboundContext, outbound adapter.Outbound) (string, string, bool) {
 	dest := metadata.Destination.String()
