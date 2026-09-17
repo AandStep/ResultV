@@ -638,8 +638,17 @@ func BuildTunnelModeConfig(cfg EngineConfig) SingBoxConfig {
 
 	pt := strings.ToUpper(strings.TrimSpace(cfg.Proxy.Type))
 
+	// strict_route снят у эндпоинтов намеренно: их собственный UDP не должен
+	// упираться в фильтры, отбрасывающие трафик мимо TUN.
+	//
+	// Стек TUN здесь НЕ переопределяется. Раньше WG и AWG прибивались к
+	// "system" — решение приехало десктопным коммитом v3.0.0 и обоснования под
+	// Android никогда не имело; на ПК этой ветки давно нет, стек там общий. На
+	// sing-tun 0.9 системный стек на телефоне перестал обслуживать TCP: DNS и
+	// QUIC идут, а TCP не открывается вовсе. Замер на живом AWG-узле: curl к
+	// 1.1.1.1:443 — таймаут 15 с, 25 МБ — ноль байт за 60 с; на VLESS через
+	// gvisor те же 25 МБ качаются за 3.5 с на том же телефоне и той же сети.
 	if pt == "WIREGUARD" || pt == "AMNEZIAWG" {
-		tunStack = "system"
 		strictRoute = false
 	}
 

@@ -81,3 +81,21 @@ func TestUDPNATCeilingIsSetForPlainNodesOnly(t *testing.T) {
 		}
 	}
 }
+
+// Стек TUN у WG и AWG был прибит к "system" ещё десктопным коммитом v3.0.0, без
+// обоснования под Android; на ПК этой ветки давно нет — стек там общий. На
+// sing-tun 0.9 системный стек на телефоне перестал обслуживать TCP: DNS и QUIC
+// идут, TCP не открывается вовсе (замер на живом AWG-узле: curl к 1.1.1.1:443 —
+// таймаут 15 с, 25 МБ — ноль байт за 60 с, при том что на VLESS через gvisor те
+// же 25 МБ качаются за 3.5 с).
+func TestWireGuardUsesTheSameTunStackAsEveryoneElse(t *testing.T) {
+	plain := tunInboundFor(t, "VLESS").Stack
+	if plain != "gvisor" {
+		t.Fatalf("обычный узел получил стек %q, тест написан в расчёте на gvisor", plain)
+	}
+	for _, pt := range []string{"WIREGUARD", "AMNEZIAWG"} {
+		if got := tunInboundFor(t, pt).Stack; got != plain {
+			t.Errorf("%s: стек TUN = %q, ожидался %q — на системном стеке TCP не открывается", pt, got, plain)
+		}
+	}
+}
