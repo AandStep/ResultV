@@ -57,7 +57,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.resultv.android.locale.LocaleManager
-import com.resultv.android.theme.Brand
+import com.resultv.android.theme.BenzinBold
+import com.resultv.android.theme.RvColor
 import com.resultv.android.theme.ResultVTheme
 import com.resultv.android.ui.screens.AddScreen
 import com.resultv.android.ui.screens.HomeScreen
@@ -159,7 +160,7 @@ class MainActivity : ComponentActivity() {
         //
         // Both bars are pinned to the dark style instead of the default auto(),
         // which follows the *system* light/dark setting. This UI is dark at all
-        // times (Brand.Bg), so on a phone in light mode auto() picked dark icons
+        // times (RvColor.Black), so on a phone in light mode auto() picked dark icons
         // — an unreadable clock over our near-black background — and painted the
         // three-button nav bar white. Until targetSdk 35 the splash theme's
         // statusBarColor/navigationBarColor hid that; API 35 ignores both, so
@@ -313,8 +314,12 @@ private fun HomeTopBar(
                     modifier = Modifier.size(28.dp),
                 )
                 Spacer(Modifier.width(8.dp))
+                // Единственное место во всём модуле, где применяется Benzin:
+                // на ПК этой гарнитурой набрано само слово «ResultV», и только
+                // оно. Остальной текст — системный Roboto.
                 Text(
                     text = stringResource(R.string.app_name),
+                    fontFamily = BenzinBold,
                     fontWeight = FontWeight.Bold,
                 )
             }
@@ -324,18 +329,18 @@ private fun HomeTopBar(
                 Icon(
                     imageVector = Icons.Outlined.Language,
                     contentDescription = stringResource(R.string.header_open_website),
-                    tint = Brand.SecondaryText,
+                    tint = RvColor.whiteA50,
                 )
             }
             IconButton(onClick = onOpenTelegram) {
                 Icon(
                     painter = painterResource(R.drawable.ic_telegram),
                     contentDescription = stringResource(R.string.header_open_telegram),
-                    tint = Brand.SecondaryText,
+                    tint = RvColor.whiteA50,
                 )
             }
         },
-        colors = TopAppBarDefaults.topAppBarColors(containerColor = Brand.Bg),
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = RvColor.Black),
     )
 }
 
@@ -388,13 +393,13 @@ private fun AppShell(
                 CenterAlignedTopAppBar(
                     title = { Text(text = stringResource(tab.titleRes)) },
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                        containerColor = Brand.Bg,
+                        containerColor = RvColor.Black,
                     ),
                 )
             }
         },
         bottomBar = {
-            NavigationBar(containerColor = Brand.Surface) {
+            NavigationBar(containerColor = RvColor.Grey) {
                 Tab.entries.forEach { entry ->
                     val title = stringResource(entry.titleRes)
                     NavigationBarItem(
