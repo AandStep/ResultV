@@ -1,0 +1,69 @@
+// Copyright (C) 2026 ResultV
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+
+package proxy
+
+import "testing"
+
+func tunInboundFor(t *testing.T, proxyType string) SBInbound {
+	t.Helper()
+	cfg := EngineConfig{
+		Mode: ProxyModeTunnel,
+		Proxy: ProxyConfig{
+			Type: proxyType,
+			IP:   "203.0.113.7",
+			Port: 443,
+		},
+	}
+	sb := BuildTunnelModeConfig(cfg)
+	for _, in := range sb.Inbounds {
+		if in.Type == "tun" {
+			return in
+		}
+	}
+	t.Fatalf("в конфиге для %s нет tun-инбаунда", proxyType)
+	return SBInbound{}
+}
+
+// На 1.13 отсутствие udp_mapping/udp_filtering означало симметричный NAT, на
+// 1.14 — endpoint-independent. Поведение обычного узла выбрано осознанно
+// (штормы QUIC-ретраев дают меньше слотов при endpoint-independent), поэтому
+// оно записано, а не унаследовано.
+func TestTunNATBehaviourIsStatedForPlainNodes(t *testing.T) {
+	in := tunInboundFor(t, "VLESS")
+	if in.UDPMapping != "endpoint_independent" {
+		t.Errorf("udp_mapping = %q, ожидалось endpoint_independent", in.UDPMapping)
+	}
+	if in.UDPFiltering != "endpoint_independent" {
+		t.Errorf("udp_filtering = %q, ожидалось endpoint_independent", in.UDPFiltering)
+	}
+}
+
+// У WG/AWG инбаунд кормит пакетами эндпоинт, который держит своё состояние
+// сессии. Здесь сохраняется ровно то поведение, которое ветка имела до 1.14,
+// — теперь сказанное вслух, потому что дефолт ядра из-под него ушёл.
+func TestTunNATBehaviourIsStatedForWireGuard(t *testing.T) {
+	for _, pt := range []string{"WIREGUARD", "AMNEZIAWG"} {
+		in := tunInboundFor(t, pt)
+		if in.UDPMapping != "address_and_port_dependent" {
+			t.Errorf("%s: udp_mapping = %q, ожидалось address_and_port_dependent", pt, in.UDPMapping)
+		}
+		if in.UDPFiltering != "address_and_port_dependent" {
+			t.Errorf("%s: udp_filtering = %q, ожидалось address_and_port_dependent", pt, in.UDPFiltering)
+		}
+	}
+}
+
+// dns_mode в 1.14 по умолчанию hijack — ровно то, на что клиент опирался
+// всегда. Записано здесь, чтобы будущий дефолт не сдвинул это молча, как
+// сдвинул endpoint_independent_nat. DNSAddress не задаётся намеренно: ядро
+// выводит адрес перехвата из адреса TUN, как было до появления опции.
+func TestTunDNSModeIsStated(t *testing.T) {
+	if in := tunInboundFor(t, "VLESS"); in.DNSMode != "hijack" {
+		t.Errorf("dns_mode = %q, ожидалось hijack", in.DNSMode)
+	}
+}

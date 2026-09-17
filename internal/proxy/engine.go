@@ -163,7 +163,6 @@ type SBDNSServer struct {
 	Server          string `json:"server,omitempty"`
 	ServerPort      int    `json:"server_port,omitempty"`
 	Detour          string `json:"detour,omitempty"`
-	AddressStrategy string `json:"address_strategy,omitempty"`
 }
 
 type SBDNSRule struct {
@@ -184,6 +183,30 @@ type SBInbound struct {
 	AutoRoute           bool     `json:"auto_route,omitempty"`
 	StrictRoute         bool     `json:"strict_route,omitempty"`
 	RouteExcludeAddress []string `json:"route_exclude_address,omitempty"`
+
+	// UDPMapping и UDPFiltering заменили endpoint_independent_nat, который
+	// sing-box 1.14 оставил в схеме, но перестал читать. Молча забытая ручка
+	// хуже удалённой: конфиг по-прежнему разбирается, меняется только
+	// поведение. Оба принимают "endpoint_independent", "address_dependent" или
+	// "address_and_port_dependent".
+	//
+	// Endpoint-independent позволяет нескольким назначениям делить NAT-слоты
+	// одной пары (адрес источника, порт источника) вместо слота на каждое
+	// назначение: под штормом QUIC-ретраев браузера по десяткам адресов CDN из
+	// одного эфемерного порта это пропорционально сокращает число слотов. Оно
+	// же — новый дефолт ядра, противоположный тому, что делала 1.13 при
+	// отсутствии поля, поэтому обе ветки в BuildTunnelModeConfig говорят своё
+	// значение вслух, а не наследуют его.
+	UDPMapping   string `json:"udp_mapping,omitempty"`
+	UDPFiltering string `json:"udp_filtering,omitempty"`
+
+	// DNSMode говорит, как TUN обходится с DNS: "disabled", "native" (задать
+	// DNS платформы на интерфейсе) или "hijack" (native плюс перехват
+	// DNS-трафика). 1.14 по умолчанию hijack — это то, на что клиент опирался
+	// всегда; записано здесь, чтобы будущий дефолт не сдвинул это молча, как
+	// сдвинул endpoint_independent_nat. Адрес перехвата не задаётся: ядро
+	// выводит его из адреса TUN, как было до появления опции.
+	DNSMode string `json:"dns_mode,omitempty"`
 }
 
 type SBOutbound struct {
@@ -580,19 +603,31 @@ func BuildTunnelModeConfig(cfg EngineConfig) SingBoxConfig {
 		logLevel = "error"
 	}
 
+	tun := SBInbound{
+		Type:                "tun",
+		Tag:                 "tun-in",
+		Address:             tunAddresses,
+		Stack:               tunStack,
+		AutoRoute:           true,
+		StrictRoute:         strictRoute,
+		RouteExcludeAddress: routeExclude,
+		DNSMode:             "hijack",
+	}
+	if pt != "WIREGUARD" && pt != "AMNEZIAWG" {
+		tun.UDPMapping = "endpoint_independent"
+		tun.UDPFiltering = "endpoint_independent"
+	} else {
+		// То же поведение NAT, которое эта ветка имела до 1.14, теперь сказанное
+		// явно, потому что дефолт ядра из-под неё ушёл.
+		tun.UDPMapping = "address_and_port_dependent"
+		tun.UDPFiltering = "address_and_port_dependent"
+	}
+
 	config := SingBoxConfig{
 		Log:       &SBLog{Level: logLevel, Disabled: false},
 		DNS:       buildDNS(cfg),
 		Endpoints: buildEndpoints(cfg.Proxy),
-		Inbounds: []SBInbound{{
-			Type:                "tun",
-			Tag:                 "tun-in",
-			Address:             tunAddresses,
-			Stack:               tunStack,
-			AutoRoute:           true,
-			StrictRoute:         strictRoute,
-			RouteExcludeAddress: routeExclude,
-		}},
+		Inbounds:  []SBInbound{tun},
 		Outbounds:    outbounds,
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
