@@ -38,7 +38,21 @@ import (
 // ok is false when ICMP produced no definitive answer (host blocks ICMP, name
 // resolution failed, or the socket couldn't be created); callers fall back to a
 // UDP liveness probe.
+// pingICMPHostDefaultTimeout is what every caller that does not care gets. It
+// is the value this probe has always used; the ping settings path passes its
+// own budget instead.
+const pingICMPHostDefaultTimeout = 2 * time.Second
+
+// pingICMPProbe is a var so the ping dispatch can be tested without raw
+// sockets, matching the pingTCPProbe pattern.
+var pingICMPProbe = pingICMPHostTimeout
+
 func pingICMPHost(host, source string) (latencyMs int64, ok bool) {
+	return pingICMPHostTimeout(host, source, pingICMPHostDefaultTimeout)
+}
+
+// pingICMPHostTimeout is pingICMPHost with an explicit budget.
+func pingICMPHostTimeout(host, source string, timeout time.Duration) (latencyMs int64, ok bool) {
 	pinger, err := probing.NewPinger(host)
 	if err != nil {
 		return 0, false
@@ -48,10 +62,16 @@ func pingICMPHost(host, source string) (latencyMs int64, ok bool) {
 	// different path.
 	pinger.SetNetwork("ip4")
 	pinger.Count = 1
-	pinger.Timeout = 2 * time.Second
+	pinger.Timeout = timeout
 	// Windows raw ICMP sockets work without administrator rights; Linux and
 	// macOS use unprivileged UDP "ping" sockets. SetPrivileged(true) off Windows
 	// would require root.
+	//
+	// Android is the Linux case and it is measured, not assumed: on the phone
+	// net.ipv4.ping_group_range is "0 2147483647", /system/bin/ping carries
+	// neither setuid nor file capabilities, and an echo from the app's own uid
+	// comes back in 59 ms. The older claim that unprivileged ICMP is
+	// unavailable there was inherited, not checked.
 	pinger.SetPrivileged(runtime.GOOS == "windows")
 	if source != "" {
 		pinger.Source = source
