@@ -58,7 +58,7 @@ func TestPingEntryWhileTunnelActiveSkipsHandshakeProbe(t *testing.T) {
 	t.Cleanup(func() { SetTunnelActive(false) })
 	SetTunnelActive(true)
 
-	raw, err := PingEntry(awgEntryFixture)
+	raw, err := PingEntry(awgEntryFixture, "")
 	if err != nil {
 		t.Fatalf("PingEntry: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestPingEntryWhileTunnelIdleUsesHandshakeProbe(t *testing.T) {
 	t.Cleanup(func() { SetTunnelActive(false) })
 	SetTunnelActive(false)
 
-	raw, err := PingEntry(awgEntryFixture)
+	raw, err := PingEntry(awgEntryFixture, "")
 	if err != nil {
 		t.Fatalf("PingEntry: %v", err)
 	}

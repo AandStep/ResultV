@@ -253,55 +253,56 @@ func Ping(ip string, port int, proxyType string) (string, error) {
 	return string(b), nil
 }
 
+// PingOptions is what the user asked the ping to measure, as it crosses JNI.
+// The keys match config.AppSettings so Kotlin and the desktop store the same
+// three settings under the same names.
+type PingOptions struct {
+	Type       string `json:"pingType,omitempty"`
+	TestURL    string `json:"pingTestUrl,omitempty"`
+	TimeoutSec int    `json:"pingTimeoutSec,omitempty"`
+}
+
+// decodePingOptions reads the options JSON, degrading to the defaults on
+// anything unreadable. An empty string is the ordinary case, not an error: it
+// means "auto, default URL, three seconds", which is what every install had
+// before the setting existed.
+func decodePingOptions(optionsJSON string) proxy.PingOptions {
+	var raw PingOptions
+	if s := strings.TrimSpace(optionsJSON); s != "" {
+		_ = json.Unmarshal([]byte(s), &raw)
+	}
+	settings := config.AppSettings{
+		PingType:       raw.Type,
+		PingTestURL:    raw.TestURL,
+		PingTimeoutSec: raw.TimeoutSec,
+	}
+	return proxy.PingOptions{
+		Type:    settings.EffectivePingType(),
+		TestURL: settings.EffectivePingTestURL(),
+		Timeout: settings.EffectivePingTimeout(),
+	}
+}
+
 // PingEntry probes a proxy using the full marshaled config.ProxyEntry instead
 // of bare (ip, port, type). The entry is required for WireGuard / AmneziaWG,
 // whose latency can only be measured with a real handshake (needs the private
-// and peer keys plus any obfuscation knobs in Extra) — bare ICMP/UDP yields no
-// RTT and on Android unprivileged ICMP is unavailable anyway. Other protocols
-// fall back to the same probes Ping uses, read from the entry's ip/port/type.
+// and peer keys plus any obfuscation knobs in Extra), and for the http_* ping
+// types, which have to build a real outbound.
+//
+// optionsJSON carries the user's ping settings (type, test URL, timeout); an
+// empty string means the defaults. The keyed WireGuard probe is still gated by
+// the tunnel state, which only this side knows.
 //
 // Returns the same JSON-encoded PingResult as Ping. reason is always populated
-// on failure so the UI can render "Timeout"/"Refused"/… instead of an endless
+// on failure so the UI can render "Timeout"/"No ICMP"/… instead of an endless
 // spinner.
-func PingEntry(entryJSON string) (string, error) {
-	var entry config.ProxyEntry
-	if err := json.Unmarshal([]byte(entryJSON), &entry); err != nil {
-		return "", fmt.Errorf("ping entry: %w", err)
-	}
-
-	ptUpper := strings.ToUpper(strings.TrimSpace(entry.Type))
-	var (
-		latency   int64
-		reachable bool
-		reason    string
-		checkType string
-	)
-	switch ptUpper {
-	case "WIREGUARD", "AMNEZIAWG":
-		if entry.IP == "" || entry.Port <= 0 {
-			return "", fmt.Errorf("ping entry: missing ip/port")
-		}
-		if keyedWGProbeAllowed() {
-			latency, reachable, reason = proxy.PingWireGuardHandshake(entryJSON)
-			checkType = "wg_handshake"
-		} else {
-			// Tunnel is up — the keyed probe would attack the live session
-			// (see SetTunnelActive). Fall back to the keyless ICMP/UDP
-			// liveness check the desktop uses for these transports.
-			latency, reachable, reason = proxy.PingWireGuard(entry.IP, entry.Port)
-			checkType = "wg_liveness"
-		}
-	case "HYSTERIA2":
-		if entry.IP == "" || entry.Port <= 0 {
-			return "", fmt.Errorf("ping entry: missing ip/port")
-		}
-		latency, reachable, reason, checkType = proxy.PingHysteria2QUIC(entry.IP, entry.Port)
-	default:
-		if entry.IP == "" || entry.Port <= 0 {
-			return "", fmt.Errorf("ping entry: missing ip/port")
-		}
-		latency, reachable, reason = proxy.PingProxy(entry.IP, entry.Port)
-		checkType = "tcp"
+func PingEntry(entryJSON string, optionsJSON string) (string, error) {
+	latency, reachable, reason, checkType := proxy.PingNode(
+		entryJSON, decodePingOptions(optionsJSON), keyedWGProbeAllowed())
+	if checkType == "" && reason == "probe_error" {
+		// The dispatcher could not even read the entry — that is a caller
+		// error, not a node verdict, and the binding says so.
+		return "", fmt.Errorf("ping entry: unreadable entry or missing ip/port")
 	}
 
 	res := PingResult{Reachable: reachable, LatencyMs: latency, Reason: reason, CheckType: checkType}
