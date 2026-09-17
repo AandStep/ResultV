@@ -57,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.resultv.android.R
 import com.resultv.android.theme.Brand
+import com.resultv.android.theme.CategoryTint
 import com.resultv.android.vpn.Subscription
 
 /**
@@ -243,8 +244,7 @@ private fun SheetHeader(displayName: String, onClose: () -> Unit) {
     ) {
         SettingIcon(
             icon = Icons.Outlined.RssFeed,
-            bg = Color(0xFFf59e0b).copy(alpha = 0.18f),
-            tint = Color(0xFFfbbf24),
+            tint = CategoryTint(Color(0xFFf59e0b).copy(alpha = 0.18f), Color(0xFFfbbf24)),
         )
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -292,8 +292,7 @@ private fun NameRow(
         ) {
             SettingIcon(
                 icon = Icons.Outlined.DriveFileRenameOutline,
-                bg = Color(0xFF3b82f6).copy(alpha = 0.18f),
-                tint = Color(0xFF60a5fa),
+                tint = CategoryTint(Color(0xFF3b82f6).copy(alpha = 0.18f), Color(0xFF60a5fa)),
             )
             Text(title, style = MaterialTheme.typography.bodyLarge)
         }
@@ -329,7 +328,7 @@ private fun ToggleRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        SettingIcon(icon, iconBg, iconTint)
+        SettingIcon(icon, CategoryTint(iconBg, iconTint))
         Column(modifier = Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
             Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Brand.SecondaryText)
@@ -350,8 +349,7 @@ private fun LinkRow(title: String, onClick: () -> Unit) {
     ) {
         SettingIcon(
             icon = Icons.AutoMirrored.Outlined.HelpOutline,
-            bg = Brand.Green.copy(alpha = 0.18f),
-            tint = Brand.GreenLight,
+            tint = CategoryTint(Brand.Green.copy(alpha = 0.18f), Brand.GreenLight),
         )
         Text(title, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
         Icon(

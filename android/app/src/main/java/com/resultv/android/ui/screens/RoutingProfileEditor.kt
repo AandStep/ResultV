@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.resultv.android.R
 import com.resultv.android.theme.Brand
+import com.resultv.android.theme.CategoryTint
 import com.resultv.android.ui.components.SettingIcon
 import com.resultv.android.vpn.ROUTING_ACTIONS
 import com.resultv.android.vpn.RoutingProfile
@@ -128,8 +129,7 @@ fun RoutingProfileEditorContent(
         ) {
             SettingIcon(
                 icon = if (isEdit) Icons.Outlined.Edit else Icons.Outlined.Add,
-                bg = Brand.Green.copy(alpha = 0.16f),
-                tint = Brand.Green,
+                tint = CategoryTint(Brand.Green.copy(alpha = 0.16f), Brand.Green),
             )
             Column {
                 Text(

@@ -13,7 +13,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import com.resultv.android.theme.Brand
+import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.RvSpace
 
 /**
  * Canonical protocol codes the filter chip row understands. The order is
@@ -46,7 +47,7 @@ fun ProtocolFilterChips(
     if (visible.size < 2) return
     Row(
         modifier = modifier.horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.xs),
     ) {
         visible.forEach { (code, label) ->
             val isSelected = code in selected
@@ -61,9 +62,9 @@ fun ProtocolFilterChips(
                 },
                 colors = FilterChipDefaults.filterChipColors(
                     containerColor = Color.White.copy(alpha = 0.04f),
-                    labelColor = Brand.SecondaryText,
-                    selectedContainerColor = Brand.Green.copy(alpha = 0.20f),
-                    selectedLabelColor = Brand.GreenLight,
+                    labelColor = RvColor.whiteA50,
+                    selectedContainerColor = RvColor.Main.copy(alpha = 0.20f),
+                    selectedLabelColor = RvColor.Second,
                 ),
                 modifier = Modifier.padding(vertical = 2.dp),
             )

@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
 import com.resultv.android.theme.Brand
+import com.resultv.android.theme.CategoryTint
 import com.resultv.android.ui.components.SettingIcon
 import com.resultv.android.vpn.DeepLinkImporter
 import com.resultv.android.vpn.ROUTING_ACTIONS
@@ -143,8 +144,7 @@ fun RoutingProfilesSheetContent(
         ) {
             SettingIcon(
                 icon = Icons.Outlined.AltRoute,
-                bg = Color(0xFF3b82f6).copy(alpha = 0.18f),
-                tint = Color(0xFF60a5fa),
+                tint = CategoryTint(Color(0xFF3b82f6).copy(alpha = 0.18f), Color(0xFF60a5fa)),
             )
             Column {
                 Text(

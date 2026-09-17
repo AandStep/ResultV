@@ -43,6 +43,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import mobile.Mobile
 import com.resultv.android.theme.Brand
+import com.resultv.android.theme.CategoryTint
 import com.resultv.android.ui.components.DarkSheetSystemBars
 import com.resultv.android.ui.components.SettingIcon
 import com.resultv.android.vpn.SettingsRepository
@@ -172,7 +173,7 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
-                        SettingIcon(sheet.icon, sheet.iconBg, sheet.iconTint)
+                        SettingIcon(sheet.icon, CategoryTint(sheet.iconBg, sheet.iconTint))
                         Column {
                             Text(stringResource(sheet.labelRes), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                             Text(stringResource(sheet.descRes), style = MaterialTheme.typography.bodyMedium, color = Brand.SecondaryText)
@@ -331,7 +332,7 @@ private fun SubcategoryRow(subcategory: SettingsSubcategory, onClick: () -> Unit
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        SettingIcon(subcategory.icon, subcategory.iconBg, subcategory.iconTint)
+        SettingIcon(subcategory.icon, CategoryTint(subcategory.iconBg, subcategory.iconTint))
         Text(
             stringResource(subcategory.labelRes),
             style = MaterialTheme.typography.titleMedium,
@@ -363,7 +364,7 @@ internal fun NavRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        SettingIcon(icon, iconBg, iconTint)
+        SettingIcon(icon, CategoryTint(iconBg, iconTint))
         Text(
             label,
             style = MaterialTheme.typography.titleMedium,
@@ -462,7 +463,7 @@ private fun NetworkGroup(settings: com.resultv.android.vpn.SettingsState) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            SettingIcon(Icons.Outlined.Dns, Color(0xFF3b82f6).copy(alpha = 0.18f), Color(0xFF60a5fa))
+            SettingIcon(Icons.Outlined.Dns, CategoryTint(Color(0xFF3b82f6).copy(alpha = 0.18f), Color(0xFF60a5fa)))
             Column {
                 Text("DNS", style = MaterialTheme.typography.bodyLarge)
                 Text(
@@ -537,7 +538,7 @@ private fun AppearanceGroup(onBeforeRecreate: () -> Unit) {
             .padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SettingIcon(Icons.Outlined.Translate, Color(0xFF8b5cf6).copy(alpha = 0.18f), Color(0xFFa78bfa))
+        SettingIcon(Icons.Outlined.Translate, CategoryTint(Color(0xFF8b5cf6).copy(alpha = 0.18f), Color(0xFFa78bfa)))
         Spacer(modifier = Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -602,7 +603,7 @@ internal fun ToggleRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        SettingIcon(icon, iconBg, iconTint)
+        SettingIcon(icon, CategoryTint(iconBg, iconTint))
         Column(modifier = Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
             Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Brand.SecondaryText)
@@ -634,7 +635,7 @@ private fun IntervalRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        SettingIcon(icon, iconBg, iconTint)
+        SettingIcon(icon, CategoryTint(iconBg, iconTint))
         Column(modifier = Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
             Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Brand.SecondaryText)
@@ -680,7 +681,7 @@ private fun TextFieldRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            SettingIcon(icon, iconBg, iconTint)
+            SettingIcon(icon, CategoryTint(iconBg, iconTint))
             Text(title, style = MaterialTheme.typography.bodyLarge)
         }
         OutlinedTextField(
@@ -711,8 +712,7 @@ private fun AppInfoCard() {
         ) {
             SettingIcon(
                 icon = Icons.Outlined.Info,
-                bg = Color(0xFF8b5cf6).copy(alpha = 0.18f),
-                tint = Color(0xFFa78bfa),
+                tint = CategoryTint(Color(0xFF8b5cf6).copy(alpha = 0.18f), Color(0xFFa78bfa)),
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(

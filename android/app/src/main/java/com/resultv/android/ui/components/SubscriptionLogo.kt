@@ -18,7 +18,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.resultv.android.R
-import com.resultv.android.theme.Brand
+import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.RvRadius
 import com.resultv.android.vpn.Subscription
 import com.resultv.android.vpn.decodePanelTitle
 
@@ -32,9 +33,9 @@ fun SubscriptionLogo(usesImpLogo: Boolean, size: Dp = 40.dp) {
     Box(
         modifier = Modifier
             .size(size)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(RvRadius.chip))
             .background(
-                if (usesImpLogo) Brand.Green.copy(alpha = 0.18f)
+                if (usesImpLogo) RvColor.Main.copy(alpha = 0.18f)
                 else Color.White.copy(alpha = 0.07f)
             ),
         contentAlignment = Alignment.Center,
@@ -50,7 +51,7 @@ fun SubscriptionLogo(usesImpLogo: Boolean, size: Dp = 40.dp) {
             Icon(
                 imageVector = Icons.Outlined.CloudDownload,
                 contentDescription = null,
-                tint = Brand.SecondaryText,
+                tint = RvColor.whiteA50,
                 modifier = Modifier.size(size * 0.55f),
             )
         }

@@ -24,7 +24,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.draw.shadow
 import com.resultv.android.R
-import com.resultv.android.theme.Brand
+import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.RvMotion
 import com.resultv.android.vpn.VpnStatus
 
 /**
@@ -57,34 +58,34 @@ fun PowerButton(
 
     val fillColor by animateColorAsState(
         targetValue = when {
-            connected -> Brand.Green
-            errored -> Brand.Surface
-            else -> Brand.SurfaceHigh   // connecting + idle
+            connected -> RvColor.Main
+            errored -> RvColor.Grey
+            else -> RvColor.LightGray   // connecting + idle
         },
-        animationSpec = tween(350),
+        animationSpec = tween(RvMotion.durationMillis, easing = RvMotion.easing),
         label = "fillColor",
     )
     // Border: connected has no visible border (collapses to fill), the rest
     // get a 4dp ring in their state colour.
     val borderColor by animateColorAsState(
         targetValue = when {
-            connected -> Brand.Green
-            connecting -> Brand.Warning
-            errored -> Brand.Danger.copy(alpha = 0.50f)
-            else -> Brand.SurfaceHigh
+            connected -> RvColor.Main
+            connecting -> RvColor.Warning
+            errored -> RvColor.Errors.copy(alpha = 0.50f)
+            else -> RvColor.LightGray
         },
-        animationSpec = tween(350),
+        animationSpec = tween(RvMotion.durationMillis, easing = RvMotion.easing),
         label = "borderColor",
     )
     val borderWidth = if (connected) 0.dp else 4.dp
     val iconTint by animateColorAsState(
         targetValue = when {
             connected -> Color.Black.copy(alpha = 0.78f)  // text-zinc-950 over green
-            connecting -> Brand.Favorite                  // amber-400
-            errored -> Brand.Danger
-            else -> Brand.SecondaryText                   // text-zinc-400
+            connecting -> RvColor.Warning                 // amber-400
+            errored -> RvColor.Errors
+            else -> RvColor.whiteA50                      // text-zinc-400
         },
-        animationSpec = tween(350),
+        animationSpec = tween(RvMotion.durationMillis, easing = RvMotion.easing),
         label = "iconTint",
     )
     // Glow uses a radial-gradient brush (NOT a blurred opaque disc): the
@@ -92,9 +93,9 @@ fun PowerButton(
     // halo edge. Matches desktop's `shadow-2xl shadow-[#007E3A]/50`, which
     // is a feathered drop shadow without a discrete inner ring.
     val glowCenter = when {
-        connected -> Brand.Green.copy(alpha = 0.55f)
-        errored -> Brand.Danger.copy(alpha = 0.30f)
-        connecting -> Brand.Warning.copy(alpha = 0.40f)
+        connected -> RvColor.Main.copy(alpha = 0.55f)
+        errored -> RvColor.Errors.copy(alpha = 0.30f)
+        connecting -> RvColor.Warning.copy(alpha = 0.40f)
         else -> Color.Black.copy(alpha = 0.20f)
     }
     val glowSize by animateDpAsState(
@@ -161,9 +162,9 @@ fun PowerButton(
                 if (connecting) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(192.dp),
-                        color = Brand.Warning,
+                        color = RvColor.Warning,
                         strokeWidth = 3.dp,
-                        trackColor = Brand.Warning.copy(alpha = 0.30f),
+                        trackColor = RvColor.Warning.copy(alpha = 0.30f),
                     )
                 }
             }
@@ -175,10 +176,10 @@ fun PowerButton(
 @Composable
 fun StatusHeader(status: VpnStatus, activeProfileName: String?) {
     val color = when (status) {
-        is VpnStatus.Connected -> Brand.Green
-        is VpnStatus.Connecting -> Brand.Warning
-        is VpnStatus.Error -> Brand.Danger
-        is VpnStatus.Idle -> Brand.SecondaryText
+        is VpnStatus.Connected -> RvColor.Main
+        is VpnStatus.Connecting -> RvColor.Warning
+        is VpnStatus.Error -> RvColor.Errors
+        is VpnStatus.Idle -> RvColor.whiteA50
     }
     val title = when (status) {
         is VpnStatus.Connected -> stringResource(R.string.status_protected)
@@ -205,7 +206,7 @@ fun StatusHeader(status: VpnStatus, activeProfileName: String?) {
             androidx.compose.material3.Text(
                 text = subtitle,
                 style = MaterialTheme.typography.bodySmall,
-                color = Brand.SecondaryText,
+                color = RvColor.whiteA50,
             )
         }
     }

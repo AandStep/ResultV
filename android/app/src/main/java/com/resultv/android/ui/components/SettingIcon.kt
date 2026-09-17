@@ -9,29 +9,33 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.unit.dp
+import com.resultv.android.theme.CategoryTint
+import com.resultv.android.theme.RvIcon
+import com.resultv.android.theme.RvRadius
 
 /**
- * Coloured icon chip used as the leading glyph in settings-style rows and
- * sheet headers. Single source of truth so Settings, Rules and the
- * subscription-edit sheet all share the exact same 36dp tinted square.
+ * Цветная плитка со значком — ведущий элемент строк настроек и шапок шторок.
+ * Единственный источник правды, чтобы настройки, правила и шторка правки
+ * подписки рисовали один и тот же квадрат.
+ *
+ * Пара цветов приходит одним значением: раздельные bg и tint разъезжались —
+ * подложка одной категории вставала под глиф другой.
  */
 @Composable
-fun SettingIcon(icon: ImageVector, bg: Color, tint: Color) {
+fun SettingIcon(icon: ImageVector, tint: CategoryTint) {
     Box(
         modifier = Modifier
-            .size(36.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(bg),
+            .size(RvIcon.tile)
+            .clip(RoundedCornerShape(RvRadius.chip))
+            .background(tint.tile),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = tint,
-            modifier = Modifier.size(20.dp),
+            tint = tint.glyph,
+            modifier = Modifier.size(RvIcon.glyph),
         )
     }
 }

@@ -47,7 +47,9 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.resultv.android.R
-import com.resultv.android.theme.Brand
+import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.RvRadius
+import com.resultv.android.theme.RvSpace
 
 /**
  * What one edit of a tag field's text box amounts to: the values it completed
@@ -82,9 +84,9 @@ internal fun tagDraftEdit(text: String): TagDraftEdit {
 // фокуса Main-color 20 %. Рамки в покое нет — только заливка.
 // Тег: заливка Light Gray, скругление 100, отступы 6/10/8/10, зазор 4,
 // подпись белым 50 % (кегль — см. TagTextStyle), крестик 14.
-private val FieldShape = RoundedCornerShape(24.dp)
-private val FieldPadding = 16.dp
-private val FieldGap = 10.dp
+private val FieldShape = RoundedCornerShape(RvRadius.card)
+private val FieldPadding = RvSpace.nest1
+private val FieldGap = RvSpace.nest3
 private val ChipShape = RoundedCornerShape(100.dp)
 
 // На ПК высота фиксирована (156px). На телефоне это съело бы шестую часть
@@ -155,14 +157,14 @@ fun TagField(
             .fillMaxWidth()
             .heightIn(min = FieldMinHeight)
             // На ПК три ступени: страница #141414 → поле #171717 → тег #1f1f1f.
-            // Здесь шторка настроек уже залита Brand.Surface, поэтому взять его
-            // же под поле значило бы слить коробку с фоном: ступень задаётся
-            // подъёмом белым, а тег поднимается до Brand.SurfaceHigh.
+            // Здесь шторка настроек уже залита тем же серым, что и RvColor.Grey,
+            // поэтому взять его же под поле значило бы слить коробку с фоном:
+            // ступень задаётся подъёмом белым, а тег поднимается до RvColor.LightGray.
             .background(Color.White.copy(alpha = 0.04f), FieldShape)
             // Рамка только в фокусе, как на ПК: в покое коробку держит заливка.
             .border(
                 width = 1.dp,
-                color = if (focused) Brand.Green.copy(alpha = 0.2f) else Color.Transparent,
+                color = if (focused) RvColor.Main.copy(alpha = 0.2f) else Color.Transparent,
                 shape = FieldShape,
             )
             // A tap anywhere in the box focuses the input, the way the whole
@@ -237,15 +239,16 @@ fun TagField(
 private fun TagChip(label: String, onRemove: () -> Unit) {
     Row(
         modifier = Modifier
-            .background(Brand.SurfaceHigh, ChipShape)
+            .background(RvColor.LightGray, ChipShape)
             .padding(
-                start = 10.dp,
+                start = RvSpace.nest3,
                 // Прозрачное поле крестика шире самой иконки на 4 dp с каждой
-                // стороны, поэтому видимые отступы ПК (зазор 4, отступ справа
-                // 10) набираются с поправкой на эти 4: зазор ряда 0, отступ 6.
-                end = 6.dp,
-                top = 6.dp,
-                bottom = 8.dp,
+                // стороны, поэтому отступ тега справа меньше отступа слева —
+                // компенсация под шкалу RvSpace, а не точный пиксельный расчёт,
+                // как было на ПК.
+                end = RvSpace.xs,
+                top = RvSpace.xs,
+                bottom = RvSpace.nest3,
             ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(0.dp),

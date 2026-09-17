@@ -20,7 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.resultv.android.R
-import com.resultv.android.theme.Brand
+import com.resultv.android.theme.RvColor
 import com.resultv.android.vpn.PingRepository
 import com.resultv.android.vpn.Profile
 
@@ -90,7 +90,7 @@ fun ProfileSortMenu(
             Icon(
                 imageVector = Icons.Outlined.Sort,
                 contentDescription = stringResource(R.string.sort_cd),
-                tint = Brand.SecondaryText,
+                tint = RvColor.whiteA50,
                 modifier = Modifier.size(20.dp),
             )
         }
@@ -103,7 +103,7 @@ fun ProfileSortMenu(
                     text = {
                         Text(
                             text = stringResource(entry.labelRes),
-                            color = if (entry == mode) Brand.GreenLight else MaterialTheme.colorScheme.onBackground,
+                            color = if (entry == mode) RvColor.Second else MaterialTheme.colorScheme.onBackground,
                         )
                     },
                     onClick = {

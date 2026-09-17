@@ -76,6 +76,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
 import com.resultv.android.theme.Brand
+import com.resultv.android.theme.CategoryTint
 import com.resultv.android.ui.components.SettingIcon
 import com.resultv.android.ui.components.TagField
 import com.resultv.android.vpn.AppInventory
@@ -269,7 +270,7 @@ private fun SectionHeader(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        SettingIcon(icon, iconBg, iconTint)
+        SettingIcon(icon, CategoryTint(iconBg, iconTint))
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = Brand.SecondaryText)

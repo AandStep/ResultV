@@ -29,7 +29,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.resultv.android.R
-import com.resultv.android.theme.Brand
+import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.RvRadius
+import com.resultv.android.theme.RvSpace
 
 /**
  * Server / profile row used by Home selector and Proxies list. Highlights
@@ -65,49 +67,51 @@ fun ServerRow(
     /** Long-press handler — used by Proxies to open the edit sheet. */
     onLongClick: (() -> Unit)? = null,
 ) {
-    val border = if (isActive) Brand.Green.copy(alpha = 0.45f) else Color.White.copy(alpha = 0.06f)
-    val bg = if (isActive) Brand.Green.copy(alpha = 0.10f) else Color.White.copy(alpha = 0.03f)
-    val titleColor = if (isActive) Brand.GreenLight else MaterialTheme.colorScheme.onBackground
+    val bg = if (isActive) RvColor.Main.copy(alpha = 0.10f) else Color.White.copy(alpha = 0.03f)
+    val titleColor = if (isActive) RvColor.Second else MaterialTheme.colorScheme.onBackground
     // Latency is colour-coded: green <80ms, amber 80–200ms, rose >200ms.
     // latencyMs <= 0 means "reachable but RTT not measurable" (UDP probe for
     // WireGuard/AmneziaWG, which don't answer the probe byte) — treat as online.
     val latencyColor = when {
-        latencyMs == null -> Brand.MutedText
-        latencyMs <= 200 -> Brand.GreenLight
-        latencyMs <= 499 -> Brand.Warning
-        else -> Brand.Danger
+        latencyMs == null -> RvColor.whiteA50
+        latencyMs <= 200 -> RvColor.Second
+        latencyMs <= 499 -> RvColor.Warning
+        else -> RvColor.Errors
     }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(RvRadius.card))
+            // Обводки у строки сервера нет намеренно: на ПК тот же компонент
+            // задаёт `border: 0` и класса `rv-border` не берёт, а подключённый
+            // сервер отмечен фоном — «по нему его и находят глазами среди
+            // остальных» (ResultV-dev ServerItem.css:86-96).
             .background(bg)
-            .border(1.dp, border, RoundedCornerShape(18.dp))
             .let { base ->
                 if (onLongClick != null)
                     base.combinedClickable(onClick = onClick, onLongClick = onLongClick)
                 else
                     base.clickable(onClick = onClick)
             }
-            .padding(horizontal = 14.dp, vertical = 14.dp),
+            .padding(horizontal = RvSpace.nest2, vertical = RvSpace.nest2),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
         // Leading icon — flag emoji, AUTO bolt, or globe fallback.
         Box(
             modifier = Modifier
                 .size(48.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(RvRadius.chip))
                 .background(
-                    if (isActive) Brand.Green.copy(alpha = 0.18f)
+                    if (isActive) RvColor.Main.copy(alpha = 0.18f)
                     else Color.White.copy(alpha = 0.07f)
                 )
                 .border(
                     1.dp,
-                    if (isActive) Brand.Green.copy(alpha = 0.28f)
+                    if (isActive) RvColor.Main.copy(alpha = 0.28f)
                     else Color.White.copy(alpha = 0.09f),
-                    RoundedCornerShape(12.dp)
+                    RoundedCornerShape(RvRadius.chip)
                 ),
             contentAlignment = Alignment.Center,
         ) {
@@ -115,7 +119,7 @@ fun ServerRow(
                 isAuto -> Icon(
                     imageVector = Icons.Filled.Bolt,
                     contentDescription = null,
-                    tint = Brand.GreenLight,
+                    tint = RvColor.Second,
                     modifier = Modifier.size(24.dp),
                 )
                 countryCode != null -> Text(
@@ -125,7 +129,7 @@ fun ServerRow(
                 else -> Icon(
                     imageVector = Icons.Outlined.Public,
                     contentDescription = null,
-                    tint = Brand.SecondaryText,
+                    tint = RvColor.whiteA50,
                     modifier = Modifier.size(24.dp),
                 )
             }
@@ -141,7 +145,7 @@ fun ServerRow(
             )
             Text(
                 text = subtitle,
-                color = Brand.MutedText,
+                color = RvColor.whiteA50,
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -154,7 +158,7 @@ fun ServerRow(
             Icon(
                 imageVector = Icons.Filled.Star,
                 contentDescription = stringResource(R.string.action_unfavorite),
-                tint = Brand.Favorite,
+                tint = RvColor.Warning,
                 modifier = Modifier.size(14.dp),
             )
         }
@@ -167,7 +171,7 @@ fun ServerRow(
         when {
             isLoading -> androidx.compose.material3.CircularProgressIndicator(
                 modifier = Modifier.size(14.dp),
-                color = Brand.MutedText,
+                color = RvColor.whiteA50,
                 strokeWidth = 2.dp,
             )
             latencyMs != null -> Text(
@@ -179,11 +183,11 @@ fun ServerRow(
             offlineReason != null -> Text(
                 text = offlineLabel(offlineReason),
                 style = MaterialTheme.typography.labelMedium,
-                color = Brand.Danger,
+                color = RvColor.Errors,
             )
             else -> androidx.compose.material3.CircularProgressIndicator(
                 modifier = Modifier.size(14.dp),
-                color = Brand.MutedText,
+                color = RvColor.whiteA50,
                 strokeWidth = 2.dp,
             )
         }
