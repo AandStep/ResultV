@@ -16,11 +16,14 @@
 package proxy
 
 import (
-	"encoding/json"
+	stdjson "encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/sagernet/sing-box/option"
+	singjson "github.com/sagernet/sing/common/json"
 
 	"resultproxy-wails/internal/verdict"
 )
@@ -42,7 +45,7 @@ func TestEnsureSmartDirectSet_CreatesValidEmptySkeleton(t *testing.T) {
 			DomainSuffix []string `json:"domain_suffix"`
 		} `json:"rules"`
 	}
-	if err := json.Unmarshal(raw, &parsed); err != nil {
+	if err := stdjson.Unmarshal(raw, &parsed); err != nil {
 		t.Fatalf("скелет не разбирается: %v (%s)", err, raw)
 	}
 	if parsed.Version != 3 {
@@ -106,5 +109,54 @@ func TestDirectNamesOf_OnlyDirectVerdicts(t *testing.T) {
 	got := directNamesOf(s)
 	if len(got) != 1 || got[0] != "clean.example" {
 		t.Fatalf("directNamesOf = %v, ожидалось только clean.example", got)
+	}
+}
+
+// Файл существует ради одного читателя — ядра. Пять тестов выше проверяют наш
+// формат против нас самих; этот проверяет его против настоящего разборщика
+// sing-box. Разойдись формат — те тесты останутся зелёными, а телефон
+// перестанет подключаться: NewLocalRuleSet читает файл в конструкторе и роняет
+// старт ядра целиком.
+func TestSmartDirectSet_CoreParserAcceptsWhatWeWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "verdict-direct.json")
+	if err := RenderSmartDirectSet(path, []string{"example.com", "b.example"}); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	compat, err := singjson.UnmarshalExtended[option.PlainRuleSetCompat](raw)
+	if err != nil {
+		t.Fatalf("ядро отвергло файл: %v (%s)", err, raw)
+	}
+	plain, err := compat.Upgrade()
+	if err != nil {
+		t.Fatalf("Upgrade: %v", err)
+	}
+	if len(plain.Rules) != 1 {
+		t.Fatalf("правил %d, ожидалось 1", len(plain.Rules))
+	}
+	got := plain.Rules[0].DefaultOptions.DomainSuffix
+	if len(got) != 2 || got[0] != "b.example" || got[1] != "example.com" {
+		t.Fatalf("ядро прочло domain_suffix = %v, ожидалось [b.example example.com]", got)
+	}
+
+	// Пустой скелет ядро тоже обязано принять: он пишется до старта, когда
+	// выучить ещё нечего.
+	empty := filepath.Join(t.TempDir(), "empty.json")
+	if err := EnsureSmartDirectSet(empty); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	eraw, err := os.ReadFile(empty)
+	if err != nil {
+		t.Fatalf("read empty: %v", err)
+	}
+	emptyCompat, err := singjson.UnmarshalExtended[option.PlainRuleSetCompat](eraw)
+	if err != nil {
+		t.Fatalf("ядро отвергло пустой скелет: %v (%s)", err, eraw)
+	}
+	if _, err := emptyCompat.Upgrade(); err != nil {
+		t.Fatalf("Upgrade пустого: %v", err)
 	}
 }
