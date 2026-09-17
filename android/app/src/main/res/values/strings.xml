@@ -59,6 +59,10 @@
     <string name="settings_kill_switch_subtitle">Block internet if the proxy drops</string>
     <string name="settings_ipv6">IPv6</string>
     <string name="settings_ipv6_subtitle">IPv6 traffic through the tunnel</string>
+    <string name="settings_adaptive_smart">Adaptive Smart</string>
+    <string name="settings_adaptive_smart_subtitle">Learns which sites need the tunnel. Smart mode only.</string>
+    <string name="settings_adaptive_smart_memory">Memory only</string>
+    <string name="settings_adaptive_smart_memory_subtitle">Forget everything learned when the app closes.</string>
     <string name="settings_ping">Ping</string>
     <string name="settings_ping_hint">What the server list measures</string>
     <string name="settings_ping_type_auto">Auto</string>

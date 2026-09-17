@@ -538,6 +538,29 @@ private fun NetworkGroup(settings: com.resultv.android.vpn.SettingsState) {
         checked = settings.ipv6,
         onCheckedChange = { SettingsRepository.setIpv6(it) },
     )
+    HorizontalDivider(color = RvColor.whiteA10)
+    ToggleRow(
+        title = stringResource(R.string.settings_adaptive_smart),
+        subtitle = stringResource(R.string.settings_adaptive_smart_subtitle),
+        icon = Icons.Outlined.AutoAwesome,
+        tint = RvCategory.Emerald,
+        checked = settings.adaptiveSmart,
+        onCheckedChange = { SettingsRepository.setAdaptiveSmart(it) },
+    )
+    // Подтумблер показывается только при включённом основном: висящая в
+    // интерфейсе настройка того, чего нет, — это вопрос, на который человеку
+    // приходится отвечать зря.
+    if (settings.adaptiveSmart) {
+        HorizontalDivider(color = RvColor.whiteA10)
+        ToggleRow(
+            title = stringResource(R.string.settings_adaptive_smart_memory),
+            subtitle = stringResource(R.string.settings_adaptive_smart_memory_subtitle),
+            icon = Icons.Outlined.Memory,
+            tint = RvCategory.Violet,
+            checked = settings.adaptiveSmartMemoryOnly,
+            onCheckedChange = { SettingsRepository.setAdaptiveSmartMemoryOnly(it) },
+        )
+    }
     PingGroup(settings)
 }
 

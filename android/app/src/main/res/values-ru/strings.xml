@@ -54,6 +54,10 @@
     <string name="settings_kill_switch_subtitle">Блокировать интернет при обрыве прокси</string>
     <string name="settings_ipv6">IPv6</string>
     <string name="settings_ipv6_subtitle">IPv6-трафик через туннель</string>
+    <string name="settings_adaptive_smart">Адаптивный Smart</string>
+    <string name="settings_adaptive_smart_subtitle">Сам узнаёт, каким сайтам нужен туннель. Только в режиме Smart.</string>
+    <string name="settings_adaptive_smart_memory">Только в памяти</string>
+    <string name="settings_adaptive_smart_memory_subtitle">Забывать выученное при закрытии приложения.</string>
     <string name="settings_ping">Пинг</string>
     <string name="settings_ping_hint">Что меряет список серверов</string>
     <string name="settings_ping_type_auto">Авто</string>
