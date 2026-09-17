@@ -8,8 +8,13 @@
 package proxy
 
 import (
+	"context"
 	"errors"
+	"net/http"
 	"testing"
+	"time"
+
+	"resultproxy-wails/internal/config"
 )
 
 func pingProbeNode() ProxyConfig {
@@ -102,5 +107,62 @@ func TestPingProbeConfigSkipsDNSForLiteralNode(t *testing.T) {
 	}
 	if cfg.DNS != nil {
 		t.Errorf("у узла с литеральным адресом DNS-блок лишний: %+v", cfg.DNS)
+	}
+}
+
+// Любой статус — успех, и это намеренно: запрос идёт по HTTPS через CONNECT,
+// сертификат проверяется внутри процесса, поэтому сам факт ответа доказывает,
+// что байты дошли до настоящего хоста. Отдельно стоит 407: это отказ прокси, а
+// не ответ сайта.
+func TestClassifyPingFetch(t *testing.T) {
+	if ok, reason := classifyPingFetch(&http.Response{StatusCode: 204}, nil); !ok || reason != "" {
+		t.Errorf("204 = (%v, %q), ожидался успех", ok, reason)
+	}
+	if ok, _ := classifyPingFetch(&http.Response{StatusCode: 500}, nil); !ok {
+		t.Error("500 тоже доказывает, что байты дошли")
+	}
+	if ok, reason := classifyPingFetch(&http.Response{StatusCode: 407}, nil); ok || reason != "proxy_auth_required" {
+		t.Errorf("407 = (%v, %q)", ok, reason)
+	}
+	if ok, reason := classifyPingFetch(nil, errors.New("i/o timeout")); ok || reason != "timeout" {
+		t.Errorf("таймаут = (%v, %q)", ok, reason)
+	}
+	if ok, reason := classifyPingFetch(nil, nil); ok || reason == "" {
+		t.Errorf("пустой ответ без ошибки должен быть назван: (%v, %q)", ok, reason)
+	}
+}
+
+// Узел без аутбаунда обязан ответить именем причины, а не поднимать движок.
+func TestPingThroughNodeRefusesWireGuard(t *testing.T) {
+	node := ProxyConfig{Type: "AMNEZIAWG", IP: "203.0.113.7", Port: 51820,
+		Extra: []byte(`{"private_key":"aAXFScHA5tAA9mUwp1aBDV9cAbHj1mSfwdc1ISTsbm8=",` +
+			`"public_key":"WpE32HIFCmunopfbfcuwwgOqdGxmuu04tdZmFQdTBTE=",` +
+			`"address":["10.0.0.2/32"],"allowed_ips":["0.0.0.0/0"]}`)}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, ok, reason := pingThroughNode(ctx, node, http.MethodHead, config.DefaultPingTestURL)
+	if ok || reason != "unsupported_for_protocol" {
+		t.Errorf("получено (%v, %q)", ok, reason)
+	}
+}
+
+// Негодный тестовый адрес — это ошибка запроса, а не узла.
+func TestPingThroughNodeRejectsBadURL(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, ok, reason := pingThroughNode(ctx, pingProbeNode(), http.MethodGet, "https://exa mple.com/ping")
+	if ok || reason != "bad_test_url" {
+		t.Errorf("получено (%v, %q)", ok, reason)
+	}
+}
+
+// Потолок одновременных движков — не украшение: список пингуется по 16
+// параллельно, а движок дороже сокета на порядки.
+func TestPingEngineConcurrencyIsCapped(t *testing.T) {
+	if cap(pingEngineSem) != pingEngineMaxConcurrency {
+		t.Errorf("ёмкость семафора %d, ожидалась %d", cap(pingEngineSem), pingEngineMaxConcurrency)
+	}
+	if pingEngineMaxConcurrency >= 16 {
+		t.Errorf("потолок %d не ниже параллелизма списка (16) — значит не ограничивает", pingEngineMaxConcurrency)
 	}
 }

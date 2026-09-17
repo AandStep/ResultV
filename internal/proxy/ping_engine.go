@@ -8,9 +8,19 @@
 package proxy
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"net/url"
+	"time"
+
+	box "github.com/sagernet/sing-box"
+	"github.com/sagernet/sing-box/include"
+	"github.com/sagernet/sing-box/option"
+	singjson "github.com/sagernet/sing/common/json"
 )
 
 // errPingProbeUnsupported marks a node whose protocol cannot carry an
@@ -81,4 +91,152 @@ func BuildPingProbeConfig(proxy ProxyConfig, listenPort int) (SingBoxConfig, err
 	}
 
 	return cfg, nil
+}
+
+// pingProbeEngineCeiling bounds how long the throwaway engine is given to shut
+// down. A leaked instance is collected eventually, a frozen sweep is not.
+const pingProbeEngineCeiling = 5 * time.Second
+
+// pingEngineMaxConcurrency caps how many throwaway probe engines run at once.
+//
+// PingRepository sweeps the list with sixteen workers (PING_CONCURRENCY), and
+// an engine costs orders of magnitude more than a socket, so the ceiling has
+// to live here rather than in Kotlin — a phone that started sixteen sing-box
+// instances at once would not be probing, it would be sabotaging itself.
+const pingEngineMaxConcurrency = 4
+
+// pingEngineSem admits probe engines. Package-level rather than per-caller
+// because the cost it protects — memory and sockets — is the process's.
+var pingEngineSem = make(chan struct{}, pingEngineMaxConcurrency)
+
+// classifyPingFetch turns one HTTP attempt into a verdict.
+//
+// Any status counts as success on purpose. The request goes out over HTTPS as
+// a CONNECT and the certificate is verified inside this process, so a response
+// arriving at all proves the bytes reached the real host — which is exactly
+// what the measurement is asking.
+func classifyPingFetch(resp *http.Response, err error) (bool, string) {
+	if err != nil {
+		return false, pingReasonFromError(err)
+	}
+	if resp == nil {
+		return false, "no_response"
+	}
+	if resp.StatusCode == http.StatusProxyAuthRequired {
+		return false, "proxy_auth_required"
+	}
+	return true, ""
+}
+
+// pingThroughNode measures how long the node takes to deliver testURL.
+//
+// The clock covers the node handshake, the CONNECT, the TLS session to the
+// target and the wait for response headers — everything the user is actually
+// waiting on. Starting the engine is NOT in the figure: that is our cost, not
+// the node's.
+func pingThroughNode(ctx context.Context, proxy ProxyConfig, method, testURL string) (latencyMs int64, reachable bool, reason string) {
+	// The seat is taken before the config is built and held until the instance
+	// is gone, so the ceiling counts live engines rather than callers.
+	select {
+	case pingEngineSem <- struct{}{}:
+		defer func() { <-pingEngineSem }()
+	case <-ctx.Done():
+		return 0, false, "timeout"
+	}
+
+	port := getFreeLocalPort(0)
+	cfg, err := BuildPingProbeConfig(proxy, port)
+	if err != nil {
+		if errors.Is(err, errPingProbeUnsupported) {
+			return 0, false, "unsupported_for_protocol"
+		}
+		return 0, false, "engine_config_failed"
+	}
+
+	configJSON, err := json.Marshal(cfg)
+	if err != nil {
+		return 0, false, "engine_config_failed"
+	}
+
+	boxCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	// include.Context, not the extended one: the custom outbound registry
+	// arrives with the adaptive Smart block. When it does, this is the line to
+	// change — the probe must build a node the same way the session does.
+	boxCtx = include.Context(boxCtx)
+
+	var options option.Options
+	if err := singjson.UnmarshalContext(boxCtx, configJSON, &options); err != nil {
+		return 0, false, "engine_config_failed"
+	}
+
+	instance, err := box.New(box.Options{Context: boxCtx, Options: options})
+	if err != nil {
+		return 0, false, "engine_start_failed"
+	}
+	if err := instance.Start(); err != nil {
+		closePingProbeBounded(instance)
+		return 0, false, "engine_start_failed"
+	}
+	defer closePingProbeBounded(instance)
+
+	proxyURL, err := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
+	if err != nil {
+		return 0, false, "engine_config_failed"
+	}
+	client := &http.Client{
+		Transport: &http.Transport{
+			Proxy:             http.ProxyURL(proxyURL),
+			DisableKeepAlives: true,
+		},
+		// Redirects are not followed: the first answer already proves the node
+		// carried the request, and chasing a redirect would measure a second
+		// host instead of this one.
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, testURL, nil)
+	if err != nil {
+		return 0, false, "bad_test_url"
+	}
+
+	start := time.Now()
+	resp, err := client.Do(req)
+	elapsed := time.Since(start)
+	if resp != nil {
+		defer resp.Body.Close()
+	}
+	ok, reason := classifyPingFetch(resp, err)
+	if !ok {
+		return 0, false, reason
+	}
+	ms := elapsed.Milliseconds()
+	if ms <= 0 {
+		ms = 1
+	}
+	return ms, true, ""
+}
+
+// pingThroughNodeProbe is a var so the dispatch can be tested without standing
+// up a real engine.
+var pingThroughNodeProbe = pingThroughNode
+
+// closePingProbeBounded closes the throwaway instance without letting a stuck
+// teardown hold the sweep.
+//
+// No logger on purpose: on the desktop a line per teardown turned a list sweep
+// into a wall of "closing N connections" in the user's own log. This engine's
+// lifetime is our business, not the user's.
+func closePingProbeBounded(instance *box.Box) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = instance.Close()
+	}()
+	select {
+	case <-done:
+	case <-time.After(pingProbeEngineCeiling):
+	}
 }
