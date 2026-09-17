@@ -35,18 +35,9 @@ class TokensTest {
         )
     }
 
-    /**
-     * У TextUnit сравниваются `.value`, а не сами значения: оператор
-     * `compareTo` у него есть, но интерфейс `Comparable<TextUnit>` он не
-     * реализует, и `sortedDescending()` на списке TextUnit не компилируется.
-     */
-    @Test fun typeLadderDescends() {
-        assertDescendingAndDistinct(
-            "RvType",
-            listOf(RvType.h1Size, RvType.titleSize, RvType.btnSize, RvType.regularSize, RvType.chipSize)
-                .map { it.value },
-        )
-    }
+    // Шкалы для текста здесь нет намеренно: типографика единственная осталась
+    // прежней, мобильной, и живёт прямо в Theme.kt слотами Material. Причина
+    // записана там же и в спеке, раздел «Пробелы».
 
     /**
      * Фоновая лестница: экран темнее карточки, карточка темнее ступени над

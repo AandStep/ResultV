@@ -10,6 +10,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import com.resultv.android.R
 
 /** Benzin Bold. Им набрано слово «ResultV» — и больше ничего. */
@@ -68,25 +69,35 @@ private val ResultVColors = darkColorScheme(
 )
 
 /**
- * Пять стилей макета разложены по слотам Material, а не живут рядом с ними:
- * компоненты M3 читают MaterialTheme.typography сами. Слоты, которым в макете
- * ничего не соответствует, получают ближайший стиль — а не выдуманное значение.
+ * Типографика НЕ переносится с ПК — единственная часть дизайн-системы,
+ * оставленная как была.
+ *
+ * Шкала макета (32/20/18/16/14, Bold у верхних трёх) даже со сдвигом на
+ * ступень вниз читается на телефоне слишком крупно и тяжело: на ПК её
+ * держит окно 1000x740 и воздух вокруг, а на 360 dp тот же ритм превращает
+ * список настроек в череду заголовков. Проверено на устройстве.
+ *
+ * Поэтому здесь прежняя мобильная шкала, и вес намеренно НЕ задаётся ни в
+ * одном слоте: Material сам ставит Normal телу и заголовкам и Medium
+ * названиям и меткам. Как только вес проставлен руками, весь интерфейс
+ * уходит в полужирный — ровно это и пришлось откатывать.
+ *
+ * Цвета, отступы, скругления, обводка и движение перенесены с ПК как есть;
+ * расхождение по типографике записано в спеку, раздел «Пробелы».
  */
-private fun style(size: androidx.compose.ui.unit.TextUnit, line: androidx.compose.ui.unit.TextUnit, weight: FontWeight) =
-    TextStyle(fontSize = size, lineHeight = line, fontWeight = weight)
-
-private val H1 = style(RvType.h1Size, RvType.h1Line, FontWeight.Bold)
-private val Title = style(RvType.titleSize, RvType.titleLine, FontWeight.Bold)
-private val Btn = style(RvType.btnSize, RvType.btnLine, FontWeight.Bold)
-private val Regular = style(RvType.regularSize, RvType.regularLine, FontWeight.Medium)
-private val Chip = style(RvType.chipSize, RvType.chipLine, FontWeight.Medium)
-
 private val ResultVTypography = Typography(
-    displayLarge = H1, displayMedium = H1, displaySmall = H1,
-    headlineLarge = H1, headlineMedium = Title, headlineSmall = Title,
-    titleLarge = Title, titleMedium = Btn, titleSmall = Btn,
-    bodyLarge = Regular, bodyMedium = Chip, bodySmall = Chip,
-    labelLarge = Btn, labelMedium = Chip, labelSmall = Chip,
+    headlineLarge = TextStyle(fontSize = 30.sp, lineHeight = 38.sp),
+    headlineMedium = TextStyle(fontSize = 26.sp, lineHeight = 34.sp),
+    headlineSmall = TextStyle(fontSize = 22.sp, lineHeight = 30.sp),
+    titleLarge = TextStyle(fontSize = 20.sp, lineHeight = 26.sp),
+    titleMedium = TextStyle(fontSize = 14.sp, lineHeight = 22.sp),
+    titleSmall = TextStyle(fontSize = 12.sp, lineHeight = 18.sp),
+    bodyLarge = TextStyle(fontSize = 14.sp, lineHeight = 22.sp),
+    bodyMedium = TextStyle(fontSize = 12.sp, lineHeight = 18.sp),
+    bodySmall = TextStyle(fontSize = 11.sp, lineHeight = 14.sp),
+    labelLarge = TextStyle(fontSize = 12.sp, lineHeight = 18.sp),
+    labelMedium = TextStyle(fontSize = 11.sp, lineHeight = 14.sp),
+    labelSmall = TextStyle(fontSize = 10.sp, lineHeight = 14.sp),
 )
 
 private val ResultVShapes = Shapes(

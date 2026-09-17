@@ -3,7 +3,6 @@ package com.resultv.android.theme
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 
 /**
  * Токены дизайн-системы, зеркало `ResultV-dev/frontend/src/design/tokens.css`.
@@ -128,28 +127,3 @@ object RvMotion {
     val easing = FastOutSlowInEasing
 }
 
-/**
- * Текстовые стили. Сдвиг работает не так, как в геометрии: отступы ужимаются,
- * потому что экран уже, а текст — нет, потому что глаз тот же. Садятся только
- * верхние стили.
- *
- * Стилей пять, а не шесть: `title-sm` макета после сдвига встал бы на 16sp —
- * туда же, где `btn`, который не сдвигается. Разница межстрочного, 22 против
- * 21, это шум. См. G-9 спеки.
- */
-object RvType {
-    val h1Size = 28.sp
-    val h1Line = 34.sp
-
-    val titleSize = 18.sp
-    val titleLine = 25.sp
-
-    val btnSize = 16.sp
-    val btnLine = 22.sp
-
-    val regularSize = 14.sp
-    val regularLine = 20.sp
-
-    val chipSize = 13.sp
-    val chipLine = 15.sp
-}
