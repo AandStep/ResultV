@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
 import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.RvIcon
 import com.resultv.android.theme.RvMotion
 import com.resultv.android.theme.RvRadius
 import com.resultv.android.theme.RvSpace
@@ -103,7 +104,7 @@ fun HomeHeader(
                     imageVector = Icons.Outlined.Language,
                     contentDescription = stringResource(R.string.header_open_website),
                     tint = RvColor.whiteA50,
-                    modifier = Modifier.size(20.dp),
+                    modifier = Modifier.size(RvIcon.glyph),
                 )
             }
             IconButton(onClick = onOpenTelegram, modifier = Modifier.size(36.dp)) {
@@ -111,7 +112,7 @@ fun HomeHeader(
                     painter = painterResource(R.drawable.ic_telegram),
                     contentDescription = stringResource(R.string.header_open_telegram),
                     tint = RvColor.whiteA50,
-                    modifier = Modifier.size(20.dp),
+                    modifier = Modifier.size(RvIcon.glyph),
                 )
             }
         }
@@ -137,9 +138,10 @@ fun HomeHeader(
 /**
  * Плашка времени соединения — `rv-header__time` с ПК.
  *
- * Отступы несимметричны по горизонтали, как в макете (9/18): слева стоит
- * значок часов со своим воздухом внутри рисунка, и равные отступы читались
- * бы как сдвиг текста влево.
+ * Отступы несимметричны по горизонтали — `nest3` слева и `nest1` справа,
+ * те же 1:2, что и 9/18 на ПК, только на ступень телефонной шкалы ниже:
+ * слева стоит значок часов со своим воздухом внутри рисунка, и равные
+ * отступы читались бы как сдвиг текста влево.
  *
  * Тикает раз в секунду своим `LaunchedEffect`, чтобы остальная шапка не
  * пересобиралась вместе с таймером.
@@ -159,7 +161,7 @@ private fun UptimeChip(connectedAt: Long) {
         modifier = Modifier
             .clip(RoundedCornerShape(RvRadius.chip))
             .background(RvColor.Grey)
-            .padding(start = 8.dp, top = 8.dp, bottom = 8.dp, end = 16.dp),
+            .padding(start = RvSpace.nest3, top = RvSpace.nest3, bottom = RvSpace.nest3, end = RvSpace.nest1),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {

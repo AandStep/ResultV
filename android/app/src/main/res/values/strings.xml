@@ -43,7 +43,7 @@
     <string name="action_favorite">Favorite</string>
     <string name="action_unfavorite">Unfavorite</string>
 
-    <!-- Status header above the power button -->
+    <!-- Connection status, read by HomeHeader at the top of Home -->
     <string name="status_protected">Protected</string>
     <string name="status_unprotected">Unprotected</string>
     <string name="status_connecting">Connecting…</string>
