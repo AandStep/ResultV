@@ -73,11 +73,14 @@ fun PowerButton(
         },
         animationSpec = motion, label = "powerGlyph",
     )
+    // В покое свечение у всех трёх состояний — 20 % (--rv-shadow-main/warning/
+    // error на ПК). 50 % — это `--pb-glow-hover`, состояние наведения, которого
+    // на телефоне не существует вовсе.
     val glow by animateColorAsState(
         targetValue = when (look) {
             HomeLook.Idle -> Color.Transparent
             HomeLook.Processing -> RvColor.warningA20
-            HomeLook.Success -> RvColor.mainA50
+            HomeLook.Success -> RvColor.mainA20
             HomeLook.Error -> RvColor.errorsA20
         },
         animationSpec = motion, label = "powerGlow",
@@ -122,7 +125,7 @@ fun PowerButton(
                 .then(
                     when (look) {
                         // У нейтральной кнопки обводка общая, градиентная.
-                        HomeLook.Idle -> Modifier.rvBorder(CircleShape)
+                        HomeLook.Idle -> Modifier.rvBorder(CircleShape, pressed = pressed)
                         // Жёлтая обводка в макете сплошная и непрозрачная.
                         HomeLook.Processing -> Modifier.border(1.dp, RvColor.Warning, CircleShape)
                         // У зелёной и красной обводки нет вовсе.
