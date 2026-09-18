@@ -86,6 +86,10 @@ private enum class SettingsSubcategory(
         R.string.tab_rules, R.string.settings_group_routing_desc,
         R.string.settings_group_routing_items, Icons.Outlined.AltRoute, RvCategory.Blue,
     ),
+    Ping(
+        R.string.settings_group_ping, R.string.settings_group_ping_desc,
+        R.string.settings_group_ping_items, Icons.Outlined.NetworkPing, RvCategory.Cyan,
+    ),
     Security(
         R.string.settings_group_security, R.string.settings_group_security_desc,
         R.string.settings_group_security_items, Icons.Outlined.Security, RvCategory.Red,
@@ -93,6 +97,10 @@ private enum class SettingsSubcategory(
     AdBlock(
         AdBlockGroupRes.label, AdBlockGroupRes.desc,
         AdBlockGroupRes.items, Icons.Outlined.Block, RvCategory.Red,
+    ),
+    Experimental(
+        R.string.settings_group_experimental, R.string.settings_group_experimental_desc,
+        R.string.settings_group_experimental_items, Icons.Outlined.Science, RvCategory.Emerald,
     ),
     Subscriptions(
         R.string.settings_group_subscriptions, R.string.settings_group_subscriptions_desc,
@@ -136,6 +144,8 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {
             SubcategoryRow(SettingsSubcategory.Network) { activeSheet = SettingsSubcategory.Network }
             HorizontalDivider(color = RvColor.whiteA10)
             SubcategoryRow(SettingsSubcategory.Routing) { activeSheet = SettingsSubcategory.Routing }
+            HorizontalDivider(color = RvColor.whiteA10)
+            SubcategoryRow(SettingsSubcategory.Ping) { activeSheet = SettingsSubcategory.Ping }
         }
 
         CategoryHeader(stringResource(R.string.settings_cat_security))
@@ -145,6 +155,14 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {
                 HorizontalDivider(color = RvColor.whiteA10)
                 SubcategoryRow(SettingsSubcategory.AdBlock) { activeSheet = SettingsSubcategory.AdBlock }
             }
+        }
+
+        // Между безопасностью и настройками приложения — тот же порядок, что
+        // на ПК. Заголовок категории и название раздела совпадают намеренно: в
+        // разделе пока одна вещь, и второе имя было бы выдуманной разницей.
+        CategoryHeader(stringResource(R.string.settings_group_experimental))
+        SettingsCard {
+            SubcategoryRow(SettingsSubcategory.Experimental) { activeSheet = SettingsSubcategory.Experimental }
         }
 
         CategoryHeader(stringResource(R.string.settings_cat_app))
@@ -216,6 +234,8 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {
                         },
                     )
                     SettingsSubcategory.Network -> NetworkGroup(settings)
+                    SettingsSubcategory.Ping -> PingGroup(settings)
+                    SettingsSubcategory.Experimental -> ExperimentalGroup(settings)
                     SettingsSubcategory.Appearance -> AppearanceGroup(onBeforeRecreate = { activeSheet = null })
                     SettingsSubcategory.Routing -> RulesScreen(
                         // Родительская шторка НЕ гасится: вложенная встаёт
@@ -538,7 +558,19 @@ private fun NetworkGroup(settings: com.resultv.android.vpn.SettingsState) {
         checked = settings.ipv6,
         onCheckedChange = { SettingsRepository.setIpv6(it) },
     )
-    HorizontalDivider(color = RvColor.whiteA10)
+}
+
+/**
+ * Недоделанное и необкатанное.
+ *
+ * Отдельный раздел, а не строка в «Сети», по одной причине: в «Сети» эти
+ * тумблеры стояли рядом с IPv6 и обходом LAN — среди вещей, которые работают и
+ * на которые можно положиться. Адаптивный Smart к таким пока не относится, и
+ * соседство обещало человеку не то.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ExperimentalGroup(settings: com.resultv.android.vpn.SettingsState) {
     ToggleRow(
         title = stringResource(R.string.settings_adaptive_smart),
         subtitle = stringResource(R.string.settings_adaptive_smart_subtitle),
@@ -561,7 +593,6 @@ private fun NetworkGroup(settings: com.resultv.android.vpn.SettingsState) {
             onCheckedChange = { SettingsRepository.setAdaptiveSmartMemoryOnly(it) },
         )
     }
-    PingGroup(settings)
 }
 
 /**
@@ -578,25 +609,13 @@ private fun NetworkGroup(settings: com.resultv.android.vpn.SettingsState) {
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun PingGroup(settings: com.resultv.android.vpn.SettingsState) {
-    HorizontalDivider(color = RvColor.whiteA10, modifier = Modifier.padding(vertical = RvSpace.nest3))
+    // Своего заголовка у группы нет, хотя раньше был: с переездом в
+    // собственный раздел его рисует шапка шторки, и «Пинг» читался бы дважды
+    // подряд. Та же причина, по которой у Routing описание своё, а не общее.
     Column(
         modifier = Modifier.padding(vertical = RvSpace.nest3),
         verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
-        ) {
-            SettingIcon(Icons.Outlined.NetworkPing, RvCategory.Cyan)
-            Column {
-                Text(stringResource(R.string.settings_ping), style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    stringResource(R.string.settings_ping_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = RvColor.whiteA50,
-                )
-            }
-        }
         androidx.compose.foundation.layout.FlowRow(
             modifier = Modifier.padding(start = 50.dp),
             horizontalArrangement = Arrangement.spacedBy(RvSpace.xs),

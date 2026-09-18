@@ -109,6 +109,12 @@
     <string name="settings_cat_app">App</string>
     <string name="settings_group_network_items">• DNS • IPv6 • Bypass LAN</string>
     <string name="settings_group_routing_items">• Smart mode • Domains • Per-app</string>
+    <string name="settings_group_ping">Ping</string>
+    <string name="settings_group_ping_desc">What measures node latency, and for how long.</string>
+    <string name="settings_group_ping_items">• Probe type • Test URL • Timeout</string>
+    <string name="settings_group_experimental">Experimental</string>
+    <string name="settings_group_experimental_desc">Rough edges and untested paths. Your own risk.</string>
+    <string name="settings_group_experimental_items">• Adaptive Smart</string>
     <string name="settings_group_security_items">• Kill Switch</string>
     <string name="settings_group_appearance_items">• Language</string>
     <string name="settings_group_subscriptions_items">• Refresh • HWID • UA</string>
