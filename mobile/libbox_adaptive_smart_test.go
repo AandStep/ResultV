@@ -12,6 +12,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/sagernet/sing-box/experimental/libbox"
+
 	"resultproxy-wails/internal/proxy"
 )
 
@@ -425,5 +427,36 @@ func TestAdaptiveSmart_Off_EmitsNoFakeIP(t *testing.T) {
 		if len(r.QueryType) > 0 || r.Server == "fakeip" {
 			t.Fatalf("правило fakeip при выключенном тумблере: %+v", cfg.DNS.Rules)
 		}
+	}
+}
+
+// Конфиг проверяется настоящим разборщиком ядра, а не нашими ожиданиями о нём.
+//
+// CheckConfig не только разбирает JSON, но и собирает коробку — то есть ловит
+// и опечатку в имени поля, и недопустимое сочетание вроде fakeip в умолчании
+// DNS. Цена такой ошибки не «правило не сработало», а «движок не стартует» и
+// человек не может подключиться вообще; юнит-тесты выше её не увидят, потому
+// что сверяют нашу структуру с нашими же ожиданиями.
+func TestAdaptiveSmart_CoreAcceptsTheBuiltConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts BuildOptions
+	}{
+		{"включено", BuildOptions{SmartMode: true, AdaptiveSmart: true}},
+		{"включено с IPv6", BuildOptions{SmartMode: true, AdaptiveSmart: true, IPv6: true}},
+		{"включено с кил-свитчем", BuildOptions{SmartMode: true, AdaptiveSmart: true, KillSwitchArmed: true}},
+		{"включено, кил-свитч сработал", BuildOptions{SmartMode: true, AdaptiveSmart: true, KillSwitchArmed: true, KillSwitchPanic: true}},
+		{"выключено", BuildOptions{SmartMode: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b, _ := json.Marshal(tc.opts)
+			cfg, err := BuildSingBoxConfigFromEntryV2(entryFixture, t.TempDir(), string(b))
+			if err != nil {
+				t.Fatalf("сборка конфига: %v", err)
+			}
+			if err := libbox.CheckConfig(cfg); err != nil {
+				t.Fatalf("ядро отвергло конфиг: %v", err)
+			}
+		})
 	}
 }
