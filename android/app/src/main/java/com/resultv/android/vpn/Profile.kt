@@ -52,6 +52,14 @@ data class Profile(
     /** Normalised protocol code for the filter chips (SS→SHADOWSOCKS, WG/AWG aliases collapsed, AUTO→""). */
     val protocol: String = computeProtocol(isSection, rawType, uri)
 
+    /**
+     * Бейджи протокола для строки списка: тип, затем `security`, затем
+     * `network` — перенос `getProtocolLabel` с ПК. У авто-группы и у
+     * SECTION-строки бейджей нет: «Авто» рисует строка ресурсов, а
+     * разделителю показывать нечего.
+     */
+    val badges: List<String> = computeBadges(isSection, isAuto, rawType, uri, parsedEntry)
+
     /** Pre-formatted subtitle string used by ServerRow — avoids per-render JSON parsing. */
     val subtitle: String = computeSubtitle()
 
@@ -139,6 +147,92 @@ private fun protocolFromUri(uri: String): String? {
     val schemeEnd = uri.indexOf("://")
     if (schemeEnd <= 0) return null
     return uri.substring(0, schemeEnd).uppercase()
+}
+
+/*
+ * Ведущий флаг в имени — пара символов regional indicator (U+1F1E6…U+1F1FF).
+ * `\x{...}` в java.util.regex работает по кодовым точкам, суррогатные пары
+ * руками собирать не нужно.
+ */
+private val FLAG_EMOJI_PREFIX = Regex("^[\\x{1F1E6}-\\x{1F1FF}]{2}\\s*")
+
+/**
+ * Имя сервера так, как оно показывается в списке: без ведущего флага и без
+ * ведущего кода страны. Перенос `formatProxyDisplayName` с ПК
+ * (`ResultVPC/frontend/src/utils/proxyParser.js`).
+ *
+ * Флаг уже стоит слева своей плиткой, и в имени он повторяется. Код страны
+ * снимается только когда совпадает с тем, что мы и так знаем о профиле, и
+ * только отдельным словом: иначе «NLD Server» превратился бы в «D Server».
+ *
+ * Если после чистки не осталось ничего — возвращается исходное имя: пустая
+ * строка в списке хуже повторённого флага.
+ */
+fun serverDisplayName(name: String, countryCode: String?): String {
+    if (name.isBlank()) return name
+    var s = name.trim().replace(FLAG_EMOJI_PREFIX, "")
+    val cc = countryCode?.trim()?.lowercase().orEmpty()
+    if (cc.length == 2 && cc.all { it in 'a'..'z' }) {
+        val next = s.replaceFirst(Regex("^$cc\\s+", RegexOption.IGNORE_CASE), "").trim()
+        if (next.isNotEmpty()) s = next
+    }
+    return s.trim().ifEmpty { name }
+}
+
+private fun computeBadges(
+    isSection: Boolean,
+    isAuto: Boolean,
+    rawType: String,
+    uri: String,
+    entry: JSONObject?,
+): List<String> {
+    if (isSection || isAuto) return emptyList()
+    val type = rawType.ifBlank { protocolFromUri(uri).orEmpty() }
+    if (type.isBlank()) return emptyList()
+
+    val out = mutableListOf(protocolCase(type))
+    // Подписки отдают `extra` то объектом, то строкой с JSON внутри —
+    // на ПК разбираются оба случая, здесь тоже.
+    val extra = entry?.let { e ->
+        e.optJSONObject("extra")
+            ?: e.optString("extra").takeIf { it.isNotBlank() }
+                ?.let { runCatching { JSONObject(it) }.getOrNull() }
+    }
+    if (extra != null) {
+        when (extra.optString("security").lowercase()) {
+            "reality" -> out += "Reality"
+            "tls" -> out += "TLS"
+        }
+        when (extra.optString("network").ifBlank { "tcp" }.lowercase()) {
+            "ws", "websocket" -> out += "WS"
+            "grpc" -> out += "gRPC"
+            "xhttp" -> out += "XHTTP"
+            "h2", "http" -> out += "H2"
+        }
+    }
+    return out
+}
+
+/*
+ * Приложение отдаёт протокол капсом, а в макете он набран как имя продукта.
+ * Правится только голова: хвост («Reality», «gRPC») уже в нужном виде.
+ * Список — копия PROTOCOL_CASE из ResultVPC/frontend/src/views/redesign/format.js.
+ */
+private fun protocolCase(type: String): String = when (type.uppercase()) {
+    "HYSTERIA2" -> "Hysteria2"
+    "HYSTERIA" -> "Hysteria"
+    "VLESS" -> "VLESS"
+    "VMESS" -> "VMess"
+    "TROJAN" -> "Trojan"
+    "SS", "SHADOWSOCKS" -> "Shadowsocks"
+    "WG", "WIREGUARD" -> "WireGuard"
+    "AWG", "AMNEZIAWG", "AMNEZIA-WG" -> "AmneziaWG"
+    "TUIC" -> "TUIC"
+    "ANYTLS" -> "AnyTLS"
+    "NAIVEPROXY", "NAIVE" -> "NaiveProxy"
+    "SOCKS", "SOCKS5" -> type.uppercase()
+    "HTTP", "HTTPS", "SSH" -> type.uppercase()
+    else -> type.uppercase()
 }
 
 data class ProfilesState(
