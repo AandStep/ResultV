@@ -62,6 +62,7 @@ import com.resultv.android.ui.components.ServerRow
 import com.resultv.android.ui.components.Sparkline
 import com.resultv.android.ui.components.SubscriptionLogo
 import com.resultv.android.ui.components.flagFromCountry
+import com.resultv.android.ui.components.homeLook
 import com.resultv.android.ui.components.sortProfiles
 import com.resultv.android.ui.components.subscriptionUsesImpLogo
 import com.resultv.android.vpn.CountryRepository
@@ -127,7 +128,7 @@ fun HomeScreen(
         verticalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
         PowerButton(
-            status = status,
+            look = homeLook(status),
             enabled = canConnect || canDisconnect,
             onClick = onPowerPressed,
         )
