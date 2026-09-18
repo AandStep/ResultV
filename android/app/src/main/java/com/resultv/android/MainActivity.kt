@@ -16,29 +16,21 @@ import androidx.annotation.StringRes
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.core.net.toUri
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.List
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -48,16 +40,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import com.resultv.android.locale.LocaleManager
-import com.resultv.android.theme.BenzinBold
 import com.resultv.android.theme.RvColor
 import com.resultv.android.theme.ResultVTheme
 import com.resultv.android.ui.screens.AddScreen
@@ -65,6 +52,7 @@ import com.resultv.android.ui.screens.HomeScreen
 import com.resultv.android.ui.screens.CertWizardScreen
 import com.resultv.android.ui.screens.LogsScreen
 import com.resultv.android.ui.screens.ProxiesScreen
+import com.resultv.android.ui.components.HomeHeader
 import com.resultv.android.ui.components.RoutingDeepLinkSheet
 import com.resultv.android.ui.screens.RulesScreen
 import com.resultv.android.ui.screens.SettingsScreen
@@ -295,55 +283,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/**
- * Home top bar — brand logo + wordmark pinned left, website + Telegram
- * shortcuts pinned right. Mirrors the desktop header layout.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun HomeTopBar(
-    onOpenWebsite: () -> Unit,
-    onOpenTelegram: () -> Unit,
-) {
-    TopAppBar(
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Image(
-                    painter = painterResource(R.drawable.resultv_logo),
-                    contentDescription = null,
-                    modifier = Modifier.size(28.dp),
-                )
-                Spacer(Modifier.width(8.dp))
-                // Единственное место во всём модуле, где применяется Benzin:
-                // на ПК этой гарнитурой набрано само слово «ResultV», и только
-                // оно. Остальной текст — системный Roboto.
-                Text(
-                    text = stringResource(R.string.app_name),
-                    fontFamily = BenzinBold,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-        },
-        actions = {
-            IconButton(onClick = onOpenWebsite) {
-                Icon(
-                    imageVector = Icons.Outlined.Language,
-                    contentDescription = stringResource(R.string.header_open_website),
-                    tint = RvColor.whiteA50,
-                )
-            }
-            IconButton(onClick = onOpenTelegram) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_telegram),
-                    contentDescription = stringResource(R.string.header_open_telegram),
-                    tint = RvColor.whiteA50,
-                )
-            }
-        },
-        colors = TopAppBarDefaults.topAppBarColors(containerColor = RvColor.Black),
-    )
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AppShell(
@@ -385,7 +324,7 @@ private fun AppShell(
     Scaffold(
         topBar = {
             if (tab == Tab.Home) {
-                HomeTopBar(
+                HomeHeader(
                     onOpenWebsite = { openUrl(ctx, WEBSITE_URL) },
                     onOpenTelegram = { openUrl(ctx, TELEGRAM_URL) },
                 )

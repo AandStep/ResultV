@@ -44,8 +44,6 @@
     <string name="status_unprotected">Не защищено</string>
     <string name="status_connecting">Подключение…</string>
     <string name="status_error">Ошибка</string>
-    <string name="status_traffic_routed_via">Трафик через %1$s</string>
-    <string name="status_unprotected_subtitle">Соединение не защищено</string>
 
     <string name="settings_section_general">ОБЩИЕ</string>
     <string name="settings_section_dns">DNS-СЕРВЕРЫ</string>

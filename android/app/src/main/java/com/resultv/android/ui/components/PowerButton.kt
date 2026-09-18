@@ -12,7 +12,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -168,46 +167,6 @@ fun PowerButton(
                     )
                 }
             }
-        }
-    }
-}
-
-/** Status text shown above the power button. */
-@Composable
-fun StatusHeader(status: VpnStatus, activeProfileName: String?) {
-    val color = when (status) {
-        is VpnStatus.Connected -> RvColor.Main
-        is VpnStatus.Connecting -> RvColor.Warning
-        is VpnStatus.Error -> RvColor.Errors
-        is VpnStatus.Idle -> RvColor.whiteA50
-    }
-    val title = when (status) {
-        is VpnStatus.Connected -> stringResource(R.string.status_protected)
-        is VpnStatus.Connecting -> stringResource(R.string.status_connecting)
-        is VpnStatus.Error -> stringResource(R.string.status_error)
-        is VpnStatus.Idle -> stringResource(R.string.status_unprotected)
-    }
-    val subtitle = when (status) {
-        is VpnStatus.Connected -> activeProfileName?.let {
-            stringResource(R.string.status_traffic_routed_via, it)
-        }
-        is VpnStatus.Error -> status.message
-        else -> stringResource(R.string.status_unprotected_subtitle)
-    }
-    androidx.compose.foundation.layout.Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        androidx.compose.material3.Text(
-            text = title,
-            style = MaterialTheme.typography.headlineMedium,
-            color = color,
-        )
-        if (subtitle != null) {
-            androidx.compose.material3.Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = RvColor.whiteA50,
-            )
         }
     }
 }

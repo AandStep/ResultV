@@ -23,7 +23,6 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Public
-import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -36,7 +35,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,7 +60,6 @@ import com.resultv.android.ui.components.ProfileSortMenu
 import com.resultv.android.ui.components.ProfileSortMode
 import com.resultv.android.ui.components.ServerRow
 import com.resultv.android.ui.components.Sparkline
-import com.resultv.android.ui.components.StatusHeader
 import com.resultv.android.ui.components.SubscriptionLogo
 import com.resultv.android.ui.components.flagFromCountry
 import com.resultv.android.ui.components.sortProfiles
@@ -129,17 +126,14 @@ fun HomeScreen(
         // speed cards sit above "Add server".
         verticalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
-        StatusHeader(status = status, activeProfileName = active?.name)
-
         PowerButton(
             status = status,
             enabled = canConnect || canDisconnect,
             onClick = onPowerPressed,
         )
 
-        // Toolbar row: left = uptime chip (only when Connected), right =
-        // refresh-ping + sort. Uptime supersedes the previous standalone
-        // 3-cell banner — down/up speeds already live in the cards below.
+        // Toolbar row: refresh-ping + sort, right-aligned. Uptime moved into
+        // HomeHeader (Task 5) — down/up speeds already live in the cards below.
         // Fixed row height ≈ 36dp keeps the gap to the next card consistent
         // with the rest of the Column spacing (default IconButton claims
         // 48dp which made the toolbar look detached from the card below).
@@ -147,9 +141,6 @@ fun HomeScreen(
             modifier = Modifier.fillMaxWidth().height(36.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            (status as? VpnStatus.Connected)?.let { connected ->
-                UptimeChip(connectedAt = connected.connectedAt)
-            }
             Spacer(Modifier.weight(1f))
             IconButton(
                 onClick = { PingRepository.refreshAll(profilesState.profiles) },
@@ -262,53 +253,6 @@ fun HomeScreen(
             },
         )
     }
-}
-
-/**
- * Compact uptime pill — clock icon + HH:MM:SS / MM:SS — that lives in the
- * toolbar row when the tunnel is up. Ticks once per second via a
- * [LaunchedEffect] keyed on [connectedAt] so the rest of HomeScreen
- * doesn't recompose with the timer.
- */
-@Composable
-private fun UptimeChip(connectedAt: Long) {
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(connectedAt) {
-        while (true) {
-            now = System.currentTimeMillis()
-            kotlinx.coroutines.delay(1000L)
-        }
-    }
-    val elapsedSec = ((now - connectedAt).coerceAtLeast(0L) / 1000L)
-
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(RvRadius.chip))
-            .background(Color.White.copy(alpha = 0.04f))
-            .padding(horizontal = RvSpace.nest2, vertical = RvSpace.xs),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(RvSpace.xs),
-    ) {
-        Icon(
-            imageVector = Icons.Outlined.Schedule,
-            contentDescription = null,
-            tint = RvColor.whiteA50,
-            modifier = Modifier.size(14.dp),
-        )
-        Text(
-            text = formatDuration(elapsedSec),
-            style = MaterialTheme.typography.labelMedium,
-            color = RvColor.whiteA50,
-        )
-    }
-}
-
-private fun formatDuration(totalSec: Long): String {
-    val h = totalSec / 3600
-    val m = (totalSec % 3600) / 60
-    val s = totalSec % 60
-    return if (h > 0) String.format("%d:%02d:%02d", h, m, s)
-    else String.format("%02d:%02d", m, s)
 }
 
 @Composable

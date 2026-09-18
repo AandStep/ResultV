@@ -48,8 +48,6 @@
     <string name="status_unprotected">Unprotected</string>
     <string name="status_connecting">Connecting…</string>
     <string name="status_error">Error</string>
-    <string name="status_traffic_routed_via">Traffic routed via %1$s</string>
-    <string name="status_unprotected_subtitle">Your connection is not protected</string>
 
     <!-- Settings screen -->
     <string name="settings_section_general">GENERAL</string>
