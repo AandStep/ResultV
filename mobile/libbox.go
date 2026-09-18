@@ -67,8 +67,10 @@ const SmartRelayPort = 18132
 const smartRelayOutboundTag = "smart-relay"
 
 // mobileTunIPv4 is the TUN interface prefix every mobile config is built with.
-// A /30 leaves exactly one other host address, browserAdBlockProxyHost.
-const mobileTunIPv4 = "172.19.0.1/30"
+// A /29 leaves room for two hosts besides the TUN address: the core claims the
+// first one (.2) as its DNS hijack address, browserAdBlockProxyHost takes the
+// next. A /30 held only one, so the two collided — see browserAdBlockProxyHost.
+const mobileTunIPv4 = "172.19.0.1/29"
 
 // browserAdBlockProxyHost is the address Kotlin points VpnService's system HTTP
 // proxy at (VpnService.Builder.setHttpProxy), and the destination the engine
@@ -85,7 +87,13 @@ const mobileTunIPv4 = "172.19.0.1/30"
 // before its bytes ever reach the MITM. The address must stay inside
 // mobileTunIPv4 but must not be the TUN address itself — the kernel answers its
 // own address locally, which would put us straight back on loopback.
-const browserAdBlockProxyHost = "172.19.0.2"
+//
+// It must also stay off the TUN's DNS address (the one right after the TUN
+// address, which libbox hands Android as the tunnel's resolver). The core reads
+// EVERY TCP connection addressed there as DNS, by address alone, before route
+// rules run — a browser CONNECT landing there is parsed as a DNS message length
+// and hangs. That is why this is .3 and not .2.
+const browserAdBlockProxyHost = "172.19.0.3"
 
 // defaultBrowserAdBlockPort mirrors Kotlin's BROWSER_ADBLOCK_PORT. Kotlin sends
 // the live value in BuildOptions.BrowserAdBlockPort; this is the fallback for a

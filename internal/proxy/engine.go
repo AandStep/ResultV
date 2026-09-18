@@ -1131,9 +1131,9 @@ func firstUpstreamDNSTag(servers []SBDNSServer) string {
 
 // lanBypassCIDRs returns RFC1918/link-local/multicast ranges for the BypassLAN
 // route rule, with 172.19.0.0/16 carved out of 172.16.0.0/12. The engine TUN
-// interface uses 172.19.0.1/30 and libbox hands Android 172.19.0.2 as the
-// in-tunnel DNS address — if that /16 were treated as LAN bypass, DNS hijack
-// breaks and the VPN shows zero traffic.
+// interface sits at 172.19.0.1 (desktop /30, mobile /29) and libbox hands
+// Android 172.19.0.2 as the in-tunnel DNS address — if that /16 were treated as
+// LAN bypass, DNS hijack breaks and the VPN shows zero traffic.
 func lanBypassCIDRs() []string {
 	return []string{
 		"10.0.0.0/8",

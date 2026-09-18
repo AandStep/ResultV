@@ -8,6 +8,7 @@ import (
 
 	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/option"
+	tun "github.com/sagernet/sing-tun"
 	singjson "github.com/sagernet/sing/common/json"
 )
 
@@ -222,5 +223,34 @@ func TestBrowserAdBlockRedirect_CoreAcceptsConfig(t *testing.T) {
 				t.Fatalf("pinned core rejected the config: %v\nconfig: %s", err, out)
 			}
 		})
+	}
+}
+
+// The core hijacks EVERY TCP connection addressed to the TUN's DNS address as
+// DNS — by address, without looking at the port (protocol/tun/inbound.go:
+// `slices.Contains(t.dnsHijackAddress, destination.Addr)`). A redirect host
+// equal to that address therefore never reaches the route rules: the browser's
+// CONNECT is fed to the DNS-over-TCP reader, which takes its first two bytes
+// for a message length and waits forever. The host must stay clear of it.
+//
+// The expected address is taken from sing-tun itself rather than restated here,
+// so the test keeps testing the real coupling if upstream changes the formula.
+func TestBrowserAdBlockProxyHost_NotDNSHijackAddress(t *testing.T) {
+	prefix, err := netip.ParsePrefix(mobileTunIPv4)
+	if err != nil {
+		t.Fatalf("parse tun prefix %q: %v", mobileTunIPv4, err)
+	}
+	dnsAddresses, err := (&tun.Options{Inet4Address: []netip.Prefix{prefix}}).Inet4DNSAddress()
+	if err != nil {
+		t.Fatalf("tun DNS address for %s: %v", prefix, err)
+	}
+	host, err := netip.ParseAddr(BrowserAdBlockProxyHost())
+	if err != nil {
+		t.Fatalf("parse redirect host %q: %v", BrowserAdBlockProxyHost(), err)
+	}
+	for _, dns := range dnsAddresses {
+		if host == dns {
+			t.Fatalf("redirect host %s is the TUN DNS hijack address: every TCP connection to it is read as DNS, so the redirect rule never runs", host)
+		}
 	}
 }
