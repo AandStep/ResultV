@@ -1584,6 +1584,10 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 		// on Android — VpnService can't manipulate routes outside its TUN,
 		// and AutoRoute already catches all egress traffic, so DNS bypass
 		// isn't possible the way it is on desktop.
+		//
+		// adaptiveSmartActive, не opts.AdaptiveSmart: вне Smart-режима фича
+		// нерабочая, и гейт живёт в одном месте, покрытом тестом.
+		AdaptiveSmart: adaptiveSmartActive(opts),
 	}
 	// Узел, на котором ядро вот-вот поднимут. Нужен применению AmneziaWG 3.1
 	// после старта — в конфиг эти ключи не попадают (см. awg31.go).

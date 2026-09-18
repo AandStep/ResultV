@@ -102,6 +102,9 @@ type EngineConfig struct {
 	// domain-suffix rule and no rule-set can ever match them; only an ip_cidr
 	// rule on the destination pulls that traffic into the tunnel. Smart-only.
 	SmartBlockedCIDRs []string
+	// AdaptiveSmart включает FakeIP: без имени в назначении реле учится по
+	// адресам, а те в domain_suffix не совпадают ни с чем.
+	AdaptiveSmart bool
 }
 
 type Engine interface {
@@ -140,6 +143,10 @@ type SBClashAPI struct {
 type SBCacheFile struct {
 	Enabled bool   `json:"enabled,omitempty"`
 	Path    string `json:"path,omitempty"`
+	// StoreFakeIP сохраняет соответствие «фейковый адрес → имя». Обязателен
+	// везде, где выпущен сервер fakeip: без него перезагрузка на месте теряет
+	// таблицу, и каждое живое соединение падает с «missing fakeip record».
+	StoreFakeIP bool `json:"store_fakeip,omitempty"`
 }
 
 type SBLog struct {
@@ -213,6 +220,11 @@ type SBDNSServer struct {
 	// server address", — так что это не предупреждение, а разница между
 	// движком, который стартует, и движком, который нет.
 	DomainResolver string `json:"domain_resolver,omitempty"`
+
+	// Inet4Range/Inet6Range задают пулы сервера типа "fakeip". Читает их
+	// только он; остальные типы поля игнорируют.
+	Inet4Range string `json:"inet4_range,omitempty"`
+	Inet6Range string `json:"inet6_range,omitempty"`
 }
 
 type SBDNSRule struct {
@@ -221,6 +233,9 @@ type SBDNSRule struct {
 	RuleSet      []string `json:"rule_set,omitempty"`
 	Server       string   `json:"server,omitempty"`
 	Action       string   `json:"action,omitempty"`
+	// QueryType сужает правило до типов вопроса. Фейковый ответ способен
+	// подменить только A и AAAA, поэтому правило FakeIP ограничено ими.
+	QueryType []string `json:"query_type,omitempty"`
 }
 
 type SBInbound struct {
@@ -553,7 +568,10 @@ func effectiveDataDir(cfg EngineConfig) string {
 	return resultProxyDataDir()
 }
 
-func buildExperimentalCache(dataDir string) *SBExperimental {
+// storeFakeIP просит сохранить таблицу «фейковый адрес → имя» на диск. Имеет
+// смысл только вместе с живым сервером fakeip: без него перезагрузка на месте
+// теряет таблицу, и каждое живое соединение падает с «missing fakeip record».
+func buildExperimentalCache(dataDir string, storeFakeIP bool) *SBExperimental {
 	if dataDir == "" {
 		// Even without a writable cache, enable clash_api so the libbox
 		// status subscription has a TrafficManager to read.
@@ -563,8 +581,9 @@ func buildExperimentalCache(dataDir string) *SBExperimental {
 	}
 	return &SBExperimental{
 		CacheFile: &SBCacheFile{
-			Enabled: true,
-			Path:    filepath.Join(dataDir, "sing-box-cache.db"),
+			Enabled:     true,
+			Path:        filepath.Join(dataDir, "sing-box-cache.db"),
+			StoreFakeIP: storeFakeIP,
 		},
 		// clash_api with no external_controller spins up the in-process
 		// TrafficManager (uplink/downlink/connection counts) without
@@ -621,7 +640,9 @@ func BuildProxyModeConfig(cfg EngineConfig) SingBoxConfig {
 		}},
 		Outbounds:    buildOutbounds(cfg.Proxy, nodeResolver),
 		Route:        buildRoute(cfg),
-		Experimental: buildExperimentalCache(dd),
+		// Proxy-режим не строит fakeip (buildDNS проверяет AdaptiveSmart только
+		// в ветке ProxyModeTunnel) — store_fakeip здесь всегда лишний.
+		Experimental: buildExperimentalCache(dd, false),
 	}
 
 	return config
@@ -737,7 +758,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) SingBoxConfig {
 		Inbounds:  []SBInbound{tun},
 		Outbounds:    outbounds,
 		Route:        buildRoute(cfg),
-		Experimental: buildExperimentalCache(dd),
+		Experimental: buildExperimentalCache(dd, cfg.AdaptiveSmart),
 	}
 
 	return config
@@ -843,6 +864,22 @@ func tunnelDNSResolver(tag, server string, port int, detour string) []SBDNSServe
 			throughDetour: detour,
 		},
 	}
+}
+
+const (
+	fakeIPTag        = "fakeip"
+	fakeIPInet4Range = "198.18.0.0/15"
+	fakeIPInet6Range = "fc00::/18"
+)
+
+// osConnectivityProbeDomains — проверки связности самой системы. Им фейковый
+// адрес давать нельзя: проба существует ровно затем, чтобы ответить «есть ли
+// рабочий путь», а фейковый адрес заставляет её отвечать «да» всегда.
+var osConnectivityProbeDomains = []string{
+	"connectivitycheck.gstatic.com",
+	"connectivitycheck.android.com",
+	"clients3.google.com",
+	"connect.rom.miui.com",
 }
 
 func buildDNS(cfg EngineConfig) *SBDNS {
@@ -985,6 +1022,31 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 					Server:  tunnelTag,
 				})
 			}
+		}
+
+		if cfg.AdaptiveSmart {
+			// Проверки связности системы обязаны получать правду — раньше FakeIP,
+			// иначе их заберёт он.
+			dns.Rules = append(dns.Rules, SBDNSRule{
+				DomainSuffix: append([]string(nil), osConnectivityProbeDomains...),
+				Server:       "local",
+			})
+			// FakeIP последним: всё, что нужно было забрать, уже забрано выше, а
+			// остаётся трафик, чьё имя мы и хотим донести до маршрутизатора.
+			// Ограничен A и AAAA — подменить фейковым ответом можно только их.
+			fake := SBDNSServer{
+				Type:       "fakeip",
+				Tag:        fakeIPTag,
+				Inet4Range: fakeIPInet4Range,
+			}
+			if cfg.IPv6 {
+				fake.Inet6Range = fakeIPInet6Range
+			}
+			dns.Servers = append(dns.Servers, fake)
+			dns.Rules = append(dns.Rules, SBDNSRule{
+				QueryType: []string{"A", "AAAA"},
+				Server:    fakeIPTag,
+			})
 		}
 
 		return dns

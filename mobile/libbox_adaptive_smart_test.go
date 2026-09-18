@@ -44,6 +44,26 @@ type adaptiveSmartView struct {
 		} `json:"rule_set"`
 		Final string `json:"final"`
 	} `json:"route"`
+	DNS struct {
+		Servers []struct {
+			Type       string `json:"type"`
+			Tag        string `json:"tag"`
+			Inet4Range string `json:"inet4_range"`
+			Inet6Range string `json:"inet6_range"`
+		} `json:"servers"`
+		Rules []struct {
+			DomainSuffix []string `json:"domain_suffix"`
+			QueryType    []string `json:"query_type"`
+			Server       string   `json:"server"`
+		} `json:"rules"`
+		Final string `json:"final"`
+	} `json:"dns"`
+	Experimental struct {
+		CacheFile struct {
+			Enabled     bool `json:"enabled"`
+			StoreFakeIP bool `json:"store_fakeip"`
+		} `json:"cache_file"`
+	} `json:"experimental"`
 }
 
 func buildAdaptive(t *testing.T, opts BuildOptions) adaptiveSmartView {
@@ -271,4 +291,139 @@ func TestAdaptiveSmart_KillSwitchArmedOnly_KeepsRelayRule(t *testing.T) {
 		}
 	}
 	t.Fatalf("правила реле нет при взведённом (но не сработавшем) кил-свитче: %+v", cfg.Route.Rules)
+}
+
+// При включённой фиче выпускается сервер fakeip с пулом, и правило к нему
+// ограничено A/AAAA: подменить фейковым ответом можно только их.
+func TestAdaptiveSmart_EmitsFakeIPServerAndRule(t *testing.T) {
+	cfg := buildAdaptive(t, smartOpts())
+
+	var fake *struct {
+		Type       string `json:"type"`
+		Tag        string `json:"tag"`
+		Inet4Range string `json:"inet4_range"`
+		Inet6Range string `json:"inet6_range"`
+	}
+	for i := range cfg.DNS.Servers {
+		if cfg.DNS.Servers[i].Type == "fakeip" {
+			fake = &cfg.DNS.Servers[i]
+		}
+	}
+	if fake == nil {
+		t.Fatalf("сервера fakeip нет: %+v", cfg.DNS.Servers)
+	}
+	if fake.Tag != "fakeip" {
+		t.Errorf("тег fakeip-сервера = %q, ожидался fakeip", fake.Tag)
+	}
+	if fake.Inet4Range != "198.18.0.0/15" {
+		t.Errorf("inet4_range = %q, ожидалось 198.18.0.0/15", fake.Inet4Range)
+	}
+	// IPv6 выключен по умолчанию — пул v6 не выпускается.
+	if fake.Inet6Range != "" {
+		t.Errorf("inet6_range = %q, ожидалась пустая строка без IPv6", fake.Inet6Range)
+	}
+
+	var ruleFound bool
+	for _, r := range cfg.DNS.Rules {
+		if r.Server != "fakeip" {
+			continue
+		}
+		ruleFound = true
+		if len(r.QueryType) != 2 || r.QueryType[0] != "A" || r.QueryType[1] != "AAAA" {
+			t.Errorf("query_type правила fakeip = %v, ожидалось [A AAAA]", r.QueryType)
+		}
+	}
+	if !ruleFound {
+		t.Fatalf("правила на fakeip нет: %+v", cfg.DNS.Rules)
+	}
+
+	// С включённым IPv6 в туннеле пул v6 тоже выпускается.
+	opts := smartOpts()
+	opts.IPv6 = true
+	cfg6 := buildAdaptive(t, opts)
+	var fake6 *struct {
+		Type       string `json:"type"`
+		Tag        string `json:"tag"`
+		Inet4Range string `json:"inet4_range"`
+		Inet6Range string `json:"inet6_range"`
+	}
+	for i := range cfg6.DNS.Servers {
+		if cfg6.DNS.Servers[i].Type == "fakeip" {
+			fake6 = &cfg6.DNS.Servers[i]
+		}
+	}
+	if fake6 == nil {
+		t.Fatalf("сервера fakeip нет при IPv6: %+v", cfg6.DNS.Servers)
+	}
+	if fake6.Inet6Range != "fc00::/18" {
+		t.Errorf("inet6_range = %q, ожидалось fc00::/18 при включённом IPv6", fake6.Inet6Range)
+	}
+}
+
+// dns.final обязан остаться настоящим сервером: ядро отвергает fakeip в
+// качестве умолчания и не стартует вовсе.
+func TestAdaptiveSmart_FakeIPIsNeverTheDefaultServer(t *testing.T) {
+	cfg := buildAdaptive(t, smartOpts())
+	if cfg.DNS.Final == "fakeip" {
+		t.Fatalf("dns.final = fakeip — ядро отвергнет такой конфиг и не стартует")
+	}
+}
+
+// Проверки связности системы идут мимо fakeip: их правило стоит РАНЬШЕ.
+func TestAdaptiveSmart_OSProbesBypassFakeIP(t *testing.T) {
+	cfg := buildAdaptive(t, smartOpts())
+
+	probeIdx, fakeIdx := -1, -1
+	for i, r := range cfg.DNS.Rules {
+		for _, d := range r.DomainSuffix {
+			if d == "connectivitycheck.gstatic.com" {
+				probeIdx = i
+				if r.Server != "local" {
+					t.Errorf("правило проверок связности ведёт на %q, ожидался local", r.Server)
+				}
+			}
+		}
+		if r.Server == "fakeip" {
+			fakeIdx = i
+		}
+	}
+	if probeIdx < 0 {
+		t.Fatalf("правила проверок связности системы нет: %+v", cfg.DNS.Rules)
+	}
+	if fakeIdx < 0 {
+		t.Fatalf("правила fakeip нет: %+v", cfg.DNS.Rules)
+	}
+	if probeIdx >= fakeIdx {
+		t.Fatalf("проверки связности на позиции %d, fakeip на %d — проверки обязаны быть раньше", probeIdx, fakeIdx)
+	}
+}
+
+// Без fakeip store_fakeip не нужен, с ним — обязателен: иначе перезагрузка на
+// месте теряет таблицу и живые соединения падают с «missing fakeip record».
+func TestAdaptiveSmart_StoreFakeIPFollowsTheServer(t *testing.T) {
+	on := buildAdaptive(t, smartOpts())
+	if !on.Experimental.CacheFile.StoreFakeIP {
+		t.Error("store_fakeip не выставлен при включённом адаптивном Smart")
+	}
+
+	off := buildAdaptive(t, BuildOptions{SmartMode: true})
+	if off.Experimental.CacheFile.StoreFakeIP {
+		t.Error("store_fakeip выставлен без fakeip — опция имеет смысл только при живом сервере")
+	}
+}
+
+// Выключенная фича не оставляет ни сервера, ни правил.
+func TestAdaptiveSmart_Off_EmitsNoFakeIP(t *testing.T) {
+	cfg := buildAdaptive(t, BuildOptions{SmartMode: true})
+
+	for _, s := range cfg.DNS.Servers {
+		if s.Type == "fakeip" {
+			t.Fatalf("сервер fakeip при выключенном тумблере: %+v", cfg.DNS.Servers)
+		}
+	}
+	for _, r := range cfg.DNS.Rules {
+		if len(r.QueryType) > 0 || r.Server == "fakeip" {
+			t.Fatalf("правило fakeip при выключенном тумблере: %+v", cfg.DNS.Rules)
+		}
+	}
 }
