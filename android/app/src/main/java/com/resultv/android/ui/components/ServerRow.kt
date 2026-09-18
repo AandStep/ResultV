@@ -2,7 +2,6 @@ package com.resultv.android.ui.components
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -29,6 +28,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.resultv.android.R
+import com.resultv.android.theme.rvBorder
 import com.resultv.android.theme.RvColor
 import com.resultv.android.theme.RvRadius
 import com.resultv.android.theme.RvSpace
@@ -107,12 +107,7 @@ fun ServerRow(
                     if (isActive) RvColor.Main.copy(alpha = 0.18f)
                     else Color.White.copy(alpha = 0.07f)
                 )
-                .border(
-                    1.dp,
-                    if (isActive) RvColor.Main.copy(alpha = 0.28f)
-                    else Color.White.copy(alpha = 0.09f),
-                    RoundedCornerShape(RvRadius.chip)
-                ),
+                .rvBorder(RoundedCornerShape(RvRadius.chip)),
             contentAlignment = Alignment.Center,
         ) {
             when {

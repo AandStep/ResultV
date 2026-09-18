@@ -1,7 +1,6 @@
 package com.resultv.android.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -38,6 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.resultv.android.R
+import com.resultv.android.theme.rvBorder
 import com.resultv.android.theme.RvCategory
 import com.resultv.android.theme.RvColor
 import com.resultv.android.theme.RvRadius
@@ -72,7 +72,6 @@ private val PanelShape = RoundedCornerShape(RvRadius.control)
  * чужая деталь.
  */
 private val FieldShape = RoundedCornerShape(RvRadius.chip)
-private val EditorBorder = Color.White.copy(alpha = 0.06f)
 private val EditorMuted = Color.White.copy(alpha = 0.50f)
 
 private fun actionLabelRes(action: String): Int = when (action) {
@@ -200,7 +199,7 @@ fun RoutingProfileEditorContent(
                         color = actionColor(action),
                         modifier = Modifier
                             .clip(RoundedCornerShape(100.dp))
-                            .border(1.dp, EditorBorder, RoundedCornerShape(100.dp))
+                            .rvBorder(RoundedCornerShape(100.dp))
                             // На ПК порядок меняют перетаскиванием. Ради трёх
                             // меток на телефоне это лишняя механика, и попасть
                             // пальцем труднее: нажатие отправляет метку в
@@ -226,7 +225,7 @@ fun RoutingProfileEditorContent(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(PanelShape)
-                    .border(1.dp, EditorBorder, PanelShape)
+                    .rvBorder(PanelShape)
                     .padding(RvSpace.nest2),
                 verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
             ) {
@@ -323,7 +322,7 @@ private fun RulePanel(
         modifier = Modifier
             .fillMaxWidth()
             .clip(PanelShape)
-            .border(1.dp, EditorBorder, PanelShape),
+            .rvBorder(PanelShape),
     ) {
         Row(
             modifier = Modifier

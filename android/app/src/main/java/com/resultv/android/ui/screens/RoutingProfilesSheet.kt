@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
+import com.resultv.android.theme.rvBorder
 import com.resultv.android.theme.RvCategory
 import com.resultv.android.theme.RvColor
 import com.resultv.android.theme.RvRadius
@@ -86,7 +87,6 @@ private val BadgeShape = RoundedCornerShape(RvRadius.chip)
 
 /** Подъём над заливкой шторки — тот же, что у поля-тегов в «Правилах». */
 private val CardFill = Color.White.copy(alpha = 0.04f)
-private val CardBorder = Color.White.copy(alpha = 0.06f)
 private val ActiveBorder = RvColor.Main.copy(alpha = 0.45f)
 private val Muted = Color.White.copy(alpha = 0.50f)
 
@@ -301,7 +301,13 @@ private fun ProfileCard(
             .fillMaxWidth()
             .clip(CardShape)
             .background(CardFill)
-            .border(1.dp, if (isActive) ActiveBorder else CardBorder, CardShape)
+            // Активный профиль держит свой зелёный контур: это признак
+            // выбора, а не обводка интерактивного элемента, и градиент его
+            // стёр бы.
+            .then(
+                if (isActive) Modifier.border(1.dp, ActiveBorder, CardShape)
+                else Modifier.rvBorder(CardShape)
+            )
             .clickable(enabled = !busy, onClick = onSelect)
             .padding(start = RvSpace.nest2, end = RvSpace.xs, top = RvSpace.nest2, bottom = RvSpace.nest2),
         verticalAlignment = Alignment.CenterVertically,
