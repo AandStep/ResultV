@@ -169,8 +169,7 @@ fun SubscriptionEditSheet(
             )
             FlowRow(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 50.dp),
+                    .fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(RvSpace.xs),
                 verticalArrangement = Arrangement.spacedBy(RvSpace.xs),
             ) {
@@ -303,8 +302,7 @@ private fun NameRow(
             onValueChange = onValueChange,
             singleLine = true,
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 50.dp),
+                .fillMaxWidth(),
         )
     }
 }

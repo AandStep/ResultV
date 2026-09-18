@@ -102,17 +102,10 @@
     <string name="settings_cat_connection">Соединение и маршрутизация</string>
     <string name="settings_cat_security">Безопасность</string>
     <string name="settings_cat_app">Приложение</string>
-    <string name="settings_group_network_items">• DNS • IPv6 • Прямой LAN</string>
-    <string name="settings_group_routing_items">• Умный режим • Домены • По приложениям</string>
     <string name="settings_group_ping">Пинг</string>
     <string name="settings_group_ping_desc">Чем и как долго измерять задержку до узлов.</string>
-    <string name="settings_group_ping_items">• Тип пробы • Тестовый адрес • Тайм-аут</string>
     <string name="settings_group_experimental">Экспериментально</string>
     <string name="settings_group_experimental_desc">Недоделанное и необкатанное. На свой страх.</string>
-    <string name="settings_group_experimental_items">• Адаптивный Smart</string>
-    <string name="settings_group_security_items">• Kill Switch</string>
-    <string name="settings_group_appearance_items">• Язык</string>
-    <string name="settings_group_subscriptions_items">• Обновление • HWID • UA</string>
 
     <string name="settings_killswitch_title">Включить Kill Switch</string>
     <string name="settings_killswitch_desc">Обрыв интернета при падении прокси.</string>

@@ -40,7 +40,6 @@ import kotlinx.coroutines.withContext
 internal object AdBlockGroupRes {
     val label = R.string.settings_group_adblock
     val desc = R.string.settings_group_adblock_desc
-    val items = R.string.settings_group_adblock_items
 }
 
 /**

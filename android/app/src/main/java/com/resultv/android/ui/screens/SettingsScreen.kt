@@ -26,7 +26,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.content.ContextWrapper
@@ -71,44 +70,43 @@ private val Languages = listOf(
 private enum class SettingsSubcategory(
     val labelRes: Int,
     val descRes: Int,
-    val itemsRes: Int,
     val icon: ImageVector,
     val tint: CategoryTint,
 ) {
     Network(
         R.string.settings_group_network, R.string.settings_group_network_desc,
-        R.string.settings_group_network_items, Icons.Outlined.Public, RvCategory.Main,
+        Icons.Outlined.Public, RvCategory.Main,
     ),
     // Описание своё, а не `rules_section_smart_subtitle`: тот же текст стоит
     // заголовком первого раздела ВНУТРИ шторки, и одна и та же фраза читалась
     // дважды подряд — в шапке и строкой ниже.
     Routing(
         R.string.tab_rules, R.string.settings_group_routing_desc,
-        R.string.settings_group_routing_items, Icons.Outlined.AltRoute, RvCategory.Blue,
+        Icons.Outlined.AltRoute, RvCategory.Blue,
     ),
     Ping(
         R.string.settings_group_ping, R.string.settings_group_ping_desc,
-        R.string.settings_group_ping_items, Icons.Outlined.NetworkPing, RvCategory.Cyan,
+        Icons.Outlined.NetworkPing, RvCategory.Cyan,
     ),
     Security(
         R.string.settings_group_security, R.string.settings_group_security_desc,
-        R.string.settings_group_security_items, Icons.Outlined.Security, RvCategory.Red,
+        Icons.Outlined.Security, RvCategory.Red,
     ),
     AdBlock(
         AdBlockGroupRes.label, AdBlockGroupRes.desc,
-        AdBlockGroupRes.items, Icons.Outlined.Block, RvCategory.Red,
+        Icons.Outlined.Block, RvCategory.Red,
     ),
     Experimental(
         R.string.settings_group_experimental, R.string.settings_group_experimental_desc,
-        R.string.settings_group_experimental_items, Icons.Outlined.Science, RvCategory.Emerald,
+        Icons.Outlined.Science, RvCategory.Emerald,
     ),
     Subscriptions(
         R.string.settings_group_subscriptions, R.string.settings_group_subscriptions_desc,
-        R.string.settings_group_subscriptions_items, Icons.Outlined.RssFeed, RvCategory.Amber,
+        Icons.Outlined.RssFeed, RvCategory.Amber,
     ),
     Appearance(
         R.string.settings_group_appearance, R.string.settings_group_appearance_desc,
-        R.string.settings_group_appearance_items, Icons.Outlined.Palette, RvCategory.Violet,
+        Icons.Outlined.Palette, RvCategory.Violet,
     ),
 }
 
@@ -376,24 +374,11 @@ private fun SubcategoryRow(subcategory: SettingsSubcategory, onClick: () -> Unit
         horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
         SettingIcon(subcategory.icon, subcategory.tint)
-        Column(
+        Text(
+            stringResource(subcategory.labelRes),
+            style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(RvSpace.xs),
-        ) {
-            Text(
-                stringResource(subcategory.labelRes),
-                style = MaterialTheme.typography.titleMedium,
-            )
-            // Одна строка с обрезкой: состав раздела виден без захода внутрь,
-            // а длинный список не разгоняет строку по высоте.
-            Text(
-                stringResource(subcategory.itemsRes),
-                style = MaterialTheme.typography.bodyMedium,
-                color = RvColor.whiteA50,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        )
         Icon(
             imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
             contentDescription = null,
@@ -510,7 +495,6 @@ private fun NetworkGroup(settings: com.resultv.android.vpn.SettingsState) {
         }
 
         androidx.compose.foundation.layout.FlowRow(
-            modifier = Modifier.padding(start = 50.dp),
             horizontalArrangement = Arrangement.spacedBy(RvSpace.xs),
             verticalArrangement = Arrangement.spacedBy(RvSpace.xs),
         ) {
@@ -529,7 +513,7 @@ private fun NetworkGroup(settings: com.resultv.android.vpn.SettingsState) {
         OutlinedTextField(
             value = if (settings.dnsPreset == "Custom") settings.dnsCustom else "",
             onValueChange = { SettingsRepository.setDnsPreset("Custom", it) },
-            modifier = Modifier.fillMaxWidth().padding(start = 50.dp, top = RvSpace.nest3),
+            modifier = Modifier.fillMaxWidth().padding(top = RvSpace.nest3),
             singleLine = true,
             placeholder = { Text(stringResource(R.string.settings_dns_custom_placeholder)) },
         )
@@ -537,7 +521,7 @@ private fun NetworkGroup(settings: com.resultv.android.vpn.SettingsState) {
             stringResource(R.string.settings_dns_private_warning),
             style = MaterialTheme.typography.bodyMedium,
             color = RvColor.whiteA50,
-            modifier = Modifier.padding(start = 50.dp, top = RvSpace.nest3),
+            modifier = Modifier.padding(top = RvSpace.nest3),
         )
     }
     HorizontalDivider(color = RvColor.whiteA10, modifier = Modifier.padding(vertical = RvSpace.nest3))
@@ -617,7 +601,6 @@ private fun PingGroup(settings: com.resultv.android.vpn.SettingsState) {
         verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
     ) {
         androidx.compose.foundation.layout.FlowRow(
-            modifier = Modifier.padding(start = 50.dp),
             horizontalArrangement = Arrangement.spacedBy(RvSpace.xs),
             verticalArrangement = Arrangement.spacedBy(RvSpace.xs),
         ) {
@@ -652,7 +635,7 @@ private fun PingGroup(settings: com.resultv.android.vpn.SettingsState) {
                     SettingsRepository.setPingTestUrl(it)
                 }
             },
-            modifier = Modifier.fillMaxWidth().padding(start = 50.dp),
+            modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             isError = urlInvalid,
             label = { Text(stringResource(R.string.settings_ping_url)) },
@@ -677,7 +660,7 @@ private fun PingGroup(settings: com.resultv.android.vpn.SettingsState) {
                 timeoutDraft = raw.filter { ch -> ch.isDigit() }.take(2)
                 SettingsRepository.setPingTimeoutSec(SettingsRepository.normalizePingTimeoutSec(timeoutDraft))
             },
-            modifier = Modifier.fillMaxWidth().padding(start = 50.dp),
+            modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             label = { Text(stringResource(R.string.settings_ping_timeout)) },
@@ -862,11 +845,11 @@ private fun TextFieldRow(
         OutlinedTextField(
             value = value,
             onValueChange = { value = it },
-            modifier = Modifier.fillMaxWidth().padding(start = 50.dp),
+            modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
         )
-        Text(subtitle, style = MaterialTheme.typography.bodySmall, color = RvColor.whiteA50, modifier = Modifier.padding(start = 50.dp))
+        Text(subtitle, style = MaterialTheme.typography.bodySmall, color = RvColor.whiteA50)
     }
 }
 
