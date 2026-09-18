@@ -59,7 +59,7 @@ import com.resultv.android.ui.components.ProfileEditSheet
 import com.resultv.android.ui.components.ProfileSortMenu
 import com.resultv.android.ui.components.ProfileSortMode
 import com.resultv.android.ui.components.ServerRow
-import com.resultv.android.ui.components.Sparkline
+import com.resultv.android.ui.components.SpeedTile
 import com.resultv.android.ui.components.SubscriptionLogo
 import com.resultv.android.ui.components.flagFromCountry
 import com.resultv.android.ui.components.homeLook
@@ -196,9 +196,7 @@ fun HomeScreen(
             }
         }
 
-        if (status is VpnStatus.Connected) {
-            TrafficStatsRow()
-        }
+        TrafficStatsRow(active = status is VpnStatus.Connected)
 
         // Add-server shortcut stays visible in every state — the user
         // commonly wants to add another profile mid-session without
@@ -257,69 +255,30 @@ fun HomeScreen(
 }
 
 @Composable
-private fun TrafficStatsRow() {
+private fun TrafficStatsRow(active: Boolean) {
     val stats by com.resultv.android.vpn.TrafficStats.snapshot.collectAsStateWithLifecycle()
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
-        StatCard(
+        SpeedTile(
             label = stringResource(R.string.home_stat_download),
+            rate = formatBps(stats.downloadBps),
             total = formatBytes(stats.downloadBytes),
-            speed = formatBps(stats.downloadBps),
             history = stats.downloadHistory.map { it.toFloat() },
             color = RvColor.Main,
+            active = active,
             modifier = Modifier.weight(1f),
         )
-        StatCard(
+        SpeedTile(
             label = stringResource(R.string.home_stat_upload),
+            rate = formatBps(stats.uploadBps),
             total = formatBytes(stats.uploadBytes),
-            speed = formatBps(stats.uploadBps),
             history = stats.uploadHistory.map { it.toFloat() },
             color = RvColor.Second,
+            active = active,
             modifier = Modifier.weight(1f),
         )
-    }
-}
-
-@Composable
-private fun StatCard(
-    label: String,
-    total: String,
-    speed: String,
-    history: List<Float>,
-    color: Color,
-    modifier: Modifier = Modifier,
-) {
-    Card(
-        modifier = modifier,
-        shape = RoundedCornerShape(RvRadius.card),
-        colors = CardDefaults.cardColors(containerColor = RvColor.Grey),
-    ) {
-        Column(modifier = Modifier.padding(RvSpace.nest1)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(label, style = MaterialTheme.typography.labelMedium, color = RvColor.whiteA50)
-                Text(speed, style = MaterialTheme.typography.labelMedium, color = color)
-            }
-            Spacer(Modifier.height(RvSpace.xs))
-            Text(
-                total,
-                style = MaterialTheme.typography.headlineSmall,
-                color = color,
-            )
-            Spacer(Modifier.height(RvSpace.nest3))
-            Sparkline(
-                values = history,
-                color = color,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(36.dp),
-            )
-        }
     }
 }
 
