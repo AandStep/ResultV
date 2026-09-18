@@ -17,6 +17,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
@@ -121,16 +122,28 @@ func ReadSmartDirectSet(path string) []string {
 //
 // Только вердикт Direct: имя, про которое известно, что оно заблокировано, —
 // это то, что человек посещал, и открытым текстом на диск оно не ложится.
-// Names() уже отсеивает истёкшее и то, чей плейнтекст этой сессии неизвестен.
+//
+// И только НАСТОЯЩИЕ имена. Стор держит ещё и ключи по адресу (LearnIP) и по
+// сети (продвижение в promote.go): в domain_suffix они не совпадут ни с чем
+// никогда, но файл засоряют — на телефоне за вечер набралось больше сотни
+// таких строк. Отсев по разбору: что разбирается как адрес или префикс, тем
+// именем не является.
 func directNamesOf(store *verdict.Store) []string {
 	if store == nil {
 		return nil
 	}
 	var out []string
 	for name, rec := range store.Names() {
-		if rec.Decision == verdict.Direct {
-			out = append(out, name)
+		if rec.Decision != verdict.Direct {
+			continue
 		}
+		if _, err := netip.ParseAddr(name); err == nil {
+			continue
+		}
+		if _, err := netip.ParsePrefix(name); err == nil {
+			continue
+		}
+		out = append(out, name)
 	}
 	sort.Strings(out)
 	return out

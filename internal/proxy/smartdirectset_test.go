@@ -17,6 +17,7 @@ package proxy
 
 import (
 	stdjson "encoding/json"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"testing"
@@ -105,6 +106,23 @@ func TestDirectNamesOf_OnlyDirectVerdicts(t *testing.T) {
 	s := verdict.New([]byte("salt"), now)
 	s.Learn("clean.example", verdict.Direct)
 	s.Learn("walled.example", verdict.Proxy)
+
+	got := directNamesOf(s)
+	if len(got) != 1 || got[0] != "clean.example" {
+		t.Fatalf("directNamesOf = %v, ожидалось только clean.example", got)
+	}
+}
+
+// В rule-set идут только имена. Стор держит ещё и ключи по адресу и по сети;
+// в domain_suffix они не совпадут ни с чем, а файл засоряют — на телефоне за
+// один вечер набралось больше сотни таких строк.
+func TestDirectNamesOf_SkipsAddressesAndPrefixes(t *testing.T) {
+	now := func() time.Time { return time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC) }
+	s := verdict.New([]byte("salt"), now)
+	s.Learn("clean.example", verdict.Direct)
+	s.LearnIP(netip.MustParseAddr("74.125.205.139"), verdict.Direct)
+	s.LearnIP(netip.MustParseAddr("2a00:1450:4010:c0b::64"), verdict.Direct)
+	s.Seed("10.0.0.0/24", verdict.Direct, verdict.SourceLearned)
 
 	got := directNamesOf(s)
 	if len(got) != 1 || got[0] != "clean.example" {
