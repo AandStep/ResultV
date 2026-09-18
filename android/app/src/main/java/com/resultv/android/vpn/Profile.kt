@@ -179,6 +179,15 @@ fun serverDisplayName(name: String, countryCode: String?): String {
     return s.trim().ifEmpty { name }
 }
 
+/*
+ * Типы, у которых читается поле `extra` для доп. бейджей (security, network).
+ * Копия VPN_TYPES из ResultVPC/frontend/src/utils/proxyParser.js:847.
+ * У остальных типов (TUIC, ANYTLS, HYSTERIA v1, SOCKS, SOCKS5, HTTP, HTTPS, SSH)
+ * на ПК `extra` не читается — их бейджи состоят только из самого типа. Это
+ * ограничивает шум в списке и соответствует тому, что на ПК показывают.
+ */
+private val VPN_TYPES = setOf("SS", "VMESS", "VLESS", "TROJAN", "WIREGUARD", "AMNEZIAWG", "HYSTERIA2", "NAIVEPROXY", "AUTO")
+
 private fun computeBadges(
     isSection: Boolean,
     isAuto: Boolean,
@@ -191,6 +200,11 @@ private fun computeBadges(
     if (type.isBlank()) return emptyList()
 
     val out = mutableListOf(protocolCase(type))
+
+    // Читаем `extra` только для VPN-типов, как на ПК (getProtocolLabel).
+    // Остальным протоколам доп. бейджи не полагаются.
+    if (!VPN_TYPES.contains(type.uppercase())) return out
+
     // Подписки отдают `extra` то объектом, то строкой с JSON внутри —
     // на ПК разбираются оба случая, здесь тоже.
     val extra = entry?.let { e ->

@@ -92,4 +92,16 @@ class ProfileDisplayTest {
         val p = profile("""{"type":"TROJAN","extra":{"security":"none","network":"tcp"}}""")
         assertEquals(listOf("Trojan"), p.badges)
     }
+
+    // Тип вне VPN_TYPES даёт только сам протокол, `extra` не читается.
+    // На ПК getProtocolLabel тоже не читает `extra` для TUIC, ANYTLS и др.
+    @Test fun nonVpnTypeIgnoresExtraSecurityForBadges() {
+        val p = profile("""{"type":"TUIC","extra":{"security":"tls"}}""")
+        assertEquals(listOf("TUIC"), p.badges)
+    }
+
+    @Test fun nonVpnTypeIgnoresExtraNetworkForBadges() {
+        val p = profile("""{"type":"SOCKS5","extra":{"network":"ws"}}""")
+        assertEquals(listOf("SOCKS5"), p.badges)
+    }
 }
