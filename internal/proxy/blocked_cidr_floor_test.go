@@ -133,3 +133,46 @@ func TestBlockedCIDRFloor_CoversObservedDiscordVoiceHosts(t *testing.T) {
 		}
 	}
 }
+
+// Fastly's 151.101.0.0/16 and GitHub's 140.82.0.0/16 are blackholed on the
+// user's uplink: the SYN leaves and nothing comes back, so every connection
+// costs the core's five-second dial timeout and then fails. Neither is on any
+// domain block-list — they carry no censored product, they are simply dead on
+// the direct path — so only an ip_cidr rule can pull them through the node.
+func TestResolveBlockedCIDRs_BlackholedCDNFloor(t *testing.T) {
+	for _, want := range []string{fastlyBlackholedNet, githubBlackholedNet} {
+		if !hasCIDR(blockedCIDRFloor(), want) {
+			t.Errorf("пол не содержит %s", want)
+		}
+	}
+	res := ResolveBlockedCIDRs(context.Background(),
+		fakeCIDRFetcher{cidrs: []string{"91.108.4.0/22"}},
+		filepath.Join(t.TempDir(), "cidr.json"))
+	for _, want := range []string{fastlyBlackholedNet, githubBlackholedNet} {
+		if !hasCIDR(res.CIDRs, want) {
+			t.Errorf("после объединения с источником %s потерялся", want)
+		}
+	}
+}
+
+// A floor entry is worthless if the route does not carry it.
+func TestBlackholedCDNFloorReachesTheRoute(t *testing.T) {
+	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
+		Mode:         ProxyModeTunnel,
+		RoutingMode:  ModeSmart,
+		Proxy:        ProxyConfig{IP: "203.0.113.7", Port: 443, Type: "vless"},
+		BlockedCIDRs: withBlockedCIDRFloor([]string{"91.108.4.0/22"}),
+		DataDir:      t.TempDir(),
+	})
+	for _, want := range []string{fastlyBlackholedNet, githubBlackholedNet} {
+		var found bool
+		for _, rule := range cfg.Route.Rules {
+			if rule.Outbound == "proxy" && hasCIDR(rule.IPCidr, want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("в маршруте нет правила %s -> proxy", want)
+		}
+	}
+}

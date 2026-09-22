@@ -442,9 +442,31 @@ func normalizeCIDRs(in []string) []string {
 // precisely because the allocation is Discord's alone — the same move is NOT
 // available for its Cloudflare and Google Cloud voice backends, which is why
 // those need the process rule in buildRoute (see smartTunneledApps).
+// Blackholed on the direct path rather than censored by name: measured on the
+// user's uplink three times across 2026-09-22, every sampled address in both
+// ranges answered nothing at all — SYN out, silence back, five seconds of the
+// core's dial timeout, then failure. No domain list can carry them, because
+// there is no censored product here: it is the transport that is dead, for
+// every site those CDNs happen to front (reddit, pypi, imgur, npm, github and
+// the player libraries most sites embed).
+//
+// Membership is earned by surviving repeated sampling at different hours, and
+// that bar removed more candidates than it admitted: Cloudflare (104.16/12,
+// 172.64/13, 162.158/15), Hetzner 188.40/16 and GitHub Pages 185.199.108/22
+// were each dead in one sample and healthy in the next, within the same hour.
+// Baking a range that flaps into the binary would tunnel a fifth of the web
+// for a condition that has already passed — that volatile half belongs to the
+// remote list, which updates itself, or to the measured verdict.
+const (
+	fastlyBlackholedNet = "151.101.0.0/16"
+	githubBlackholedNet = "140.82.0.0/16"
+)
+
 func blockedCIDRFloor() []string {
 	return []string{
 		"66.22.192.0/18",
+		fastlyBlackholedNet,
+		githubBlackholedNet,
 	}
 }
 
