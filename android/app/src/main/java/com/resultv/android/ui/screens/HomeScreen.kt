@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
 import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.RvIcon
 import com.resultv.android.theme.RvRadius
 import com.resultv.android.theme.RvSpace
 import com.resultv.android.theme.rvBorder
@@ -374,7 +375,7 @@ private fun ActiveProfileRow(
                     imageVector = Icons.Outlined.Bolt,
                     contentDescription = stringResource(R.string.ping_refresh_cd),
                     tint = RvColor.whiteA50,
-                    modifier = Modifier.size(20.dp),
+                    modifier = Modifier.size(RvIcon.glyph),
                 )
             }
             ProfileSortMenu(mode = sortMode, onModeChange = onSortModeChange)
