@@ -22,6 +22,7 @@
 
 import { useTranslation } from "react-i18next";
 import { useConfigContext } from "../../context/ConfigContext";
+import { useAppVersion } from "../../hooks/useCheckUpdate";
 import { Sidebar } from "../../components/kit";
 
 export const MENU = [
@@ -41,6 +42,7 @@ export default function AppSidebar() {
    */
   const { activeTab, setActiveTab, setEditingProxy, sidebarOpen, setSidebarOpen } =
     useConfigContext();
+  const version = useAppVersion();
 
   /* «Добавить» — это всегда новый сервер: правку начинают из списка. */
   const select = (key) => {
@@ -51,6 +53,7 @@ export default function AppSidebar() {
   return (
     <Sidebar
       opened={sidebarOpen}
+      version={version}
       onToggle={() => setSidebarOpen((v) => !v)}
       items={MENU.map((item) => ({ ...item, label: t(item.label) }))}
       bottomItem={{ key: "settings", icon: "settings", label: t("sidebar.settings") }}
