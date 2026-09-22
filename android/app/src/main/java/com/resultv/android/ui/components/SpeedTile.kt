@@ -52,9 +52,14 @@ fun SpeedTile(
     active: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val waveEnabled = rememberWaveEnabled()
     val dataAlpha by animateFloatAsState(
         targetValue = if (active) 1f else 0.5f,
-        animationSpec = tween(RvMotion.durationMillis, easing = RvMotion.easing),
+        animationSpec = tween(
+            durationMillis = RvMotion.durationMillis,
+            delayMillis = if (waveEnabled) waveDelayMillis(WaveStep.Speed, connected = active) else 0,
+            easing = RvMotion.easing,
+        ),
         label = "speedData",
     )
 

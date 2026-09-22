@@ -1,5 +1,7 @@
 package com.resultv.android.ui.components
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -24,9 +26,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -36,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import com.resultv.android.R
 import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.RvMotion
 import com.resultv.android.theme.RvRadius
 import com.resultv.android.theme.RvSpace
 import com.resultv.android.theme.rvBorder
@@ -49,18 +54,33 @@ import com.resultv.android.theme.rvBorder
  */
 @Composable
 fun ProtocolBadge(text: String, first: Boolean, accent: HomeLook) {
-    val bg = when (accent) {
-        HomeLook.Success -> RvColor.mainA10
-        HomeLook.Processing -> RvColor.warningA10
-        HomeLook.Error -> RvColor.errorsA10
-        HomeLook.Idle -> if (first) RvColor.LightGray else RvColor.lightGrayA50
-    }
-    val fg = when (accent) {
-        HomeLook.Success -> RvColor.Main
-        HomeLook.Processing -> RvColor.Warning
-        HomeLook.Error -> RvColor.Errors
-        HomeLook.Idle -> RvColor.whiteA50
-    }
+    // Бейдж — часть плитки флага по волне: обе меняют цвет с одной и той же
+    // задержкой WaveStep.Card, иначе подсветка карточки распадалась бы на
+    // два разновременных пятна.
+    val waveEnabled = rememberWaveEnabled()
+    val delay = if (waveEnabled) {
+        waveDelayMillis(WaveStep.Card, connected = accent == HomeLook.Success)
+    } else 0
+    val spec = tween<Color>(RvMotion.durationMillis, delay, RvMotion.easing)
+
+    val bg by animateColorAsState(
+        targetValue = when (accent) {
+            HomeLook.Success -> RvColor.mainA10
+            HomeLook.Processing -> RvColor.warningA10
+            HomeLook.Error -> RvColor.errorsA10
+            HomeLook.Idle -> if (first) RvColor.LightGray else RvColor.lightGrayA50
+        },
+        animationSpec = spec, label = "badgeBg",
+    )
+    val fg by animateColorAsState(
+        targetValue = when (accent) {
+            HomeLook.Success -> RvColor.Main
+            HomeLook.Processing -> RvColor.Warning
+            HomeLook.Error -> RvColor.Errors
+            HomeLook.Idle -> RvColor.whiteA50
+        },
+        animationSpec = spec, label = "badgeFg",
+    )
     Box(
         modifier = Modifier
             .height(20.dp)
@@ -109,11 +129,22 @@ fun ProfileTile(
         HomeLook.Error -> RvColor.errorsA10
         HomeLook.Idle -> RvColor.LightGray
     }
+    val connected = accent == HomeLook.Success
+    val waveEnabled = rememberWaveEnabled()
+    val tileColor by animateColorAsState(
+        targetValue = tile,
+        animationSpec = tween(
+            durationMillis = RvMotion.durationMillis,
+            delayMillis = if (waveEnabled) waveDelayMillis(WaveStep.Card, connected) else 0,
+            easing = RvMotion.easing,
+        ),
+        label = "rowTile",
+    )
     Box(
         modifier = Modifier
             .size(size)
             .clip(RoundedCornerShape(RvRadius.chip))
-            .background(tile)
+            .background(tileColor)
             .rvBorder(RoundedCornerShape(RvRadius.chip)),
         contentAlignment = Alignment.Center,
     ) {

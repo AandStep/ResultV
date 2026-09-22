@@ -68,6 +68,8 @@ fun HomeHeader(
 ) {
     val status by VpnState.status.collectAsStateWithLifecycle()
     val look = homeLook(status)
+    val connected = look == HomeLook.Success
+    val waveEnabled = rememberWaveEnabled()
 
     val titleColor by animateColorAsState(
         targetValue = when (look) {
@@ -76,7 +78,11 @@ fun HomeHeader(
             HomeLook.Success -> RvColor.Main
             HomeLook.Error -> RvColor.Errors
         },
-        animationSpec = tween(RvMotion.durationMillis, easing = RvMotion.easing),
+        animationSpec = tween(
+            durationMillis = RvMotion.durationMillis,
+            delayMillis = if (waveEnabled) waveDelayMillis(WaveStep.Title, connected) else 0,
+            easing = RvMotion.easing,
+        ),
         label = "headerTitle",
     )
 
@@ -97,7 +103,30 @@ fun HomeHeader(
                 contentDescription = null,
                 modifier = Modifier.size(24.dp),
             )
-            (status as? VpnStatus.Connected)?.let { UptimeChip(connectedAt = it.connectedAt) }
+            // Плашка не проявляется, а выпадает сверху из-за края — как
+            // `clip-path` на ПК. AnimatedVisibility сама обрезает по своим
+            // границам, так путь плашки не наезжает на заголовок.
+            androidx.compose.animation.AnimatedVisibility(
+                visible = status is VpnStatus.Connected,
+                enter = androidx.compose.animation.slideInVertically(
+                    animationSpec = tween(
+                        durationMillis = RvMotion.durationMillis,
+                        delayMillis = if (waveEnabled) waveDelayMillis(WaveStep.Time, connected = true) else 0,
+                        easing = RvMotion.easing,
+                    ),
+                    initialOffsetY = { -it },
+                ),
+                exit = androidx.compose.animation.slideOutVertically(
+                    animationSpec = tween(
+                        durationMillis = RvMotion.durationMillis,
+                        delayMillis = if (waveEnabled) waveDelayMillis(WaveStep.Time, connected = false) else 0,
+                        easing = RvMotion.easing,
+                    ),
+                    targetOffsetY = { -it },
+                ),
+            ) {
+                (status as? VpnStatus.Connected)?.let { UptimeChip(connectedAt = it.connectedAt) }
+            }
             Spacer(Modifier.weight(1f))
             IconButton(onClick = onOpenWebsite, modifier = Modifier.size(36.dp)) {
                 Icon(

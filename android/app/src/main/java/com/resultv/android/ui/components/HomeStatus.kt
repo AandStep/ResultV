@@ -1,5 +1,8 @@
 package com.resultv.android.ui.components
 
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import com.resultv.android.vpn.VpnStatus
 
 /**
@@ -43,4 +46,21 @@ const val WAVE_STEP_MILLIS = 70
 fun waveDelayMillis(step: WaveStep, connected: Boolean): Int {
     val order = if (connected) step.ordinal else WaveStep.entries.size - 1 - step.ordinal
     return order * WAVE_STEP_MILLIS
+}
+
+/**
+ * Кому движение мешает — тому его не показываем. На ПК это
+ * `prefers-reduced-motion`, здесь — системный масштаб анимаций: при нуле
+ * волна схлопывается в мгновенную смену состояния.
+ */
+@Composable
+fun rememberWaveEnabled(): Boolean {
+    val ctx = LocalContext.current
+    return remember(ctx) {
+        android.provider.Settings.Global.getFloat(
+            ctx.contentResolver,
+            android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,
+            1f,
+        ) != 0f
+    }
 }
