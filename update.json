@@ -1,24 +1,34 @@
 {
   "version": "",
   "releaseTitle": {
-    "ru": "Улучшения умного режима и новые разделы настроек",
-    "en": "Smart mode improvements and new settings sections"
+    "ru": "Умный режим: адаптивный режим починен, мёртвые CDN уходят в VPN",
+    "en": "Smart mode: adaptive mode fixed, dead CDN ranges go through the VPN"
   },
   "releaseNotes": [
     {
-      "type": "improve",
-      "ru": "Умный режим теперь имеет экспериментальный адаптивный режим, который без списка определяет заблокированные ресурсы и передает их в ВПН, настройка доступна в разделе \"Настройки\" -> \"Экспериментально\"",
-      "en": "The smart mode now has an experimental adaptive mode that determines blocked resources without a list and passes them to the VPN. The setting is available in the \"Settings\" -> \"Experimental\" section."
+      "type": "fix",
+      "ru": "Адаптивный умный режим выключал сам себя: каждый сайт, который он успешно уводил в VPN, засчитывался как поломка прямого канала, и после пяти таких сайтов подряд всё неизвестное на две минуты отправлялось напрямую — то есть ровно туда, где оно и не открывалось. Одна современная страница набирает пять чужих адресов за секунды, поэтому режим почти всё время работал в этом состоянии",
+      "en": "The adaptive smart mode used to switch itself off: every site it successfully sent through the VPN was counted as a failure of the direct link, and after five such sites in a row everything unknown went direct for two minutes — precisely where it would not open. A single modern page pulls five third-party addresses within seconds, so the mode spent most of its time in that state"
     },
     {
-      "type": "feature",
-      "ru": "Появился раздел \"Настройки\" -> \"Пинг\": можно выбрать, чем измерять задержку до серверов - автоматически по протоколу узла, через ICMP или HTTP-запросом через сам узел, - указать свой тестовый адрес и задать тайм-аут ожидания",
-      "en": "New \"Settings\" -> \"Ping\" section: choose how latency to servers is measured - automatically by node protocol, via ICMP, or with an HTTP request through the node itself - set your own test URL and the wait timeout"
+      "type": "fix",
+      "ru": "В адаптивном режиме прямой путь не мог открыть сайт по имени: определение адреса возвращалось само к себе, соединение висело десять секунд и обрывалось. Из-за этого напрямую не работало ничего, чего нет в списках",
+      "en": "With the adaptive mode on, the direct path could not open a site by name: address lookup looped back on itself, the connection hung for ten seconds and then failed. As a result nothing outside the lists worked directly"
     },
     {
       "type": "improve",
-      "ru": "Обновление ядра и баг-фиксы",
-      "en": "Core update and bug fixes"
+      "ru": "Соединение, которое провайдер молча роняет, больше не ждёт пять секунд впустую: отказ приходит сразу, как только отвалились оба пути. А уже открытое соединение через VPN теперь не выбрасывается по тайм-ауту, а отдаётся дальше — страница загрузится, даже если сервер отвечает медленно",
+      "en": "A connection the provider silently drops no longer wastes five seconds: it fails as soon as both paths are gone. And a VPN connection that is already open is no longer discarded on timeout but handed on — the page still loads even when the server answers slowly"
+    },
+    {
+      "type": "improve",
+      "ru": "Диапазоны Fastly и GitHub, которые у части провайдеров не открываются напрямую, в умном режиме теперь всегда идут через VPN. Под них попадают reddit, pypi, imgur, npm, сам GitHub и библиотеки видеоплееров, которые встраивают многие сайты",
+      "en": "The Fastly and GitHub ranges, unreachable directly on some providers, now always go through the VPN in smart mode. They carry reddit, pypi, imgur, npm, GitHub itself and the video-player libraries many sites embed"
+    },
+    {
+      "type": "improve",
+      "ru": "В журнале ошибка соединения теперь подписана адресом, к которому она относится, — раньше там был только номер соединения",
+      "en": "A connection error in the log is now labelled with the address it belongs to — it used to carry only a connection number"
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",
