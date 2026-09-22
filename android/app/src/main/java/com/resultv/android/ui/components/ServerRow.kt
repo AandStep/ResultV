@@ -7,6 +7,9 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.FlowRowOverflow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -76,12 +79,13 @@ fun ProtocolBadge(text: String, first: Boolean, accent: HomeLook) {
 }
 
 /**
- * Server / profile row used by Home selector and Proxies list. Protocol
- * shows as badges above the name (перенос вида ПК — Figma ServerItem);
- * an active row is marked by row background + green flag tile/badges, not
- * by name colour (ResultV-dev ServerItem.css:86-96).
+ * Строка сервера/профиля — используется селектором на главном экране и
+ * списком «Прокси». Протокол показан бейджами над именем (перенос вида
+ * ПК — Figma ServerItem); подключённая строка отмечена подложкой строки и
+ * зелёным цветом плитки флага/бейджей, а не цветом имени
+ * (ResultV-dev ServerItem.css:86-96).
  */
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun ServerRow(
     name: String,
@@ -173,7 +177,20 @@ fun ServerRow(
         ) {
             val shown = if (isAuto) listOf(stringResource(R.string.badge_auto)) else badges
             if (shown.isNotEmpty()) {
-                Row(horizontalArrangement = Arrangement.spacedBy(RvSpace.xs)) {
+                // Строка держит фиксированную высоту (64.dp) — переносить
+                // бейджи на вторую строку некуда. На 360dp три бейджа
+                // (обычная связка вроде VLESS + Reality + XHTTP) не
+                // помещаются рядом с плиткой флага, звездой и задержкой —
+                // без ограничения третий чип рисуется поверх соседей,
+                // Row в Compose сам не обрезает переполнение. maxLines = 1
+                // + Clip показывают столько целых бейджей, сколько влезает,
+                // и обрубают по границе чипа, а не посреди него.
+                FlowRow(
+                    maxItemsInEachRow = Int.MAX_VALUE,
+                    maxLines = 1,
+                    overflow = FlowRowOverflow.Clip,
+                    horizontalArrangement = Arrangement.spacedBy(RvSpace.xs),
+                ) {
                     shown.forEachIndexed { i, b ->
                         ProtocolBadge(text = b, first = i == 0, accent = accent)
                     }
