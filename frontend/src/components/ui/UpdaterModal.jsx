@@ -15,13 +15,19 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { DownloadCloud, X, RefreshCw, ExternalLink, CheckCircle, Loader } from "lucide-react";
+import { Badge, Button, Dialog, Icon } from "../kit";
 import { wailsAPI } from "../../utils/wailsAPI";
 import { EventsOn, EventsOff } from "../../../wailsjs/runtime/runtime";
+import "./UpdaterModal.css";
 
-// Hosts allowed to open in browser as fallback
+/*
+ * update.json приезжает с raw.githubusercontent.com, поэтому подменённая
+ * ветка или MITM с чужим корневым сертификатом могут вписать в downloadUrl
+ * что угодно. Список хостов ограничивает последствия: адрес вне его никуда
+ * не ведёт.
+ */
 const ALLOWED_DOWNLOAD_HOSTS = new Set([
   "result-proxy.ru",
   "www.result-proxy.ru",
@@ -31,40 +37,69 @@ const ALLOWED_DOWNLOAD_HOSTS = new Set([
 function isSafeDownloadURL(raw) {
   if (!raw || typeof raw !== "string") return false;
   let u;
-  try { u = new URL(raw); } catch { return false; }
+  try {
+    u = new URL(raw);
+  } catch {
+    return false;
+  }
   if (u.protocol !== "https:") return false;
   return ALLOWED_DOWNLOAD_HOSTS.has(u.hostname.toLowerCase());
 }
 
-function formatBytes(bytes) {
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} КБ`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
-}
+/* Фазы, на которых окно ничем не занято и его можно закрыть. */
+const IDLE_PHASES = new Set(["idle", "failed"]);
 
-function formatSpeed(bps) {
-  if (bps < 1024) return `${bps.toFixed(0)} Б/с`;
-  if (bps < 1024 * 1024) return `${(bps / 1024).toFixed(0)} КБ/с`;
-  return `${(bps / (1024 * 1024)).toFixed(1)} МБ/с`;
-}
+/* Фазы ожидания: значок окна дышит, кнопок нет. */
+const BUSY_PHASES = new Set(["verifying", "installing", "restarting"]);
+
+const PHASE_TITLES = {
+  idle: ["update.title", "Доступно обновление"],
+  downloading: ["update.downloading", "Скачивание..."],
+  verifying: ["update.verifying", "Проверка целостности..."],
+  installing: ["update.installing", "Установка..."],
+  restarting: ["update.restarting", "Перезапуск..."],
+  failed: ["update.failed", "Ошибка обновления"],
+};
+
+const BUSY_BODIES = {
+  verifying: ["update.verifying_body", "Проверяем целостность загруженного файла..."],
+  installing: ["update.installing_body", "Устанавливаем обновление, подождите..."],
+  restarting: ["update.restarting_body", "Перезапуск приложения..."],
+};
 
 /**
- * UpdaterModal — handles the full in-app update lifecycle:
+ * UpdaterModal — обновление целиком внутри приложения:
  *   idle → downloading → verifying → installing → restarting
- *                                                ↘ failed
+ *                                              ↘ failed
  *
  * Props:
- *   currentVersion  — installed version string
- *   latestVersion   — new version string
- *   downloadUrl     — browser fallback URL
- *   onClose         — dismiss callback (only available in idle / failed states)
+ *   currentVersion — установленная версия
+ *   latestVersion  — версия из манифеста
+ *   downloadUrl    — запасной адрес для браузера
+ *   onClose        — закрытие; доступно только в idle и failed
  */
 const UpdaterModal = ({ currentVersion, latestVersion, downloadUrl, onClose }) => {
   const { t } = useTranslation();
-  const [phase, setPhase] = useState("idle"); // idle | downloading | verifying | installing | restarting | failed
+  const [phase, setPhase] = useState("idle");
   const [progress, setProgress] = useState({ downloaded: 0, total: 0, speedBps: 0 });
-  const [errorInfo, setErrorInfo] = useState(null); // { stage, message }
+  const [errorInfo, setErrorInfo] = useState(null);
 
-  // Subscribe to Wails backend events
+  const formatBytes = useCallback(
+    (bytes) =>
+      bytes < 1024 * 1024
+        ? `${(bytes / 1024).toFixed(1)} ${t("units.kb", "кб")}`
+        : `${(bytes / (1024 * 1024)).toFixed(1)} ${t("units.mb", "Мб")}`,
+    [t],
+  );
+
+  const formatSpeed = useCallback(
+    (bps) =>
+      bps < 1024 * 1024
+        ? `${(bps / 1024).toFixed(1)} ${t("units.kbps", "кб/с")}`
+        : `${(bps / (1024 * 1024)).toFixed(1)} ${t("units.mbps", "Мб/с")}`,
+    [t],
+  );
+
   useEffect(() => {
     const onProgress = (data) => {
       setPhase("downloading");
@@ -75,18 +110,20 @@ const UpdaterModal = ({ currentVersion, latestVersion, downloadUrl, onClose }) =
       });
     };
     const onVerifying = () => setPhase("verifying");
-    const onVerified  = () => setPhase("verifying"); // brief, transitions to installing next
     const onInstalling = () => setPhase("installing");
     const onFailed = (data) => {
-      setErrorInfo({ stage: data?.stage || "unknown", message: data?.message || "Unknown error" });
+      setErrorInfo({
+        stage: data?.stage || "unknown",
+        message: data?.message || "Unknown error",
+      });
       setPhase("failed");
     };
 
-    EventsOn("update:progress",   onProgress);
-    EventsOn("update:verifying",  onVerifying);
-    EventsOn("update:verified",   onVerified);
+    EventsOn("update:progress", onProgress);
+    EventsOn("update:verifying", onVerifying);
+    EventsOn("update:verified", onVerifying);
     EventsOn("update:installing", onInstalling);
-    EventsOn("update:failed",     onFailed);
+    EventsOn("update:failed", onFailed);
 
     return () => {
       EventsOff("update:progress");
@@ -118,6 +155,9 @@ const UpdaterModal = ({ currentVersion, latestVersion, downloadUrl, onClose }) =
     if (isSafeDownloadURL(downloadUrl)) {
       window.open(downloadUrl, "_blank", "noopener,noreferrer");
     } else {
+      if (downloadUrl) {
+        console.warn("Update downloadUrl rejected by host allow list:", downloadUrl);
+      }
       document.dispatchEvent(new CustomEvent("open-download-modal"));
     }
     onClose();
@@ -130,134 +170,106 @@ const UpdaterModal = ({ currentVersion, latestVersion, downloadUrl, onClose }) =
 
   if (!latestVersion) return null;
 
-  const pct = progress.total > 0 ? Math.round((progress.downloaded / progress.total) * 100) : 0;
-  const canClose = phase === "idle" || phase === "failed";
-  const canCancel = phase === "downloading";
+  const pct =
+    progress.total > 0 ? Math.round((progress.downloaded / progress.total) * 100) : 0;
+  const failed = phase === "failed";
+  const canClose = IDLE_PHASES.has(phase);
+  const busy = BUSY_PHASES.has(phase);
+  const [titleKey, titleFallback] = PHASE_TITLES[phase] ?? PHASE_TITLES.idle;
+
+  /* Ожидание проходит без кнопок: прервать проверку и установку нельзя. */
+  let actions = null;
+  if (phase === "idle") {
+    actions = (
+      <>
+        <Button onClick={onClose}>{t("update.later", "Позже")}</Button>
+        <Button variant="green" onClick={handleStartUpdate}>
+          {t("update.download", "Обновить")}
+        </Button>
+      </>
+    );
+  } else if (phase === "downloading") {
+    actions = (
+      <Button variant="red" onClick={handleCancel}>
+        {t("update.cancel", "Отмена")}
+      </Button>
+    );
+  } else if (failed) {
+    actions = (
+      <>
+        <Button
+          icon={<Icon name="sync" color="currentColor" />}
+          onClick={handleRetry}
+        >
+          {t("update.retry", "Повторить")}
+        </Button>
+        <Button
+          icon={<Icon name="externallink" color="currentColor" />}
+          onClick={handleBrowserFallback}
+        >
+          {t("update.browser", "В браузере")}
+        </Button>
+      </>
+    );
+  }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="bg-zinc-950 border border-zinc-800 rounded-3xl shadow-2xl max-w-sm w-full p-6 animate-fade-in-up">
-
-        {/* Header */}
-        <div className="flex justify-between items-start mb-4">
-          <div className="flex items-center gap-3 text-[#00A819]">
-            {phase === "installing" || phase === "restarting"
-              ? <Loader size={24} className="animate-spin" />
-              : <DownloadCloud size={24} />}
-            <h3 className="text-xl font-bold text-white">
-              {phase === "idle"    && t("update.title", "Доступно обновление")}
-              {phase === "downloading" && t("update.downloading", "Скачивание...")}
-              {phase === "verifying"   && t("update.verifying", "Проверка целостности...")}
-              {phase === "installing"  && t("update.installing", "Установка...")}
-              {phase === "restarting"  && t("update.restarting", "Перезапуск...")}
-              {phase === "failed"      && t("update.failed", "Ошибка обновления")}
-            </h3>
-          </div>
-          {canClose && (
-            <button
-              onClick={onClose}
-              className="text-zinc-500 hover:text-[#00A819] transition-colors outline-none focus:outline-none focus:ring-0"
-            >
-              <X size={20} />
-            </button>
+    <Dialog
+      className={busy ? "rv-dialog--busy" : ""}
+      variant={failed ? "error" : "success"}
+      icon={failed ? "alert" : "import"}
+      title={t(titleKey, titleFallback)}
+      subtitle={<Badge color={failed ? "error" : "success"}>{latestVersion}</Badge>}
+      onClose={canClose ? onClose : undefined}
+      actions={actions}
+    >
+      {phase === "idle" && (
+        <p className="rv-dialog__text">
+          {t(
+            "update.message",
+            "У вас установлена версия {{current}}, доступна новая версия {{latest}}.",
+            { current: currentVersion, latest: latestVersion },
           )}
-        </div>
+        </p>
+      )}
 
-        {/* Body */}
-        {phase === "idle" && (
-          <p className="text-zinc-500 text-sm mb-6 whitespace-pre-wrap">
-            {t("update.message", "У вас установлена версия {{current}}, доступна новая версия {{latest}}.", {
-              current: currentVersion,
-              latest: latestVersion,
-            })}
-          </p>
-        )}
-
-        {phase === "downloading" && (
-          <div className="mb-6 space-y-3">
-            <div className="flex justify-between text-xs text-zinc-400">
-              <span>{formatBytes(progress.downloaded)} / {progress.total > 0 ? formatBytes(progress.total) : "…"}</span>
-              <span>{formatSpeed(progress.speedBps)}</span>
-            </div>
-            <div className="w-full bg-zinc-800 rounded-full h-2">
-              <div
-                className="bg-[#00A819] h-2 rounded-full transition-all duration-300"
-                style={{ width: `${pct}%` }}
-              />
-            </div>
-            <p className="text-center text-zinc-500 text-xs">{pct}%</p>
-          </div>
-        )}
-
-        {(phase === "verifying" || phase === "installing" || phase === "restarting") && (
-          <div className="flex items-center gap-3 mb-6 text-zinc-400 text-sm">
-            <Loader size={16} className="animate-spin text-[#00A819] shrink-0" />
+      {phase === "downloading" && (
+        <div className="rv-updater__progress">
+          <div className="rv-updater__figures">
             <span>
-              {phase === "verifying"  && t("update.verifying_body", "Проверяем целостность загруженного файла...")}
-              {phase === "installing" && t("update.installing_body", "Устанавливаем обновление, подождите...")}
-              {phase === "restarting" && t("update.restarting_body", "Перезапуск приложения...")}
+              {formatBytes(progress.downloaded)} /{" "}
+              {progress.total > 0 ? formatBytes(progress.total) : "…"}
             </span>
+            <span>{formatSpeed(progress.speedBps)}</span>
           </div>
-        )}
-
-        {phase === "failed" && (
-          <div className="mb-6 space-y-2">
-            <p className="text-red-400 text-sm">
-              {t("update.error_stage", "Этап: {{stage}}", { stage: errorInfo?.stage })}
-            </p>
-            <p className="text-zinc-400 text-xs break-words">{errorInfo?.message}</p>
+          <div
+            className="rv-updater__track"
+            role="progressbar"
+            aria-valuenow={pct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <div className="rv-updater__fill" style={{ width: `${pct}%` }} />
           </div>
-        )}
-
-        {/* Footer buttons */}
-        <div className="flex gap-3">
-          {phase === "idle" && (
-            <>
-              <button
-                onClick={onClose}
-                className="flex-1 py-3 px-4 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white hover:border-[#00A819] transition-all font-bold outline-none focus:outline-none"
-              >
-                {t("update.later", "Позже")}
-              </button>
-              <button
-                onClick={handleStartUpdate}
-                className="flex-1 py-3 px-4 rounded-xl bg-[#007E3A] hover:bg-[#00A819] text-white transition-all font-bold border-transparent outline-none focus:outline-none"
-              >
-                {t("update.download", "Обновить")}
-              </button>
-            </>
-          )}
-
-          {canCancel && (
-            <button
-              onClick={handleCancel}
-              className="flex-1 py-3 px-4 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white hover:border-red-500 transition-all font-bold outline-none focus:outline-none"
-            >
-              {t("update.cancel", "Отмена")}
-            </button>
-          )}
-
-          {phase === "failed" && (
-            <>
-              <button
-                onClick={handleRetry}
-                className="flex-1 py-3 px-4 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white hover:border-[#00A819] transition-all font-bold outline-none focus:outline-none flex items-center justify-center gap-2"
-              >
-                <RefreshCw size={14} />
-                {t("update.retry", "Повторить")}
-              </button>
-              <button
-                onClick={handleBrowserFallback}
-                className="flex-1 py-3 px-4 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white hover:border-zinc-500 transition-all font-bold outline-none focus:outline-none flex items-center justify-center gap-2"
-              >
-                <ExternalLink size={14} />
-                {t("update.browser", "В браузере")}
-              </button>
-            </>
-          )}
+          <p className="rv-updater__percent">{pct}%</p>
         </div>
-      </div>
-    </div>
+      )}
+
+      {busy && (
+        <p className="rv-dialog__text">
+          {t(BUSY_BODIES[phase][0], BUSY_BODIES[phase][1])}
+        </p>
+      )}
+
+      {failed && (
+        <div className="rv-updater__failure">
+          <p className="rv-updater__stage">
+            {t("update.error_stage", "Этап: {{stage}}", { stage: errorInfo?.stage })}
+          </p>
+          <p className="rv-updater__reason">{errorInfo?.message}</p>
+        </div>
+      )}
+    </Dialog>
   );
 };
 

@@ -15,16 +15,15 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { DownloadCloud, X } from "lucide-react";
+import { Badge, Button, Dialog } from "../kit";
 
-// Hosts allowed to serve an update download. update.json is fetched from
-// raw.githubusercontent.com, so a compromised GitHub branch or a MITM with
-// rogue CA could rewrite downloadUrl to anywhere. Pinning the navigation
-// target limits the blast radius — even if update.json says
-// "downloadUrl": "javascript:evil()" or "http://attacker/installer.exe",
-// nothing happens.
+/*
+ * update.json приезжает с raw.githubusercontent.com, поэтому подменённая
+ * ветка или MITM с чужим корневым сертификатом могут вписать в downloadUrl
+ * что угодно — хоть "javascript:evil()", хоть чужой установщик по http.
+ * Список хостов ограничивает последствия: адрес вне его никуда не ведёт.
+ */
 const ALLOWED_DOWNLOAD_HOSTS = new Set([
   "result-proxy.ru",
   "www.result-proxy.ru",
@@ -43,6 +42,12 @@ function isSafeDownloadURL(raw) {
   return ALLOWED_DOWNLOAD_HOSTS.has(u.hostname.toLowerCase());
 }
 
+/**
+ * UpdateNotificationModal — «вышла новая версия» без встроенной загрузки.
+ *
+ * Показывается вместо UpdaterModal, когда в манифесте нет готового файла
+ * под эту платформу: обновляться приходится вручную, с сайта.
+ */
 const UpdateNotificationModal = ({
   currentVersion,
   latestVersion,
@@ -53,68 +58,41 @@ const UpdateNotificationModal = ({
 
   if (!latestVersion) return null;
 
+  const openDownloadPage = () => {
+    if (isSafeDownloadURL(downloadUrl)) {
+      window.open(downloadUrl, "_blank", "noopener,noreferrer");
+    } else {
+      if (downloadUrl) {
+        console.warn("Update downloadUrl rejected by host allow list:", downloadUrl);
+      }
+      document.dispatchEvent(new CustomEvent("open-download-modal"));
+    }
+    onClose();
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="bg-zinc-950 border border-zinc-800 rounded-3xl shadow-2xl max-w-sm w-full p-6 animate-fade-in-up">
-        <div className="flex justify-between items-start mb-4">
-          <div className="flex items-center gap-3 text-[#00A819]">
-            <DownloadCloud size={24} />
-            <h3 className="text-xl font-bold text-white">
-              {t("update.title", "Доступно обновление")}
-            </h3>
-          </div>
-          <button
-            onClick={onClose}
-            className="text-zinc-500 hover:text-[#00A819] transition-colors outline-none focus:outline-none focus:ring-0"
-          >
-            <X size={20} />
-          </button>
-        </div>
-
-        <p className="text-zinc-500 text-sm mb-6 whitespace-pre-wrap">
-          {t(
-            "update.message",
-            "У вас установлена версия {{current}}, доступна новая версия {{latest}}.",
-            {
-              current: currentVersion,
-              latest: latestVersion,
-            },
-          )}
-        </p>
-
-        <div className="flex gap-3">
-          <button
-            onClick={onClose}
-            className="flex-1 py-3 px-4 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white hover:border-[#00A819] transition-all font-bold outline-none focus:outline-none"
-          >
-            {t("update.later", "Позже")}
-          </button>
-
-          <button
-            onClick={() => {
-              if (isSafeDownloadURL(downloadUrl)) {
-                window.open(downloadUrl, "_blank", "noopener,noreferrer");
-              } else {
-                // downloadUrl was missing or pointed outside the allowed
-                // host list — fall back to the in-app downloads modal so
-                // the user is never redirected to an arbitrary URL.
-                if (downloadUrl) {
-                  console.warn(
-                    "Update downloadUrl rejected by host allow list:",
-                    downloadUrl,
-                  );
-                }
-                document.dispatchEvent(new CustomEvent("open-download-modal"));
-              }
-              onClose();
-            }}
-            className="flex-1 py-3 px-4 rounded-xl bg-[#007E3A] hover:bg-[#00A819] text-white transition-all font-bold border-transparent outline-none focus:outline-none"
-          >
+    <Dialog
+      icon="import"
+      title={t("update.title", "Доступно обновление")}
+      subtitle={<Badge color="success">{latestVersion}</Badge>}
+      onClose={onClose}
+      actions={
+        <>
+          <Button onClick={onClose}>{t("update.later", "Позже")}</Button>
+          <Button variant="green" onClick={openDownloadPage}>
             {t("update.download", "Обновить")}
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </>
+      }
+    >
+      <p className="rv-dialog__text">
+        {t(
+          "update.message",
+          "У вас установлена версия {{current}}, доступна новая версия {{latest}}.",
+          { current: currentVersion, latest: latestVersion },
+        )}
+      </p>
+    </Dialog>
   );
 };
 
