@@ -1,5 +1,5 @@
 {
-  "version": "",
+  "version": "3.5.1",
   "releaseTitle": {
     "ru": "Умный режим: адаптивный режим починен, мёртвые CDN уходят в VPN",
     "en": "Smart mode: adaptive mode fixed, dead CDN ranges go through the VPN"
@@ -17,5 +17,31 @@
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",
-  "platforms": {}
+  "platforms": {
+    "windows-amd64-portable": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.1/ResultV.exe",
+      "sha256": "ea32d92dd16d8459b2dadeb80e04628cf6ab7d1a7856df3951955fdaa96b4a75",
+      "size": 62099456
+    },
+    "windows-amd64-installer": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.1/ResultV-amd64-installer.exe",
+      "sha256": "3fabd676bd0bf9e5d9c9e5386781b615b4f8b2bdc53b23e89259b912eff430d5",
+      "size": 29113515
+    },
+    "darwin-universal": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.1/ResultV.dmg",
+      "sha256": "03b9fd559609489a092e6b6d18aec29b85ed75fd047629e8935c8ef14eba9ed7",
+      "size": 65552495
+    },
+    "linux-amd64-appimage": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.1/ResultV-3.5.1-x86_64.AppImage",
+      "sha256": "3da9561d7d3c5c3ca7d49ba4d19f717b2b7df96d13850f743e0129d81b4ec765",
+      "size": 95984120
+    },
+    "linux-amd64-deb": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.1/resultv_3.5.1_amd64.deb",
+      "sha256": "3fd1edab7ad13eb5f003af9eeb203d01e58da0ad2b1a1aba1c3b92f406e3b396",
+      "size": 28102522
+    }
+  }
 }
