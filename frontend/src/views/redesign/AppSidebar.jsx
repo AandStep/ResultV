@@ -40,15 +40,9 @@ export default function AppSidebar() {
    * Раскрытость хранится в контексте, а не здесь: каждая страница рисует свой
    * экземпляр меню, и своё состояние схлопывалось бы на каждом переходе.
    */
-  const { activeTab, setActiveTab, setEditingProxy, sidebarOpen, setSidebarOpen } =
+  const { activeTab, setActiveTab, sidebarOpen, setSidebarOpen } =
     useConfigContext();
   const version = useAppVersion();
-
-  /* «Добавить» — это всегда новый сервер: правку начинают из списка. */
-  const select = (key) => {
-    if (key === "add") setEditingProxy(null);
-    setActiveTab(key);
-  };
 
   return (
     <Sidebar
@@ -58,7 +52,7 @@ export default function AppSidebar() {
       items={MENU.map((item) => ({ ...item, label: t(item.label) }))}
       bottomItem={{ key: "settings", icon: "settings", label: t("sidebar.settings") }}
       activeKey={activeTab}
-      onSelect={select}
+      onSelect={setActiveTab}
     />
   );
 }

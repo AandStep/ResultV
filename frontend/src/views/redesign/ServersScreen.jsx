@@ -110,7 +110,6 @@ export default function ServersScreen() {
     showConfirmDialog,
     handleSaveProxy,
     setActiveTab,
-    setEditingProxy,
   } = useConfigContext();
   const {
     activeProxy,
@@ -539,7 +538,6 @@ export default function ServersScreen() {
       isConnected,
       selectAndConnect,
       setActiveTab,
-      setEditingProxy,
     );
   };
 
