@@ -16,9 +16,9 @@ import kotlin.math.max
  * Sparkline — visual parity with desktop SpeedChart (SpeedChart.jsx).
  *
  * Renders [values] as a thin polyline scaled to max(values, [baseline]).
- * No fill, 0.9 alpha, 2 dp stroke — толщина 3 из макета, пересчитанная под
- * плитку телефона — matches the desktop look so a brief 1 s burst draws as
- * a smooth dip-and-return rather than a tall narrow spike.
+ * No fill, 0.9 alpha, 2 dp stroke — weight 3 from the desktop mockup,
+ * rescaled for the phone tile — matches the desktop look so a brief 1 s
+ * burst draws as a smooth dip-and-return rather than a tall narrow spike.
  *
  * Expects [values] to already be pre-filled (e.g. with zeros) at the buffer
  * size — TrafficStats does this — so the line always has a baseline to draw
