@@ -1065,7 +1065,7 @@ fun PowerButton(
         targetValue = when (look) {
             HomeLook.Idle -> Color.Transparent
             HomeLook.Processing -> RvColor.warningA20
-            HomeLook.Success -> RvColor.mainA50
+            HomeLook.Success -> RvColor.mainA20
             HomeLook.Error -> RvColor.errorsA20
         },
         animationSpec = motion, label = "powerGlow",
