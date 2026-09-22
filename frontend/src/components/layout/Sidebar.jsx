@@ -29,6 +29,7 @@ import { useConfigContext } from "../../context/ConfigContext";
 import { useConnectionContext } from "../../context/ConnectionContext";
 import logo from "../../assets/logo.png";
 import { useTranslation } from "react-i18next";
+import { useAppVersion } from "../../hooks/useCheckUpdate";
 import { LanguageSwitcher } from "../ui/LanguageSwitcher";
 
 const NavItem = ({ icon, label, isActive, onClick }) => (
@@ -49,6 +50,7 @@ export const Sidebar = () => {
   const { activeTab, setActiveTab, setEditingProxy } = useConfigContext();
   const { daemonStatus } = useConnectionContext();
   const { t } = useTranslation();
+  const version = useAppVersion();
 
   return (
     <div className="hidden md:flex flex-col w-64 bg-zinc-900 border-r border-zinc-800 shrink-0">
@@ -58,7 +60,14 @@ export const Sidebar = () => {
           alt="ResultV"
           className="w-8 h-8 drop-shadow-[0_0_10px_rgba(0,126,58,0.5)]"
         />
-        <span className="text-xl font-bold text-white">ResultV</span>
+        {/* Название и версия идут колонкой, как в макете (Figma 6492:1403):
+            версия — вторая строка, мельче и приглушённее. */}
+        <div className="flex flex-col leading-none">
+          <span className="text-xl font-bold text-white">ResultV</span>
+          {version && (
+            <span className="text-xs text-white/20 mt-1">{version}</span>
+          )}
+        </div>
       </div>
 
       {daemonStatus === "offline" && (
