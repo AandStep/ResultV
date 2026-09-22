@@ -149,24 +149,34 @@
   opacity: 1;
 }
 
+.rv-sidebar__wordmark {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 5px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 /*
  * Название набрано шрифтом Benzin Bold — его нет ни в системе, ни в проекте.
  * До того как файл появится, текст рисуется основным шрифтом.
  * См. docs/design/GAPS.md SB-1.
  */
-.rv-sidebar__wordmark {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  padding-top: 5px;
+.rv-sidebar__name {
   font-family: "Benzin", var(--rv-font-family);
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
-  line-height: 1;
-  text-align: center;
-  white-space: nowrap;
   color: var(--rv-white);
+}
+
+.rv-sidebar__version {
+  padding-top: 4px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--rv-white-a20);
 }
 
 .rv-sidebar__collapse {

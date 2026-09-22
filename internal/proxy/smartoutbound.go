@@ -158,15 +158,10 @@ func (s *smartOutbound) member(c smartChoice) adapter.Outbound {
 	return s.direct
 }
 
-// decide answers for one connection. Racing is switched off here and turned on
-// by the task that implements it.
+// decide answers for one connection.
 func (s *smartOutbound) decide(metadata *adapter.InboundContext) smartChoice {
-	return decideSmart(s.store, smartHost(metadata), metadata.Destination.Addr, s.raceAllowed())
+	return decideSmart(s.store, smartHost(metadata), metadata.Destination.Addr)
 }
-
-// raceAllowed is the breaker (spec §6.5). While the direct path is failing on
-// everything at once, nothing is raced and nothing is learned.
-func (s *smartOutbound) raceAllowed() bool { return s.health.healthy() }
 
 // smartHost is the name this connection is for, or "" when there is none.
 // FakeIP puts the name in Destination.Fqdn before any rule is matched (fork
@@ -207,7 +202,7 @@ func (s *smartOutbound) attributeProxy(conn net.Conn, metadata adapter.InboundCo
 
 func (s *smartOutbound) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	rec, known := s.lookupAndRefresh(&metadata)
-	choice := choiceFrom(rec, known, s.raceAllowed())
+	choice := choiceFrom(rec, known)
 	if choice == chooseRace {
 		s.raceConnection(ctx, conn, metadata, onClose)
 		return
@@ -251,28 +246,34 @@ func (s *smartOutbound) raceConnection(ctx context.Context, conn net.Conn, metad
 		func(dialCtx context.Context) (net.Conn, error) {
 			return s.proxy.DialContext(dialCtx, N.NetworkTCP, metadata.Destination)
 		})
+	if report, ok := raceLinkEvidence(res); report {
+		s.health.record(smartHost(&metadata), ok)
+	}
 	if res.Err != nil {
-		s.health.record(smartHost(&metadata), false)
 		N.CloseOnHandshakeFailure(conn, onClose, res.Err)
-		s.logger.ErrorContext(ctx, res.Err)
+		s.logger.ErrorContext(ctx, E.Cause(res.Err, raceTarget(&metadata)))
 		return
 	}
 
-	// A race the direct path won is proof the link works; one the proxy won is
-	// one more site that did not answer directly.
-	s.health.record(smartHost(&metadata), !res.ViaProxy)
-	s.learn(metadata, res.ViaProxy)
+	if raceTeaches(res) {
+		s.learn(metadata, res.ViaProxy)
+	}
 	if res.ViaProxy {
 		conn = s.attributeProxy(conn, metadata)
-	} else {
+	} else if raceTeaches(res) {
 		// Direct won on bytes. Whether those bytes were the site or a wall is a
-		// different question, and only a probe can answer it.
+		// different question, and only a probe can answer it. A handover has no
+		// bytes to be suspicious of, so there is nothing to recheck.
 		s.recheckAsync(smartHost(&metadata))
 	}
 	// The server's first bytes are already off the socket, so they are handed
 	// back in front of it; from here this is an ordinary relayed pair and the
-	// core's own copy loop owns it.
-	server := bufio.NewCachedConn(res.Conn, buf.As(res.Head))
+	// core's own copy loop owns it. A handover carries none, and an empty cache
+	// is a wrapper with nothing to do.
+	server := res.Conn
+	if len(res.Head) > 0 {
+		server = bufio.NewCachedConn(res.Conn, buf.As(res.Head))
+	}
 	s.connection.NewConnection(ctx, constantDialer{conn: server}, conn, metadata, onClose)
 }
 
@@ -381,7 +382,7 @@ func (s *smartOutbound) NewPacketConnection(ctx context.Context, conn N.PacketCo
 	// somewhere safe. A refusal costs the client one immediate fall back to TCP
 	// — where the race does work — rather than the full HTTP/3 timeout.
 	rec, known := s.lookupAndRefresh(&metadata)
-	choice := choiceFrom(rec, known, false)
+	choice := choiceFrom(rec, known)
 	switch decideSmartUDP(choice, known, metadata.Destination.Port, s.nodeCarriesUDP()) {
 	case udpRefuse:
 		err := E.New("smart: udp to ", metadata.Destination, " refused (verdict ", choice,

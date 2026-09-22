@@ -5,6 +5,7 @@ go 1.26.4
 require (
 	github.com/energye/systray v1.0.3
 	github.com/google/uuid v1.6.0
+	github.com/miekg/dns v1.1.72
 	github.com/mitchellh/go-ps v1.0.0
 	github.com/prometheus-community/pro-bing v0.4.0
 	github.com/quic-go/quic-go v0.60.0
@@ -124,7 +125,6 @@ require (
 	github.com/mdlayher/socket v0.6.0 // indirect
 	github.com/metacubex/utls v1.8.7 // indirect
 	github.com/mholt/acmez/v3 v3.1.6 // indirect
-	github.com/miekg/dns v1.1.72 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/openai/openai-go/v3 v3.26.0 // indirect
 	github.com/panjf2000/ants/v2 v2.12.0 // indirect

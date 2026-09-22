@@ -1,0 +1,95 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * Окно обновления. Само окно — обычный Dialog кита; здесь только полоса
+ * загрузки и разбор отказа.
+ *
+ * Полосы загрузки в макете нет ни на одном кадре — она собрана из токенов:
+ * дорожка белым 10 %, заполнение основным зелёным, скругление и зазоры
+ * такие же, как у остальных окон.
+ */
+
+.rv-updater__progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-8);
+  min-width: 0;
+}
+
+.rv-updater__figures {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--rv-space-8);
+  font-size: var(--rv-chip-size);
+  font-weight: var(--rv-chip-weight);
+  line-height: var(--rv-chip-leading);
+  color: var(--rv-white-a50);
+}
+
+.rv-updater__track {
+  height: 8px;
+  border-radius: var(--rv-radius-pill);
+  background: var(--rv-white-a10);
+  overflow: hidden;
+}
+
+.rv-updater__fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--rv-main-color);
+  transition: width var(--rv-transition);
+}
+
+.rv-updater__percent {
+  margin: 0;
+  text-align: center;
+  font-size: var(--rv-chip-size);
+  font-weight: var(--rv-chip-weight);
+  line-height: var(--rv-chip-leading);
+  color: var(--rv-white-a50);
+}
+
+/* --- Отказ --------------------------------------------------------------- */
+
+.rv-updater__failure {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-4);
+  min-width: 0;
+}
+
+.rv-updater__stage {
+  margin: 0;
+  font-size: var(--rv-regular-size);
+  font-weight: var(--rv-regular-weight);
+  line-height: var(--rv-regular-leading);
+  color: var(--rv-errors);
+}
+
+/*
+ * Причина приходит от Go одной строкой и бывает длинной без пробелов —
+ * путь к файлу, адрес. Рвём по любому месту, иначе она вылезет за окно.
+ */
+.rv-updater__reason {
+  margin: 0;
+  font-size: var(--rv-chip-size);
+  font-weight: var(--rv-chip-weight);
+  line-height: var(--rv-chip-leading);
+  color: var(--rv-white-a50);
+  overflow-wrap: anywhere;
+}

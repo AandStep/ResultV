@@ -270,3 +270,51 @@ func TestWireGuardNodeGetsNoFakeIPEvenWithTheSwitchOn(t *testing.T) {
 		})
 	}
 }
+
+// FakeIP hands the router a NAME where there used to be an address, so the
+// direct outbound has to resolve it at dial time. That lookup walks the DNS
+// rules, where the fakeip catch-all is waiting for it — and a fakeip transport
+// cannot answer an internal lookup, so the dial sat for the full deadline and
+// died. Measured on a live engine 2026-09-22:
+//
+//	router: found fakeip domain: example.com
+//	outbound/direct[direct]: outbound connection to example.com:80
+//	dns: match[3] query_type=[A AAAA] => route(fakeip)
+//	dns: lookup failed for example.com: context deadline exceeded   (10.0s)
+//
+// Naming a resolver on the outbound takes dial-time resolution off the rule
+// walk entirely, which is the same move serverDomainResolverTag already makes
+// for the node's own address.
+func TestDirectOutboundResolvesOutsideTheRulesUnderFakeIP(t *testing.T) {
+	cfg := mustBuildTunnelModeConfig(t, adaptiveTunnelConfig())
+	direct := mustOutbound(t, cfg, "direct")
+	if direct.DomainResolver == "" {
+		t.Fatal("у direct нет domain_resolver: резолв уйдёт в обход правил и попадёт в fakeip-ловушку")
+	}
+	if direct.DomainResolver == fakeIPTag {
+		t.Fatalf("direct резолвит через fakeip: %s", direct.DomainResolver)
+	}
+	if !dnsServerExists(cfg.DNS, direct.DomainResolver) {
+		t.Fatalf("direct ссылается на несуществующий DNS-сервер %q", direct.DomainResolver)
+	}
+}
+
+// Without FakeIP a destination reaches direct as an address, so there is
+// nothing to resolve and nothing to change.
+func TestDirectOutboundKeepsItsOldShapeWithoutFakeIP(t *testing.T) {
+	plain := adaptiveTunnelConfig()
+	plain.AdaptiveSmart = false
+	cfg := mustBuildTunnelModeConfig(t, plain)
+	if direct := mustOutbound(t, cfg, "direct"); direct.DomainResolver != "" {
+		t.Fatalf("direct получил domain_resolver без FakeIP: %s", direct.DomainResolver)
+	}
+}
+
+func mustOutbound(t *testing.T, cfg SingBoxConfig, tag string) SBOutbound {
+	t.Helper()
+	out, ok := outboundByTag(cfg, tag)
+	if !ok {
+		t.Fatalf("аутбаунд %q не найден", tag)
+	}
+	return out
+}

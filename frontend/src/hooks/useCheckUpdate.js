@@ -60,6 +60,29 @@ async function fetchRemoteManifest() {
     return remoteResponse.json();
 }
 
+/**
+ * Версия работающей сборки. Тот же порядок, что у проверки обновлений:
+ * сначала спрашиваем бэкенд (источник правды — wails.json), и только если
+ * его нет рядом, берём зашитую на сборке константу.
+ */
+export const useAppVersion = () => {
+    const [version, setVersion] = useState(() =>
+        typeof __APP_VERSION__ !== "undefined" ? String(__APP_VERSION__) : "",
+    );
+
+    useEffect(() => {
+        let alive = true;
+        resolveLocalVersion().then((v) => {
+            if (alive && v) setVersion(v);
+        });
+        return () => {
+            alive = false;
+        };
+    }, []);
+
+    return version;
+};
+
 export const useCheckUpdate = () => {
     const [updateAvailable, setUpdateAvailable] = useState(false);
     const [latestVersionData, setLatestVersionData] = useState(null);

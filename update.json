@@ -1,52 +1,21 @@
 {
-  "version": "3.5.0",
+  "version": "",
   "releaseTitle": {
-    "ru": "Улучшения умного режима и новые разделы настроек",
-    "en": "Smart mode improvements and new settings sections"
+    "ru": "Умный режим: адаптивный режим починен, мёртвые CDN уходят в VPN",
+    "en": "Smart mode: adaptive mode fixed, dead CDN ranges go through the VPN"
   },
   "releaseNotes": [
     {
-      "type": "improve",
-      "ru": "Умный режим теперь имеет экспериментальный адаптивный режим, который без списка определяет заблокированные ресурсы и передает их в ВПН, настройка доступна в разделе \"Настройки\" -> \"Экспериментально\"",
-      "en": "The smart mode now has an experimental adaptive mode that determines blocked resources without a list and passes them to the VPN. The setting is available in the \"Settings\" -> \"Experimental\" section."
-    },
-    {
-      "type": "feature",
-      "ru": "Появился раздел \"Настройки\" -> \"Пинг\": можно выбрать, чем измерять задержку до серверов - автоматически по протоколу узла, через ICMP или HTTP-запросом через сам узел, - указать свой тестовый адрес и задать тайм-аут ожидания",
-      "en": "New \"Settings\" -> \"Ping\" section: choose how latency to servers is measured - automatically by node protocol, via ICMP, or with an HTTP request through the node itself - set your own test URL and the wait timeout"
+      "type": "fix",
+      "ru": "Улучшена работа адаптивного умного режима.",
+      "en": "Improved performance of the adaptive smart mode."
     },
     {
       "type": "improve",
-      "ru": "Обновление ядра и баг-фиксы",
-      "en": "Core update and bug fixes"
+      "ru": "Окно обновления переведено на новый дизайн.",
+      "en": "The update window has been translated to the new design."
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",
-  "platforms": {
-    "windows-amd64-portable": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.0/ResultV.exe",
-      "sha256": "e824be49affee62bb63706e66422a781e4d649158af3ab7717458cfa9986c10f",
-      "size": 62131712
-    },
-    "windows-amd64-installer": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.0/ResultV-amd64-installer.exe",
-      "sha256": "ec77c6483f57c3ed9a5c76ecbae43861c9414bdebd36cc9851daa50d75973905",
-      "size": 29120541
-    },
-    "darwin-universal": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.0/ResultV.dmg",
-      "sha256": "13a3002512f4827e50c557a8b1bc4697184f5d09a90e7654e9fcd3ce6c60e2af",
-      "size": 65452123
-    },
-    "linux-amd64-appimage": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.0/ResultV-3.5.0-x86_64.AppImage",
-      "sha256": "84f4e03b8509a4df05a6badfc9051971e7c2febbb80c6358d264a8b2c1616c7b",
-      "size": 96000504
-    },
-    "linux-amd64-deb": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.0/resultv_3.5.0_amd64.deb",
-      "sha256": "ad778ab8810ae09fdd9a270fe5eda21baf1995f690dc749854c5ca39c240a4ff",
-      "size": 28110768
-    }
-  }
+  "platforms": {}
 }

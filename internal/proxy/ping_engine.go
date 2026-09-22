@@ -56,7 +56,7 @@ func BuildPingProbeConfig(proxy ProxyConfig, listenPort int, bindIPv4 string) (S
 	// The probe engine's DNS block below has the same shape tunnel mode builds —
 	// the hosts record when the server is pinned, the system resolver when it is
 	// not — so it asks for the tag the same way.
-	outbounds := buildOutbounds(proxy, serverDomainResolverTag(proxy, ProxyModeTunnel, nil))
+	outbounds := buildOutbounds(proxy, serverDomainResolverTag(proxy, ProxyModeTunnel, nil), "")
 	found := false
 	for i := range outbounds {
 		if outbounds[i].Tag != "proxy" {

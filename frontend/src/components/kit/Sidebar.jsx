@@ -28,10 +28,14 @@ import "./Sidebar.css";
  * развёрнутом виде. Нижний пункт (в макете «Настройки») передаётся отдельно —
  * он прижат к низу.
  *
+ * `version` — вторая строка под названием (Figma 6492:1403). Приходит пропом,
+ * как заголовок у шапки: кит не знает, откуда берётся версия.
+ *
  * `state` нужен витрине кита, чтобы показать вариант OpenHover без курсора.
  */
 export default function Sidebar({
   opened = false,
+  version = "",
   items = [],
   bottomItem,
   activeKey,
@@ -70,7 +74,8 @@ export default function Sidebar({
                 CSS — тем же ходом, что и подписи пунктов, чтобы всё
                 появлялось разом и внутри уже раздвинутого сайдбара. */}
             <span className="rv-sidebar__wordmark" data-visible={opened}>
-              ResultV
+              <span className="rv-sidebar__name">ResultV</span>
+              {version && <span className="rv-sidebar__version">{version}</span>}
             </span>
           </button>
           <button

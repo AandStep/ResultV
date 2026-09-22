@@ -129,7 +129,6 @@ export default function HomeScreen() {
     toggleFavorite,
     showAlertDialog,
     setActiveTab,
-    setEditingProxy,
   } = useConfigContext();
   const {
     isConnected,
@@ -514,10 +513,7 @@ export default function HomeScreen() {
       serverGroups={serverGroups}
       /* Серверов нет вовсе — вместо карточки приглашение их добавить. */
       empty={proxies.length === 0}
-      onAddServer={() => {
-        setEditingProxy(null);
-        setActiveTab("add");
-      }}
+      onAddServer={() => setActiveTab("add")}
       /* Пустой список раскрывать незачем: карточка осталась бы такой же. */
       serverListOpen={listOpen && rowCount > 0}
       onToggleServerList={() => setListOpen((v) => !v)}

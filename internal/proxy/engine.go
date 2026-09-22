@@ -945,7 +945,7 @@ func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 			Listen:     host,
 			ListenPort: port,
 		}},
-		Outbounds:    buildOutbounds(cfg.Proxy, nodeResolver),
+		Outbounds:    buildOutbounds(cfg.Proxy, nodeResolver, ""),
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
 	}
@@ -1155,7 +1155,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	// mirrors the DNS rule buildDNS emits for this same domain — so it can be
 	// named before the DNS block exists.
 	nodeResolver := serverDomainResolverTag(cfg.Proxy, ProxyModeTunnel, nil)
-	outbounds := buildOutbounds(cfg.Proxy, nodeResolver)
+	outbounds := buildOutbounds(cfg.Proxy, nodeResolver, directDomainResolverTag(cfg))
 	if adaptiveSmartActive(cfg) {
 		outbounds = append(outbounds, SBOutbound{
 			Type:      smartOutboundTag,
@@ -1284,25 +1284,48 @@ func effectiveTunStack(stack string) string {
 }
 
 // buildOutbounds assembles the outbound list. domainResolver is the tag from
-// serverDomainResolverTag and lands on the node's own outbound only: "direct"
-// dials every destination the router sends it and has no single correct
-// resolver, so it stays on the core's rule-walking fallback deliberately.
-func buildOutbounds(proxy ProxyConfig, domainResolver string) []SBOutbound {
+// serverDomainResolverTag and lands on the node's own outbound;
+// directResolver is directDomainResolverTag's answer for "direct" and is empty
+// unless FakeIP is on. See directDomainResolverTag for why that one exists.
+func buildOutbounds(proxy ProxyConfig, domainResolver, directResolver string) []SBOutbound {
+	directOut := SBOutbound{Type: "direct", Tag: "direct", DomainResolver: directResolver}
 	pt := strings.ToUpper(strings.TrimSpace(proxy.Type))
 	if pt == "WIREGUARD" || pt == "AMNEZIAWG" {
 		return []SBOutbound{
-			{Type: "direct", Tag: "direct"},
+			directOut,
 			{Type: "block", Tag: "block"},
 		}
 	}
 	proxyOut := buildProxyOutbound(proxy)
 	proxyOut.DomainResolver = domainResolver
 	outbounds := []SBOutbound{
-		{Type: "direct", Tag: "direct"},
+		directOut,
 		{Type: "block", Tag: "block"},
 		proxyOut,
 	}
 	return outbounds
+}
+
+// directDomainResolverTag names the server that resolves a domain the direct
+// outbound is asked to dial.
+//
+// It is needed only under FakeIP, and there it is not a preference but the
+// difference between a working direct path and none at all. FakeIP replaces the
+// destination address with the NAME before any rule runs, so every direct dial
+// becomes a dial-by-name; with no resolver on the outbound the core resolves it
+// by walking the DNS rules, where the fakeip catch-all claims it, and a fakeip
+// transport cannot answer an internal lookup. Measured on a live engine
+// (2026-09-22): ten seconds of silence, then "lookup example.com: context
+// deadline exceeded", for every destination that was not on the block-list.
+//
+// "local" and not the tunnel resolver: this is the direct path, and Smart
+// already resolves direct traffic through the system resolver for the GeoDNS
+// reason dns.Final carries. buildDNS emits the tag in every tunnel-mode branch.
+func directDomainResolverTag(cfg EngineConfig) string {
+	if !adaptiveSmartActive(cfg) {
+		return ""
+	}
+	return "local"
 }
 
 // serverPinnedIPs returns every literal IP associated with the proxy server,

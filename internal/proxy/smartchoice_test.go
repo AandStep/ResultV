@@ -37,10 +37,10 @@ func TestDecideSmartFollowsAKnownVerdict(t *testing.T) {
 	s.Learn("blocked.example", verdict.Proxy)
 	s.Learn("clean.example", verdict.Direct)
 
-	if got := decideSmart(s, "blocked.example", netip.Addr{}, true); got != chooseProxy {
+	if got := decideSmart(s, "blocked.example", netip.Addr{}); got != chooseProxy {
 		t.Errorf("blocked name went %v, want proxy", got)
 	}
-	if got := decideSmart(s, "clean.example", netip.Addr{}, true); got != chooseDirect {
+	if got := decideSmart(s, "clean.example", netip.Addr{}); got != chooseDirect {
 		t.Errorf("clean name went %v, want direct", got)
 	}
 }
@@ -49,27 +49,17 @@ func TestDecideSmartFollowsAKnownVerdict(t *testing.T) {
 // to reach it — that is the whole feature.
 func TestDecideSmartRacesAnUnknownName(t *testing.T) {
 	s := choiceStore(t)
-	if got := decideSmart(s, "never-seen.example", netip.Addr{}, true); got != chooseRace {
+	if got := decideSmart(s, "never-seen.example", netip.Addr{}); got != chooseRace {
 		t.Fatalf("unknown name went %v, want race", got)
-	}
-}
-
-// With the breaker tripped the direct path is presumed broken for reasons that
-// have nothing to do with censorship, so nothing may be raced and nothing may
-// be learned. Falling back to direct keeps the pre-feature behaviour.
-func TestDecideSmartWithoutRaceFallsBackToDirect(t *testing.T) {
-	s := choiceStore(t)
-	if got := decideSmart(s, "never-seen.example", netip.Addr{}, false); got != chooseDirect {
-		t.Fatalf("unknown name went %v with racing off, want direct", got)
 	}
 }
 
 // A tripped breaker must not throw away what is already known: a name proven
 // blocked last week is still blocked while the Wi-Fi is flaky.
-func TestDecideSmartKeepsKnownVerdictsWithoutRace(t *testing.T) {
+func TestDecideSmartKeepsKnownVerdicts(t *testing.T) {
 	s := choiceStore(t)
 	s.Learn("blocked.example", verdict.Proxy)
-	if got := decideSmart(s, "blocked.example", netip.Addr{}, false); got != chooseProxy {
+	if got := decideSmart(s, "blocked.example", netip.Addr{}); got != chooseProxy {
 		t.Fatalf("a known verdict was dropped with racing off: %v", got)
 	}
 }
@@ -79,7 +69,7 @@ func TestDecideSmartUsesTheAddressWhenThereIsNoName(t *testing.T) {
 	s := choiceStore(t)
 	addr := netip.MustParseAddr("149.154.167.51")
 	s.LearnIP(addr, verdict.Proxy)
-	if got := decideSmart(s, "", addr, true); got != chooseProxy {
+	if got := decideSmart(s, "", addr); got != chooseProxy {
 		t.Fatalf("bare address went %v, want proxy", got)
 	}
 }
@@ -91,17 +81,17 @@ func TestDecideSmartPrefersTheNameOverTheAddress(t *testing.T) {
 	addr := netip.MustParseAddr("203.0.113.9")
 	s.Learn("named.example", verdict.Direct)
 	s.LearnIP(addr, verdict.Proxy)
-	if got := decideSmart(s, "named.example", addr, true); got != chooseDirect {
+	if got := decideSmart(s, "named.example", addr); got != chooseDirect {
 		t.Fatalf("the address overruled the name: %v", got)
 	}
 }
 
 func TestDecideSmartWithNoInputAtAll(t *testing.T) {
 	s := choiceStore(t)
-	if got := decideSmart(s, "", netip.Addr{}, true); got != chooseRace {
+	if got := decideSmart(s, "", netip.Addr{}); got != chooseRace {
 		t.Fatalf("got %v, want race", got)
 	}
-	if got := decideSmart(nil, "x.example", netip.Addr{}, true); got != chooseRace {
+	if got := decideSmart(nil, "x.example", netip.Addr{}); got != chooseRace {
 		t.Fatalf("a nil store must not panic and must not pretend to know: %v", got)
 	}
 }

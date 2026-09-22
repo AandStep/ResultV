@@ -441,7 +441,6 @@ export const useAppConfig = (addLog) => {
             isConnected,
             selectAndConnect,
             setActiveTab,
-            setEditingProxy,
         ) => {
             let countryCode = await detectCountry(proxyData.ip);
 
@@ -482,7 +481,6 @@ export const useAppConfig = (addLog) => {
                 addLog(`Новый профиль "${proxyData.name}" добавлен.`, "success");
                 setActiveTab("list");
             }
-            setEditingProxy(null);
         },
         [addLog]
     );

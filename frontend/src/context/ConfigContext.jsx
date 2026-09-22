@@ -34,7 +34,6 @@ export const ConfigProvider = ({ children }) => {
      * состояние, из-за чего раскрытое меню схлопывалось на каждом переходе.
      */
     const [sidebarOpen, setSidebarOpen] = useState(false);
-    const [editingProxy, setEditingProxy] = useState(null);
     const [pendingDeepLink, setPendingDeepLink] = useState("");
     const [pendingDeepLinkSource, setPendingDeepLinkSource] = useState("");
 
@@ -106,8 +105,6 @@ export const ConfigProvider = ({ children }) => {
         setActiveTab,
         sidebarOpen,
         setSidebarOpen,
-        editingProxy,
-        setEditingProxy,
         pendingDeepLink,
         setPendingDeepLink,
         pendingDeepLinkSource,
