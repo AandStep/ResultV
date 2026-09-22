@@ -19,8 +19,12 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/sagernet/sing-box/adapter"
+	M "github.com/sagernet/sing/common/metadata"
 )
 
 // liveServer answers as soon as it has been written to. That is what a working
@@ -159,4 +163,35 @@ func (c *notifyCloseConn) Close() error {
 	default:
 	}
 	return c.Conn.Close()
+}
+
+// "neither path answered" is what the user saw in the log, and it was not
+// quite true: the deadline branch fires while a path is still SILENT, not
+// refused. The difference matters when reading a log — a refusal is an answer
+// of sorts, silence is a black hole — so the message has to say which.
+func TestRaceDeadlineSaysAPathWasStillSilent(t *testing.T) {
+	res := runSmartRace(context.Background(), []byte("hello"), refusingDialer(), blackHoleServer(t))
+	if res.Err == nil {
+		res.Conn.Close()
+		t.Fatal("гонка отчиталась успехом, хотя один путь отказал, а второй молчал")
+	}
+	if !strings.Contains(res.Err.Error(), "silent") {
+		t.Fatalf("сообщение не говорит, что путь молчал: %v", res.Err)
+	}
+}
+
+// An error nobody can attribute to a destination is a line in the log and
+// nothing more: the user's report of this failure could not say which site it
+// was, because the message carried only a connection id.
+func TestRaceFailureNamesTheDestination(t *testing.T) {
+	named := adapter.InboundContext{Domain: "example.com"}
+	named.Destination = M.ParseSocksaddrHostPort("198.18.0.3", 443)
+	if got := raceTarget(&named); !strings.Contains(got, "example.com") {
+		t.Fatalf("имя назначения потеряно: %q", got)
+	}
+	bare := adapter.InboundContext{}
+	bare.Destination = M.ParseSocksaddrHostPort("149.154.167.51", 443)
+	if got := raceTarget(&bare); !strings.Contains(got, "149.154.167.51") {
+		t.Fatalf("адрес назначения потерян: %q", got)
+	}
 }

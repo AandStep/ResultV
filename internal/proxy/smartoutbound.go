@@ -251,7 +251,7 @@ func (s *smartOutbound) raceConnection(ctx context.Context, conn net.Conn, metad
 	}
 	if res.Err != nil {
 		N.CloseOnHandshakeFailure(conn, onClose, res.Err)
-		s.logger.ErrorContext(ctx, res.Err)
+		s.logger.ErrorContext(ctx, E.Cause(res.Err, raceTarget(&metadata)))
 		return
 	}
 

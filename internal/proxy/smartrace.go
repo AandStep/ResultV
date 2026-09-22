@@ -18,9 +18,11 @@ package proxy
 import (
 	"context"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
@@ -43,6 +45,16 @@ const (
 	// know the server spoke; reading more would only delay the handover.
 	smartFirstReadBudget = 8 * 1024
 )
+
+// raceTarget is what a failed race should be reported against: the name when
+// there is one, the address otherwise. Without it the log carries a connection
+// id and nothing a user or a reader can act on.
+func raceTarget(metadata *adapter.InboundContext) string {
+	if host := smartHost(metadata); host != "" {
+		return host
+	}
+	return metadata.Destination.String()
+}
 
 // raceDialer opens one candidate connection.
 type raceDialer func(ctx context.Context) (net.Conn, error)
@@ -134,11 +146,16 @@ func runSmartRace(ctx context.Context, first []byte, direct, proxy raceDialer) r
 				return raceResult{Err: lastErr}
 			}
 		case <-ctx.Done():
+			// Not "both paths failed": the deadline fires while `pending`
+			// attempts are still connected and silent, which is a different
+			// diagnosis from a refusal and has to read as one.
 			go drainLosers(results, pending)
 			if lastErr == nil {
 				lastErr = ctx.Err()
 			}
-			return raceResult{Err: E.Cause(lastErr, "smart: neither path answered")}
+			return raceResult{Err: E.Cause(lastErr,
+				"no answer in ", smartRaceDeadline.String(), ", ",
+				strconv.Itoa(pending), " path(s) still silent")}
 		}
 	}
 }
