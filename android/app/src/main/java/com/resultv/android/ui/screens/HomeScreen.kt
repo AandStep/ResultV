@@ -54,6 +54,7 @@ import com.resultv.android.theme.RvColor
 import com.resultv.android.theme.RvRadius
 import com.resultv.android.theme.RvSpace
 import com.resultv.android.theme.rvBorder
+import com.resultv.android.ui.components.HomeLook
 import com.resultv.android.ui.components.PowerButton
 import com.resultv.android.ui.components.ProfileEditSheet
 import com.resultv.android.ui.components.ProfileSortMenu
@@ -73,6 +74,7 @@ import com.resultv.android.vpn.Subscription
 import com.resultv.android.vpn.SubscriptionRepository
 import com.resultv.android.vpn.VpnState
 import com.resultv.android.vpn.VpnStatus
+import com.resultv.android.vpn.serverDisplayName
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -183,6 +185,7 @@ fun HomeScreen(
                     profiles = visibleHomeProfiles,
                     subscriptions = subsState.subs,
                     activeId = profilesState.activeId,
+                    accent = homeLook(status),
                     pings = pings,
                     pingInflight = pingInflight,
                     countries = countries,
@@ -374,6 +377,8 @@ private fun ProfileDropdown(
     profiles: List<Profile>,
     subscriptions: List<Subscription>,
     activeId: String?,
+    /** Состояние подключения — им подсвечивается строка выбранного сервера. */
+    accent: HomeLook,
     pings: Map<String, PingRepository.Sample>,
     pingInflight: Set<String>,
     countries: Map<String, String>,
@@ -418,12 +423,13 @@ private fun ProfileDropdown(
                         SectionLabel(p.name)
                     } else {
                         ServerRow(
-                            name = p.name,
-                            subtitle = p.subtitle,
+                            name = serverDisplayName(p.name, p.country ?: countries[p.id]),
+                            badges = p.badges,
                             countryCode = p.country ?: countries[p.id],
                             isAuto = p.isAuto,
                             isActive = p.id == activeId,
                             isFavorite = p.isFavorite,
+                            accent = if (p.id == activeId) accent else HomeLook.Idle,
                             onClick = { onSelect(p) },
                             onLongClick = { onLongPress(p) },
                             latencyMs = pings[p.id]?.takeIf { it.reachable }?.latencyMs,
@@ -592,5 +598,4 @@ private fun AddProfileShortcut(onClick: () -> Unit) {
 // shape that consumers were already using.
 
 internal fun profileIsAuto(p: Profile): Boolean = p.isAuto
-internal fun profileSubtitle(p: Profile): String = p.subtitle
 internal fun profileProtocol(p: Profile): String = p.protocol

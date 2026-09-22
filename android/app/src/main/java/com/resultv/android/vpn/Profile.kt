@@ -60,9 +60,6 @@ data class Profile(
      */
     val badges: List<String> = computeBadges(isSection, isAuto, rawType, uri, parsedEntry)
 
-    /** Pre-formatted subtitle string used by ServerRow — avoids per-render JSON parsing. */
-    val subtitle: String = computeSubtitle()
-
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
         .put("name", name)
@@ -74,26 +71,6 @@ data class Profile(
 
     /** PingRepository reads this to avoid re-parsing entryJson on every probe. */
     internal fun cachedEntry(): JSONObject? = parsedEntry
-
-    private fun computeSubtitle(): String {
-        if (isSection) return ""
-        if (subscriptionId.isNotBlank()) {
-            return rawType.ifBlank { protocolFromUri(uri).orEmpty() }
-        }
-        if (uri.isNotBlank()) {
-            // Show only the protocol (e.g. "VLESS", "AWG"), mirroring how
-            // subscription rows display their type rather than the full URI.
-            return rawType.ifBlank { protocolFromUri(uri).orEmpty() }
-        }
-        val entry = parsedEntry ?: return ""
-        val type = entry.optString("type")
-        val ip = entry.optString("ip")
-        val port = entry.optInt("port")
-        return listOfNotNull(
-            type.takeIf { it.isNotBlank() },
-            "$ip:$port".takeIf { ip.isNotBlank() }
-        ).joinToString("  ·  ")
-    }
 
     companion object {
         fun fromJson(o: JSONObject) = Profile(

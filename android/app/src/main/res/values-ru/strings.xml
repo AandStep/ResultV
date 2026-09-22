@@ -211,6 +211,8 @@
 
     <!-- Sort menu -->
     <string name="ping_refresh_cd">Обновить пинг</string>
+    <!-- Бейдж протокола для авто-групп — у Profile.badges для них намеренно пусто. -->
+    <string name="badge_auto">Авто</string>
     <string name="ping_online">В сети</string>
     <!-- Offline labels shown for a probed-but-unreachable server. -->
     <string name="ping_timeout">Таймаут</string>

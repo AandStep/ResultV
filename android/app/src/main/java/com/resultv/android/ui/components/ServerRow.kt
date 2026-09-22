@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,31 +24,75 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import com.resultv.android.R
-import com.resultv.android.theme.rvBorder
 import com.resultv.android.theme.RvColor
 import com.resultv.android.theme.RvRadius
 import com.resultv.android.theme.RvSpace
+import com.resultv.android.theme.rvBorder
 
 /**
- * Server / profile row used by Home selector and Proxies list. Highlights
- * when active and shows a leading flag (or AUTO bolt) + name + optional
- * favorite star.
+ * Бейдж протокола — перенос `Badge` (Figma 6503:3035) из кита ПК.
+ *
+ * Первый бейдж ярче остальных: в макете это два разных варианта, First и
+ * Second. Разрядка 2 % — правило дизайнера поверх макета: имена протоколов
+ * набраны латиницей в верхнем регистре и без неё слипаются.
+ */
+@Composable
+fun ProtocolBadge(text: String, first: Boolean, accent: HomeLook) {
+    val bg = when (accent) {
+        HomeLook.Success -> RvColor.mainA10
+        HomeLook.Processing -> RvColor.warningA10
+        HomeLook.Error -> RvColor.errorsA10
+        HomeLook.Idle -> if (first) RvColor.LightGray else RvColor.lightGrayA50
+    }
+    val fg = when (accent) {
+        HomeLook.Success -> RvColor.Main
+        HomeLook.Processing -> RvColor.Warning
+        HomeLook.Error -> RvColor.Errors
+        HomeLook.Idle -> RvColor.whiteA50
+    }
+    Box(
+        modifier = Modifier
+            .height(20.dp)
+            .clip(RoundedCornerShape(percent = 50))
+            .background(bg)
+            .padding(horizontal = RvSpace.nest3),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.02.em,
+            color = fg,
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * Server / profile row used by Home selector and Proxies list. Protocol
+ * shows as badges above the name (перенос вида ПК — Figma ServerItem);
+ * an active row is marked by row background + green flag tile/badges, not
+ * by name colour (ResultV-dev ServerItem.css:86-96).
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ServerRow(
     name: String,
-    subtitle: String,
+    badges: List<String>,
     countryCode: String?,
     isAuto: Boolean,
     isActive: Boolean,
     isFavorite: Boolean,
     onClick: () -> Unit,
+    /** Подсветка плитки флага и бейджей под состояние подключения. */
+    accent: HomeLook = HomeLook.Idle,
     trailing: @Composable (() -> Unit)? = null,
     /** Latest ping in milliseconds when reachable, or null otherwise. */
     latencyMs: Int? = null,
@@ -67,26 +112,22 @@ fun ServerRow(
     /** Long-press handler — used by Proxies to open the edit sheet. */
     onLongClick: (() -> Unit)? = null,
 ) {
-    val bg = if (isActive) RvColor.Main.copy(alpha = 0.10f) else Color.White.copy(alpha = 0.03f)
-    val titleColor = if (isActive) RvColor.Second else MaterialTheme.colorScheme.onBackground
-    // Latency is colour-coded: green <80ms, amber 80–200ms, rose >200ms.
-    // latencyMs <= 0 means "reachable but RTT not measurable" (UDP probe for
-    // WireGuard/AmneziaWG, which don't answer the probe byte) — treat as online.
-    val latencyColor = when {
-        latencyMs == null -> RvColor.whiteA50
-        latencyMs <= 200 -> RvColor.Second
-        latencyMs <= 499 -> RvColor.Warning
-        else -> RvColor.Errors
+    // Подключённый сервер выходит из прозрачности на ту же подложку, что и
+    // остальные строки под касанием, — по ней его и находят глазами среди
+    // прочих (ResultV-dev ServerItem.css:86-96). Зелёным его метят плитка
+    // флага и бейдж, а не цвет имени.
+    val bg = if (isActive) RvColor.DarkGrey else RvColor.Black.copy(alpha = 0.7f)
+    val tile = when {
+        accent == HomeLook.Success -> RvColor.mainA10
+        accent == HomeLook.Processing -> RvColor.warningA10
+        accent == HomeLook.Error -> RvColor.errorsA10
+        else -> RvColor.LightGray
     }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(RvRadius.card))
-            // Обводки у строки сервера нет намеренно: на ПК тот же компонент
-            // задаёт `border: 0` и класса `rv-border` не берёт, а подключённый
-            // сервер отмечен фоном — «по нему его и находят глазами среди
-            // остальных» (ResultV-dev ServerItem.css:86-96).
+            .height(64.dp)
             .background(bg)
             .let { base ->
                 if (onLongClick != null)
@@ -94,19 +135,15 @@ fun ServerRow(
                 else
                     base.clickable(onClick = onClick)
             }
-            .padding(horizontal = RvSpace.nest2, vertical = RvSpace.nest2),
+            .padding(horizontal = RvSpace.nest2),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
-        // Leading icon — flag emoji, AUTO bolt, or globe fallback.
         Box(
             modifier = Modifier
-                .size(48.dp)
+                .size(44.dp)
                 .clip(RoundedCornerShape(RvRadius.chip))
-                .background(
-                    if (isActive) RvColor.Main.copy(alpha = 0.18f)
-                    else Color.White.copy(alpha = 0.07f)
-                )
+                .background(tile)
                 .rvBorder(RoundedCornerShape(RvRadius.chip)),
             contentAlignment = Alignment.Center,
         ) {
@@ -114,8 +151,8 @@ fun ServerRow(
                 isAuto -> Icon(
                     imageVector = Icons.Filled.Bolt,
                     contentDescription = null,
-                    tint = RvColor.Second,
-                    modifier = Modifier.size(24.dp),
+                    tint = if (accent == HomeLook.Idle) RvColor.Second else RvColor.Main,
+                    modifier = Modifier.size(22.dp),
                 )
                 countryCode != null -> Text(
                     text = flagFromCountry(countryCode),
@@ -125,23 +162,27 @@ fun ServerRow(
                     imageVector = Icons.Outlined.Public,
                     contentDescription = null,
                     tint = RvColor.whiteA50,
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier.size(22.dp),
                 )
             }
         }
 
-        Column(modifier = Modifier.weight(1f)) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(RvSpace.xs),
+        ) {
+            val shown = if (isAuto) listOf(stringResource(R.string.badge_auto)) else badges
+            if (shown.isNotEmpty()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(RvSpace.xs)) {
+                    shown.forEachIndexed { i, b ->
+                        ProtocolBadge(text = b, first = i == 0, accent = accent)
+                    }
+                }
+            }
             Text(
                 text = name,
-                color = titleColor,
+                color = RvColor.White,
                 style = MaterialTheme.typography.titleSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = subtitle,
-                color = RvColor.whiteA50,
-                style = MaterialTheme.typography.bodySmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -163,6 +204,8 @@ fun ServerRow(
         //  2. reachable → "N ms" (or "Online" for an RTT-less UDP probe)
         //  3. probed but unreachable → text reason ("Timeout"/"Refused"/…)
         //  4. not yet probed → spinner
+        // Задержка набрана одним цветом, как на ПК: белым 50 %. Цветовая
+        // шкала по порогам снята осознанно, см. P-4 спеки.
         when {
             isLoading -> androidx.compose.material3.CircularProgressIndicator(
                 modifier = Modifier.size(14.dp),
@@ -173,7 +216,7 @@ fun ServerRow(
                 text = if (latencyMs <= 0) stringResource(R.string.ping_online)
                 else "$latencyMs ms",
                 style = MaterialTheme.typography.labelMedium,
-                color = latencyColor,
+                color = RvColor.whiteA50,
             )
             offlineReason != null -> Text(
                 text = offlineLabel(offlineReason),

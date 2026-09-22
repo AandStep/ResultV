@@ -240,6 +240,8 @@
 
     <!-- Sort menu (Home dropdown + Proxies list) -->
     <string name="ping_refresh_cd">Refresh ping</string>
+    <!-- Protocol badge shown for AUTO groups — Profile.badges is empty for them by design. -->
+    <string name="badge_auto">Auto</string>
     <!-- Shown for reachable servers whose RTT can't be measured (WireGuard/AmneziaWG UDP). -->
     <string name="ping_online">Online</string>
     <!-- Offline labels shown for a probed-but-unreachable server. -->

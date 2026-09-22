@@ -64,6 +64,7 @@ import com.resultv.android.R
 import com.resultv.android.theme.RvColor
 import com.resultv.android.theme.RvRadius
 import com.resultv.android.theme.RvSpace
+import com.resultv.android.ui.components.HomeLook
 import com.resultv.android.ui.components.ProfileEditSheet
 import com.resultv.android.ui.components.ProfileSortMenu
 import com.resultv.android.ui.components.ProfileSortMode
@@ -83,6 +84,7 @@ import com.resultv.android.vpn.SubscriptionRefresher
 import com.resultv.android.vpn.SubscriptionRepository
 import com.resultv.android.vpn.SubscriptionRouting
 import com.resultv.android.vpn.SubscriptionUsage
+import com.resultv.android.vpn.serverDisplayName
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -451,12 +453,13 @@ private fun ProfileCard(
     onLongClick: () -> Unit,
 ) {
     ServerRow(
-        name = profile.name,
-        subtitle = profile.subtitle,
+        name = serverDisplayName(profile.name, country),
+        badges = profile.badges,
         countryCode = country,
         isAuto = profile.isAuto,
         isActive = profile.id == activeId,
         isFavorite = profile.isFavorite,
+        accent = if (profile.id == activeId) HomeLook.Success else HomeLook.Idle,
         onClick = onClick,
         onLongClick = onLongClick,
         latencyMs = sample?.takeIf { it.reachable }?.latencyMs,
@@ -583,12 +586,13 @@ private fun SubscriptionServerRowBlock(
             .padding(horizontal = RvSpace.nest3, vertical = 2.dp),
     ) {
         ServerRow(
-            name = profile.name,
-            subtitle = profile.subtitle,
+            name = serverDisplayName(profile.name, country),
+            badges = profile.badges,
             countryCode = country,
             isAuto = profile.isAuto,
             isActive = profile.id == activeId,
             isFavorite = profile.isFavorite,
+            accent = if (profile.id == activeId) HomeLook.Success else HomeLook.Idle,
             onClick = onClick,
             onLongClick = onLongClick,
             latencyMs = sample?.takeIf { it.reachable }?.latencyMs,
