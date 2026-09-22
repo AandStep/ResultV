@@ -22,7 +22,6 @@
     <string name="action_connect">Подключить</string>
     <string name="action_disconnect">Отключить</string>
 
-    <string name="home_current_server">ТЕКУЩИЙ СЕРВЕР</string>
     <string name="home_no_profile_selected">Профиль не выбран</string>
     <string name="home_no_profiles_yet">Нет профилей — добавьте, чтобы начать.</string>
     <string name="home_view_all_profiles">Показать все %1$d профилей</string>

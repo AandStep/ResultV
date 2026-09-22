@@ -25,7 +25,6 @@
     <string name="action_disconnect">Disconnect</string>
 
     <!-- Home screen -->
-    <string name="home_current_server">CURRENT SERVER</string>
     <string name="home_no_profile_selected">No profile selected</string>
     <string name="home_no_profiles_yet">No profiles yet — add one to get started.</string>
     <string name="home_view_all_profiles">View all %1$d profiles</string>

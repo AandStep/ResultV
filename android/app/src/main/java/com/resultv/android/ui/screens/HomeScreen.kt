@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -44,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -59,6 +59,7 @@ import com.resultv.android.ui.components.PowerButton
 import com.resultv.android.ui.components.ProfileEditSheet
 import com.resultv.android.ui.components.ProfileSortMenu
 import com.resultv.android.ui.components.ProfileSortMode
+import com.resultv.android.ui.components.ProtocolBadge
 import com.resultv.android.ui.components.ServerRow
 import com.resultv.android.ui.components.SpeedTile
 import com.resultv.android.ui.components.SubscriptionLogo
@@ -124,9 +125,9 @@ fun HomeScreen(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = RvSpace.nest1, vertical = RvSpace.nest3),
         horizontalAlignment = Alignment.CenterHorizontally,
-        // Standardised gap between every block on Home — the toolbar row
-        // sits the same distance above the current-server card as the
-        // speed cards sit above "Add server".
+        // Standardised gap between every block on Home — the current-server
+        // card sits the same distance below the power button as the speed
+        // cards sit above "Add server".
         verticalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
         PowerButton(
@@ -135,67 +136,45 @@ fun HomeScreen(
             onClick = onPowerPressed,
         )
 
-        // Toolbar row: refresh-ping + sort, right-aligned. Uptime moved into
-        // HomeHeader (Task 5) — down/up speeds already live in the cards below.
-        // Fixed row height ≈ 36dp keeps the gap to the next card consistent
-        // with the rest of the Column spacing (default IconButton claims
-        // 48dp which made the toolbar look detached from the card below).
-        Row(
-            modifier = Modifier.fillMaxWidth().height(36.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Spacer(Modifier.weight(1f))
-            IconButton(
-                onClick = { PingRepository.refreshAll(profilesState.profiles) },
-                modifier = Modifier.size(36.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Bolt,
-                    contentDescription = stringResource(R.string.ping_refresh_cd),
-                    tint = RvColor.whiteA50,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-            ProfileSortMenu(mode = sortMode, onModeChange = { sortMode = it })
-        }
-
-        // Active profile selector + expandable picker — one Card. Container
-        // stays neutral regardless of connection state; the active row in
-        // the list below highlights itself via [ServerRow.isActive] so the
-        // green tint reads as "this is the connected server", not "the whole
-        // picker is the connection".
-        val activeProfileShape = RoundedCornerShape(RvRadius.card)
+        // Active profile selector + expandable picker — one Card. Ping-probe
+        // and sort controls live in the card's own header (desktop parity —
+        // no separate toolbar row above it) and only draw once expanded.
+        val listShape = RoundedCornerShape(RvRadius.panel)
         Card(
-            shape = activeProfileShape,
-            colors = CardDefaults.cardColors(containerColor = RvColor.Grey),
-            modifier = Modifier
-                .fillMaxWidth()
-                .rvBorder(activeProfileShape),
+            shape = listShape,
+            colors = CardDefaults.cardColors(containerColor = RvColor.Black),
+            modifier = Modifier.fillMaxWidth().rvBorder(listShape),
         ) {
-            ActiveProfileRow(
-                active = active,
-                activeCountry = active?.let { it.country ?: countries[it.id] },
-                connected = status is VpnStatus.Connected,
-                expanded = dropdownOpen,
-                onToggle = { dropdownOpen = !dropdownOpen },
-            )
-
-            AnimatedVisibility(visible = dropdownOpen) {
-                ProfileDropdown(
-                    profiles = visibleHomeProfiles,
-                    subscriptions = subsState.subs,
-                    activeId = profilesState.activeId,
+            // Обрезка живёт внутри, а не на карточке: обрезка по внешнему
+            // краю съела бы собственную обводку вместе со сглаживанием.
+            Column(modifier = Modifier.clip(listShape)) {
+                ActiveProfileRow(
+                    active = active,
+                    activeCountry = active?.let { it.country ?: countries[it.id] },
                     accent = homeLook(status),
-                    pings = pings,
-                    pingInflight = pingInflight,
-                    countries = countries,
+                    expanded = dropdownOpen,
+                    onToggle = { dropdownOpen = !dropdownOpen },
+                    onPing = { PingRepository.refreshAll(profilesState.profiles) },
                     sortMode = sortMode,
-                    onSelect = {
-                        ProfileRepository.setActive(it.id)
-                        dropdownOpen = false
-                    },
-                    onLongPress = { editingProfileId = it.id },
+                    onSortModeChange = { sortMode = it },
                 )
+                AnimatedVisibility(visible = dropdownOpen) {
+                    ProfileDropdown(
+                        profiles = visibleHomeProfiles,
+                        subscriptions = subsState.subs,
+                        activeId = profilesState.activeId,
+                        accent = homeLook(status),
+                        pings = pings,
+                        pingInflight = pingInflight,
+                        countries = countries,
+                        sortMode = sortMode,
+                        onSelect = {
+                            ProfileRepository.setActive(it.id)
+                            dropdownOpen = false
+                        },
+                        onLongPress = { editingProfileId = it.id },
+                    )
+                }
             }
         }
 
@@ -303,71 +282,113 @@ private fun formatBps(bps: Long): String {
 private fun ActiveProfileRow(
     active: Profile?,
     activeCountry: String?,
-    connected: Boolean,
+    accent: HomeLook,
     expanded: Boolean,
     onToggle: () -> Unit,
+    onPing: () -> Unit,
+    sortMode: ProfileSortMode,
+    onSortModeChange: (ProfileSortMode) -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .height(72.dp)
+            .background(RvColor.Grey)
             .clickable(onClick = onToggle)
-            .padding(horizontal = RvSpace.nest1, vertical = RvSpace.nest1),
+            .padding(horizontal = RvSpace.nest1),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
+        val tile = when (accent) {
+            HomeLook.Success -> RvColor.mainA10
+            HomeLook.Processing -> RvColor.warningA10
+            HomeLook.Error -> RvColor.errorsA10
+            HomeLook.Idle -> RvColor.LightGray
+        }
         Box(
             modifier = Modifier
-                .size(54.dp)
+                .size(48.dp)
                 .clip(RoundedCornerShape(RvRadius.chip))
-                .background(
-                    if (connected) RvColor.Main.copy(alpha = 0.18f)
-                    else Color.White.copy(alpha = 0.07f)
-                ),
+                .background(tile)
+                .rvBorder(RoundedCornerShape(RvRadius.chip)),
             contentAlignment = Alignment.Center,
         ) {
             val country = activeCountry
-            val isAuto = active?.let { profileIsAuto(it) } ?: false
             when {
                 active == null -> Icon(
                     imageVector = Icons.Outlined.Public,
                     contentDescription = null,
                     tint = RvColor.whiteA50,
+                    modifier = Modifier.size(24.dp),
                 )
-                isAuto -> Icon(
+                active.isAuto -> Icon(
                     imageVector = Icons.Filled.Bolt,
                     contentDescription = null,
-                    tint = RvColor.Second,
+                    tint = if (accent == HomeLook.Idle) RvColor.Second else RvColor.Main,
+                    modifier = Modifier.size(24.dp),
                 )
-                country != null -> Text(text = flagFromCountry(country), style = MaterialTheme.typography.headlineSmall)
+                country != null -> Text(
+                    text = flagFromCountry(country),
+                    style = MaterialTheme.typography.headlineSmall,
+                )
                 else -> Icon(
                     imageVector = Icons.Outlined.Public,
                     contentDescription = null,
                     tint = RvColor.whiteA50,
+                    modifier = Modifier.size(24.dp),
                 )
             }
         }
 
-        Column(modifier = Modifier.weight(1f)) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(RvSpace.xs),
+        ) {
+            val shown = when {
+                active == null -> emptyList()
+                active.isAuto -> listOf(stringResource(R.string.badge_auto))
+                else -> active.badges
+            }
+            if (shown.isNotEmpty()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(RvSpace.xs)) {
+                    shown.forEachIndexed { i, b ->
+                        ProtocolBadge(text = b, first = i == 0, accent = accent)
+                    }
+                }
+            }
             Text(
-                text = stringResource(R.string.home_current_server),
-                style = MaterialTheme.typography.labelSmall,
-                color = RvColor.whiteA50,
-            )
-            Text(
-                text = active?.name ?: stringResource(R.string.home_no_profile_selected),
+                text = active?.let { serverDisplayName(it.name, activeCountry) }
+                    ?: stringResource(R.string.home_no_profile_selected),
                 style = MaterialTheme.typography.titleMedium,
-                color = if (connected) RvColor.Second else MaterialTheme.colorScheme.onBackground,
+                color = RvColor.White,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
 
+        // Замер задержки и сортировка показываются только в раскрытом виде —
+        // на ПК это тоже кнопки шапки, а не отдельная панель над карточкой.
+        if (expanded) {
+            IconButton(onClick = onPing, modifier = Modifier.size(36.dp)) {
+                Icon(
+                    imageVector = Icons.Outlined.Bolt,
+                    contentDescription = stringResource(R.string.ping_refresh_cd),
+                    tint = RvColor.whiteA50,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            ProfileSortMenu(mode = sortMode, onModeChange = onSortModeChange)
+        }
+
+        // Поворот, а не подмена иконки — то же движение, которым шеврон и
+        // открывает карточку (парность с ПК).
         Icon(
             imageVector = Icons.Outlined.ExpandMore,
             contentDescription = stringResource(
                 if (expanded) R.string.action_collapse else R.string.action_expand,
             ),
             tint = RvColor.whiteA50,
+            modifier = Modifier.graphicsLayer { rotationZ = if (expanded) 180f else 0f },
         )
     }
 }
@@ -397,10 +418,7 @@ private fun ProfileDropdown(
     }
 
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(RvSpace.nest3),
-        verticalArrangement = Arrangement.spacedBy(RvSpace.xs),
+        modifier = Modifier.fillMaxWidth(),
     ) {
         if (groups.isEmpty()) {
             Text(
@@ -505,7 +523,8 @@ private fun HomeGroupHeader(group: HomeGroup) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = RvSpace.xs, top = RvSpace.xs, bottom = 2.dp),
+            .background(RvColor.Black)
+            .padding(start = RvSpace.nest1, end = RvSpace.nest1, top = RvSpace.nest2, bottom = RvSpace.xs),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3),
     ) {
@@ -520,7 +539,7 @@ private fun HomeGroupHeader(group: HomeGroup) {
                 Text(
                     text = stringResource(R.string.home_favorites),
                     style = MaterialTheme.typography.labelMedium,
-                    color = RvColor.whiteA50,
+                    color = RvColor.whiteA20,
                 )
             }
             HomeGroupKind.Subscription -> {
@@ -532,7 +551,7 @@ private fun HomeGroupHeader(group: HomeGroup) {
                 Text(
                     text = sub?.displayName.orEmpty().uppercase(),
                     style = MaterialTheme.typography.labelMedium,
-                    color = RvColor.whiteA50,
+                    color = RvColor.whiteA20,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -547,7 +566,7 @@ private fun HomeGroupHeader(group: HomeGroup) {
                 Text(
                     text = stringResource(R.string.home_group_standalone),
                     style = MaterialTheme.typography.labelMedium,
-                    color = RvColor.whiteA50,
+                    color = RvColor.whiteA20,
                 )
             }
         }
@@ -597,5 +616,4 @@ private fun AddProfileShortcut(onClick: () -> Unit) {
 // sites read uniformly across screens — and to keep the existing function
 // shape that consumers were already using.
 
-internal fun profileIsAuto(p: Profile): Boolean = p.isAuto
 internal fun profileProtocol(p: Profile): String = p.protocol
