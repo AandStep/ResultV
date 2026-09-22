@@ -734,6 +734,24 @@
     "typeFix": "Fix",
     "typeOther": "Change"
   },
+  "update": {
+    "title": "Update available",
+    "message": "You have version {{current}} installed, version {{latest}} is available.",
+    "downloading": "Downloading...",
+    "verifying": "Checking integrity...",
+    "verifying_body": "Checking the integrity of the downloaded file...",
+    "installing": "Installing...",
+    "installing_body": "Installing the update, please wait...",
+    "restarting": "Restarting...",
+    "restarting_body": "Restarting the application...",
+    "failed": "Update failed",
+    "error_stage": "Stage: {{stage}}",
+    "later": "Later",
+    "download": "Update",
+    "cancel": "Cancel",
+    "retry": "Retry",
+    "browser": "In browser"
+  },
   "units": {
     "kb": "KB",
     "mb": "MB",
