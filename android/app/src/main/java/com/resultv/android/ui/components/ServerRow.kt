@@ -192,6 +192,18 @@ fun ServerRow(
     onClick: () -> Unit,
     /** Подсветка плитки флага и бейджей под состояние подключения. */
     accent: HomeLook = HomeLook.Idle,
+    /**
+     * Заливка строки в покое и заливка активной строки — параметром, а не
+     * зашитым цветом. На главной строки лежат прямо на чёрной карточке
+     * (RvColor.Black), и собственная подложка там уместна; на «Прокси» те же
+     * строки лежат внутри уже закрашенных серых блоков подписок, и та же
+     * подложка читается лишним тёмным прямоугольником поверх блока. Один и
+     * тот же цвет не может быть верным в обоих местах, поэтому решает
+     * вызывающий: главная не передаёт ничего и получает старое поведение,
+     * «Прокси» передаёт прозрачный `surface` и лёгкий `activeSurface`.
+     */
+    surface: Color = RvColor.Black.copy(alpha = 0.7f),
+    activeSurface: Color = RvColor.DarkGrey,
     trailing: @Composable (() -> Unit)? = null,
     /** Latest ping in milliseconds when reachable, or null otherwise. */
     latencyMs: Int? = null,
@@ -215,7 +227,7 @@ fun ServerRow(
     // остальные строки под касанием, — по ней его и находят глазами среди
     // прочих (ResultV-dev ServerItem.css:86-96). Зелёным его метят плитка
     // флага и бейдж, а не цвет имени.
-    val bg = if (isActive) RvColor.DarkGrey else RvColor.Black.copy(alpha = 0.7f)
+    val bg = if (isActive) activeSurface else surface
 
     Row(
         modifier = Modifier

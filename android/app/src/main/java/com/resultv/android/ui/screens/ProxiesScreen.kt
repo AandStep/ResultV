@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
 import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.RvIcon
 import com.resultv.android.theme.RvRadius
 import com.resultv.android.theme.RvSpace
 import com.resultv.android.ui.components.HomeLook
@@ -90,6 +91,16 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+
+/**
+ * Ключ-заглушка для «Мои серверы» в списке свёрнутых групп — той же
+ * коллекции, что хранит свёрнутость подписок. Группа самостоятельных
+ * профилей не имеет своего id подписки, а заводить для неё отдельное
+ * состояние — значит заводить второй механизм ради одной группы. Реальные
+ * id подписок — это UUID, так что со строковой константой они никогда не
+ * совпадут.
+ */
+private const val STANDALONE_GROUP_ID = "standalone"
 
 @Composable
 fun ProxiesScreen(onAddPressed: () -> Unit) {
@@ -211,32 +222,19 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
             }
         }
 
+        // «Мои серверы» — теперь ПОСЛЕДНЯЯ группа списка (как на ПК,
+        // ServersScreen.jsx), а не отдельная плоская пачка перед подписками:
+        // самостоятельные профили и подписки равноправны, разница только в
+        // источнике, а не в порядке на экране.
+        val standaloneCollapsed = STANDALONE_GROUP_ID in collapsedSubs
+
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
         ) {
-            if (sortedStandalone.isNotEmpty()) {
-                item("standalone-header", contentType = "standalone-header") {
-                    StandaloneHeader(sortedStandalone.size)
-                }
-                items(sortedStandalone, key = { it.id }, contentType = { "standalone-row" }) { p ->
-                    Box(modifier = Modifier.padding(top = RvSpace.nest2)) {
-                        ProfileCard(
-                            profile = p,
-                            activeId = state.activeId,
-                            sample = pings[p.id],
-                            country = p.country ?: countries[p.id],
-                            isLoading = p.id in pingInflight,
-                            onClick = { ProfileRepository.setActive(p.id) },
-                            onLongClick = { editingProfileId = p.id },
-                        )
-                    }
-                }
-            }
-
             subscriptionBuckets.forEachIndexed { idx, (sub, subProfiles) ->
                 val collapsed = sub.id in collapsedSubs
-                val needsTopGap = idx > 0 || sortedStandalone.isNotEmpty()
+                val needsTopGap = idx > 0
                 val ordered = orderedBySub[sub.id].orEmpty()
 
                 item("sub-${sub.id}-head", contentType = "sub-head") {
@@ -295,7 +293,7 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
                         if (p.isSection) {
                             SubscriptionSectionRowBlock(p.name)
                         } else {
-                            SubscriptionServerRowBlock(
+                            GroupServerRowBlock(
                                 profile = p,
                                 activeId = state.activeId,
                                 sample = pings[p.id],
@@ -307,6 +305,40 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
                         }
                     }
                     item("sub-${sub.id}-foot", contentType = "sub-foot") {
+                        SubscriptionTrailingCap()
+                    }
+                }
+            }
+
+            if (sortedStandalone.isNotEmpty()) {
+                item("standalone-head", contentType = "standalone-head") {
+                    StandaloneHeaderBlock(
+                        modifier = if (subscriptionBuckets.isNotEmpty())
+                            Modifier.padding(top = RvSpace.nest2) else Modifier,
+                        count = sortedStandalone.size,
+                        collapsed = standaloneCollapsed,
+                        onToggleCollapsed = {
+                            collapsedSubsList = if (STANDALONE_GROUP_ID in collapsedSubs)
+                                collapsedSubsList - STANDALONE_GROUP_ID
+                            else
+                                collapsedSubsList + STANDALONE_GROUP_ID
+                        },
+                    )
+                }
+
+                if (!standaloneCollapsed) {
+                    items(sortedStandalone, key = { it.id }, contentType = { "standalone-row" }) { p ->
+                        GroupServerRowBlock(
+                            profile = p,
+                            activeId = state.activeId,
+                            sample = pings[p.id],
+                            country = p.country ?: countries[p.id],
+                            isLoading = p.id in pingInflight,
+                            onClick = { ProfileRepository.setActive(p.id) },
+                            onLongClick = { editingProfileId = p.id },
+                        )
+                    }
+                    item("standalone-foot", contentType = "standalone-foot") {
                         SubscriptionTrailingCap()
                     }
                 }
@@ -421,75 +453,29 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
     }
 }
 
-@Composable
-private fun StandaloneHeader(count: Int) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3),
-        modifier = Modifier.padding(start = RvSpace.xs, bottom = 2.dp, top = 2.dp),
-    ) {
-        Icon(
-            imageVector = Icons.Outlined.Bolt,
-            contentDescription = null,
-            tint = RvColor.whiteA50,
-            modifier = Modifier.size(16.dp),
-        )
-        Text(
-            text = stringResource(R.string.proxies_standalone_header, count),
-            style = MaterialTheme.typography.labelMedium,
-            color = RvColor.whiteA50,
-        )
-    }
-}
-
-@Composable
-private fun ProfileCard(
-    profile: Profile,
-    activeId: String?,
-    sample: PingRepository.Sample?,
-    country: String?,
-    isLoading: Boolean,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit,
-) {
-    ServerRow(
-        name = serverDisplayName(profile.name, country),
-        badges = profile.badges,
-        countryCode = country,
-        isAuto = profile.isAuto,
-        isActive = profile.id == activeId,
-        isFavorite = profile.isFavorite,
-        accent = if (profile.id == activeId) HomeLook.Success else HomeLook.Idle,
-        onClick = onClick,
-        onLongClick = onLongClick,
-        latencyMs = sample?.takeIf { it.reachable }?.latencyMs,
-        offlineReason = sample?.takeUnless { it.reachable }?.reason,
-        isLoading = isLoading,
-    )
-}
-
 /**
- * Top portion of a subscription "card", but rendered as its own LazyColumn
- * item so it doesn't drag the body's row composition along with it. Shape
- * is fully-rounded when collapsed (header is the only chunk) and only
- * top-rounded when the body items follow below.
+ * Общий каркас шапки группы — заливка, форма со скруглением, шеврон,
+ * ведущая иконка/лого, название и счётчик. У подписки и у «Моих серверов»
+ * на ПК это один и тот же вид строки (`subitem`/`myitem` в ServerItem.jsx,
+ * различаются только ведущим значком и набором кнопок справа), так что и
+ * здесь это один composable, а не две почти одинаковые копии — [leading] и
+ * [trailing] параметризуют ровно то немногое, чем группы отличаются.
+ *
+ * Рендерится как отдельный LazyColumn item, чтобы не тянуть за собой
+ * композицию всех строк тела. Форма — полное скругление, когда группа
+ * свёрнута (шапка — единственный кусок), и только сверху, когда ниже идут
+ * строки тела.
  */
 @Composable
-private fun SubscriptionHeaderBlock(
+private fun GroupHeaderBlock(
     modifier: Modifier = Modifier,
-    subscription: Subscription,
-    profileCount: Int,
     collapsed: Boolean,
-    refreshing: Boolean,
     onToggleCollapsed: () -> Unit,
-    onRefresh: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit,
+    leading: @Composable () -> Unit,
+    title: String,
+    trailing: @Composable () -> Unit = {},
+    footer: @Composable () -> Unit = {},
 ) {
-    val usage = remember(subscription.userInfo) { SubscriptionUsage.parse(subscription.userInfo) }
-    val usesImpLogo = remember(subscription.id, subscription.name, subscription.source) {
-        subscriptionUsesImpLogo(subscription)
-    }
     val shape = if (collapsed) RoundedCornerShape(RvRadius.card)
     else RoundedCornerShape(topStart = RvRadius.card, topEnd = RvRadius.card)
 
@@ -507,15 +493,47 @@ private fun SubscriptionHeaderBlock(
             horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3),
         ) {
             ChevronChip(collapsed = collapsed, onClick = onToggleCollapsed)
-            SubscriptionLogo(usesImpLogo = usesImpLogo)
+            leading()
             Text(
-                text = subscription.displayName,
+                text = title,
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+            trailing()
+        }
+
+        footer()
+    }
+}
+
+/** Top portion of a subscription "card" — subscription-specific dressing over [GroupHeaderBlock]. */
+@Composable
+private fun SubscriptionHeaderBlock(
+    modifier: Modifier = Modifier,
+    subscription: Subscription,
+    profileCount: Int,
+    collapsed: Boolean,
+    refreshing: Boolean,
+    onToggleCollapsed: () -> Unit,
+    onRefresh: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val usage = remember(subscription.userInfo) { SubscriptionUsage.parse(subscription.userInfo) }
+    val usesImpLogo = remember(subscription.id, subscription.name, subscription.source) {
+        subscriptionUsesImpLogo(subscription)
+    }
+
+    GroupHeaderBlock(
+        modifier = modifier,
+        collapsed = collapsed,
+        onToggleCollapsed = onToggleCollapsed,
+        leading = { SubscriptionLogo(usesImpLogo = usesImpLogo) },
+        title = subscription.displayName,
+        trailing = {
             CircleActionChip(
                 onClick = onRefresh,
                 enabled = !refreshing,
@@ -558,19 +576,58 @@ private fun SubscriptionHeaderBlock(
                     modifier = Modifier.size(16.dp),
                 )
             }
-        }
-
-        if (usage.hasQuota || usage.hasExpiry || usage.used > 0) {
-            UsageInlineStrip(usage)
-        }
-
-        SubscriptionFooter(subscription.lastFetchedAt, profileCount)
-    }
+        },
+        footer = {
+            if (usage.hasQuota || usage.hasExpiry || usage.used > 0) {
+                UsageInlineStrip(usage)
+            }
+            SubscriptionFooter(subscription.lastFetchedAt, profileCount)
+        },
+    )
 }
 
-/** Body row in a subscription, sharing the surface background of the header. */
+/**
+ * Шапка группы «Мои серверы» — тот же [GroupHeaderBlock], что и у подписки,
+ * но без логотипа провайдера (сервера ничьи — значок вместо него) и без
+ * кнопок обновления/удаления: обновлять у самостоятельных профилей нечего
+ * (это не подписка, синку неоткуда взяться), а удаление профиля уже живёт в
+ * длинном нажатии по строке — заводить для группы второй путь удаления
+ * не нужно. Счётчик показан тем же [SubscriptionFooter], что и у подписки —
+ * `lastFetchedAt = 0` прячет в нём метку времени, оставляя только «N серверов».
+ */
 @Composable
-private fun SubscriptionServerRowBlock(
+private fun StandaloneHeaderBlock(
+    modifier: Modifier = Modifier,
+    count: Int,
+    collapsed: Boolean,
+    onToggleCollapsed: () -> Unit,
+) {
+    GroupHeaderBlock(
+        modifier = modifier,
+        collapsed = collapsed,
+        onToggleCollapsed = onToggleCollapsed,
+        leading = {
+            Icon(
+                imageVector = Icons.Outlined.Bolt,
+                contentDescription = null,
+                tint = RvColor.whiteA50,
+                modifier = Modifier.size(RvIcon.glyph),
+            )
+        },
+        title = stringResource(R.string.proxies_standalone_header),
+        footer = { SubscriptionFooter(lastFetchedAt = 0L, profileCount = count) },
+    )
+}
+
+/**
+ * Body row inside a group — subscription or standalone, they share the same
+ * look. Заливка/подсветка строки берётся не по умолчанию из [ServerRow]:
+ * строка уже лежит на закрашенном сером блоке группы, и заливка ServerRow
+ * "для чёрного фона" здесь читалась бы лишним прямоугольником поверх блока
+ * (см. комментарий у параметров surface/activeSurface в ServerRow.kt).
+ */
+@Composable
+private fun GroupServerRowBlock(
     profile: Profile,
     activeId: String?,
     sample: PingRepository.Sample?,
@@ -595,6 +652,8 @@ private fun SubscriptionServerRowBlock(
             accent = if (profile.id == activeId) HomeLook.Success else HomeLook.Idle,
             onClick = onClick,
             onLongClick = onLongClick,
+            surface = Color.Transparent,
+            activeSurface = RvColor.whiteA05,
             latencyMs = sample?.takeIf { it.reachable }?.latencyMs,
             offlineReason = sample?.takeUnless { it.reachable }?.reason,
             isLoading = isLoading,
@@ -615,9 +674,17 @@ private fun SubscriptionSectionRowBlock(name: String) {
 }
 
 /**
- * Visual "cap" at the bottom of an expanded subscription — gives the
- * grouped rows their rounded bottom edge without needing a wrapping Card
- * (the rows would otherwise have to compose all at once to fit inside one).
+ * Visual "cap" at the bottom of an expanded group — gives the grouped rows
+ * their rounded bottom edge without needing a wrapping Card (the rows would
+ * otherwise have to compose all at once to fit inside one).
+ *
+ * Высота берётся от того же радиуса, что рисует скругление низа
+ * (RvRadius.card), а не числом руками: Compose ужимает угол до половины
+ * меньшей стороны фигуры, и при высоте меньше радиуса низ раскрытой группы
+ * скруглён заметно слабее, чем низ свёрнутой карточки (где скругление 16.dp
+ * помещается свободно) — это и была жалоба на разъезжающиеся углы. Если
+ * когда-нибудь захочется сделать заглушку тоньше, сначала нужно уменьшить
+ * RvRadius.card, а не эту высоту в одиночку.
  */
 @Composable
 private fun SubscriptionTrailingCap() {
@@ -626,7 +693,7 @@ private fun SubscriptionTrailingCap() {
             .fillMaxWidth()
             .clip(RoundedCornerShape(bottomStart = RvRadius.card, bottomEnd = RvRadius.card))
             .background(RvColor.Grey)
-            .height(8.dp),
+            .height(RvRadius.card),
     )
 }
 
