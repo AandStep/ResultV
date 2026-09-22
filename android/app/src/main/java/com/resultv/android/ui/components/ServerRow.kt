@@ -63,21 +63,26 @@ fun ProtocolBadge(text: String, first: Boolean, accent: HomeLook) {
     } else 0
     val spec = tween<Color>(RvMotion.durationMillis, delay, RvMotion.easing)
 
+    // Первый бейдж и остальные различаются В КАЖДОМ состоянии, а не только в
+    // покое — так задан компонент кита на ПК (`Badge.css`, варианты First и
+    // Second). Второй вариант всюду глуше первого: у покоя заливка вполовину
+    // прозрачнее, у жёлтого и красного — вдвое плотнее при том же тексте, а у
+    // зелёного меняется сам тон, с Main-color на Second-color.
     val bg by animateColorAsState(
         targetValue = when (accent) {
-            HomeLook.Success -> RvColor.mainA10
-            HomeLook.Processing -> RvColor.warningA10
-            HomeLook.Error -> RvColor.errorsA10
             HomeLook.Idle -> if (first) RvColor.LightGray else RvColor.lightGrayA50
+            HomeLook.Processing -> if (first) RvColor.warningA10 else RvColor.warningA20
+            HomeLook.Success -> if (first) RvColor.mainA10 else RvColor.secondA10
+            HomeLook.Error -> if (first) RvColor.errorsA10 else RvColor.errorsA20
         },
         animationSpec = spec, label = "badgeBg",
     )
     val fg by animateColorAsState(
         targetValue = when (accent) {
-            HomeLook.Success -> RvColor.Main
-            HomeLook.Processing -> RvColor.Warning
-            HomeLook.Error -> RvColor.Errors
             HomeLook.Idle -> RvColor.whiteA50
+            HomeLook.Processing -> RvColor.Warning
+            HomeLook.Success -> if (first) RvColor.Main else RvColor.Second
+            HomeLook.Error -> RvColor.Errors
         },
         animationSpec = spec, label = "badgeFg",
     )
@@ -144,8 +149,7 @@ fun ProfileTile(
         modifier = Modifier
             .size(size)
             .clip(RoundedCornerShape(RvRadius.chip))
-            .background(tileColor)
-            .rvBorder(RoundedCornerShape(RvRadius.chip)),
+            .background(tileColor),
         contentAlignment = Alignment.Center,
     ) {
         when {

@@ -104,11 +104,11 @@ object RvSpace {
 
 /** Скругления. Шкала ПК (32 / 24 / 16 / 14 / 8 / 2) ступенью ниже. */
 object RvRadius {
-    val panel = 24.dp
-    val card = 20.dp
-    val control = 14.dp
-    val chip = 12.dp
-    val small = 8.dp
+    val panel = 20.dp
+    val card = 16.dp
+    val control = 12.dp
+    val chip = 10.dp
+    val small = 6.dp
     val hairline = 2.dp
 }
 

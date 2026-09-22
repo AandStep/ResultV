@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -62,10 +63,9 @@ import com.resultv.android.ui.components.ProfileTile
 import com.resultv.android.ui.components.ProtocolBadge
 import com.resultv.android.ui.components.ServerRow
 import com.resultv.android.ui.components.SpeedTile
-import com.resultv.android.ui.components.SubscriptionLogo
+import com.resultv.android.ui.components.UptimeChip
 import com.resultv.android.ui.components.homeLook
 import com.resultv.android.ui.components.sortProfiles
-import com.resultv.android.ui.components.subscriptionUsesImpLogo
 import com.resultv.android.vpn.CountryRepository
 import com.resultv.android.vpn.PingRepository
 import com.resultv.android.vpn.Profile
@@ -135,9 +135,32 @@ fun HomeScreen(
             onClick = onPowerPressed,
         )
 
-        // Active profile selector + expandable picker — one Card. Ping-probe
-        // and sort controls live in the card's own header (desktop parity —
-        // no separate toolbar row above it) and only draw once expanded.
+        // Панель над карточкой: слева таймер соединения, справа замер задержки
+        // и сортировка. На ПК эти кнопки живут в шапке карточки, но здесь
+        // решено иначе — им место над списком, а не внутри строки выбора.
+        // Высота фиксирована, иначе стандартный IconButton забирает 48 dp и
+        // панель отрывается от карточки.
+        Row(
+            modifier = Modifier.fillMaxWidth().height(36.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            UptimeChip(status = status)
+            Spacer(Modifier.weight(1f))
+            IconButton(
+                onClick = { PingRepository.refreshAll(profilesState.profiles) },
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Bolt,
+                    contentDescription = stringResource(R.string.ping_refresh_cd),
+                    tint = RvColor.whiteA50,
+                    modifier = Modifier.size(RvIcon.glyph),
+                )
+            }
+            ProfileSortMenu(mode = sortMode, onModeChange = { sortMode = it })
+        }
+
+        // Active profile selector + expandable picker — one Card.
         val listShape = RoundedCornerShape(RvRadius.panel)
         Card(
             shape = listShape,
@@ -153,9 +176,6 @@ fun HomeScreen(
                     accent = homeLook(status),
                     expanded = dropdownOpen,
                     onToggle = { dropdownOpen = !dropdownOpen },
-                    onPing = { PingRepository.refreshAll(profilesState.profiles) },
-                    sortMode = sortMode,
-                    onSortModeChange = { sortMode = it },
                 )
                 AnimatedVisibility(visible = dropdownOpen) {
                     ProfileDropdown(
@@ -284,9 +304,6 @@ private fun ActiveProfileRow(
     accent: HomeLook,
     expanded: Boolean,
     onToggle: () -> Unit,
-    onPing: () -> Unit,
-    sortMode: ProfileSortMode,
-    onSortModeChange: (ProfileSortMode) -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -339,18 +356,6 @@ private fun ActiveProfileRow(
 
         // Замер задержки и сортировка показываются только в раскрытом виде —
         // на ПК это тоже кнопки шапки, а не отдельная панель над карточкой.
-        if (expanded) {
-            IconButton(onClick = onPing, modifier = Modifier.size(36.dp)) {
-                Icon(
-                    imageVector = Icons.Outlined.Bolt,
-                    contentDescription = stringResource(R.string.ping_refresh_cd),
-                    tint = RvColor.whiteA50,
-                    modifier = Modifier.size(RvIcon.glyph),
-                )
-            }
-            ProfileSortMenu(mode = sortMode, onModeChange = onSortModeChange)
-        }
-
         // Поворот, а не подмена иконки — то же движение, которым шеврон и
         // открывает карточку (парность с ПК).
         Icon(
@@ -514,11 +519,10 @@ private fun HomeGroupHeader(group: HomeGroup) {
                 )
             }
             HomeGroupKind.Subscription -> {
+                // Логотипа провайдера здесь нет: на главной подпись группы —
+                // это подпись, а не строка провайдера, и значок рядом с ней
+                // спорил с плитками флагов, которые начинаются строкой ниже.
                 val sub = group.subscription
-                val usesImp = remember(sub?.id, sub?.name, sub?.source) {
-                    sub?.let { subscriptionUsesImpLogo(it) } ?: false
-                }
-                SubscriptionLogo(usesImpLogo = usesImp, size = 22.dp)
                 Text(
                     text = sub?.displayName.orEmpty().uppercase(),
                     style = MaterialTheme.typography.labelMedium,

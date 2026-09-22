@@ -29,11 +29,11 @@
     <string name="home_no_profiles_yet">No profiles yet — add one to get started.</string>
     <string name="home_view_all_profiles">View all %1$d profiles</string>
     <string name="home_favorites">FAVORITES</string>
-    <string name="home_group_standalone">MY PROXIES</string>
+    <string name="home_group_standalone">MY SERVERS</string>
     <string name="home_add_server">Add server</string>
     <string name="home_add_server_subtitle">Paste link or subscription URL</string>
-    <string name="home_stat_download">DOWNLOAD</string>
-    <string name="home_stat_upload">UPLOAD</string>
+    <string name="home_stat_download">Download</string>
+    <string name="home_stat_upload">Upload</string>
     <string name="home_banner_duration">UPTIME</string>
     <string name="home_banner_download">DOWN</string>
     <string name="home_banner_upload">UP</string>
@@ -269,7 +269,7 @@
     <string name="proxies_delete_message">"%1$s" will be removed.</string>
     <string name="proxies_empty_title">No profiles yet</string>
     <string name="proxies_empty_subtitle">Paste a share link or import a subscription URL to get started.</string>
-    <string name="proxies_standalone_header">My proxies · %1$d</string>
+    <string name="proxies_standalone_header">My servers</string>
     <string name="proxies_edit_title">Edit profile</string>
     <string name="proxies_edit_name_label">Name</string>
     <string name="proxies_action_probe_latency">Check latency</string>

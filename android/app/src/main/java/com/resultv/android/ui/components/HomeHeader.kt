@@ -101,47 +101,23 @@ fun HomeHeader(
             androidx.compose.foundation.Image(
                 painter = painterResource(R.drawable.resultv_logo),
                 contentDescription = null,
-                modifier = Modifier.size(24.dp),
+                modifier = Modifier.size(28.dp),
             )
-            // Плашка не проявляется, а выпадает сверху из-за края — как
-            // `clip-path` на ПК. AnimatedVisibility сама обрезает по своим
-            // границам, так путь плашки не наезжает на заголовок.
-            androidx.compose.animation.AnimatedVisibility(
-                visible = status is VpnStatus.Connected,
-                enter = androidx.compose.animation.slideInVertically(
-                    animationSpec = tween(
-                        durationMillis = RvMotion.durationMillis,
-                        delayMillis = if (waveEnabled) waveDelayMillis(WaveStep.Time, connected = true) else 0,
-                        easing = RvMotion.easing,
-                    ),
-                    initialOffsetY = { -it },
-                ),
-                exit = androidx.compose.animation.slideOutVertically(
-                    animationSpec = tween(
-                        durationMillis = RvMotion.durationMillis,
-                        delayMillis = if (waveEnabled) waveDelayMillis(WaveStep.Time, connected = false) else 0,
-                        easing = RvMotion.easing,
-                    ),
-                    targetOffsetY = { -it },
-                ),
-            ) {
-                (status as? VpnStatus.Connected)?.let { UptimeChip(connectedAt = it.connectedAt) }
-            }
             Spacer(Modifier.weight(1f))
-            IconButton(onClick = onOpenWebsite, modifier = Modifier.size(36.dp)) {
+            IconButton(onClick = onOpenWebsite, modifier = Modifier.size(40.dp)) {
                 Icon(
                     imageVector = Icons.Outlined.Language,
                     contentDescription = stringResource(R.string.header_open_website),
                     tint = RvColor.whiteA50,
-                    modifier = Modifier.size(RvIcon.glyph),
+                    modifier = Modifier.size(24.dp),
                 )
             }
-            IconButton(onClick = onOpenTelegram, modifier = Modifier.size(36.dp)) {
+            IconButton(onClick = onOpenTelegram, modifier = Modifier.size(40.dp)) {
                 Icon(
                     painter = painterResource(R.drawable.ic_telegram),
                     contentDescription = stringResource(R.string.header_open_telegram),
                     tint = RvColor.whiteA50,
-                    modifier = Modifier.size(RvIcon.glyph),
+                    modifier = Modifier.size(24.dp),
                 )
             }
         }
@@ -176,7 +152,37 @@ fun HomeHeader(
  * пересобиралась вместе с таймером.
  */
 @Composable
-private fun UptimeChip(connectedAt: Long) {
+fun UptimeChip(status: VpnStatus, modifier: Modifier = Modifier) {
+    val waveEnabled = rememberWaveEnabled()
+    // Плашка не проявляется, а выпадает сверху из-за края — как `clip-path`
+    // на ПК. AnimatedVisibility сама обрезает по своим границам, так путь
+    // плашки не наезжает на соседей.
+    androidx.compose.animation.AnimatedVisibility(
+        modifier = modifier,
+        visible = status is VpnStatus.Connected,
+        enter = androidx.compose.animation.slideInVertically(
+            animationSpec = tween(
+                durationMillis = RvMotion.durationMillis,
+                delayMillis = if (waveEnabled) waveDelayMillis(WaveStep.Time, connected = true) else 0,
+                easing = RvMotion.easing,
+            ),
+            initialOffsetY = { -it },
+        ),
+        exit = androidx.compose.animation.slideOutVertically(
+            animationSpec = tween(
+                durationMillis = RvMotion.durationMillis,
+                delayMillis = if (waveEnabled) waveDelayMillis(WaveStep.Time, connected = false) else 0,
+                easing = RvMotion.easing,
+            ),
+            targetOffsetY = { -it },
+        ),
+    ) {
+        (status as? VpnStatus.Connected)?.let { UptimeChipBody(connectedAt = it.connectedAt) }
+    }
+}
+
+@Composable
+private fun UptimeChipBody(connectedAt: Long) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(connectedAt) {
         while (true) {
@@ -188,9 +194,12 @@ private fun UptimeChip(connectedAt: Long) {
 
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(RvRadius.chip))
+            // Капсула, а не скруглённый прямоугольник: на ПК у плашки
+            // `--rv-radius-pill`, то есть скругление заведомо больше её
+            // высоты. Процент от высоты даёт ровно это на любом кегле.
+            .clip(RoundedCornerShape(percent = 50))
             .background(RvColor.Grey)
-            .padding(start = RvSpace.nest3, top = RvSpace.nest3, bottom = RvSpace.nest3, end = RvSpace.nest1),
+            .padding(start = RvSpace.nest3, top = RvSpace.nest3, bottom = RvSpace.nest3, end = RvSpace.nest2),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
