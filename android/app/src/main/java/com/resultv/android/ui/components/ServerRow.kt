@@ -28,8 +28,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import com.resultv.android.R
@@ -79,6 +81,64 @@ fun ProtocolBadge(text: String, first: Boolean, accent: HomeLook) {
 }
 
 /**
+ * Плитка флага/молнии/глобуса — общий блок шапки карточки (`ActiveProfileRow`
+ * в `HomeScreen.kt`) и строки списка ([ServerRow]). На ПК это один компонент
+ * кита, `Flag` (`frontend/src/components/kit/Flag.jsx`), который принимает
+ * `size` («md»/«sm») и `status` и которым пользуются и шапка, и строка
+ * (`ServerItem.jsx`); здесь то же самое, но параметром — [size]/[glyph]
+ * задают разницу в масштабе, а не превращают компонент в две копии. Задача 9
+ * начала их расходиться по пикселям (48/44, 24/22) именно потому, что копии
+ * были раздельные — общий composable убирает саму возможность разъехаться.
+ *
+ * Случай «профиль не выбран» отдельной ветки не требует: он совпадает со
+ * «страны нет и это не авто» — просто передайте `isAuto = false,
+ * countryCode = null`.
+ */
+@Composable
+fun ProfileTile(
+    accent: HomeLook,
+    isAuto: Boolean,
+    countryCode: String?,
+    size: Dp,
+    glyph: Dp,
+    flagStyle: TextStyle,
+) {
+    val tile = when (accent) {
+        HomeLook.Success -> RvColor.mainA10
+        HomeLook.Processing -> RvColor.warningA10
+        HomeLook.Error -> RvColor.errorsA10
+        HomeLook.Idle -> RvColor.LightGray
+    }
+    Box(
+        modifier = Modifier
+            .size(size)
+            .clip(RoundedCornerShape(RvRadius.chip))
+            .background(tile)
+            .rvBorder(RoundedCornerShape(RvRadius.chip)),
+        contentAlignment = Alignment.Center,
+    ) {
+        when {
+            isAuto -> Icon(
+                imageVector = Icons.Filled.Bolt,
+                contentDescription = null,
+                tint = if (accent == HomeLook.Idle) RvColor.Second else RvColor.Main,
+                modifier = Modifier.size(glyph),
+            )
+            countryCode != null -> Text(
+                text = flagFromCountry(countryCode),
+                style = flagStyle,
+            )
+            else -> Icon(
+                imageVector = Icons.Outlined.Public,
+                contentDescription = null,
+                tint = RvColor.whiteA50,
+                modifier = Modifier.size(glyph),
+            )
+        }
+    }
+}
+
+/**
  * Строка сервера/профиля — используется селектором на главном экране и
  * списком «Прокси». Протокол показан бейджами над именем (перенос вида
  * ПК — Figma ServerItem); подключённая строка отмечена подложкой строки и
@@ -121,12 +181,6 @@ fun ServerRow(
     // прочих (ResultV-dev ServerItem.css:86-96). Зелёным его метят плитка
     // флага и бейдж, а не цвет имени.
     val bg = if (isActive) RvColor.DarkGrey else RvColor.Black.copy(alpha = 0.7f)
-    val tile = when {
-        accent == HomeLook.Success -> RvColor.mainA10
-        accent == HomeLook.Processing -> RvColor.warningA10
-        accent == HomeLook.Error -> RvColor.errorsA10
-        else -> RvColor.LightGray
-    }
 
     Row(
         modifier = Modifier
@@ -143,33 +197,14 @@ fun ServerRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(RoundedCornerShape(RvRadius.chip))
-                .background(tile)
-                .rvBorder(RoundedCornerShape(RvRadius.chip)),
-            contentAlignment = Alignment.Center,
-        ) {
-            when {
-                isAuto -> Icon(
-                    imageVector = Icons.Filled.Bolt,
-                    contentDescription = null,
-                    tint = if (accent == HomeLook.Idle) RvColor.Second else RvColor.Main,
-                    modifier = Modifier.size(22.dp),
-                )
-                countryCode != null -> Text(
-                    text = flagFromCountry(countryCode),
-                    style = MaterialTheme.typography.titleLarge,
-                )
-                else -> Icon(
-                    imageVector = Icons.Outlined.Public,
-                    contentDescription = null,
-                    tint = RvColor.whiteA50,
-                    modifier = Modifier.size(22.dp),
-                )
-            }
-        }
+        ProfileTile(
+            accent = accent,
+            isAuto = isAuto,
+            countryCode = countryCode,
+            size = 44.dp,
+            glyph = 22.dp,
+            flagStyle = MaterialTheme.typography.titleLarge,
+        )
 
         Column(
             modifier = Modifier.weight(1f),

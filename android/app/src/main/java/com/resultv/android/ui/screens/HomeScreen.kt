@@ -16,12 +16,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.ExpandMore
-import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -60,11 +58,11 @@ import com.resultv.android.ui.components.PowerButton
 import com.resultv.android.ui.components.ProfileEditSheet
 import com.resultv.android.ui.components.ProfileSortMenu
 import com.resultv.android.ui.components.ProfileSortMode
+import com.resultv.android.ui.components.ProfileTile
 import com.resultv.android.ui.components.ProtocolBadge
 import com.resultv.android.ui.components.ServerRow
 import com.resultv.android.ui.components.SpeedTile
 import com.resultv.android.ui.components.SubscriptionLogo
-import com.resultv.android.ui.components.flagFromCountry
 import com.resultv.android.ui.components.homeLook
 import com.resultv.android.ui.components.sortProfiles
 import com.resultv.android.ui.components.subscriptionUsesImpLogo
@@ -300,46 +298,18 @@ private fun ActiveProfileRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
-        val tile = when (accent) {
-            HomeLook.Success -> RvColor.mainA10
-            HomeLook.Processing -> RvColor.warningA10
-            HomeLook.Error -> RvColor.errorsA10
-            HomeLook.Idle -> RvColor.LightGray
-        }
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(RoundedCornerShape(RvRadius.chip))
-                .background(tile)
-                .rvBorder(RoundedCornerShape(RvRadius.chip)),
-            contentAlignment = Alignment.Center,
-        ) {
-            val country = activeCountry
-            when {
-                active == null -> Icon(
-                    imageVector = Icons.Outlined.Public,
-                    contentDescription = null,
-                    tint = RvColor.whiteA50,
-                    modifier = Modifier.size(24.dp),
-                )
-                active.isAuto -> Icon(
-                    imageVector = Icons.Filled.Bolt,
-                    contentDescription = null,
-                    tint = if (accent == HomeLook.Idle) RvColor.Second else RvColor.Main,
-                    modifier = Modifier.size(24.dp),
-                )
-                country != null -> Text(
-                    text = flagFromCountry(country),
-                    style = MaterialTheme.typography.headlineSmall,
-                )
-                else -> Icon(
-                    imageVector = Icons.Outlined.Public,
-                    contentDescription = null,
-                    tint = RvColor.whiteA50,
-                    modifier = Modifier.size(24.dp),
-                )
-            }
-        }
+        // Общая с ServerRow плитка (см. её KDoc в ServerRow.kt) — здесь
+        // масштаб шапки: 48dp/24dp против 44dp/22dp у строки списка.
+        // activeCountry уже null всякий раз, когда active == null (см.
+        // вычисление в вызывающем коде), так что отдельная ветка не нужна.
+        ProfileTile(
+            accent = accent,
+            isAuto = active?.isAuto ?: false,
+            countryCode = activeCountry,
+            size = 48.dp,
+            glyph = 24.dp,
+            flagStyle = MaterialTheme.typography.headlineSmall,
+        )
 
         Column(
             modifier = Modifier.weight(1f),
