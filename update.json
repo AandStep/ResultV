@@ -9,6 +9,11 @@
       "type": "fix",
       "ru": "Улучшена работа адаптивного умного режима.",
       "en": "Improved performance of the adaptive smart mode."
+    },
+    {
+      "type": "improve",
+      "ru": "Окно обновления переведено на новый дизайн.",
+      "en": "The update window has been translated to the new design."
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",
