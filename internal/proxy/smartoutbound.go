@@ -255,18 +255,25 @@ func (s *smartOutbound) raceConnection(ctx context.Context, conn net.Conn, metad
 		return
 	}
 
-	s.learn(metadata, res.ViaProxy)
+	if raceTeaches(res) {
+		s.learn(metadata, res.ViaProxy)
+	}
 	if res.ViaProxy {
 		conn = s.attributeProxy(conn, metadata)
-	} else {
+	} else if raceTeaches(res) {
 		// Direct won on bytes. Whether those bytes were the site or a wall is a
-		// different question, and only a probe can answer it.
+		// different question, and only a probe can answer it. A handover has no
+		// bytes to be suspicious of, so there is nothing to recheck.
 		s.recheckAsync(smartHost(&metadata))
 	}
 	// The server's first bytes are already off the socket, so they are handed
 	// back in front of it; from here this is an ordinary relayed pair and the
-	// core's own copy loop owns it.
-	server := bufio.NewCachedConn(res.Conn, buf.As(res.Head))
+	// core's own copy loop owns it. A handover carries none, and an empty cache
+	// is a wrapper with nothing to do.
+	server := res.Conn
+	if len(res.Head) > 0 {
+		server = bufio.NewCachedConn(res.Conn, buf.As(res.Head))
+	}
 	s.connection.NewConnection(ctx, constantDialer{conn: server}, conn, metadata, onClose)
 }
 
