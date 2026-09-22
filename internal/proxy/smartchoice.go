@@ -58,15 +58,16 @@ type smartLookup interface {
 // whichever CDN edge answered today, the name is what the user actually asked
 // for, and a verdict filed under the name survives the rotation.
 //
-// raceAllowed is the breaker (spec §6.5). When it is off, an unknown
-// destination goes direct — exactly what the client did before this feature —
-// rather than being tunnelled on a guess made while the network is broken.
-func decideSmart(store smartLookup, host string, addr netip.Addr, raceAllowed bool) smartChoice {
+// An unknown destination is always raced. The breaker (spec §6.5) used to send
+// it direct instead; that handed every unknown name straight to a blackholed
+// path at the exact moment hedging was worth most. It now gates learning only —
+// see smartOutbound.learn.
+func decideSmart(store smartLookup, host string, addr netip.Addr) smartChoice {
 	rec, ok := lookupSmart(store, host, addr)
 	if !ok {
-		return unknownChoice(raceAllowed)
+		return chooseRace
 	}
-	return choiceFor(rec.Decision, raceAllowed)
+	return choiceFor(rec.Decision)
 }
 
 // lookupSmart is decideSmart's first half on its own: the record, and whether
@@ -95,29 +96,22 @@ func lookupSmart(store smartLookup, host string, addr netip.Addr) (verdict.Recor
 
 // choiceFrom is choiceFor for a caller that already has the record, so it does
 // not have to ask the store again just to turn it into a choice.
-func choiceFrom(rec verdict.Record, known bool, raceAllowed bool) smartChoice {
+func choiceFrom(rec verdict.Record, known bool) smartChoice {
 	if !known {
-		return unknownChoice(raceAllowed)
+		return chooseRace
 	}
-	return choiceFor(rec.Decision, raceAllowed)
+	return choiceFor(rec.Decision)
 }
 
-func choiceFor(d verdict.Decision, raceAllowed bool) smartChoice {
+func choiceFor(d verdict.Decision) smartChoice {
 	switch d {
 	case verdict.Proxy:
 		return chooseProxy
 	case verdict.Direct:
 		return chooseDirect
 	default:
-		return unknownChoice(raceAllowed)
-	}
-}
-
-func unknownChoice(raceAllowed bool) smartChoice {
-	if raceAllowed {
 		return chooseRace
 	}
-	return chooseDirect
 }
 
 // smartUDPAction is what the smart outbound does with one UDP flow. UDP needs
@@ -145,9 +139,8 @@ func (a smartUDPAction) String() string {
 // decideSmartUDP answers where one UDP flow should go.
 //
 // choice is what decideSmart made of the destination and known says whether
-// that came from an actual record or from the fallback — UDP needs the
-// difference, because "known to work directly" and "nothing is known" both
-// arrive as chooseDirect and only the second has to be refused.
+// that came from an actual record. UDP has no race of its own, so chooseRace
+// means "nothing is known" here and is treated as direct.
 //
 // nodeUDPAlive is the node's own measured ability to carry UDP (see
 // ProbeUDPRelay). It only ever gates port 443, and that is the whole point of

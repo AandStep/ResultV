@@ -57,6 +57,22 @@ type raceResult struct {
 	Err      error
 }
 
+// raceLinkEvidence turns one finished race into what it says about the direct
+// LINK, which is not the same question as what it says about the destination.
+// Only a race both legs lost is evidence the link is broken; a race the node
+// won is one censored destination, and filing it as a link failure is what let
+// the breaker trip on the engine's own rescues.
+func raceLinkEvidence(res raceResult) (report, ok bool) {
+	switch {
+	case res.Err != nil:
+		return true, false
+	case res.ViaProxy:
+		return false, false
+	default:
+		return true, true
+	}
+}
+
 type raceAttempt struct {
 	conn     net.Conn
 	head     []byte
