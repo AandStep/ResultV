@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
@@ -39,17 +40,17 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.resultv.android.ui.screens.RoutingProfilesSheets
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.outlined.Apps
-import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -113,9 +114,11 @@ private fun openUrl(ctx: Context, url: String) {
 private enum class Tab(
     @StringRes val titleRes: Int,
     @DrawableRes val icon: Int,
+    /** Заголовок страницы в шапке; у главной своя шапка. */
+    @StringRes val headerRes: Int = titleRes,
 ) {
     Home(R.string.tab_home, R.drawable.ic_nav_home),
-    Add(R.string.tab_add, R.drawable.ic_nav_add),
+    Add(R.string.tab_add, R.drawable.ic_nav_add, headerRes = R.string.home_add_server),
     Proxies(R.string.tab_proxies, R.drawable.ic_nav_servers),
     Rules(R.string.tab_rules, R.drawable.ic_nav_rules),
     Settings(R.string.tab_settings, R.drawable.ic_nav_settings),
@@ -348,12 +351,7 @@ private fun AppShell(
                     onOpenTelegram = { openUrl(ctx, TELEGRAM_URL) },
                 )
             } else {
-                CenterAlignedTopAppBar(
-                    title = { Text(text = stringResource(tab.titleRes)) },
-                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                        containerColor = RvColor.Black,
-                    ),
-                )
+                PageHeader(title = stringResource(tab.headerRes))
             }
         },
         bottomBar = { BottomBar(selected = tab, onSelect = { tab = it }) },
@@ -406,6 +404,26 @@ private fun AppShell(
     }
 
     RoutingImportSheet(dataDir)
+}
+
+/**
+ * Шапка страницы мобильного макета (например, AddPage 6863:4864): заголовок
+ * 24 Bold слева, поле страницы 12, до содержимого 24.
+ */
+@Composable
+private fun PageHeader(title: String) {
+    Text(
+        text = title,
+        fontSize = 24.sp,
+        lineHeight = 28.8.sp,
+        fontWeight = FontWeight.Bold,
+        color = RvColor.White,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(RvColor.Black)
+            .windowInsetsPadding(WindowInsets.statusBars)
+            .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 24.dp),
+    )
 }
 
 /**

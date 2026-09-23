@@ -139,11 +139,8 @@
 
     <!-- Add screen -->
     <string name="add_quick_clipboard_title">Из буфера</string>
-    <string name="add_quick_clipboard_subtitle">Вставить ссылки из буфера</string>
     <string name="add_quick_file_title">Из файла</string>
-    <string name="add_quick_file_subtitle">Открыть .txt со ссылками</string>
-    <string name="add_quick_qr_title">Сканер QR</string>
-    <string name="add_quick_qr_subtitle">Камера · ссылка или подписка</string>
+    <string name="add_quick_qr_title">QR-код</string>
     <string name="add_msg_qr_empty">Сканирование отменено</string>
     <string name="add_msg_qr_unsupported">Сканер QR недоступен на этом устройстве</string>
     <string name="add_msg_qr_imported">Импортировано из QR</string>
@@ -154,12 +151,10 @@
     <string name="add_msg_clipboard_empty">Буфер обмена пуст</string>
     <string name="add_msg_imported_clipboard">Импортировано из буфера: %1$d</string>
     <string name="add_msg_no_valid_uris_clipboard">В буфере нет корректных ссылок</string>
-    <string name="add_mode_link">Ссылка</string>
-    <string name="add_mode_manual">Вручную</string>
 
-    <string name="add_link_label">Вставьте ссылку, подписку или конфиг</string>
-    <string name="add_link_placeholder">resultv:// · https://… · vless:// vmess:// trojan:// hy2:// …
-[Interface] из .conf WireGuard или JSON-конфиг</string>
+    <string name="add_link_label">Вставьте ссылку</string>
+    <string name="add_config_label">Вставьте данные из файла JSON или .conf</string>
+    <string name="add_link_hint">https://example.com/sub или %1$s://...</string>
     <string name="add_link_err_empty">Ссылка пустая</string>
     <string name="add_link_err_invalid">Не удалось распознать ссылку или конфиг</string>
     <string name="add_paste_default_name">Профиль</string>
@@ -177,7 +172,6 @@
     <string name="manual_err_build">Не удалось собрать ссылку</string>
     <string name="manual_err_invalid">Некорректная конфигурация</string>
     <string name="manual_choice_none">(нет)</string>
-    <string name="manual_added">Сервер добавлен: %1$s</string>
 
     <string name="manual_field_name">Имя</string>
     <string name="manual_field_name_placeholder">Мой сервер</string>

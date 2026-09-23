@@ -6,14 +6,33 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.DrawableRes
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import com.resultv.android.theme.SegoeUi
+import com.resultv.android.ui.components.RvButton
+import com.resultv.android.ui.components.RvButtonColors
+import com.resultv.android.ui.components.RvButtonLabel
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -26,35 +45,21 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.CloudDownload
-import androidx.compose.material.icons.outlined.ContentPaste
-import androidx.compose.material.icons.outlined.FileOpen
-import androidx.compose.material.icons.outlined.QrCodeScanner
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -67,7 +72,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.resultv.android.R
 import com.resultv.android.theme.RvColor
-import com.resultv.android.theme.RvRadius
 import com.resultv.android.theme.RvSpace
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
@@ -87,8 +91,6 @@ import mobile.Mobile
 import org.json.JSONArray
 import org.json.JSONObject
 
-private enum class AddMode { Link, Manual }
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddScreen(
@@ -99,7 +101,6 @@ fun AddScreen(
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val scope = rememberCoroutineScope()
-    var mode by remember { mutableStateOf(AddMode.Link) }
     var importMessage by remember { mutableStateOf<String?>(null) }
 
     val defaultName = stringResource(R.string.add_paste_default_name)
@@ -152,29 +153,27 @@ fun AddScreen(
                     focusManager.clearFocus()
                 })
             }
-            .padding(horizontal = RvSpace.nest1, vertical = RvSpace.nest2),
-        verticalArrangement = Arrangement.spacedBy(RvSpace.nest2),
+            // Макет AddPage (Figma 6863:4833): поле 12, между блоками 8.
+            .padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
     ) {
-        // Quick-import shortcuts (clipboard / file / QR).
+        // Быстрые источники: файл, буфер, QR — плитки BigBtn макета.
         Row(horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3)) {
-            QuickAddCard(
-                icon = Icons.Outlined.ContentPaste,
-                title = stringResource(R.string.add_quick_clipboard_title),
-                subtitle = stringResource(R.string.add_quick_clipboard_subtitle),
-                onClick = { pasteFromClipboard(ctx, scope, dataDir) { importMessage = it } },
-                modifier = Modifier.weight(1f),
-            )
-            QuickAddCard(
-                icon = Icons.Outlined.FileOpen,
-                title = stringResource(R.string.add_quick_file_title),
-                subtitle = stringResource(R.string.add_quick_file_subtitle),
+            BigBtn(
+                icon = R.drawable.ic_upload_file,
+                label = stringResource(R.string.add_quick_file_title),
                 onClick = { filePicker.launch(arrayOf("*/*")) },
                 modifier = Modifier.weight(1f),
             )
-            QuickAddCard(
-                icon = Icons.Outlined.QrCodeScanner,
-                title = stringResource(R.string.add_quick_qr_title),
-                subtitle = stringResource(R.string.add_quick_qr_subtitle),
+            BigBtn(
+                icon = R.drawable.ic_paste,
+                label = stringResource(R.string.add_quick_clipboard_title),
+                onClick = { pasteFromClipboard(ctx, scope, dataDir) { importMessage = it } },
+                modifier = Modifier.weight(1f),
+            )
+            BigBtn(
+                icon = R.drawable.ic_qr_scan,
+                label = stringResource(R.string.add_quick_qr_title),
                 onClick = { scanQr(ctx) { importMessage = it } },
                 modifier = Modifier.weight(1f),
             )
@@ -188,69 +187,168 @@ fun AddScreen(
             )
         }
 
-        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-            AddMode.entries.forEachIndexed { i, m ->
-                SegmentedButton(
-                    selected = mode == m,
-                    onClick = { mode = m },
-                    shape = SegmentedButtonDefaults.itemShape(i, AddMode.entries.size),
+        LinkPane(dataDir = dataDir, onDone = onDone)
+    }
+}
+
+// ───────────────────────────── BigBtn ─────────────────────────────
+
+/** Плитка быстрого источника — компонент BigBtn макета: 106 в высоту, значок 32. */
+@Composable
+private fun BigBtn(
+    @DrawableRes icon: Int,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(16.dp)
+    Column(
+        modifier = modifier
+            .height(106.dp)
+            .clip(shape)
+            .background(RvColor.Grey)
+            .border(1.dp, RvColor.whiteA10, shape)
+            .clickable(role = Role.Button, onClick = onClick),
+        verticalArrangement = Arrangement.spacedBy(RvSpace.nest3, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(
+            painter = painterResource(icon),
+            contentDescription = null,
+            tint = RvColor.whiteA50,
+            modifier = Modifier.size(32.dp),
+        )
+        Text(label, style = RvButtonLabel, fontWeight = FontWeight.Bold, color = RvColor.whiteA50)
+    }
+}
+
+// ───────────────────────────── Protocols ─────────────────────────────
+
+/**
+ * Протоколы ряда «Выберите протокол» — порядок и написание с макета, как на
+ * ПК (ADD_PAGE_PROTOCOLS). Выбор меняет только подпись и подсказку поля:
+ * разбор вставленного всё равно определяет формат сам.
+ */
+private class AddProtocol(
+    val key: String,
+    val label: String,
+    /** Схема ссылки для подсказки; null — протокол вставляется конфигом. */
+    val scheme: String?,
+    val configHint: String? = null,
+)
+
+/** У обычного WireGuard нет джиттера, поэтому строки `Jc` в его конфиге нет. */
+private const val WG_HINT = "[Interface]\nPrivateKey = \nAddress = \nDNS = "
+
+private val AddProtocols = listOf(
+    AddProtocol("vless", "VLESS", "vless"),
+    AddProtocol("hysteria2", "Hysteria2", "hysteria2"),
+    AddProtocol("amneziawg", "AmneziaWG", null, "$WG_HINT\nJc = "),
+    AddProtocol("wireguard", "Wireguard", null, WG_HINT),
+    AddProtocol("trojan", "Trojan", "trojan"),
+    AddProtocol("vmess", "VMESS", "vmess"),
+    AddProtocol("ss", "SS", "ss"),
+    AddProtocol("naive", "NaiveProxy", "naive+https"),
+    AddProtocol("http", "HTTP(S)", "http"),
+    AddProtocol("socks5", "Socks5", "socks5"),
+)
+
+/**
+ * Ряд протоколов шире экрана и прокручивается вбок; справа затухание 96,
+ * пока есть что листать.
+ */
+@Composable
+private fun ProtocolRow(selected: String, onSelect: (String) -> Unit) {
+    val scroll = rememberScrollState()
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.horizontalScroll(scroll),
+            horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3),
+        ) {
+            AddProtocols.forEach { p ->
+                val on = p.key == selected
+                RvButton(
+                    onClick = { onSelect(p.key) },
+                    fill = if (on) RvButtonColors.greenSelected else RvButtonColors.greenFill,
+                    outline = RvButtonColors.greenOutline,
+                    modifier = Modifier.semantics { this.selected = on },
                 ) {
                     Text(
-                        text = stringResource(
-                            when (m) {
-                                AddMode.Link -> R.string.add_mode_link
-                                AddMode.Manual -> R.string.add_mode_manual
-                            },
-                        ),
+                        text = p.label,
+                        style = RvButtonLabel,
+                        fontWeight = FontWeight.Bold,
+                        color = RvColor.Main,
+                        modifier = Modifier.padding(horizontal = 32.dp),
                     )
                 }
             }
         }
-
-        when (mode) {
-            AddMode.Link -> LinkPane(dataDir = dataDir, onDone = onDone)
-            AddMode.Manual -> ManualPane(onDone = onDone)
+        if (scroll.canScrollForward) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .width(96.dp)
+                    .height(52.dp)
+                    .background(Brush.horizontalGradient(listOf(Color.Transparent, RvColor.Grey))),
+            )
         }
     }
 }
 
-// ───────────────────────────── Quick-add card ────────────────────────────
+/** Подписи полей и текст в поле: 12 Semibold, межстрочный 1.4. */
+private val FieldTextStyle = TextStyle(
+    fontFamily = SegoeUi,
+    fontSize = 12.sp,
+    lineHeight = 16.8.sp,
+    fontWeight = FontWeight.SemiBold,
+)
 
+/**
+ * Поле ссылки — Textarea макета: 140 в высоту, Dark Grey, скругление 16.
+ * В фокусе рамка Main 20 %, с ошибкой — красная.
+ */
 @Composable
-private fun QuickAddCard(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    @Suppress("UNUSED_PARAMETER") subtitle: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
+private fun LinkField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    hint: String,
+    isError: Boolean,
 ) {
-    // Square card — equal height for clipboard/file/QR. Subtitle dropped at
-    // user request; tooltip-style hints live in i18n only.
-    ElevatedCard(
-        onClick = onClick,
-        modifier = modifier.aspectRatio(1f),
-        shape = RoundedCornerShape(RvRadius.card),
-        colors = CardDefaults.elevatedCardColors(containerColor = RvColor.Grey),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(RvSpace.nest2),
-            verticalArrangement = Arrangement.spacedBy(RvSpace.nest3, Alignment.CenterVertically),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
+    var focused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(16.dp)
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(140.dp)
+            .onFocusChanged { focused = it.isFocused },
+        textStyle = FieldTextStyle.copy(color = RvColor.White),
+        cursorBrush = SolidColor(RvColor.whiteA50),
+        decorationBox = { inner ->
             Box(
                 modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(RvRadius.chip))
-                    .background(RvColor.LightGray),
-                contentAlignment = Alignment.Center,
+                    .fillMaxSize()
+                    .clip(shape)
+                    .background(RvColor.DarkGrey)
+                    .border(
+                        1.dp,
+                        when {
+                            isError -> RvColor.errorsA50
+                            focused -> RvColor.mainA20
+                            else -> Color.Transparent
+                        },
+                        shape,
+                    )
+                    .padding(12.dp),
             ) {
-                Icon(icon, contentDescription = null, tint = RvColor.Second)
+                if (value.isEmpty()) {
+                    Text(hint, style = FieldTextStyle, color = RvColor.whiteA20)
+                }
+                inner()
             }
-            Text(title, style = MaterialTheme.typography.titleSmall)
-        }
-    }
+        },
+    )
 }
 
 // ──────────────────────────── Unified Link pane ────────────────────────────
@@ -273,6 +371,8 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
     val scope = rememberCoroutineScope()
 
     var input by remember { mutableStateOf("") }
+    var protocolKey by rememberSaveable { mutableStateOf(AddProtocols.first().key) }
+    val protocol = AddProtocols.first { it.key == protocolKey }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
     // Non-null once an http(s):// fetch succeeds — switches the pane from
@@ -350,20 +450,35 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
         }
     }
 
-    Card(
-        shape = RoundedCornerShape(RvRadius.card),
-        colors = CardDefaults.cardColors(containerColor = RvColor.Grey),
+    // Карточка формы макета: Grey, скругление 24, поле 14, между блоками 12.
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(24.dp))
+            .background(RvColor.Grey)
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
-        Column(
-            modifier = Modifier.padding(RvSpace.nest1),
-            verticalArrangement = Arrangement.spacedBy(RvSpace.nest2),
-        ) {
+        Column(verticalArrangement = Arrangement.spacedBy(RvSpace.nest3)) {
             Text(
-                stringResource(R.string.add_link_label),
-                style = MaterialTheme.typography.labelLarge,
+                stringResource(R.string.manual_choose_protocol),
+                style = FieldTextStyle,
                 color = RvColor.whiteA50,
             )
-            OutlinedTextField(
+            ProtocolRow(selected = protocolKey, onSelect = { protocolKey = it })
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(RvSpace.nest3)) {
+            Text(
+                stringResource(
+                    if (protocol.scheme == null) R.string.add_config_label else R.string.add_link_label,
+                ),
+                style = FieldTextStyle,
+                color = RvColor.whiteA50,
+            )
+            // Многострочное: .conf или JSON вставляют целиком, список ссылок —
+            // по нескольку строк. Enter переносит строку, добавляет кнопка ниже.
+            LinkField(
                 value = input,
                 onValueChange = {
                     input = it
@@ -374,147 +489,138 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
                         fetched = null; fetchedUrl = ""
                     }
                 },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text(stringResource(R.string.add_link_placeholder)) },
+                hint = protocol.configHint
+                    ?: stringResource(R.string.add_link_hint, protocol.scheme.orEmpty()),
                 isError = error != null,
-                supportingText = error?.let { { Text(it) } },
-                // Multi-line: a .conf or a JSON config is pasted whole, and a
-                // list of links comes several rows at a time. Enter therefore
-                // inserts a newline — the Add button below submits.
-                minLines = 3,
-                maxLines = 8,
             )
+            error?.let { Text(it, style = FieldTextStyle, color = RvColor.Errors) }
+        }
+
+        RvButton(
+            onClick = submit,
+            fill = RvButtonColors.greenFill,
+            outline = RvButtonColors.greenOutline,
+            enabled = !loading && input.isNotBlank(),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            if (loading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(14.dp),
+                    strokeWidth = 2.dp,
+                    color = RvColor.Main,
+                )
+            }
+            Text(
+                stringResource(if (loading) R.string.add_sub_fetching else R.string.home_add_server),
+                style = RvButtonLabel,
+                fontWeight = FontWeight.Bold,
+                color = RvColor.Main,
+            )
+        }
+
+        // Subscription preview — only rendered after a successful
+        // http(s):// fetch. SECTION rows are inlined as labels and ride
+        // along with whatever's selected.
+        val sub = fetched
+        if (sub != null && sub.entries.isNotEmpty()) {
+            val realKeys = remember(sub) {
+                sub.entries.filterNot { it.isSection }.map { it.key }.toSet()
+            }
+            val realCount = realKeys.size
+            val allSelected = selected.value.size >= realCount && realCount > 0
+
+            // Selection summary + select-all toggle, kept directly above
+            // the import action so neither is buried under the (possibly
+            // long) server list.
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3),
             ) {
-                FilledTonalButton(
-                    onClick = submit,
-                    enabled = !loading && input.isNotBlank(),
-                ) {
-                    Icon(
-                        if (loading) Icons.Outlined.CloudDownload else Icons.Outlined.Add,
-                        contentDescription = null,
-                    )
-                    Spacer(Modifier.width(RvSpace.nest3))
+                Text(
+                    text = stringResource(R.string.add_sub_selected, selected.value.size, realCount),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = RvColor.whiteA50,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = {
+                    selected.value = if (allSelected) emptySet() else realKeys
+                }) {
                     Text(
                         stringResource(
-                            if (loading) R.string.add_sub_fetching else R.string.action_add,
+                            if (allSelected) R.string.add_sub_clear_all
+                            else R.string.add_sub_select_all,
                         ),
                     )
                 }
-                if (loading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.heightIn(max = 18.dp).width(18.dp),
-                        strokeWidth = 2.dp,
-                    )
-                }
-                TextButton(onClick = {
-                    input = ""; error = null
-                    fetched = null; fetchedUrl = ""
-                    keyboard?.hide(); focusManager.clearFocus()
-                }) { Text(stringResource(R.string.action_clear)) }
             }
 
-            // Subscription preview — only rendered after a successful
-            // http(s):// fetch. SECTION rows are inlined as labels and ride
-            // along with whatever's selected.
-            val sub = fetched
-            if (sub != null && sub.entries.isNotEmpty()) {
-                val realKeys = remember(sub) {
-                    sub.entries.filterNot { it.isSection }.map { it.key }.toSet()
-                }
-                val realCount = realKeys.size
-                val allSelected = selected.value.size >= realCount && realCount > 0
-
-                // Selection summary + select-all toggle, kept directly above
-                // the import action so neither is buried under the (possibly
-                // long) server list.
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = stringResource(R.string.add_sub_selected, selected.value.size, realCount),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = RvColor.whiteA50,
-                        modifier = Modifier.weight(1f),
+            // Import button pinned above the list — the user no longer
+            // has to scroll to the bottom of all entries to commit.
+            RvButton(
+                fill = RvButtonColors.greenFill,
+                outline = RvButtonColors.greenOutline,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = selected.value.isNotEmpty(),
+                onClick = {
+                    importSubscription(
+                        url = fetchedUrl,
+                        sub = sub,
+                        selectedKeys = selected.value,
+                        sourceTag = "",
+                        dataDir = dataDir,
                     )
-                    TextButton(onClick = {
-                        selected.value = if (allSelected) emptySet() else realKeys
-                    }) {
+                    onDone()
+                },
+            ) {
+                Text(
+                    stringResource(R.string.add_sub_import, selected.value.size),
+                    style = RvButtonLabel,
+                    fontWeight = FontWeight.Bold,
+                    color = RvColor.Main,
+                )
+            }
+
+            LazyColumn(
+                modifier = Modifier.heightIn(max = 360.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                items(sub.entries, key = { it.key }) { e ->
+                    if (e.isSection) {
                         Text(
-                            stringResource(
-                                if (allSelected) R.string.add_sub_clear_all
-                                else R.string.add_sub_select_all,
-                            ),
+                            text = e.name,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = RvColor.whiteA50,
+                            modifier = Modifier.padding(start = RvSpace.xs, top = RvSpace.nest3, bottom = RvSpace.xs),
                         )
+                        return@items
                     }
-                }
-
-                // Import button pinned above the list — the user no longer
-                // has to scroll to the bottom of all entries to commit.
-                FilledTonalButton(
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = selected.value.isNotEmpty(),
-                    onClick = {
-                        importSubscription(
-                            url = fetchedUrl,
-                            sub = sub,
-                            selectedKeys = selected.value,
-                            sourceTag = "",
-                            dataDir = dataDir,
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        val checked = e.key in selected.value
+                        Checkbox(
+                            checked = checked,
+                            onCheckedChange = { now ->
+                                selected.value = if (now) selected.value + e.key
+                                else selected.value - e.key
+                            },
                         )
-                        onDone()
-                    },
-                ) {
-                    Icon(Icons.Outlined.Check, contentDescription = null)
-                    Spacer(Modifier.width(RvSpace.nest3))
-                    Text(stringResource(R.string.add_sub_import, selected.value.size))
-                }
-
-                LazyColumn(
-                    modifier = Modifier.heightIn(max = 360.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    items(sub.entries, key = { it.key }) { e ->
-                        if (e.isSection) {
+                        Column(modifier = Modifier.padding(start = RvSpace.xs)) {
                             Text(
-                                text = e.name,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = RvColor.whiteA50,
-                                modifier = Modifier.padding(start = RvSpace.xs, top = RvSpace.nest3, bottom = RvSpace.xs),
+                                e.name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
-                            return@items
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            val checked = e.key in selected.value
-                            Checkbox(
-                                checked = checked,
-                                onCheckedChange = { now ->
-                                    selected.value = if (now) selected.value + e.key
-                                    else selected.value - e.key
-                                },
-                            )
-                            Column(modifier = Modifier.padding(start = RvSpace.xs)) {
+                            if (e.preview.isNotBlank()) {
                                 Text(
-                                    e.name,
-                                    style = MaterialTheme.typography.bodyMedium,
+                                    e.preview,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = RvColor.whiteA50,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
-                                if (e.preview.isNotBlank()) {
-                                    Text(
-                                        e.preview,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = RvColor.whiteA50,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
                             }
                         }
                     }

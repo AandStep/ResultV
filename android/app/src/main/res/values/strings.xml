@@ -145,11 +145,8 @@
 
     <!-- Add screen — quick imports + mode tabs -->
     <string name="add_quick_clipboard_title">From clipboard</string>
-    <string name="add_quick_clipboard_subtitle">Paste links from buffer</string>
     <string name="add_quick_file_title">From file</string>
-    <string name="add_quick_file_subtitle">Open .txt with URIs</string>
-    <string name="add_quick_qr_title">Scan QR</string>
-    <string name="add_quick_qr_subtitle">Camera + share link / sub URL</string>
+    <string name="add_quick_qr_title">QR code</string>
     <string name="add_msg_qr_empty">Scan cancelled or empty</string>
     <string name="add_msg_qr_unsupported">QR scanner unavailable on this device</string>
     <string name="add_msg_qr_imported">Imported from QR</string>
@@ -160,13 +157,11 @@
     <string name="add_msg_clipboard_empty">Clipboard is empty</string>
     <string name="add_msg_imported_clipboard">Imported %1$d profile(s) from clipboard</string>
     <string name="add_msg_no_valid_uris_clipboard">No valid URIs in clipboard</string>
-    <string name="add_mode_link">Link</string>
-    <string name="add_mode_manual">Manual</string>
 
     <!-- Add screen — unified Link pane -->
-    <string name="add_link_label">Paste a link, a subscription or a config</string>
-    <string name="add_link_placeholder">resultv:// · https://… · vless:// vmess:// trojan:// hy2:// …
-[Interface] of a WireGuard .conf, or a JSON config</string>
+    <string name="add_link_label">Paste a link</string>
+    <string name="add_config_label">Paste the contents of a JSON or .conf file</string>
+    <string name="add_link_hint">https://example.com/sub or %1$s://...</string>
     <string name="add_link_err_empty">Link is empty</string>
     <string name="add_link_err_invalid">Could not recognize this link or config</string>
     <string name="add_paste_default_name">Profile</string>
@@ -180,12 +175,11 @@
     <string name="add_sub_clear_all">Clear all</string>
 
     <!-- Manual protocol entry -->
-    <string name="manual_choose_protocol">Choose protocol</string>
+    <string name="manual_choose_protocol">Choose a protocol</string>
     <string name="manual_err_required">%1$s is required</string>
     <string name="manual_err_build">Cannot build URI</string>
     <string name="manual_err_invalid">Invalid configuration</string>
     <string name="manual_choice_none">(none)</string>
-    <string name="manual_added">Server added: %1$s</string>
 
     <string name="manual_field_name">Name</string>
     <string name="manual_field_name_placeholder">My server</string>

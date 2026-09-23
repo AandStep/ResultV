@@ -1,9 +1,6 @@
 package com.resultv.android.ui.screens
 
 import android.util.Base64
-import android.widget.Toast
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -14,25 +11,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -42,13 +30,11 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -58,7 +44,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.text.KeyboardOptions
 import com.resultv.android.R
 import com.resultv.android.theme.RvColor
-import com.resultv.android.theme.RvRadius
 import com.resultv.android.theme.RvSpace
 import com.resultv.android.ui.components.DarkSheetSystemBars
 import com.resultv.android.vpn.Profile
@@ -67,182 +52,6 @@ import mobile.Mobile
 import org.json.JSONObject
 import java.net.URLDecoder
 import java.net.URLEncoder
-
-/**
- * Manual entry pane: pick a protocol, fill a form, build a share-URI string,
- * validate via Mobile.parseProxyURI, save the profile.
- *
- * URI builders mirror the schemes accepted by internal/proxy/uriparser.go.
- */
-@Composable
-fun ManualPane(onDone: () -> Unit) {
-    var picked by remember { mutableStateOf<ProtocolSpec?>(null) }
-    val current = picked
-    if (current == null) {
-        ProtocolGrid(onPick = { picked = it })
-    } else {
-        ProtocolForm(
-            spec = current,
-            onBack = { picked = null },
-            onDone = onDone,
-        )
-    }
-}
-
-// ───────────────────────────── Grid ─────────────────────────────
-
-@Composable
-private fun ProtocolGrid(onPick: (ProtocolSpec) -> Unit) {
-    Card(
-        shape = RoundedCornerShape(RvRadius.card),
-        colors = CardDefaults.cardColors(containerColor = RvColor.Grey),
-    ) {
-        Column(
-            modifier = Modifier.padding(RvSpace.nest1),
-            verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
-        ) {
-            Text(
-                stringResource(R.string.manual_choose_protocol),
-                style = MaterialTheme.typography.labelLarge,
-                color = RvColor.whiteA50,
-            )
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(3),
-                verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
-                horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3),
-                modifier = Modifier.height(280.dp),
-            ) {
-                items(Protocols, key = { it.id }) { spec ->
-                    ProtocolCard(spec, onClick = { onPick(spec) })
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ProtocolCard(spec: ProtocolSpec, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(80.dp)
-            .clip(RoundedCornerShape(RvRadius.control))
-            .background(RvColor.LightGray)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text(
-                spec.title,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                spec.scheme,
-                style = MaterialTheme.typography.bodySmall,
-                color = RvColor.whiteA50,
-            )
-        }
-    }
-}
-
-// ───────────────────────────── Form ─────────────────────────────
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ProtocolForm(
-    spec: ProtocolSpec,
-    onBack: () -> Unit,
-    onDone: () -> Unit,
-) {
-    val ctx = LocalContext.current
-    val values = remember(spec.id) {
-        mutableStateMapOf<String, String>().apply {
-            spec.fields.forEach { put(it.key, it.default) }
-        }
-    }
-    var error by remember(spec.id) { mutableStateOf<String?>(null) }
-    val errBuild = stringResource(R.string.manual_err_build)
-    val errInvalid = stringResource(R.string.manual_err_invalid)
-
-    val submit = submit@{
-        val missing = spec.fields.firstOrNull {
-            it.required && values[it.key].orEmpty().isBlank()
-        }
-        if (missing != null) {
-            error = ctx.getString(R.string.manual_err_required, ctx.getString(missing.labelRes))
-            return@submit
-        }
-        val uri = try {
-            spec.build(values)
-        } catch (t: Throwable) {
-            error = t.message ?: errBuild
-            return@submit
-        }
-        try {
-            Mobile.parseProxyURI(uri)
-        } catch (t: Throwable) {
-            error = t.message ?: errInvalid
-            return@submit
-        }
-        val name = values["name"].orEmpty().ifBlank { spec.title }
-        ProfileRepository.add(Profile.fromUri(name, uri))
-        // Confirm the add with a toast — mirrors the subscription import
-        // feedback. submit() calls onDone() right after, so an inline
-        // message wouldn't survive the navigation away from this pane.
-        Toast.makeText(ctx, ctx.getString(R.string.manual_added, name), Toast.LENGTH_LONG).show()
-        onDone()
-    }
-
-    Card(
-        shape = RoundedCornerShape(RvRadius.card),
-        colors = CardDefaults.cardColors(containerColor = RvColor.Grey),
-    ) {
-        Column(
-            modifier = Modifier.padding(RvSpace.nest1),
-            verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        Icons.AutoMirrored.Outlined.ArrowBack,
-                        contentDescription = stringResource(R.string.action_back),
-                    )
-                }
-                Spacer(Modifier.width(RvSpace.xs))
-                Text(spec.title, style = MaterialTheme.typography.titleMedium)
-            }
-
-            spec.fields.forEach { f ->
-                FieldRow(
-                    field = f,
-                    value = values[f.key].orEmpty(),
-                    onValue = { values[f.key] = it; error = null },
-                )
-            }
-
-            error?.let {
-                Text(
-                    it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3)) {
-                FilledTonalButton(onClick = submit) {
-                    Icon(Icons.Outlined.Check, contentDescription = null)
-                    Spacer(Modifier.width(RvSpace.nest3))
-                    Text(stringResource(R.string.action_save))
-                }
-                TextButton(onClick = onBack) { Text(stringResource(R.string.action_cancel)) }
-            }
-        }
-    }
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

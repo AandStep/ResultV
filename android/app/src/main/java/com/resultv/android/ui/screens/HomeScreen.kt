@@ -2,19 +2,14 @@ package com.resultv.android.ui.screens
 
 import android.widget.Toast
 import kotlin.math.roundToInt
-import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
-import com.resultv.android.theme.SegoeUi
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -74,6 +69,9 @@ import com.resultv.android.ui.components.ProfileSortMenu
 import com.resultv.android.ui.components.ProfileSortMode
 import com.resultv.android.ui.components.ProfileTile
 import com.resultv.android.ui.components.ProtocolBadge
+import com.resultv.android.ui.components.RvButton
+import com.resultv.android.ui.components.RvButtonColors
+import com.resultv.android.ui.components.RvButtonLabel
 import com.resultv.android.ui.components.ServerRow
 import com.resultv.android.ui.components.SpeedTile
 import com.resultv.android.ui.components.UptimeChip
@@ -610,10 +608,10 @@ private fun HomeActions(onAdd: () -> Unit, onPaste: () -> Unit, onScan: () -> Un
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(HomeGap.tight),
     ) {
-        HomeActionButton(
+        RvButton(
             onClick = onAdd,
-            fill = RvColor.mainA10,
-            outline = RvColor.mainA10,
+            fill = RvButtonColors.greenFill,
+            outline = RvButtonColors.greenOutline,
             modifier = Modifier.weight(1f),
         ) {
             Icon(
@@ -624,15 +622,15 @@ private fun HomeActions(onAdd: () -> Unit, onPaste: () -> Unit, onScan: () -> Un
             )
             Text(
                 text = stringResource(R.string.tab_add),
-                style = ActionLabel,
+                style = RvButtonLabel,
                 fontWeight = FontWeight.Bold,
                 color = RvColor.Main,
             )
         }
-        HomeActionButton(
+        RvButton(
             onClick = onPaste,
-            fill = RvColor.Grey,
-            outline = RvColor.whiteA10,
+            fill = RvButtonColors.greyFill,
+            outline = RvButtonColors.greyOutline,
             modifier = Modifier.weight(1f),
         ) {
             Icon(
@@ -643,16 +641,16 @@ private fun HomeActions(onAdd: () -> Unit, onPaste: () -> Unit, onScan: () -> Un
             )
             Text(
                 text = stringResource(R.string.home_paste),
-                style = ActionLabel,
+                style = RvButtonLabel,
                 fontWeight = FontWeight.SemiBold,
                 color = RvColor.whiteA50,
             )
         }
         val scanLabel = stringResource(R.string.add_quick_qr_title)
-        HomeActionButton(
+        RvButton(
             onClick = onScan,
-            fill = RvColor.Grey,
-            outline = RvColor.whiteA10,
+            fill = RvButtonColors.greyFill,
+            outline = RvButtonColors.greyOutline,
             modifier = Modifier
                 .width(52.dp)
                 .semantics { contentDescription = scanLabel },
@@ -665,30 +663,6 @@ private fun HomeActions(onAdd: () -> Unit, onPaste: () -> Unit, onScan: () -> Un
             )
         }
     }
-}
-
-private val ActionLabel = TextStyle(fontFamily = SegoeUi, fontSize = 12.sp, lineHeight = 15.6.sp)
-
-@Composable
-private fun HomeActionButton(
-    onClick: () -> Unit,
-    fill: Color,
-    outline: Color,
-    modifier: Modifier = Modifier,
-    content: @Composable RowScope.() -> Unit,
-) {
-    val shape = RoundedCornerShape(16.dp)
-    Row(
-        modifier = modifier
-            .height(52.dp)
-            .clip(shape)
-            .background(fill)
-            .border(1.dp, outline, shape)
-            .clickable(role = Role.Button, onClick = onClick),
-        horizontalArrangement = Arrangement.spacedBy(RvSpace.xs, Alignment.CenterHorizontally),
-        verticalAlignment = Alignment.CenterVertically,
-        content = content,
-    )
 }
 
 // ───────────────────────── Profile field helpers ──────────────────────────
