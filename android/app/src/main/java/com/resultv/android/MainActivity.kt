@@ -40,9 +40,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.resultv.android.ui.screens.RoutingProfilesSheets
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
@@ -71,6 +69,7 @@ import com.resultv.android.ui.screens.CertWizardScreen
 import com.resultv.android.ui.screens.LogsScreen
 import com.resultv.android.ui.screens.ProxiesScreen
 import com.resultv.android.ui.components.HomeHeader
+import com.resultv.android.ui.components.PageHeader
 import com.resultv.android.ui.components.RoutingDeepLinkSheet
 import com.resultv.android.ui.screens.RulesScreen
 import com.resultv.android.ui.screens.SettingsScreen
@@ -116,10 +115,12 @@ private enum class Tab(
     @DrawableRes val icon: Int,
     /** Заголовок страницы в шапке; у главной своя шапка. */
     @StringRes val headerRes: Int = titleRes,
+    /** Экран рисует шапку сам — ей нужны его кнопки и состояние. */
+    val ownHeader: Boolean = false,
 ) {
     Home(R.string.tab_home, R.drawable.ic_nav_home),
     Add(R.string.tab_add, R.drawable.ic_nav_add, headerRes = R.string.home_add_server),
-    Proxies(R.string.tab_proxies, R.drawable.ic_nav_servers),
+    Proxies(R.string.tab_proxies, R.drawable.ic_nav_servers, ownHeader = true),
     Rules(R.string.tab_rules, R.drawable.ic_nav_rules),
     Settings(R.string.tab_settings, R.drawable.ic_nav_settings),
 }
@@ -350,8 +351,13 @@ private fun AppShell(
                     onOpenWebsite = { openUrl(ctx, WEBSITE_URL) },
                     onOpenTelegram = { openUrl(ctx, TELEGRAM_URL) },
                 )
-            } else {
-                PageHeader(title = stringResource(tab.headerRes))
+            } else if (!tab.ownHeader) {
+                PageHeader(
+                    title = stringResource(tab.headerRes),
+                    modifier = Modifier
+                        .background(RvColor.Black)
+                        .windowInsetsPadding(WindowInsets.statusBars),
+                )
             }
         },
         bottomBar = { BottomBar(selected = tab, onSelect = { tab = it }) },
@@ -404,26 +410,6 @@ private fun AppShell(
     }
 
     RoutingImportSheet(dataDir)
-}
-
-/**
- * Шапка страницы мобильного макета (например, AddPage 6863:4864): заголовок
- * 24 Bold слева, поле страницы 12, до содержимого 24.
- */
-@Composable
-private fun PageHeader(title: String) {
-    Text(
-        text = title,
-        fontSize = 24.sp,
-        lineHeight = 28.8.sp,
-        fontWeight = FontWeight.Bold,
-        color = RvColor.White,
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(RvColor.Black)
-            .windowInsetsPadding(WindowInsets.statusBars)
-            .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 24.dp),
-    )
 }
 
 /**

@@ -2,9 +2,15 @@ package com.resultv.android.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.res.painterResource
+import com.resultv.android.ui.components.PageHeader
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -12,26 +18,22 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Bolt
-import androidx.compose.material.icons.outlined.DeleteOutline
-import androidx.compose.material.icons.outlined.Dns
-import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.ExpandLess
-import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.ListAlt
-import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -48,28 +50,29 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import android.widget.Toast
+import kotlin.math.roundToInt
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
 import com.resultv.android.theme.RvColor
-import com.resultv.android.theme.RvIcon
-import com.resultv.android.theme.RvRadius
 import com.resultv.android.theme.RvSpace
+import com.resultv.android.theme.SegoeUi
 import com.resultv.android.ui.components.HomeLook
 import com.resultv.android.ui.components.ProfileEditSheet
 import com.resultv.android.ui.components.ProfileSortMenu
 import com.resultv.android.ui.components.ProfileSortMode
-import com.resultv.android.ui.components.ProtocolFilterChips
 import com.resultv.android.ui.components.ServerRow
 import com.resultv.android.ui.components.SubscriptionEditSheet
 import com.resultv.android.ui.components.SubscriptionLogo
@@ -121,7 +124,7 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
     var editingSubId by remember { mutableStateOf<String?>(null) }
     // Persisted across tab switches via the SaveableStateHolder in AppShell.
     var sortMode by rememberSaveable { mutableStateOf(ProfileSortMode.Default) }
-    var protocolFilter by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    var search by rememberSaveable { mutableStateOf("") }
     // Subscription collapse state hoisted here so each row can live as its
     // own LazyColumn item (true virtualisation). List-of-ids form is what
     // rememberSaveable can persist; the Set is the runtime lookup form.
@@ -139,214 +142,196 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
         CountryRepository.resolve(state.profiles, dataDir)
     }
 
-    Column(modifier = Modifier.fillMaxSize().padding(horizontal = RvSpace.nest1, vertical = RvSpace.nest2)) {
-        if (state.profiles.isEmpty() && subscriptions.subs.isEmpty()) {
-            EmptyState(onAddPressed)
-            return@Column
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = RvSpace.nest3),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = stringResource(R.string.proxies_count, state.profiles.count { !it.isSection }),
-                style = MaterialTheme.typography.labelLarge,
-                color = RvColor.whiteA50,
-                modifier = Modifier.weight(1f),
-            )
-            IconButton(onClick = { PingRepository.refreshAll(state.profiles) }) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        PageHeader(title = stringResource(R.string.servers_title)) {
+            IconButton(
+                onClick = { PingRepository.refreshAll(state.profiles) },
+                modifier = Modifier.size(36.dp),
+            ) {
                 Icon(
-                    imageVector = Icons.Outlined.Bolt,
+                    painter = painterResource(R.drawable.ic_ping),
                     contentDescription = stringResource(R.string.ping_refresh_cd),
                     tint = RvColor.whiteA50,
+                    modifier = Modifier.size(20.dp),
                 )
             }
             ProfileSortMenu(mode = sortMode, onModeChange = { sortMode = it })
         }
-
-        // Protocol filter chips. Hidden when the underlying data only
-        // contains a single protocol — ProtocolFilterChips itself bails
-        // out below the 2-entry threshold.
-        val availableProtocols = remember(state.profiles) {
-            state.profiles.asSequence()
-                .filterNot { it.isSection }
-                .map { it.protocol }
-                .filter { it.isNotEmpty() }
-                .toSet()
-        }
-        // Membership tests inside the chip use Set semantics — the list
-        // form is just for [rememberSaveable] friendliness.
-        val protocolFilterSet = remember(protocolFilter) { protocolFilter.toSet() }
-        ProtocolFilterChips(
-            selected = protocolFilterSet,
-            available = availableProtocols,
-            onToggle = { code ->
-                protocolFilter = if (code in protocolFilterSet)
-                    protocolFilter - code else protocolFilter + code
-            },
-            modifier = Modifier.padding(bottom = RvSpace.nest3),
-        )
-
-        // Group profiles by subscription. Unaffiliated ("My proxies") go
-        // in their own bucket; SECTION rows stay with their subscription
-        // and keep their original order so impVPN's "👇 выберите конфиг
-        // ниже" labels land between the right blocks.
-        //
-        // Memoised on (profiles, filter) so a ping-only update doesn't
-        // re-walk every profile to rebuild the bucket lists.
-        val standalone = remember(state.profiles, protocolFilterSet) {
-            val raw = state.profiles.filter { it.subscriptionId.isBlank() && !it.isSection }
-            if (protocolFilterSet.isEmpty()) raw
-            else raw.filter { it.protocol in protocolFilterSet }
-        }
-        val sortedStandalone = remember(standalone, sortMode, pings) {
-            sortProfiles(standalone, sortMode, pings)
-        }
-        // Pre-bucket subscription profiles once per (profiles, subs, filter)
-        // change. Each bucket's rows are rendered as individual LazyColumn
-        // items below, so opening Proxies only composes rows actually on
-        // screen instead of all N at once.
-        val subscriptionBuckets = remember(state.profiles, subscriptions.subs, protocolFilterSet) {
-            subscriptions.subs.mapNotNull { sub ->
-                val raw = state.profiles.filter { it.subscriptionId == sub.id }
-                val subProfiles = if (protocolFilterSet.isEmpty()) raw
-                    else raw.filterNot { it.isSection }
-                        .filter { it.protocol in protocolFilterSet }
-                if (protocolFilterSet.isNotEmpty() && subProfiles.isEmpty()) null
-                else sub to subProfiles
+        Column(modifier = Modifier.fillMaxSize().padding(horizontal = GroupLook.pagePadding)) {
+            if (state.profiles.isEmpty() && subscriptions.subs.isEmpty()) {
+                EmptyState(onAddPressed)
+                return@Column
             }
-        }
-        // Sort each bucket once per (buckets, mode, pings) change — the
-        // LazyColumn body just walks the pre-sorted lists.
-        val orderedBySub = remember(subscriptionBuckets, sortMode, pings) {
-            subscriptionBuckets.associate { (sub, profiles) ->
-                sub.id to reorderForDisplay(profiles, sortMode, pings)
+
+            SearchField(
+                value = search,
+                onValueChange = { search = it },
+                modifier = Modifier.padding(bottom = GroupLook.groupGap),
+            )
+
+            // Поиск как на ПК (ServersScreen.jsx `matches`): по имени, без учёта
+            // регистра. Пока он идёт, группы раскрыты, а пустые скрыты.
+            val query = search.trim().lowercase()
+            val searching = query.isNotEmpty()
+            val matches: (Profile) -> Boolean = { query.isEmpty() || it.name.lowercase().contains(query) }
+
+            // Group profiles by subscription. Unaffiliated ("My proxies") go
+            // in their own bucket; SECTION rows stay with their subscription
+            // and keep their original order so impVPN's "👇 выберите конфиг
+            // ниже" labels land between the right blocks.
+            //
+            // Memoised on (profiles, query) so a ping-only update doesn't
+            // re-walk every profile to rebuild the bucket lists.
+            val standalone = remember(state.profiles, query) {
+                state.profiles.filter { it.subscriptionId.isBlank() && !it.isSection && matches(it) }
             }
-        }
+            val sortedStandalone = remember(standalone, sortMode, pings) {
+                sortProfiles(standalone, sortMode, pings)
+            }
+            // Pre-bucket subscription profiles once per (profiles, subs, query)
+            // change. Each bucket's rows are rendered as individual LazyColumn
+            // items below, so opening Proxies only composes rows actually on
+            // screen instead of all N at once.
+            val subscriptionBuckets = remember(state.profiles, subscriptions.subs, query) {
+                subscriptions.subs.mapNotNull { sub ->
+                    val raw = state.profiles.filter { it.subscriptionId == sub.id }
+                    val subProfiles = if (!searching) raw
+                        else raw.filter { !it.isSection && matches(it) }
+                    if (searching && subProfiles.isEmpty()) null
+                    else sub to subProfiles
+                }
+            }
+            // Sort each bucket once per (buckets, mode, pings) change — the
+            // LazyColumn body just walks the pre-sorted lists.
+            val orderedBySub = remember(subscriptionBuckets, sortMode, pings) {
+                subscriptionBuckets.associate { (sub, profiles) ->
+                    sub.id to reorderForDisplay(profiles, sortMode, pings)
+                }
+            }
 
-        // «Мои серверы» — теперь ПОСЛЕДНЯЯ группа списка (как на ПК,
-        // ServersScreen.jsx), а не отдельная плоская пачка перед подписками:
-        // самостоятельные профили и подписки равноправны, разница только в
-        // источнике, а не в порядке на экране.
-        val standaloneCollapsed = STANDALONE_GROUP_ID in collapsedSubs
+            // «Мои серверы» — теперь ПОСЛЕДНЯЯ группа списка (как на ПК,
+            // ServersScreen.jsx), а не отдельная плоская пачка перед подписками:
+            // самостоятельные профили и подписки равноправны, разница только в
+            // источнике, а не в порядке на экране.
+            val standaloneCollapsed = !searching && STANDALONE_GROUP_ID in collapsedSubs
 
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            subscriptionBuckets.forEachIndexed { idx, (sub, subProfiles) ->
-                val collapsed = sub.id in collapsedSubs
-                val needsTopGap = idx > 0
-                val ordered = orderedBySub[sub.id].orEmpty()
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                subscriptionBuckets.forEachIndexed { idx, (sub, subProfiles) ->
+                    val collapsed = !searching && sub.id in collapsedSubs
+                    val needsTopGap = idx > 0
+                    val ordered = orderedBySub[sub.id].orEmpty()
 
-                item("sub-${sub.id}-head", contentType = "sub-head") {
-                    SubscriptionHeaderBlock(
-                        modifier = if (needsTopGap) Modifier.padding(top = RvSpace.nest2) else Modifier,
-                        subscription = sub,
-                        profileCount = subProfiles.count { !it.isSection },
-                        collapsed = collapsed,
-                        refreshing = refreshingSubId == sub.id,
-                        onToggleCollapsed = {
-                            collapsedSubsList = if (sub.id in collapsedSubs)
-                                collapsedSubsList - sub.id
-                            else
-                                collapsedSubsList + sub.id
-                        },
-                        onRefresh = onRefresh@{
-                            if (refreshingSubId != null) return@onRefresh
-                            refreshingSubId = sub.id
-                            scope.launch {
-                                val result = runCatching {
-                                    SubscriptionRefresher.refreshOne(sub, dataDir)
+                    item("sub-${sub.id}-head", contentType = "sub-head") {
+                        SubscriptionHeaderBlock(
+                            modifier = if (needsTopGap) Modifier.padding(top = GroupLook.groupGap) else Modifier,
+                            subscription = sub,
+                            profileCount = subProfiles.count { !it.isSection },
+                            collapsed = collapsed,
+                            refreshing = refreshingSubId == sub.id,
+                            onToggleCollapsed = {
+                                collapsedSubsList = if (sub.id in collapsedSubs)
+                                    collapsedSubsList - sub.id
+                                else
+                                    collapsedSubsList + sub.id
+                            },
+                            onRefresh = onRefresh@{
+                                if (refreshingSubId != null) return@onRefresh
+                                refreshingSubId = sub.id
+                                scope.launch {
+                                    val result = runCatching {
+                                        SubscriptionRefresher.refreshOne(sub, dataDir)
+                                    }
+                                    refreshingSubId = null
+                                    // A failed manual refresh used to end here silently:
+                                    // the spinner stopped, nothing else changed, and the
+                                    // reason was logged only on the auto-refresh path
+                                    // (SubscriptionRefresher.refreshDue). From the screen
+                                    // the button looked dead - which is exactly how it was
+                                    // reported. Log it like the timer does, and say so on
+                                    // screen.
+                                    result.onFailure { t ->
+                                        AppLog.warning(
+                                            R.string.log_sub_refresh_failed,
+                                            sub.name,
+                                            t.message ?: t.javaClass.simpleName,
+                                        )
+                                        Toast.makeText(
+                                            ctx,
+                                            ctx.getString(R.string.sub_refresh_failed),
+                                            Toast.LENGTH_LONG,
+                                        ).show()
+                                    }
                                 }
-                                refreshingSubId = null
-                                // A failed manual refresh used to end here silently:
-                                // the spinner stopped, nothing else changed, and the
-                                // reason was logged only on the auto-refresh path
-                                // (SubscriptionRefresher.refreshDue). From the screen
-                                // the button looked dead - which is exactly how it was
-                                // reported. Log it like the timer does, and say so on
-                                // screen.
-                                result.onFailure { t ->
-                                    AppLog.warning(
-                                        R.string.log_sub_refresh_failed,
-                                        sub.name,
-                                        t.message ?: t.javaClass.simpleName,
-                                    )
-                                    Toast.makeText(
-                                        ctx,
-                                        ctx.getString(R.string.sub_refresh_failed),
-                                        Toast.LENGTH_LONG,
-                                    ).show()
-                                }
+                            },
+                            onEdit = { editingSubId = sub.id },
+                            onDelete = { pendingDeleteSub = sub },
+                        )
+                    }
+
+                    if (!collapsed) {
+                        itemsIndexed(
+                            ordered,
+                            key = { _, it -> "sub-${sub.id}-${it.id}" },
+                            contentType = { _, it -> if (it.isSection) "sub-sec" else "sub-row" },
+                        ) { index, p ->
+                            val isLast = index == ordered.lastIndex
+                            if (p.isSection) {
+                                SubscriptionSectionRowBlock(p.name, isLast = isLast)
+                            } else {
+                                GroupServerRowBlock(
+                                    profile = p,
+                                    activeId = state.activeId,
+                                    sample = pings[p.id],
+                                    country = p.country ?: countries[p.id],
+                                    isLoading = p.id in pingInflight,
+                                    isLast = isLast,
+                                    onClick = { ProfileRepository.setActive(p.id) },
+                                    onLongClick = { editingProfileId = p.id },
+                                )
                             }
-                        },
-                        onEdit = { editingSubId = sub.id },
-                        onDelete = { pendingDeleteSub = sub },
-                    )
+                        }
+                    }
                 }
 
-                if (!collapsed) {
-                    itemsIndexed(
-                        ordered,
-                        key = { _, it -> "sub-${sub.id}-${it.id}" },
-                        contentType = { _, it -> if (it.isSection) "sub-sec" else "sub-row" },
-                    ) { index, p ->
-                        val isLast = index == ordered.lastIndex
-                        if (p.isSection) {
-                            SubscriptionSectionRowBlock(p.name, isLast = isLast)
-                        } else {
+                if (sortedStandalone.isNotEmpty()) {
+                    item("standalone-head", contentType = "standalone-head") {
+                        StandaloneHeaderBlock(
+                            modifier = if (subscriptionBuckets.isNotEmpty())
+                                Modifier.padding(top = GroupLook.groupGap) else Modifier,
+                            count = sortedStandalone.size,
+                            collapsed = standaloneCollapsed,
+                            refreshing = sortedStandalone.any { it.id in pingInflight },
+                            onRefresh = { PingRepository.refreshAll(sortedStandalone) },
+                            onDelete = { pendingDeleteStandalone = true },
+                            onToggleCollapsed = {
+                                collapsedSubsList = if (STANDALONE_GROUP_ID in collapsedSubs)
+                                    collapsedSubsList - STANDALONE_GROUP_ID
+                                else
+                                    collapsedSubsList + STANDALONE_GROUP_ID
+                            },
+                        )
+                    }
+
+                    if (!standaloneCollapsed) {
+                        itemsIndexed(
+                            sortedStandalone,
+                            key = { _, it -> it.id },
+                            contentType = { _, _ -> "standalone-row" },
+                        ) { index, p ->
                             GroupServerRowBlock(
                                 profile = p,
                                 activeId = state.activeId,
                                 sample = pings[p.id],
                                 country = p.country ?: countries[p.id],
                                 isLoading = p.id in pingInflight,
-                                isLast = isLast,
+                                isLast = index == sortedStandalone.lastIndex,
                                 onClick = { ProfileRepository.setActive(p.id) },
                                 onLongClick = { editingProfileId = p.id },
                             )
                         }
-                    }
-                }
-            }
-
-            if (sortedStandalone.isNotEmpty()) {
-                item("standalone-head", contentType = "standalone-head") {
-                    StandaloneHeaderBlock(
-                        modifier = if (subscriptionBuckets.isNotEmpty())
-                            Modifier.padding(top = RvSpace.nest2) else Modifier,
-                        count = sortedStandalone.size,
-                        collapsed = standaloneCollapsed,
-                        refreshing = sortedStandalone.any { it.id in pingInflight },
-                        onRefresh = { PingRepository.refreshAll(sortedStandalone) },
-                        onDelete = { pendingDeleteStandalone = true },
-                        onToggleCollapsed = {
-                            collapsedSubsList = if (STANDALONE_GROUP_ID in collapsedSubs)
-                                collapsedSubsList - STANDALONE_GROUP_ID
-                            else
-                                collapsedSubsList + STANDALONE_GROUP_ID
-                        },
-                    )
-                }
-
-                if (!standaloneCollapsed) {
-                    itemsIndexed(
-                        sortedStandalone,
-                        key = { _, it -> it.id },
-                        contentType = { _, _ -> "standalone-row" },
-                    ) { index, p ->
-                        GroupServerRowBlock(
-                            profile = p,
-                            activeId = state.activeId,
-                            sample = pings[p.id],
-                            country = p.country ?: countries[p.id],
-                            isLoading = p.id in pingInflight,
-                            isLast = index == sortedStandalone.lastIndex,
-                            onClick = { ProfileRepository.setActive(p.id) },
-                            onLongClick = { editingProfileId = p.id },
-                        )
                     }
                 }
             }
@@ -488,12 +473,96 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
 }
 
 /**
- * Общий каркас шапки группы — заливка, форма со скруглением, шеврон,
- * ведущая иконка/лого, название и счётчик. У подписки и у «Моих серверов»
- * на ПК это один и тот же вид строки (`subitem`/`myitem` в ServerItem.jsx,
- * различаются только ведущим значком и набором кнопок справа), так что и
- * здесь это один composable, а не две почти одинаковые копии — [leading] и
- * [trailing] параметризуют ровно то немногое, чем группы отличаются.
+ * Поле поиска — Search мобильного макета (Figma 6864:4933): высота 44,
+ * Grey с обводкой белой 10 %, скругление 16, лупа справа.
+ */
+@Composable
+private fun SearchField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(16.dp)
+    val style = TextStyle(
+        fontFamily = SegoeUi,
+        fontSize = 12.sp,
+        lineHeight = 16.8.sp,
+        fontWeight = FontWeight.SemiBold,
+    )
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        singleLine = true,
+        textStyle = style.copy(color = RvColor.White),
+        cursorBrush = SolidColor(RvColor.whiteA50),
+        modifier = modifier.fillMaxWidth().height(44.dp),
+        decorationBox = { inner ->
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(shape)
+                    .background(RvColor.Grey)
+                    .border(1.dp, RvColor.whiteA10, shape)
+                    .padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(modifier = Modifier.weight(1f)) {
+                    if (value.isEmpty()) {
+                        Text(stringResource(R.string.servers_search), style = style, color = RvColor.whiteA20)
+                    }
+                    inner()
+                }
+                Icon(
+                    painter = painterResource(R.drawable.ic_search),
+                    contentDescription = null,
+                    tint = RvColor.whiteA50,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        },
+    )
+}
+
+/**
+ * Метрики шапки группы — сняты с макета Figma (ResultV, узел 6853:4805) один
+ * в один, поэтому живут здесь, а не в общих токенах: радиус 20 и отступ 14 —
+ * собственные размеры этой карточки, а не шаг общей шкалы.
+ */
+private object GroupLook {
+    val pagePadding = 12.dp
+    val groupGap = 8.dp
+    val radius = 20.dp
+    val padding = 14.dp
+    val logoGap = 12.dp
+    val titleGap = 4.dp
+    val footerGap = 20.dp
+    val countGap = 8.dp
+    val chip = 30.dp
+    val chipIcon = 14.dp
+    val chipGap = 4.dp
+    val countIcon = 12.dp
+    val iconTint = RvColor.whiteA50
+    val metaColor = RvColor.whiteA20
+    val titleStyle = TextStyle(
+        fontFamily = SegoeUi,
+        fontWeight = FontWeight.Bold,
+        fontSize = 14.sp,
+        lineHeight = 19.6.sp,
+    )
+    val metaStyle = TextStyle(
+        fontFamily = SegoeUi,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 12.sp,
+        lineHeight = 13.2.sp,
+    )
+}
+
+/**
+ * Общий каркас шапки группы — заливка, форма со скруглением и тап по всей
+ * карточке, сворачивающий группу. Содержимое у подписки и у «Моих серверов»
+ * разное по составу (у подписки лого, срок и трафик, у своих серверов одна
+ * строка), поэтому каркас отдаёт его целиком в [content], а не пытается
+ * параметризовать каждый кусок.
  *
  * Рендерится как отдельный LazyColumn item, чтобы не тянуть за собой
  * композицию всех строк тела. Форма — полное скругление, когда группа
@@ -505,45 +574,32 @@ private fun GroupHeaderBlock(
     modifier: Modifier = Modifier,
     collapsed: Boolean,
     onToggleCollapsed: () -> Unit,
-    leading: @Composable () -> Unit,
-    title: String,
-    trailing: @Composable () -> Unit = {},
-    footer: @Composable () -> Unit = {},
+    content: @Composable ColumnScope.() -> Unit,
 ) {
-    val shape = if (collapsed) RoundedCornerShape(RvRadius.card)
-    else RoundedCornerShape(topStart = RvRadius.card, topEnd = RvRadius.card)
+    val shape = if (collapsed) RoundedCornerShape(GroupLook.radius)
+    else RoundedCornerShape(topStart = GroupLook.radius, topEnd = GroupLook.radius)
 
     Column(
         modifier = modifier
             .fillMaxWidth()
             .clip(shape)
             .background(RvColor.Grey)
-            .clickable(onClick = onToggleCollapsed)
-            .padding(horizontal = RvSpace.nest2, vertical = RvSpace.nest2),
-        verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3),
-        ) {
-            ChevronChip(collapsed = collapsed, onClick = onToggleCollapsed)
-            leading()
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
+            .clickable(
+                onClickLabel = stringResource(
+                    if (collapsed) R.string.action_expand else R.string.action_collapse,
+                ),
+                onClick = onToggleCollapsed,
             )
-            trailing()
-        }
-
-        footer()
-    }
+            .padding(GroupLook.padding),
+        verticalArrangement = Arrangement.spacedBy(GroupLook.footerGap),
+        content = content,
+    )
 }
 
-/** Top portion of a subscription "card" — subscription-specific dressing over [GroupHeaderBlock]. */
+/**
+ * Шапка подписки по макету: лого, название со сроком действия под ним и
+ * кнопки справа; ниже — строка «трафик слева, число серверов справа».
+ */
 @Composable
 private fun SubscriptionHeaderBlock(
     modifier: Modifier = Modifier,
@@ -565,69 +621,56 @@ private fun SubscriptionHeaderBlock(
         modifier = modifier,
         collapsed = collapsed,
         onToggleCollapsed = onToggleCollapsed,
-        leading = { SubscriptionLogo(usesImpLogo = usesImpLogo) },
-        title = subscription.displayName,
-        trailing = {
-            CircleActionChip(
-                onClick = onRefresh,
-                enabled = !refreshing,
-                contentDescription = stringResource(R.string.sub_refresh_cd),
+    ) {
+        // Кнопки по макету прижаты к верху, вровень с лого, а не по центру.
+        Row(horizontalArrangement = Arrangement.spacedBy(GroupLook.logoGap)) {
+            SubscriptionLogo(usesImpLogo = usesImpLogo)
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(GroupLook.titleGap),
             ) {
-                if (refreshing) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(14.dp),
-                        strokeWidth = 2.dp,
-                        color = RvColor.Second,
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Outlined.Refresh,
-                        contentDescription = null,
-                        tint = RvColor.whiteA50,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
+                GroupTitle(subscription.displayName)
+                if (usage.hasExpiry) ExpiryLine(usage)
             }
-            CircleActionChip(
-                onClick = onEdit,
-                contentDescription = stringResource(R.string.sub_edit_cd),
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Edit,
-                    contentDescription = null,
-                    tint = RvColor.whiteA50,
-                    modifier = Modifier.size(16.dp),
+            Row(horizontalArrangement = Arrangement.spacedBy(GroupLook.chipGap)) {
+                CircleActionChip(
+                    onClick = onEdit,
+                    contentDescription = stringResource(R.string.sub_edit_cd),
+                ) { ChipIcon(Icons.Filled.Edit) }
+                RefreshChip(
+                    refreshing = refreshing,
+                    onClick = onRefresh,
+                    contentDescription = stringResource(R.string.sub_refresh_cd),
                 )
+                CircleActionChip(
+                    onClick = onDelete,
+                    contentDescription = stringResource(R.string.sub_delete_cd),
+                ) { ChipIcon(Icons.Filled.Delete) }
             }
-            CircleActionChip(
-                onClick = onDelete,
-                contentDescription = stringResource(R.string.sub_delete_cd),
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.DeleteOutline,
-                    contentDescription = null,
-                    tint = RvColor.whiteA50,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
-        },
-        footer = {
-            if (usage.hasQuota || usage.hasExpiry || usage.used > 0) {
-                UsageInlineStrip(usage)
-            }
-            SubscriptionFooter(subscription.lastFetchedAt, profileCount)
-        },
-    )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = trafficText(usage),
+                style = GroupLook.metaStyle,
+                color = GroupLook.metaColor,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
+            )
+            ServerCount(profileCount)
+        }
+    }
 }
 
 /**
- * Шапка группы «Мои серверы» — тот же [GroupHeaderBlock], что и у подписки,
- * но без логотипа провайдера (сервера ничьи — значок вместо него) и без
- * кнопок обновления/удаления: обновлять у самостоятельных профилей нечего
- * (это не подписка, синку неоткуда взяться), а удаление профиля уже живёт в
- * длинном нажатии по строке — заводить для группы второй путь удаления
- * не нужно. Счётчик показан тем же [SubscriptionFooter], что и у подписки —
- * `lastFetchedAt = 0` прячет в нём метку времени, оставляя только «N серверов».
+ * Шапка группы «Мои серверы» — одна строка: название, число серверов рядом с
+ * ним и две кнопки. Правки нет: у группы своих серверов нет ни адреса, ни
+ * расписания. Обновление здесь означает не выкачать список заново, а
+ * перемерить задержку до своих узлов — так же решено и на ПК
+ * (ServersScreen.jsx, группа `myitem`).
  */
 @Composable
 private fun StandaloneHeaderBlock(
@@ -643,55 +686,105 @@ private fun StandaloneHeaderBlock(
         modifier = modifier,
         collapsed = collapsed,
         onToggleCollapsed = onToggleCollapsed,
-        leading = {
-            Icon(
-                imageVector = Icons.Outlined.Bolt,
-                contentDescription = null,
-                tint = RvColor.whiteA50,
-                modifier = Modifier.size(RvIcon.glyph),
-            )
-        },
-        title = stringResource(R.string.proxies_standalone_header),
-        // Кнопок две, а не три, как у подписки: правку у группы своих
-        // серверов править нечего — ни адреса, ни расписания у неё нет.
-        // Обновление здесь означает не выкачать список заново, а перемерить
-        // задержку до своих узлов: значок тот же, работа по смыслу та же,
-        // так же решено и на ПК (ServersScreen.jsx, группа `myitem`).
-        trailing = {
-            CircleActionChip(
-                onClick = onRefresh,
-                enabled = !refreshing,
-                contentDescription = stringResource(R.string.proxies_standalone_refresh_cd),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // Счётчик стоит сразу за названием, а не у кнопок: вес у общей
+            // пары, а не у названия, иначе свободное место делится между
+            // названием и распоркой и кнопки отъезжают от края.
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(GroupLook.countGap),
             ) {
-                if (refreshing) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(14.dp),
-                        strokeWidth = 2.dp,
-                        color = RvColor.Second,
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Outlined.Refresh,
-                        contentDescription = null,
-                        tint = RvColor.whiteA50,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-            }
-            CircleActionChip(
-                onClick = onDelete,
-                contentDescription = stringResource(R.string.proxies_standalone_delete_cd),
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.DeleteOutline,
-                    contentDescription = null,
-                    tint = RvColor.whiteA50,
-                    modifier = Modifier.size(16.dp),
+                GroupTitle(
+                    text = stringResource(R.string.proxies_standalone_header),
+                    modifier = Modifier.weight(1f, fill = false),
                 )
+                ServerCount(count)
             }
-        },
-        footer = { SubscriptionFooter(lastFetchedAt = 0L, profileCount = count) },
+            Row(horizontalArrangement = Arrangement.spacedBy(GroupLook.chipGap)) {
+                RefreshChip(
+                    refreshing = refreshing,
+                    onClick = onRefresh,
+                    contentDescription = stringResource(R.string.proxies_standalone_refresh_cd),
+                )
+                CircleActionChip(
+                    onClick = onDelete,
+                    contentDescription = stringResource(R.string.proxies_standalone_delete_cd),
+                ) { ChipIcon(Icons.Filled.Delete) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GroupTitle(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text = text,
+        style = GroupLook.titleStyle,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = modifier,
     )
+}
+
+/**
+ * «До 16.08.26 в 21:32» под названием подписки. Цвет предупреждает о сроке:
+ * жёлтый за неделю до конца, красный с надписью «Истекла» — после.
+ */
+@Composable
+private fun ExpiryLine(usage: SubscriptionUsage) {
+    val expireMs = usage.expireUnix * 1000L
+    val text = if (usage.expired) {
+        stringResource(R.string.sub_expired)
+    } else {
+        val (date, time) = remember(usage.expireUnix) {
+            val d = Date(expireMs)
+            SimpleDateFormat("dd.MM.yy", Locale.getDefault()).format(d) to
+                SimpleDateFormat("HH:mm", Locale.getDefault()).format(d)
+        }
+        stringResource(R.string.sub_valid_until, date, time)
+    }
+    val daysLeft = TimeUnit.MILLISECONDS.toDays(expireMs - System.currentTimeMillis())
+    Text(
+        text = text,
+        style = GroupLook.metaStyle,
+        color = when {
+            usage.expired -> RvColor.Errors
+            daysLeft <= 7 -> RvColor.Warning
+            else -> GroupLook.metaColor
+        },
+        maxLines = 1,
+    )
+}
+
+/** «634.5 GB / ∞» или «18.4 / 50 GB»; пусто, если провайдер трафик не отдаёт. */
+@Composable
+private fun trafficText(usage: SubscriptionUsage): String = when {
+    usage.hasQuota -> formatBytesPair(usage.used, usage.total)
+    usage.used > 0 -> stringResource(R.string.sub_traffic_used_unlimited, formatBytesShort(usage.used))
+    else -> ""
+}
+
+/** «39 [dns]» — число серверов группы. */
+@Composable
+private fun ServerCount(count: Int) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.xs),
+    ) {
+        Text(
+            text = count.toString(),
+            style = GroupLook.metaStyle,
+            color = GroupLook.metaColor,
+        )
+        Icon(
+            imageVector = Icons.Filled.Dns,
+            contentDescription = null,
+            tint = GroupLook.metaColor,
+            modifier = Modifier.size(GroupLook.countIcon),
+        )
+    }
 }
 
 /**
@@ -765,7 +858,7 @@ private fun SubscriptionSectionRowBlock(name: String, isLast: Boolean) {
  * совпадает с углом свёрнутой карточки.
  */
 private fun Modifier.groupBottom(isLast: Boolean): Modifier =
-    if (isLast) clip(RoundedCornerShape(bottomStart = RvRadius.card, bottomEnd = RvRadius.card))
+    if (isLast) clip(RoundedCornerShape(bottomStart = GroupLook.radius, bottomEnd = GroupLook.radius))
     else this
 
 internal fun reorderForDisplay(
@@ -792,33 +885,12 @@ internal fun reorderForDisplay(
     return result
 }
 
-/** Leading chevron — flips Up/Down based on [collapsed]. */
-@Composable
-private fun ChevronChip(collapsed: Boolean, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .size(32.dp)
-            .clip(RoundedCornerShape(50))
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = if (collapsed) Icons.Outlined.ExpandMore else Icons.Outlined.ExpandLess,
-            contentDescription = stringResource(
-                if (collapsed) R.string.action_expand else R.string.action_collapse,
-            ),
-            tint = RvColor.whiteA50,
-            modifier = Modifier.size(20.dp),
-        )
-    }
-}
-
 /**
- * Round 32dp action chip — refresh/delete in the header use this.
+ * Round 30dp action chip — refresh/delete in the header use this.
  *
  * Plain Box + clickable instead of IconButton: IconButton enforces a 48dp
  * minimum tap target which made the chips overflow into the title text
- * even when sized to 32dp. The role+contentDescription semantics keep
+ * even when sized to 30dp. The role+contentDescription semantics keep
  * accessibility behaviour.
  */
 @Composable
@@ -831,9 +903,9 @@ private fun CircleActionChip(
     val cdState = contentDescription
     Box(
         modifier = Modifier
-            .size(32.dp)
+            .size(GroupLook.chip)
             .clip(RoundedCornerShape(50))
-            .background(Color.White.copy(alpha = 0.06f))
+            .background(RvColor.LightGray)
             .clickable(enabled = enabled, onClick = onClick)
             .semantics {
                 this.contentDescription = cdState
@@ -845,161 +917,33 @@ private fun CircleActionChip(
     }
 }
 
-/**
- * One-line strip packing days-left + traffic progress + used/total. Three
- * cells separated by a thin divider, mirroring the desktop mock:
- *
- *   "Осталось 25 дней │ ▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬ │ 203.84 ГБ / ∞"
- *
- * Renders only the cells we have data for; the progress bar fills the
- * available middle space.
- */
 @Composable
-private fun UsageInlineStrip(usage: SubscriptionUsage) {
-    val daysLeft = if (usage.hasExpiry) {
-        TimeUnit.MILLISECONDS.toDays(usage.expireUnix * 1000L - System.currentTimeMillis())
-            .coerceAtLeast(0L)
-    } else 0L
-    val daysLeftInt = daysLeft.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-    val daysLeftText = when {
-        !usage.hasExpiry -> ""
-        usage.expired -> stringResource(R.string.sub_expired)
-        else -> pluralStringResource(R.plurals.sub_days_left, daysLeftInt, daysLeftInt)
-    }
-    val expireOnText = if (usage.hasExpiry && !usage.expired) {
-        val formatted = remember(usage.expireUnix) {
-            SimpleDateFormat("dd.MM.yy HH:mm", Locale.getDefault())
-                .format(Date(usage.expireUnix * 1000L))
-        }
-        stringResource(R.string.sub_expires_on, formatted)
-    } else ""
-    val daysColour = when {
-        !usage.hasExpiry -> RvColor.whiteA50
-        usage.expired -> RvColor.Errors
-        daysLeft <= 7 -> RvColor.Warning
-        else -> RvColor.whiteA50
-    }
-    val ratio = if (usage.hasQuota && usage.total > 0)
-        (usage.used.toFloat() / usage.total.toFloat()).coerceIn(0f, 1f)
-    else 0f
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3),
-    ) {
-        if (usage.hasExpiry) {
-            Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                Text(
-                    text = daysLeftText,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = daysColour,
-                    maxLines = 1,
-                )
-                if (expireOnText.isNotEmpty()) {
-                    Text(
-                        text = expireOnText,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = RvColor.whiteA50,
-                        maxLines = 1,
-                    )
-                }
-            }
-            ThinVerticalDivider()
-        }
-        when {
-            usage.hasQuota -> {
-                LinearProgressIndicator(
-                    progress = { ratio },
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(4.dp),
-                    color = if (ratio > 0.9f) RvColor.Errors else RvColor.Second,
-                    trackColor = Color.White.copy(alpha = 0.08f),
-                )
-                Text(
-                    text = formatBytesPair(usage.used, usage.total),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = RvColor.whiteA50,
-                    maxLines = 1,
-                )
-            }
-            usage.used > 0 -> {
-                // No quota declared — show only "USED / ∞" so the user
-                // still sees how much they've spent. Skip the progress bar
-                // (there's no denominator to fill it against).
-                Spacer(Modifier.weight(1f))
-                Text(
-                    text = stringResource(
-                        R.string.sub_traffic_used_unlimited,
-                        formatBytesShort(usage.used),
-                    ),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = RvColor.whiteA50,
-                    maxLines = 1,
-                )
-            }
-            else -> {
-                // Filler so the days-left line still spans the row when
-                // there's nothing else to display.
-                Spacer(Modifier.weight(1f))
-            }
-        }
-    }
-}
-
-@Composable
-private fun ThinVerticalDivider() {
-    Box(
-        modifier = Modifier
-            .size(width = 1.dp, height = 14.dp)
-            .background(Color.White.copy(alpha = 0.10f)),
+private fun ChipIcon(imageVector: ImageVector) {
+    Icon(
+        imageVector = imageVector,
+        contentDescription = null,
+        tint = GroupLook.iconTint,
+        modifier = Modifier.size(GroupLook.chipIcon),
     )
 }
 
-/**
- * "DD.MM.YY, HH:MM · N серверов 📋" — small right-aligned footer under
- * the header. Hidden when [lastFetchedAt] is 0 (never refreshed, e.g.
- * just-imported via deep-link).
- */
+/** Кнопка обновления: пока идёт работа, на месте значка крутится индикатор. */
 @Composable
-private fun SubscriptionFooter(lastFetchedAt: Long, profileCount: Int) {
-    val timestamp = remember(lastFetchedAt) {
-        if (lastFetchedAt <= 0L) ""
-        else SimpleDateFormat("dd.MM.yy, HH:mm", Locale.getDefault())
-            .format(Date(lastFetchedAt))
-    }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.End,
+private fun RefreshChip(refreshing: Boolean, onClick: () -> Unit, contentDescription: String) {
+    CircleActionChip(
+        onClick = onClick,
+        enabled = !refreshing,
+        contentDescription = contentDescription,
     ) {
-        if (timestamp.isNotEmpty()) {
-            Text(
-                text = timestamp,
-                style = MaterialTheme.typography.labelSmall,
-                color = RvColor.whiteA50,
+        if (refreshing) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(GroupLook.chipIcon),
+                strokeWidth = 2.dp,
+                color = RvColor.Second,
             )
-            Spacer(Modifier.width(RvSpace.nest3))
-            Box(
-                modifier = Modifier
-                    .size(width = 1.dp, height = 10.dp)
-                    .background(Color.White.copy(alpha = 0.10f)),
-            )
-            Spacer(Modifier.width(RvSpace.nest3))
+        } else {
+            ChipIcon(Icons.Filled.Sync)
         }
-        Text(
-            text = pluralStringResource(R.plurals.sub_footer_servers, profileCount, profileCount),
-            style = MaterialTheme.typography.labelSmall,
-            color = RvColor.whiteA50,
-        )
-        Spacer(Modifier.width(RvSpace.xs))
-        Icon(
-            imageVector = Icons.Outlined.Dns,
-            contentDescription = null,
-            tint = RvColor.whiteA50,
-            modifier = Modifier.size(12.dp),
-        )
     }
 }
 
@@ -1055,39 +999,16 @@ private fun EmptyState(onAddPressed: () -> Unit) {
     }
 }
 
-private val BYTE_UNITS = arrayOf("B", "KB", "MB", "GB", "TB")
-
-private fun scaleBytes(bytes: Long): Pair<Double, Int> {
-    if (bytes <= 0) return 0.0 to 0
-    var v = bytes.toDouble()
-    var i = 0
-    while (v >= 1024 && i < BYTE_UNITS.size - 1) {
-        v /= 1024.0
-        i++
-    }
-    return v to i
-}
-
-private fun formatScaled(v: Double): String =
-    if (v >= 100) String.format(Locale.US, "%.0f", v)
-    else String.format(Locale.US, "%.1f", v)
-
+/** Объём как на ПК (`formatTraffic`): «312 Мб», «634.5 Гб». */
+@Composable
 private fun formatBytesShort(bytes: Long): String {
-    val (v, i) = scaleBytes(bytes)
-    return "${formatScaled(v)} ${BYTE_UNITS[i]}"
+    val gb = 1024.0 * 1024 * 1024
+    val mb = 1024.0 * 1024
+    return if (bytes >= gb) stringResource(R.string.unit_gb, bytes / gb)
+    else stringResource(R.string.unit_mb, (bytes / mb).roundToInt())
 }
 
-/**
- * Pair-formatter mirroring desktop's `formatTrafficBytes` usage in
- * `ProxyListView.jsx`: when the two values share a unit suffix, emit
- * "18.4 / 50 GB" (single suffix). Otherwise fall back to "1.2 MB / 50 GB".
- */
-private fun formatBytesPair(used: Long, total: Long): String {
-    val (uV, uI) = scaleBytes(used)
-    val (tV, tI) = scaleBytes(total)
-    return if (uI == tI) {
-        "${formatScaled(uV)} / ${formatScaled(tV)} ${BYTE_UNITS[uI]}"
-    } else {
-        "${formatBytesShort(used)} / ${formatBytesShort(total)}"
-    }
-}
+/** «Использовано / всего» — каждая величина со своей единицей, как `subMeta` на ПК. */
+@Composable
+private fun formatBytesPair(used: Long, total: Long): String =
+    "${formatBytesShort(used)} / ${formatBytesShort(total)}"

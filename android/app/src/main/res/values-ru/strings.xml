@@ -11,6 +11,8 @@
     <string name="tab_add">Добавить</string>
     <string name="tab_rules">Правила</string>
     <string name="tab_settings">Настройки</string>
+    <string name="servers_title">Список серверов</string>
+    <string name="servers_search">Поиск серверов...</string>
 
     <string name="action_add">Добавить</string>
     <string name="action_clear">Очистить</string>
@@ -211,6 +213,7 @@
     <!-- Бейдж протокола для авто-групп — у Profile.badges для них намеренно пусто. -->
     <string name="badge_auto">Авто</string>
     <string name="ping_online">В сети</string>
+    <string name="ping_ms">%1$dмс</string>
     <!-- Offline labels shown for a probed-but-unreachable server. -->
     <string name="ping_timeout">Таймаут</string>
     <string name="ping_refused">Отказ</string>
@@ -231,7 +234,6 @@
     <string name="sort_name">Название</string>
 
     <!-- Proxies screen -->
-    <string name="proxies_count">Профилей: %1$d</string>
     <string name="proxies_delete_cd">Удалить профиль</string>
     <string name="proxies_delete_title">Удалить профиль?</string>
     <string name="proxies_delete_message">«%1$s» будет удалён.</string>
@@ -281,7 +283,7 @@
     <string name="sub_traffic_used">%1$s / %2$s</string>
     <string name="sub_expires_in_days">Истекает через %1$d дн.</string>
     <string name="sub_expired">Срок истёк</string>
-    <string name="sub_expires_on">до %1$s</string>
+    <string name="sub_valid_until">До %1$s в %2$s</string>
 
     <!-- Deep-link import -->
     <string name="deeplink_err_decode">Не удалось расшифровать ссылку</string>

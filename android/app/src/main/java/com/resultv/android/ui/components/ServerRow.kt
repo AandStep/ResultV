@@ -37,6 +37,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.resultv.android.theme.SegoeUi
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.em
 import com.resultv.android.R
 import com.resultv.android.theme.RvColor
@@ -230,9 +232,9 @@ fun ServerRow(
     val bg = if (isActive) activeSurface else surface
 
     Row(
+        // Метрики — ServerItem мобильного макета (Figma 6864:4978).
         modifier = Modifier
             .fillMaxWidth()
-            .height(64.dp)
             .background(bg)
             .let { base ->
                 if (onLongClick != null)
@@ -240,27 +242,24 @@ fun ServerRow(
                 else
                     base.clickable(onClick = onClick)
             }
-            .padding(horizontal = RvSpace.nest2),
+            .padding(start = 15.dp, end = 14.dp, top = 14.dp, bottom = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3),
     ) {
         ProfileTile(
             accent = accent,
             isAuto = isAuto,
             countryCode = countryCode,
-            size = 44.dp,
-            glyph = 22.dp,
+            size = 46.dp,
+            glyph = 23.dp,
             flagStyle = MaterialTheme.typography.titleLarge,
         )
 
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(RvSpace.xs),
-        ) {
+        Column(modifier = Modifier.weight(1f)) {
             val shown = if (isAuto) listOf(stringResource(R.string.badge_auto)) else badges
             if (shown.isNotEmpty()) {
-                // Строка держит фиксированную высоту (64.dp) — переносить
-                // бейджи на вторую строку некуда. На 360dp три бейджа
+                // Бейджи в одну строку — переносить их на вторую нельзя,
+                // строка тогда выросла бы. На 360dp три бейджа
                 // (обычная связка вроде VLESS + Reality + XHTTP) не
                 // помещаются рядом с плиткой флага, звездой и задержкой —
                 // без ограничения третий чип рисуется поверх соседей,
@@ -281,9 +280,13 @@ fun ServerRow(
             Text(
                 text = name,
                 color = RvColor.White,
-                style = MaterialTheme.typography.titleSmall,
+                style = MaterialTheme.typography.titleMedium,
+                lineHeight = 19.6.sp,
+                fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                // Вровень с текстом бейджа, а не с краем капсулы — как в макете.
+                modifier = Modifier.padding(start = 5.dp),
             )
         }
 
@@ -313,13 +316,13 @@ fun ServerRow(
             )
             latencyMs != null -> Text(
                 text = if (latencyMs <= 0) stringResource(R.string.ping_online)
-                else "$latencyMs ms",
-                style = MaterialTheme.typography.labelMedium,
+                else stringResource(R.string.ping_ms, latencyMs),
+                style = PingStyle,
                 color = RvColor.whiteA50,
             )
             offlineReason != null -> Text(
                 text = offlineLabel(offlineReason),
-                style = MaterialTheme.typography.labelMedium,
+                style = PingStyle,
                 color = RvColor.Errors,
             )
             else -> androidx.compose.material3.CircularProgressIndicator(
@@ -332,6 +335,14 @@ fun ServerRow(
         if (trailing != null) trailing()
     }
 }
+
+/** Задержка в строке: 10 Medium, межстрочный 1.1 — как в макете. */
+private val PingStyle = TextStyle(
+    fontFamily = SegoeUi,
+    fontSize = 10.sp,
+    lineHeight = 11.sp,
+    fontWeight = FontWeight.Medium,
+)
 
 /**
  * Map a probe failure [reason] to a short localized label. Mirrors the

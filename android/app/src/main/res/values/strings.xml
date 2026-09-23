@@ -12,6 +12,8 @@
     <string name="tab_add">Add</string>
     <string name="tab_rules">Rules</string>
     <string name="tab_settings">Settings</string>
+    <string name="servers_title">Server list</string>
+    <string name="servers_search">Search servers...</string>
 
     <!-- Generic actions reused across screens -->
     <string name="action_add">Add</string>
@@ -241,6 +243,7 @@
     <string name="badge_auto">Auto</string>
     <!-- Shown for reachable servers whose RTT can't be measured (WireGuard/AmneziaWG UDP). -->
     <string name="ping_online">Online</string>
+    <string name="ping_ms">%1$dms</string>
     <!-- Offline labels shown for a probed-but-unreachable server. -->
     <string name="ping_timeout">Timeout</string>
     <string name="ping_refused">Refused</string>
@@ -261,7 +264,6 @@
     <string name="sort_name">Name</string>
 
     <!-- Proxies screen -->
-    <string name="proxies_count">%1$d profiles</string>
     <string name="proxies_delete_cd">Delete profile</string>
     <string name="proxies_delete_title">Delete profile?</string>
     <string name="proxies_delete_message">"%1$s" will be removed.</string>
@@ -311,7 +313,7 @@
     <string name="sub_traffic_used_unlimited">%1$s / ∞</string>
     <string name="sub_expires_in_days">Expires in %1$d days</string>
     <string name="sub_expired">Expired</string>
-    <string name="sub_expires_on">until %1$s</string>
+    <string name="sub_valid_until">Until %1$s at %2$s</string>
 
     <!-- Deep-link import toasts -->
     <string name="deeplink_err_decode">Could not decode the link</string>

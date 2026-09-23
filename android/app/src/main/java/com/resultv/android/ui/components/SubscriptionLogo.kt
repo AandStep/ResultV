@@ -12,7 +12,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
@@ -26,7 +25,8 @@ import com.resultv.android.vpn.decodePanelTitle
 /**
  * Square subscription avatar shared by the Proxies list and the Home group
  * headers. Shows the impVPN brand artwork when [usesImpLogo], otherwise a
- * neutral cloud-download glyph.
+ * neutral cloud-download glyph. По макету: плитка 40 на подложке LightGray,
+ * знак 24 — отступ 8 со всех сторон.
  */
 @Composable
 fun SubscriptionLogo(usesImpLogo: Boolean, size: Dp = 40.dp) {
@@ -34,10 +34,7 @@ fun SubscriptionLogo(usesImpLogo: Boolean, size: Dp = 40.dp) {
         modifier = Modifier
             .size(size)
             .clip(RoundedCornerShape(RvRadius.chip))
-            .background(
-                if (usesImpLogo) RvColor.Main.copy(alpha = 0.18f)
-                else Color.White.copy(alpha = 0.07f)
-            ),
+            .background(RvColor.LightGray),
         contentAlignment = Alignment.Center,
     ) {
         if (usesImpLogo) {
@@ -45,14 +42,14 @@ fun SubscriptionLogo(usesImpLogo: Boolean, size: Dp = 40.dp) {
                 painter = painterResource(R.drawable.imp_logo),
                 contentDescription = null,
                 contentScale = ContentScale.Fit,
-                modifier = Modifier.size(size * 0.8f),
+                modifier = Modifier.size(size * 0.6f),
             )
         } else {
             Icon(
                 imageVector = Icons.Outlined.CloudDownload,
                 contentDescription = null,
                 tint = RvColor.whiteA50,
-                modifier = Modifier.size(size * 0.55f),
+                modifier = Modifier.size(size * 0.6f),
             )
         }
     }
