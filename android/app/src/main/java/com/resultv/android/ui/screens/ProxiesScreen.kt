@@ -539,9 +539,12 @@ private fun GroupHeaderBlock(
             .fillMaxWidth()
             .clip(shape)
             .background(RvColor.Grey)
-            // Свёрнутая группа — серая карточка без обводки; раскрытая —
-            // чёрная карточка с обводкой, и шапка несёт её верх.
-            .then(if (collapsed) Modifier else Modifier.groupOutline(GroupEdge.Top))
+            // Обводка есть всегда: у свёрнутой группы она целиком на шапке,
+            // у раскрытой шапка несёт её верх, а строки — бока и низ.
+            .then(
+                if (collapsed) Modifier.border(1.dp, RvColor.whiteA10, shape)
+                else Modifier.groupOutline(GroupEdge.Top)
+            )
             .clickable(
                 onClickLabel = stringResource(
                     if (collapsed) R.string.action_expand else R.string.action_collapse,
