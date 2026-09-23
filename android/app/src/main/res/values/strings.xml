@@ -270,6 +270,10 @@
     <string name="proxies_empty_title">No profiles yet</string>
     <string name="proxies_empty_subtitle">Paste a share link or import a subscription URL to get started.</string>
     <string name="proxies_standalone_header">My servers</string>
+    <string name="proxies_standalone_refresh_cd">Re-measure latency to my servers</string>
+    <string name="proxies_standalone_delete_cd">Delete all my servers</string>
+    <string name="proxies_standalone_delete_title">Delete my servers?</string>
+    <string name="proxies_standalone_delete_message">%1$d server(s) added by hand will be removed. Subscriptions are not affected.</string>
     <string name="proxies_edit_title">Edit profile</string>
     <string name="proxies_edit_name_label">Name</string>
     <string name="proxies_action_probe_latency">Check latency</string>

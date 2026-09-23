@@ -240,6 +240,10 @@
     <string name="proxies_empty_title">Профилей пока нет</string>
     <string name="proxies_empty_subtitle">Вставьте share-ссылку или URL подписки, чтобы начать.</string>
     <string name="proxies_standalone_header">Мои серверы</string>
+    <string name="proxies_standalone_refresh_cd">Перемерить задержку до своих серверов</string>
+    <string name="proxies_standalone_delete_cd">Удалить все свои серверы</string>
+    <string name="proxies_standalone_delete_title">Удалить свои серверы?</string>
+    <string name="proxies_standalone_delete_message">Будут удалены серверы, добавленные вручную: %1$d. Подписок это не касается.</string>
     <string name="proxies_edit_title">Редактировать профиль</string>
     <string name="proxies_edit_name_label">Название</string>
     <string name="proxies_action_probe_latency">Проверить задержку</string>

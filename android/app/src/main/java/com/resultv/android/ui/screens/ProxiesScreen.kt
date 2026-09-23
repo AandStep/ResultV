@@ -14,7 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
@@ -112,6 +112,9 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
     // Transient — these are dialogs/sheets that should always start dismissed.
     var pendingDeleteProfile by remember { mutableStateOf<Profile?>(null) }
     var pendingDeleteSub by remember { mutableStateOf<Subscription?>(null) }
+    // Удаление своих серверов сносит их все разом, поэтому идёт через
+    // подтверждение — как и удаление подписки.
+    var pendingDeleteStandalone by remember { mutableStateOf(false) }
     var refreshingSubId by remember { mutableStateOf<String?>(null) }
     var editingProfileId by remember { mutableStateOf<String?>(null) }
     var fullEditProfileId by remember { mutableStateOf<String?>(null) }
@@ -285,13 +288,14 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
                 }
 
                 if (!collapsed) {
-                    items(
+                    itemsIndexed(
                         ordered,
-                        key = { "sub-${sub.id}-${it.id}" },
-                        contentType = { if (it.isSection) "sub-sec" else "sub-row" },
-                    ) { p ->
+                        key = { _, it -> "sub-${sub.id}-${it.id}" },
+                        contentType = { _, it -> if (it.isSection) "sub-sec" else "sub-row" },
+                    ) { index, p ->
+                        val isLast = index == ordered.lastIndex
                         if (p.isSection) {
-                            SubscriptionSectionRowBlock(p.name)
+                            SubscriptionSectionRowBlock(p.name, isLast = isLast)
                         } else {
                             GroupServerRowBlock(
                                 profile = p,
@@ -299,13 +303,11 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
                                 sample = pings[p.id],
                                 country = p.country ?: countries[p.id],
                                 isLoading = p.id in pingInflight,
+                                isLast = isLast,
                                 onClick = { ProfileRepository.setActive(p.id) },
                                 onLongClick = { editingProfileId = p.id },
                             )
                         }
-                    }
-                    item("sub-${sub.id}-foot", contentType = "sub-foot") {
-                        SubscriptionTrailingCap()
                     }
                 }
             }
@@ -317,6 +319,9 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
                             Modifier.padding(top = RvSpace.nest2) else Modifier,
                         count = sortedStandalone.size,
                         collapsed = standaloneCollapsed,
+                        refreshing = sortedStandalone.any { it.id in pingInflight },
+                        onRefresh = { PingRepository.refreshAll(sortedStandalone) },
+                        onDelete = { pendingDeleteStandalone = true },
                         onToggleCollapsed = {
                             collapsedSubsList = if (STANDALONE_GROUP_ID in collapsedSubs)
                                 collapsedSubsList - STANDALONE_GROUP_ID
@@ -327,19 +332,21 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
                 }
 
                 if (!standaloneCollapsed) {
-                    items(sortedStandalone, key = { it.id }, contentType = { "standalone-row" }) { p ->
+                    itemsIndexed(
+                        sortedStandalone,
+                        key = { _, it -> it.id },
+                        contentType = { _, _ -> "standalone-row" },
+                    ) { index, p ->
                         GroupServerRowBlock(
                             profile = p,
                             activeId = state.activeId,
                             sample = pings[p.id],
                             country = p.country ?: countries[p.id],
                             isLoading = p.id in pingInflight,
+                            isLast = index == sortedStandalone.lastIndex,
                             onClick = { ProfileRepository.setActive(p.id) },
                             onLongClick = { editingProfileId = p.id },
                         )
-                    }
-                    item("standalone-foot", contentType = "standalone-foot") {
-                        SubscriptionTrailingCap()
                     }
                 }
             }
@@ -448,6 +455,33 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
             },
             dismissButton = {
                 TextButton(onClick = { pendingDeleteSub = null }) { Text(stringResource(R.string.action_cancel)) }
+            },
+        )
+    }
+
+    if (pendingDeleteStandalone) {
+        // Удаляются все свои серверы разом, поэтому в тексте стоит их число:
+        // без него человек не видит, на что соглашается.
+        val own = state.profiles.filter { it.subscriptionId.isBlank() && !it.isSection }
+        AlertDialog(
+            onDismissRequest = { pendingDeleteStandalone = false },
+            title = { Text(stringResource(R.string.proxies_standalone_delete_title)) },
+            text = {
+                Text(
+                    stringResource(R.string.proxies_standalone_delete_message, own.size),
+                    color = RvColor.whiteA50,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    own.forEach { ProfileRepository.remove(it.id) }
+                    pendingDeleteStandalone = false
+                }) { Text(stringResource(R.string.action_delete), color = RvColor.Errors) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteStandalone = false }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
             },
         )
     }
@@ -600,7 +634,10 @@ private fun StandaloneHeaderBlock(
     modifier: Modifier = Modifier,
     count: Int,
     collapsed: Boolean,
+    refreshing: Boolean,
     onToggleCollapsed: () -> Unit,
+    onRefresh: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     GroupHeaderBlock(
         modifier = modifier,
@@ -615,6 +652,44 @@ private fun StandaloneHeaderBlock(
             )
         },
         title = stringResource(R.string.proxies_standalone_header),
+        // Кнопок две, а не три, как у подписки: правку у группы своих
+        // серверов править нечего — ни адреса, ни расписания у неё нет.
+        // Обновление здесь означает не выкачать список заново, а перемерить
+        // задержку до своих узлов: значок тот же, работа по смыслу та же,
+        // так же решено и на ПК (ServersScreen.jsx, группа `myitem`).
+        trailing = {
+            CircleActionChip(
+                onClick = onRefresh,
+                enabled = !refreshing,
+                contentDescription = stringResource(R.string.proxies_standalone_refresh_cd),
+            ) {
+                if (refreshing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(14.dp),
+                        strokeWidth = 2.dp,
+                        color = RvColor.Second,
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Outlined.Refresh,
+                        contentDescription = null,
+                        tint = RvColor.whiteA50,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+            CircleActionChip(
+                onClick = onDelete,
+                contentDescription = stringResource(R.string.proxies_standalone_delete_cd),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.DeleteOutline,
+                    contentDescription = null,
+                    tint = RvColor.whiteA50,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        },
         footer = { SubscriptionFooter(lastFetchedAt = 0L, profileCount = count) },
     )
 }
@@ -633,14 +708,21 @@ private fun GroupServerRowBlock(
     sample: PingRepository.Sample?,
     country: String?,
     isLoading: Boolean,
+    isLast: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
+    // Ни бокового, ни вертикального отступа у обёртки нет намеренно. На ПК
+    // строки внутри группы идут вплотную и во всю её ширину: отступ по бокам
+    // оставлял бы подсветку активной строки не доходящей до краёв блока — по
+    // краям светился бы другой фон, — а вертикальный превращался бы в щель
+    // между строками и в лишнюю полосу под последней. Воздух вокруг
+    // содержимого держит сама ServerRow своим внутренним отступом.
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(RvColor.Grey)
-            .padding(horizontal = RvSpace.nest3, vertical = 2.dp),
+            .groupBottom(isLast)
+            .background(RvColor.Grey),
     ) {
         ServerRow(
             name = serverDisplayName(profile.name, country),
@@ -663,10 +745,11 @@ private fun GroupServerRowBlock(
 
 /** SECTION label inside a subscription (impVPN "выберите конфиг ниже" etc.). */
 @Composable
-private fun SubscriptionSectionRowBlock(name: String) {
+private fun SubscriptionSectionRowBlock(name: String, isLast: Boolean) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            .groupBottom(isLast)
             .background(RvColor.Grey),
     ) {
         SectionLabel(name)
@@ -674,28 +757,16 @@ private fun SubscriptionSectionRowBlock(name: String) {
 }
 
 /**
- * Visual "cap" at the bottom of an expanded group — gives the grouped rows
- * their rounded bottom edge without needing a wrapping Card (the rows would
- * otherwise have to compose all at once to fit inside one).
- *
- * Высота берётся от того же радиуса, что рисует скругление низа
- * (RvRadius.card), а не числом руками: Compose ужимает угол до половины
- * меньшей стороны фигуры, и при высоте меньше радиуса низ раскрытой группы
- * скруглён заметно слабее, чем низ свёрнутой карточки (где скругление 16.dp
- * помещается свободно) — это и была жалоба на разъезжающиеся углы. Если
- * когда-нибудь захочется сделать заглушку тоньше, сначала нужно уменьшить
- * RvRadius.card, а не эту высоту в одиночку.
+ * Скругление низа раскрытой группы. Висит на самой последней строке, а не на
+ * отдельной полосе под ней: полоса, чтобы угол в ней не ужимался, должна быть
+ * не ниже радиуса, и тогда под последним сервером появляется пустая щель — на
+ * ПК её нет, там последняя строка упирается прямо в скруглённый низ карточки.
+ * Строка в 64 dp выше двух радиусов, поэтому угол в ней рисуется полностью и
+ * совпадает с углом свёрнутой карточки.
  */
-@Composable
-private fun SubscriptionTrailingCap() {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(bottomStart = RvRadius.card, bottomEnd = RvRadius.card))
-            .background(RvColor.Grey)
-            .height(RvRadius.card),
-    )
-}
+private fun Modifier.groupBottom(isLast: Boolean): Modifier =
+    if (isLast) clip(RoundedCornerShape(bottomStart = RvRadius.card, bottomEnd = RvRadius.card))
+    else this
 
 internal fun reorderForDisplay(
     profiles: List<Profile>,
