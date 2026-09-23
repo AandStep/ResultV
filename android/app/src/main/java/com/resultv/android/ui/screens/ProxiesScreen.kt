@@ -7,6 +7,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.painterResource
 import com.resultv.android.ui.components.PageHeader
+import com.resultv.android.ui.components.RvSearchField
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,6 +50,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import android.widget.Toast
@@ -163,9 +168,10 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
                 return@Column
             }
 
-            SearchField(
+            RvSearchField(
                 value = search,
                 onValueChange = { search = it },
+                placeholder = stringResource(R.string.servers_search),
                 modifier = Modifier.padding(bottom = GroupLook.groupGap),
             )
 
@@ -473,57 +479,6 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
 }
 
 /**
- * Поле поиска — Search мобильного макета (Figma 6864:4933): высота 44,
- * Grey с обводкой белой 10 %, скругление 16, лупа справа.
- */
-@Composable
-private fun SearchField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val shape = RoundedCornerShape(16.dp)
-    val style = TextStyle(
-        fontFamily = SegoeUi,
-        fontSize = 12.sp,
-        lineHeight = 16.8.sp,
-        fontWeight = FontWeight.SemiBold,
-    )
-    BasicTextField(
-        value = value,
-        onValueChange = onValueChange,
-        singleLine = true,
-        textStyle = style.copy(color = RvColor.White),
-        cursorBrush = SolidColor(RvColor.whiteA50),
-        modifier = modifier.fillMaxWidth().height(44.dp),
-        decorationBox = { inner ->
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clip(shape)
-                    .background(RvColor.Grey)
-                    .border(1.dp, RvColor.whiteA10, shape)
-                    .padding(horizontal = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(modifier = Modifier.weight(1f)) {
-                    if (value.isEmpty()) {
-                        Text(stringResource(R.string.servers_search), style = style, color = RvColor.whiteA20)
-                    }
-                    inner()
-                }
-                Icon(
-                    painter = painterResource(R.drawable.ic_search),
-                    contentDescription = null,
-                    tint = RvColor.whiteA50,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-        },
-    )
-}
-
-/**
  * Метрики шапки группы — сняты с макета Figma (ResultV, узел 6853:4805) один
  * в один, поэтому живут здесь, а не в общих токенах: радиус 20 и отступ 14 —
  * собственные размеры этой карточки, а не шаг общей шкалы.
@@ -584,6 +539,9 @@ private fun GroupHeaderBlock(
             .fillMaxWidth()
             .clip(shape)
             .background(RvColor.Grey)
+            // Свёрнутая группа — серая карточка без обводки; раскрытая —
+            // чёрная карточка с обводкой, и шапка несёт её верх.
+            .then(if (collapsed) Modifier else Modifier.groupOutline(GroupEdge.Top))
             .clickable(
                 onClickLabel = stringResource(
                     if (collapsed) R.string.action_expand else R.string.action_collapse,
@@ -815,7 +773,8 @@ private fun GroupServerRowBlock(
         modifier = Modifier
             .fillMaxWidth()
             .groupBottom(isLast)
-            .background(RvColor.Grey),
+            .background(RvColor.Black)
+            .groupOutline(if (isLast) GroupEdge.Bottom else GroupEdge.Sides),
     ) {
         ServerRow(
             name = serverDisplayName(profile.name, country),
@@ -828,7 +787,7 @@ private fun GroupServerRowBlock(
             onClick = onClick,
             onLongClick = onLongClick,
             surface = Color.Transparent,
-            activeSurface = RvColor.whiteA05,
+            activeSurface = RvColor.Grey,
             latencyMs = sample?.takeIf { it.reachable }?.latencyMs,
             offlineReason = sample?.takeUnless { it.reachable }?.reason,
             isLoading = isLoading,
@@ -843,7 +802,8 @@ private fun SubscriptionSectionRowBlock(name: String, isLast: Boolean) {
         modifier = Modifier
             .fillMaxWidth()
             .groupBottom(isLast)
-            .background(RvColor.Grey),
+            .background(RvColor.Black)
+            .groupOutline(if (isLast) GroupEdge.Bottom else GroupEdge.Sides),
     ) {
         SectionLabel(name)
     }
@@ -860,6 +820,49 @@ private fun SubscriptionSectionRowBlock(name: String, isLast: Boolean) {
 private fun Modifier.groupBottom(isLast: Boolean): Modifier =
     if (isLast) clip(RoundedCornerShape(bottomStart = GroupLook.radius, bottomEnd = GroupLook.radius))
     else this
+
+/** Какой кусок обводки раскрытой группы несёт элемент списка. */
+private enum class GroupEdge { Top, Sides, Bottom }
+
+/**
+ * Обводка раскрытой группы — белая 10 %, 1 dp, как у карточки Subscription
+ * в макете (Figma 6864:4974). Группа разрезана на элементы LazyColumn, и
+ * одной рамкой её не обвести: шапка рисует верх со скруглёнными углами,
+ * строки — боковые линии, последняя строка — низ.
+ */
+private fun Modifier.groupOutline(edge: GroupEdge): Modifier = drawWithContent {
+    drawContent()
+    val stroke = 1.dp.toPx()
+    val half = stroke / 2
+    val r = GroupLook.radius.toPx()
+    val w = size.width
+    val h = size.height
+    val path = Path().apply {
+        when (edge) {
+            GroupEdge.Top -> {
+                moveTo(half, h)
+                lineTo(half, r)
+                arcTo(Rect(half, half, 2 * r - half, 2 * r - half), 180f, 90f, false)
+                lineTo(w - r, half)
+                arcTo(Rect(w - 2 * r + half, half, w - half, 2 * r - half), 270f, 90f, false)
+                lineTo(w - half, h)
+            }
+            GroupEdge.Sides -> {
+                moveTo(half, 0f); lineTo(half, h)
+                moveTo(w - half, 0f); lineTo(w - half, h)
+            }
+            GroupEdge.Bottom -> {
+                moveTo(half, 0f)
+                lineTo(half, h - r)
+                arcTo(Rect(half, h - 2 * r + half, 2 * r - half, h - half), 180f, -90f, false)
+                lineTo(w - r, h - half)
+                arcTo(Rect(w - 2 * r + half, h - 2 * r + half, w - half, h - half), 90f, -90f, false)
+                lineTo(w - half, 0f)
+            }
+        }
+    }
+    drawPath(path, RvColor.whiteA10, style = Stroke(width = stroke))
+}
 
 internal fun reorderForDisplay(
     profiles: List<Profile>,
