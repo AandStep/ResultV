@@ -25,7 +25,8 @@ The vendored copy has been modified by ResultV. Original package comment:
 
 The vendored copy has been modified by ResultV: handshake messages are sliced
 to their own size before MACs are added (`device/send.go`), so random trailers
-no longer overwrite MAC1/MAC2. `device/padding_test.go` was dropped because it
+no longer overwrite MAC1/MAC2, and transport packets injected through
+`InputPacket` get room for trailers instead of overrunning their buffer. `device/padding_test.go` was dropped because it
 no longer compiles against the fork. Drop the copy once upstream ships the fix.
 
 ---

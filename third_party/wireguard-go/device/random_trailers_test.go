@@ -86,8 +86,9 @@ func waitForHandshake(wgDevice *device.Device, timeout time.Duration) bool {
 }
 
 type memNetwork struct {
-	mu    sync.Mutex
-	ports map[uint16]chan memDatagram
+	mu      sync.Mutex
+	ports   map[uint16]chan memDatagram
+	largest int
 }
 
 type memDatagram struct {
@@ -166,10 +167,74 @@ func (b *memBind) Send(bufs [][]byte, ep conn.Endpoint, offset int) error {
 	}
 	for _, buf := range bufs {
 		data := append([]byte(nil), buf[offset:]...)
+		b.network.mu.Lock()
+		b.network.largest = max(b.network.largest, len(data))
+		b.network.mu.Unlock()
 		select {
 		case inbox <- memDatagram{data: data, from: b.port}:
 		default:
 		}
 	}
 	return nil
+}
+
+// TestRandomTrailersInputPacket sends small packets through InputPacket, whose
+// buffers are sized to the packet. A trailer must neither overrun that buffer
+// nor put anything but the sealed packet on the wire.
+func TestRandomTrailersInputPacket(t *testing.T) {
+	serverPrivate, serverPublic := generateTestKeyPair(t)
+	clientPrivate, clientPublic := generateTestKeyPair(t)
+	network := newMemNetwork()
+
+	server, _ := startMemDevice(t, network, "server", 1000, true,
+		"private_key="+serverPrivate+"\npublic_key="+clientPublic+"\nallowed_ip=10.0.0.2/32")
+	defer server.Close()
+	client, clientTUN := startMemDevice(t, network, "client", 2000, true,
+		"private_key="+clientPrivate+"\npublic_key="+serverPublic+"\nallowed_ip=10.0.0.1/32\nendpoint=127.0.0.1:1000")
+	defer client.Close()
+
+	clientTUN.inbound <- buildTestPacket()
+	if !waitForHandshake(client, 10*time.Second) {
+		t.Fatal("handshake did not complete")
+	}
+	before := rxBytes(t, server)
+	network.mu.Lock()
+	network.largest = 0
+	network.mu.Unlock()
+
+	const count = 200
+	destination := netip.MustParseAddr("10.0.0.1").AsSlice()
+	for i := 0; i < count; i++ {
+		client.InputPacket(destination, [][]byte{buildTestPacket()})
+	}
+
+	want := before + count*len(buildTestPacket())
+	deadline := time.Now().Add(5 * time.Second)
+	for rxBytes(t, server) < want {
+		if time.Now().After(deadline) {
+			t.Fatalf("server decrypted %d bytes, want at least %d", rxBytes(t, server)-before, want-before)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	network.mu.Lock()
+	largest := network.largest
+	network.mu.Unlock()
+	if plain := 12 + 16 + len(buildTestPacket()) + 16 + 16; largest <= plain {
+		t.Fatalf("largest datagram %d bytes, no trailers beyond %d", largest, plain)
+	}
+}
+
+func rxBytes(t *testing.T, wgDevice *device.Device) int {
+	config, err := wgDevice.IpcGet()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(config, "\n") {
+		if value, ok := strings.CutPrefix(line, "rx_bytes="); ok {
+			n, _ := strconv.Atoi(value)
+			return n
+		}
+	}
+	return 0
 }

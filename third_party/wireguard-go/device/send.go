@@ -554,6 +554,7 @@ func (device *Device) InputPacket(destination []byte, packetSlices [][]byte) {
 	if allocLength > MaxMessageSize {
 		return
 	}
+	allocLength = min(allocLength+peer.paddingHeadroom(totalLength+MinMessageSize+int(padding)), MaxMessageSize)
 	elem := device.GetOutboundElement()
 	elem.buffer = device.GetOutboundBuffer(allocLength)
 	elem.nonce = 0
@@ -602,6 +603,7 @@ func (device *Device) InputPackets(packets []*InputPacketRef) []*InputPacketRef 
 		if allocLength > MaxMessageSize {
 			continue
 		}
+		allocLength = min(allocLength+peer.paddingHeadroom(totalLength+MinMessageSize+int(padding)), MaxMessageSize)
 		elem := device.GetOutboundElement()
 		elem.buffer = device.GetOutboundBuffer(allocLength)
 		elem.nonce = 0
@@ -781,6 +783,15 @@ func (peer *Peer) randomPaddingAddition(packetSize int) int {
 	return add
 }
 
+// paddingHeadroom is the most that randomPaddingAddition or randomTrailer can
+// add to a transport packet of packetSize.
+func (peer *Peer) paddingHeadroom(packetSize int) int {
+	if peer.device.contentPaddingAddition.Load().IsZero() && !peer.device.randomTrailers.Load() {
+		return 0
+	}
+	return max(int(peer.udpWindow.Load())-packetSize, 0)
+}
+
 func (device *Device) randomTrailer(packetSize int) int {
 	if !device.randomTrailers.Load() {
 		return -1
@@ -850,6 +861,8 @@ func (device *Device) RoutineEncryption(id int) {
 				// pad content to multiple of 16
 				paddingSize = calculatePaddingSize(len(elem.packet), mtu)
 			}
+			room := cap(elem.buffer) - MessageEncapsulatingTransportSize - int(elem.padding) - MessageTransportHeaderSize - len(elem.packet) - chacha20poly1305.Overhead
+			paddingSize = max(min(paddingSize, room), 0)
 
 			// append trailing zeroes
 			oldLen := len(elem.packet)
