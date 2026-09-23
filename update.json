@@ -1,19 +1,14 @@
 {
   "version": "",
   "releaseTitle": {
-    "ru": "Умный режим: адаптивный режим починен, мёртвые CDN уходят в VPN",
-    "en": "Smart mode: adaptive mode fixed, dead CDN ranges go through the VPN"
+    "ru": "Hotfix для AWG 3.1",
+    "en": "Hotfix for AWG 3.1"
   },
   "releaseNotes": [
     {
       "type": "fix",
-      "ru": "Улучшена работа адаптивного умного режима.",
-      "en": "Improved performance of the adaptive smart mode."
-    },
-    {
-      "type": "improve",
-      "ru": "Окно обновления переведено на новый дизайн.",
-      "en": "The update window has been translated to the new design."
+      "ru": "Доработана поддержка AWG 3.1. Временно ядро перенесено на собственный форк.",
+      "en": "Improved support for AWG 3.1. The kernel has been temporarily moved to a custom fork."
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",
