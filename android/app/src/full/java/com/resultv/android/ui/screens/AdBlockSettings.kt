@@ -1,5 +1,11 @@
 package com.resultv.android.ui.screens
 
+import androidx.compose.material.icons.outlined.OpenInBrowser
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.text.font.FontWeight
+import com.resultv.android.ui.components.RvButton
+import com.resultv.android.ui.components.RvButtonColors
+import com.resultv.android.ui.components.RvButtonLabel
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Block
@@ -40,6 +46,7 @@ import kotlinx.coroutines.withContext
 internal object AdBlockGroupRes {
     val label = R.string.settings_group_adblock
     val desc = R.string.settings_group_adblock_desc
+    val items = R.string.settings_group_adblock_items
 }
 
 /**
@@ -53,20 +60,22 @@ internal object AdBlockGroupRes {
  */
 @Composable
 internal fun AdBlockGroupContent(settings: SettingsState, onOpenCertWizard: () -> Unit) {
-    ToggleRow(
-        title = stringResource(R.string.settings_adblock),
-        subtitle = stringResource(R.string.settings_adblock_subtitle),
-        icon = Icons.Outlined.Block,
-        tint = RvCategory.Red,
-        checked = settings.adblock,
-        onCheckedChange = {
-            SettingsRepository.setAdblock(it)
-            // Warm the SRS cache so the next connect references local lists
-            // instead of waiting on sing-box's remote fetch. Safe no-op when
-            // already fresh (24h TTL).
-            if (it) AdBlockRepository.refreshAsync()
-        },
-    )
+    SheetGroup(stringResource(R.string.settings_label_dns_filter), Icons.Outlined.Block) {
+        SheetToggleRow(
+            icon = Icons.Outlined.Block,
+            tint = RvCategory.Red,
+            title = stringResource(R.string.settings_adblock),
+            subtitle = stringResource(R.string.settings_adblock_subtitle),
+            checked = settings.adblock,
+            onCheckedChange = {
+                SettingsRepository.setAdblock(it)
+                // Warm the SRS cache so the next connect references local lists
+                // instead of waiting on sing-box's remote fetch. Safe no-op when
+                // already fresh (24h TTL).
+                if (it) AdBlockRepository.refreshAsync()
+            },
+        )
+    }
     BrowserAdBlockSection(settings, onOpenCertWizard)
 }
 
@@ -79,7 +88,6 @@ internal fun AdBlockGroupContent(settings: SettingsState, onOpenCertWizard: () -
 @Composable
 private fun BrowserAdBlockSection(settings: SettingsState, onOpenCertWizard: () -> Unit) {
     if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) return
-    HorizontalDivider(color = RvColor.LightGray)
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -98,41 +106,50 @@ private fun BrowserAdBlockSection(settings: SettingsState, onOpenCertWizard: () 
         )
     }
 
-    ToggleRow(
-        title = stringResource(R.string.settings_browser_adblock),
-        subtitle = stringResource(R.string.settings_browser_adblock_subtitle),
-        icon = Icons.Outlined.Shield,
-        tint = RvCategory.Emerald,
-        checked = settings.browserAdBlock,
-        onCheckedChange = { enabled ->
-            if (enabled) {
-                scope.launch(Dispatchers.IO) {
-                    mobile.Mobile.fetchFilterLists(context.filesDir.absolutePath)
+    SheetGroup(stringResource(R.string.settings_label_browser), Icons.Outlined.OpenInBrowser) {
+        SheetToggleRow(
+            icon = Icons.Outlined.OpenInBrowser,
+            tint = RvCategory.Amber,
+            title = stringResource(R.string.settings_browser_adblock),
+            subtitle = stringResource(R.string.settings_browser_adblock_subtitle),
+            checked = settings.browserAdBlock,
+            onCheckedChange = { enabled ->
+                if (enabled) {
+                    scope.launch(Dispatchers.IO) {
+                        mobile.Mobile.fetchFilterLists(context.filesDir.absolutePath)
+                    }
+                    SettingsRepository.setBrowserAdBlock(true)
+                    // Turning the feature on without a trusted cert does nothing
+                    // useful, so the toggle doubles as the wizard's entry point.
+                    if (!certInstalled) onOpenCertWizard()
+                } else {
+                    SettingsRepository.setBrowserAdBlock(false)
                 }
-                SettingsRepository.setBrowserAdBlock(true)
-                // Turning the feature on without a trusted cert does nothing
-                // useful, so the toggle doubles as the wizard's entry point.
-                if (!certInstalled) onOpenCertWizard()
-            } else {
-                SettingsRepository.setBrowserAdBlock(false)
-            }
-        },
-    )
-    Text(
-        text = stringResource(
-            if (certInstalled) R.string.cert_status_trusted else R.string.cert_status_untrusted,
-        ),
-        style = MaterialTheme.typography.labelSmall,
-        color = if (certInstalled) RvColor.Second else RvColor.whiteA50,
-        modifier = Modifier.padding(start = 62.dp, top = 2.dp),
-    )
-    if (!certInstalled) {
-        HorizontalDivider(color = RvColor.LightGray)
-        NavRow(
-            label = stringResource(R.string.settings_browser_adblock_install),
-            icon = Icons.Outlined.Shield,
-            tint = RvCategory.Emerald,
-            onClick = onOpenCertWizard,
+            },
+            below = {
+                Text(
+                    text = stringResource(
+                        if (certInstalled) R.string.cert_status_trusted else R.string.cert_status_untrusted,
+                    ),
+                    style = SheetNoteStyle,
+                    color = if (certInstalled) RvColor.Second else RvColor.Warning,
+                )
+                if (!certInstalled) {
+                    RvButton(
+                        onClick = onOpenCertWizard,
+                        fill = RvButtonColors.greenFill,
+                        outline = RvButtonColors.greenOutline,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            stringResource(R.string.settings_browser_adblock_install),
+                            style = RvButtonLabel,
+                            fontWeight = FontWeight.Bold,
+                            color = RvColor.Main,
+                        )
+                    }
+                }
+            },
         )
     }
 }

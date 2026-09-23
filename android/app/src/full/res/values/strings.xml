@@ -35,7 +35,7 @@
     <string name="cert_wizard_why_title">HTTPS filtering is required to block ads</string>
     <string name="settings_browser_adblock_cert_error">Couldn\'t prepare the ad-block certificate. Please try again.</string>
     <string name="settings_browser_adblock">Block banner ads in browser</string>
-    <string name="settings_browser_adblock_subtitle">Banners in Chrome. Needs a certificate; not YouTube.</string>
+    <string name="settings_browser_adblock_subtitle">Banners in Chrome. Needs a certificate; YouTube is untouched</string>
     <string name="settings_browser_adblock_install">Install certificate</string>
     <string name="cert_status_trusted">✓ Certificate installed</string>
     <string name="cert_status_untrusted">⚠ Certificate not installed</string>
@@ -48,7 +48,10 @@
     <string name="log_adblock_loaded">Block lists loaded (%1$d/%2$d).</string>
     <string name="log_source_adblock" translatable="false">ADBLOCK</string>
     <string name="settings_adblock">Ad blocking</string>
-    <string name="settings_adblock_subtitle">Ads and trackers via DNS, including YouTube.</string>
+    <string name="settings_adblock_subtitle">Ads and trackers via DNS, YouTube included</string>
     <string name="settings_group_adblock">Ad blocking</string>
-    <string name="settings_group_adblock_desc">• Ads in apps and the browser</string>
+    <string name="settings_group_adblock_desc">Banners, trackers and browser ads</string>
+    <string name="settings_group_adblock_items">• Ads in apps and the browser</string>
+    <string name="settings_label_dns_filter">DNS filter</string>
+    <string name="settings_label_browser">Browser</string>
 </resources>

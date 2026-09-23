@@ -36,6 +36,7 @@ object RvColor {
     // Прозрачные ступени. В Figma это не отдельные переменные, а базовый цвет
     // с непрозрачностью слоя; значения сняты с компонентов кита.
     val whiteA05 = White.copy(alpha = 0.05f)
+    val whiteA06 = White.copy(alpha = 0.06f)   // обводка карточек групп в шторках
     val whiteA10 = White.copy(alpha = 0.10f)
     val whiteA15 = White.copy(alpha = 0.15f)
     val whiteA20 = White.copy(alpha = 0.20f)

@@ -64,9 +64,9 @@
     <string name="settings_ipv6">IPv6</string>
     <string name="settings_ipv6_subtitle">IPv6 traffic through the tunnel</string>
     <string name="settings_adaptive_smart">Adaptive Smart</string>
-    <string name="settings_adaptive_smart_subtitle">Learns which sites need the tunnel. Smart mode only.</string>
+    <string name="settings_adaptive_smart_subtitle">Learns which sites need the tunnel. Smart mode only</string>
     <string name="settings_adaptive_smart_memory">Memory only</string>
-    <string name="settings_adaptive_smart_memory_subtitle">Forget everything learned when the app closes.</string>
+    <string name="settings_adaptive_smart_memory_subtitle">Forget what was learned when the app closes</string>
     <string name="settings_ping">Ping</string>
     <string name="settings_ping_hint">What the server list measures</string>
     <string name="settings_ping_type_auto">Auto</string>
@@ -77,10 +77,10 @@
     <string name="settings_ping_url_subtitle">HTTPS only; empty uses the built-in one</string>
     <string name="settings_ping_url_invalid">Needs an https:// address with a host</string>
     <string name="settings_ping_timeout">Ping timeout</string>
-    <string name="settings_ping_timeout_subtitle">1-10 seconds; empty means 3</string>
+    <string name="settings_ping_timeout_subtitle">1-10 seconds</string>
     <string name="settings_bypass_lan">Bypass LAN</string>
     <string name="settings_bypass_lan_subtitle">Printers, NAS and router bypass the VPN</string>
-    <string name="settings_dns_hint">Pick a preset or enter custom servers, comma-separated.</string>
+    <string name="settings_dns_hint">A preset or your own servers, comma-separated</string>
     <string name="settings_dns_custom_placeholder">Custom: 1.1.1.1, 8.8.8.8</string>
     <string name="settings_about_subtitle">Mobile preview · Phase 5+</string>
     <string name="settings_dns_preset_auto">Auto</string>
@@ -98,33 +98,33 @@
     <string name="settings_data_usage_reset">Reset</string>
     <string name="settings_data_usage_reset_confirm">Reset data usage statistics?</string>
     <string name="settings_group_subscriptions">Subscriptions</string>
-    <string name="settings_group_subscriptions_desc">• Refresh  • HWID  • UA</string>
+    <string name="settings_group_subscriptions_desc">Refresh and data for the provider</string>
     <string name="settings_group_security">Security</string>
-    <string name="settings_group_security_desc">• Kill Switch</string>
+    <string name="settings_group_security_desc">Connection protection on failures</string>
     <string name="settings_group_network">Network</string>
-    <string name="settings_group_network_desc">• DNS  • IPv6  • Local network</string>
+    <string name="settings_group_network_desc">DNS, IPv6 and the local network</string>
     <string name="settings_group_appearance">More settings</string>
-    <string name="settings_group_appearance_desc">• Interface language</string>
+    <string name="settings_group_appearance_desc">Interface language</string>
 
     <string name="settings_dns_private_warning">Not working? Turn off Private DNS in Android settings.</string>
     <string name="settings_group_ping">Ping</string>
-    <string name="settings_group_ping_desc">• Probe type  • Test URL  • Timeout</string>
+    <string name="settings_group_ping_desc">How and how long to measure latency to nodes</string>
     <string name="settings_group_experimental">Experimental</string>
-    <string name="settings_group_experimental_desc">• Adaptive Smart</string>
+    <string name="settings_group_experimental_desc">Unfinished and untested. At your own risk</string>
 
-    <string name="settings_killswitch_title">Enable Kill Switch</string>
-    <string name="settings_killswitch_desc">Cuts the internet if the proxy drops.</string>
+    <string name="settings_killswitch_title">Kill Switch</string>
+    <string name="settings_killswitch_desc">Cut the internet when the proxy drops</string>
 
     <string name="settings_sub_auto_update_title">Automatic update</string>
-    <string name="settings_sub_auto_update_desc">Refresh every subscription on a schedule.</string>
+    <string name="settings_sub_auto_update_desc">Refresh every subscription on a schedule</string>
     <string name="settings_sub_interval_title">Update interval</string>
-    <string name="settings_sub_interval_desc">How often subscriptions are refreshed, in hours.</string>
+    <string name="settings_sub_interval_desc">How often to refresh subscriptions, in hours</string>
     <string name="settings_sub_hwid_title">Send HWID</string>
-    <string name="settings_sub_hwid_desc">Device identifier — for the device-limit check.</string>
+    <string name="settings_sub_hwid_desc">Device ID — for the device limit check</string>
     <string name="settings_sub_ua_title">User agent</string>
-    <string name="settings_sub_ua_desc">Empty field — the default value.</string>
+    <string name="settings_sub_ua_desc">Empty — the default value</string>
 
-    <string name="settings_appearance_language_title">Language</string>
+    <string name="settings_appearance_language_title">Interface language</string>
 
     <!-- VPN service notification -->
     <string name="vpn_status_killswitch">Kill switch active — traffic blocked</string>
@@ -347,7 +347,27 @@
 
     <!-- Logs -->
     <string name="settings_group_logs">Logs</string>
-    <string name="settings_group_logs_desc">• Connection and app events</string>
+    <string name="settings_group_logs_items">• Connection and app events</string>
+    <string name="settings_group_appearance_items">• Interface language</string>
+    <string name="settings_appearance_language_desc">Language of the app\'s labels</string>
+    <string name="settings_label_interface">Interface</string>
+    <string name="settings_label_update">Refresh</string>
+    <string name="settings_label_provider_data">Data for the provider</string>
+    <string name="settings_label_connection">Connection</string>
+    <string name="settings_label_lan">Local network</string>
+    <string name="settings_label_tunnel">Tunnel</string>
+    <string name="settings_label_probe">Probe</string>
+    <string name="settings_label_params">Parameters</string>
+    <string name="settings_dns_title">DNS servers</string>
+    <string name="settings_ping_type_title">Probe type</string>
+    <string name="settings_hours_short">%1$dh</string>
+    <string name="settings_seconds_short">%1$ds</string>
+    <string name="settings_sub_ua_placeholder">Default</string>
+    <string name="settings_group_subscriptions_items">• Refresh  • HWID  • UA</string>
+    <string name="settings_group_experimental_items">• Adaptive Smart</string>
+    <string name="settings_group_security_items">• Kill Switch</string>
+    <string name="settings_group_ping_items">• Probe type  • Test URL  • Timeout</string>
+    <string name="settings_group_network_items">• DNS  • IPv6  • Local network</string>
     <string name="logs_title">Logs</string>
     <string name="logs_empty">No events yet.</string>
     <string name="logs_save_cd">Save logs</string>

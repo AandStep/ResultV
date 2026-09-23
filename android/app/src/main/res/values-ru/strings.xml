@@ -59,9 +59,9 @@
     <string name="settings_ipv6">IPv6</string>
     <string name="settings_ipv6_subtitle">IPv6-трафик через туннель</string>
     <string name="settings_adaptive_smart">Адаптивный Smart</string>
-    <string name="settings_adaptive_smart_subtitle">Сам узнаёт, каким сайтам нужен туннель. Только в режиме Smart.</string>
+    <string name="settings_adaptive_smart_subtitle">Сам узнаёт, каким сайтам нужен туннель. Только в режиме Smart</string>
     <string name="settings_adaptive_smart_memory">Только в памяти</string>
-    <string name="settings_adaptive_smart_memory_subtitle">Забывать выученное при закрытии приложения.</string>
+    <string name="settings_adaptive_smart_memory_subtitle">Забывать выученное при закрытии приложения</string>
     <string name="settings_ping">Пинг</string>
     <string name="settings_ping_hint">Что меряет список серверов</string>
     <string name="settings_ping_type_auto">Авто</string>
@@ -72,10 +72,10 @@
     <string name="settings_ping_url_subtitle">Только https; пусто — встроенный</string>
     <string name="settings_ping_url_invalid">Нужен адрес https:// с хостом</string>
     <string name="settings_ping_timeout">Таймаут пинга</string>
-    <string name="settings_ping_timeout_subtitle">1-10 секунд; пусто — три</string>
+    <string name="settings_ping_timeout_subtitle">1-10 секунд</string>
     <string name="settings_bypass_lan">Прямой LAN</string>
     <string name="settings_bypass_lan_subtitle">Принтеры, NAS и роутер — мимо VPN</string>
-    <string name="settings_dns_hint">Пресет или свои серверы через запятую.</string>
+    <string name="settings_dns_hint">Пресет или свои серверы через запятую</string>
     <string name="settings_dns_custom_placeholder">Свой: 1.1.1.1, 8.8.8.8</string>
     <string name="settings_about_subtitle">Мобильная превью-сборка · Phase 5+</string>
     <string name="settings_dns_preset_auto">Авто</string>
@@ -93,33 +93,33 @@
     <string name="settings_data_usage_reset">Сбросить</string>
     <string name="settings_data_usage_reset_confirm">Сбросить статистику трафика?</string>
     <string name="settings_group_subscriptions">Подписки</string>
-    <string name="settings_group_subscriptions_desc">• Обновление  • HWID  • UA</string>
+    <string name="settings_group_subscriptions_desc">Обновление и данные для провайдера</string>
     <string name="settings_group_security">Безопасность</string>
-    <string name="settings_group_security_desc">• Kill Switch</string>
+    <string name="settings_group_security_desc">Защита соединения при сбоях</string>
     <string name="settings_group_network">Сеть</string>
-    <string name="settings_group_network_desc">• DNS  • IPv6  • Локальная сеть</string>
+    <string name="settings_group_network_desc">DNS, IPv6 и локальная сеть</string>
     <string name="settings_group_appearance">Дополнительные настройки</string>
-    <string name="settings_group_appearance_desc">• Язык интерфейса</string>
+    <string name="settings_group_appearance_desc">Язык интерфейса</string>
 
     <string name="settings_dns_private_warning">Не работает? Отключите частный DNS в настройках сети Android.</string>
     <string name="settings_group_ping">Пинг</string>
-    <string name="settings_group_ping_desc">• Тип замера  • Тестовый адрес  • Таймаут</string>
+    <string name="settings_group_ping_desc">Чем и как долго измерять задержку до узлов</string>
     <string name="settings_group_experimental">Экспериментально</string>
-    <string name="settings_group_experimental_desc">• Адаптивный Smart</string>
+    <string name="settings_group_experimental_desc">Недоделанное и необкатанное. На свой страх</string>
 
-    <string name="settings_killswitch_title">Включить Kill Switch</string>
-    <string name="settings_killswitch_desc">Обрыв интернета при падении прокси.</string>
+    <string name="settings_killswitch_title">Kill Switch</string>
+    <string name="settings_killswitch_desc">Обрыв интернета при падении прокси</string>
 
     <string name="settings_sub_auto_update_title">Автоматическое обновление</string>
-    <string name="settings_sub_auto_update_desc">Обновлять все подписки по расписанию.</string>
+    <string name="settings_sub_auto_update_desc">Обновлять все подписки по расписанию</string>
     <string name="settings_sub_interval_title">Интервал обновления</string>
-    <string name="settings_sub_interval_desc">Как часто обновлять подписки, в часах.</string>
+    <string name="settings_sub_interval_desc">Как часто обновлять подписки, в часах</string>
     <string name="settings_sub_hwid_title">Передавать HWID</string>
-    <string name="settings_sub_hwid_desc">Идентификатор устройства — для проверки лимита.</string>
+    <string name="settings_sub_hwid_desc">Идентификатор устройства — для проверки лимита</string>
     <string name="settings_sub_ua_title">User agent</string>
-    <string name="settings_sub_ua_desc">Пустое поле — значение по умолчанию.</string>
+    <string name="settings_sub_ua_desc">Пустое поле — значение по умолчанию</string>
 
-    <string name="settings_appearance_language_title">Язык</string>
+    <string name="settings_appearance_language_title">Язык интерфейса</string>
 
     <string name="vpn_status_killswitch">Kill switch активен — трафик заблокирован</string>
     <string name="vpn_status_connecting">Подключение…</string>
@@ -317,7 +317,27 @@
 
     <!-- Logs -->
     <string name="settings_group_logs">Логи</string>
-    <string name="settings_group_logs_desc">• События подключения и приложения</string>
+    <string name="settings_group_logs_items">• События подключения и приложения</string>
+    <string name="settings_group_appearance_items">• Язык интерфейса</string>
+    <string name="settings_appearance_language_desc">Язык подписей в приложении</string>
+    <string name="settings_label_interface">Интерфейс</string>
+    <string name="settings_label_update">Обновление</string>
+    <string name="settings_label_provider_data">Данные для провайдера</string>
+    <string name="settings_label_connection">Соединение</string>
+    <string name="settings_label_lan">Локальная сеть</string>
+    <string name="settings_label_tunnel">Туннель</string>
+    <string name="settings_label_probe">Замер</string>
+    <string name="settings_label_params">Параметры</string>
+    <string name="settings_dns_title">DNS-серверы</string>
+    <string name="settings_ping_type_title">Тип замера</string>
+    <string name="settings_hours_short">%1$dч</string>
+    <string name="settings_seconds_short">%1$dс</string>
+    <string name="settings_sub_ua_placeholder">По умолчанию</string>
+    <string name="settings_group_subscriptions_items">• Обновление  • HWID  • UA</string>
+    <string name="settings_group_experimental_items">• Адаптивный Smart</string>
+    <string name="settings_group_security_items">• Kill Switch</string>
+    <string name="settings_group_ping_items">• Тип замера  • Тестовый адрес  • Таймаут</string>
+    <string name="settings_group_network_items">• DNS  • IPv6  • Локальная сеть</string>
     <string name="logs_title">Логи</string>
     <string name="logs_empty">Событий пока нет.</string>
     <string name="logs_save_cd">Сохранить логи</string>
