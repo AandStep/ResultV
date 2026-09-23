@@ -1,6 +1,7 @@
 package com.resultv.android.ui.screens
 
 import android.widget.Toast
+import kotlin.math.roundToInt
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.offset
@@ -298,8 +299,8 @@ private fun TrafficStatsRow(active: Boolean) {
     ) {
         SpeedTile(
             label = stringResource(R.string.home_stat_download),
-            rate = formatBps(stats.downloadBps),
-            total = formatBytes(stats.downloadBytes),
+            rate = rateText(stats.downloadBps),
+            total = trafficText(stats.downloadBytes),
             history = stats.downloadHistory.map { it.toFloat() },
             color = RvColor.Main,
             active = active,
@@ -307,8 +308,8 @@ private fun TrafficStatsRow(active: Boolean) {
         )
         SpeedTile(
             label = stringResource(R.string.home_stat_upload),
-            rate = formatBps(stats.uploadBps),
-            total = formatBytes(stats.uploadBytes),
+            rate = rateText(stats.uploadBps),
+            total = trafficText(stats.uploadBytes),
             history = stats.uploadHistory.map { it.toFloat() },
             color = RvColor.Second,
             active = active,
@@ -317,19 +318,21 @@ private fun TrafficStatsRow(active: Boolean) {
     }
 }
 
-private fun formatBytes(bytes: Long): String {
-    if (bytes < 1024) return "$bytes B"
-    val units = arrayOf("KB", "MB", "GB", "TB")
-    var v = bytes.toDouble() / 1024.0
-    var i = 0
-    while (v >= 1024 && i < units.size - 1) { v /= 1024.0; i++ }
-    return String.format("%.2f %s", v, units[i])
-}
+private const val KB = 1024.0
+private const val MB = KB * 1024
+private const val GB = MB * 1024
 
-private fun formatBps(bps: Long): String {
-    if (bps == 0L) return "0 B/s"
-    return formatBytes(bps) + "/s"
-}
+/** Накопленный объём, как на ПК (`formatTraffic`): «0 Мб», «312 Мб», «1.5 Гб». */
+@Composable
+private fun trafficText(bytes: Long): String =
+    if (bytes >= GB) stringResource(R.string.unit_gb, bytes / GB)
+    else stringResource(R.string.unit_mb, (bytes / MB).roundToInt())
+
+/** Текущая скорость, как на ПК (`formatRate`): «0 кб/с», «312 кб/с», «1.5 Мб/с». */
+@Composable
+private fun rateText(bytesPerSec: Long): String =
+    if (bytesPerSec >= MB) stringResource(R.string.unit_mbps, bytesPerSec / MB)
+    else stringResource(R.string.unit_kbps, (bytesPerSec / KB).roundToInt())
 
 @Composable
 private fun ActiveProfileRow(

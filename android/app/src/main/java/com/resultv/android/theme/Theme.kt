@@ -6,6 +6,10 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
@@ -138,12 +142,29 @@ private val ResultVShapes = Shapes(
     extraLarge = RoundedCornerShape(RvRadius.panel),
 )
 
+/** Ширина мобильных фреймов в Figma, dp. */
+private const val DESIGN_WIDTH_DP = 360f
+
+/**
+ * Интерфейс масштабируется под ширину макета: на любом телефоне 360 dp
+ * макета занимают всю ширину экрана, и пропорции — как в Figma. Без этого
+ * на экране шире 360 (Redmi Note 7 — 393) всё выглядело на 9 % мельче.
+ *
+ * Берётся меньшая сторона экрана, чтобы поворот не раздувал интерфейс.
+ * Системный масштаб шрифта сохраняется поверх — это настройка доступности.
+ */
 @Composable
 fun ResultVTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = ResultVColors,
-        typography = ResultVTypography,
-        shapes = ResultVShapes,
-        content = content,
-    )
+    val base = LocalDensity.current
+    val scale = LocalConfiguration.current.smallestScreenWidthDp / DESIGN_WIDTH_DP
+    CompositionLocalProvider(
+        LocalDensity provides Density(base.density * scale, base.fontScale),
+    ) {
+        MaterialTheme(
+            colorScheme = ResultVColors,
+            typography = ResultVTypography,
+            shapes = ResultVShapes,
+            content = content,
+        )
+    }
 }

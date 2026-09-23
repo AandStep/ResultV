@@ -33,7 +33,11 @@
     <string name="home_add_server">Add server</string>
     <string name="home_paste">Paste</string>
     <string name="home_stat_download">Download</string>
-    <string name="home_stat_upload">Upload</string>
+    <string name="home_stat_upload">Uploaded</string>
+    <string name="unit_mb">%1$d MB</string>
+    <string name="unit_gb">%1$.1f GB</string>
+    <string name="unit_kbps">%1$d KB/s</string>
+    <string name="unit_mbps">%1$.1f MB/s</string>
     <string name="home_banner_duration">UPTIME</string>
     <string name="home_banner_download">DOWN</string>
     <string name="home_banner_upload">UP</string>
@@ -44,9 +48,9 @@
 
     <!-- Connection status, read by HomeHeader at the top of Home -->
     <string name="status_protected">Protected</string>
-    <string name="status_unprotected">Unprotected</string>
-    <string name="status_connecting">Connecting…</string>
-    <string name="status_error">Error</string>
+    <string name="status_unprotected">Not connected</string>
+    <string name="status_connecting">Connecting...</string>
+    <string name="status_error">Something went wrong</string>
 
     <!-- Settings screen -->
     <string name="settings_section_general">GENERAL</string>
