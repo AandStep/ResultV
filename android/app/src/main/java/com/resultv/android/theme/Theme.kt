@@ -6,15 +6,39 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.resultv.android.R
 
 /** Benzin Bold. Им набрано слово «ResultV» — и больше ничего. */
 val BenzinBold = FontFamily(Font(R.font.benzin_bold, FontWeight.Bold))
+
+/**
+ * Segoe UI Variable — шрифт всего интерфейса. Файл один, вариативный
+ * (ось wght 300–700), поэтому каждый вес — тот же ресурс со своей точкой
+ * на оси: без явного variationSettings Android отрисовал бы всё весом 400.
+ */
+@OptIn(ExperimentalTextApi::class)
+val SegoeUi = FontFamily(
+    listOf(
+        FontWeight.Light,
+        FontWeight.Normal,
+        FontWeight.Medium,
+        FontWeight.SemiBold,
+        FontWeight.Bold,
+    ).map { weight ->
+        Font(
+            R.font.segoe_ui_variable,
+            weight,
+            variationSettings = FontVariation.Settings(FontVariation.weight(weight.weight)),
+        )
+    }
+)
 
 /**
  * Все слоты выставлены явно: любой незаданный уезжает в фиолетовую тональную
@@ -86,18 +110,18 @@ private val ResultVColors = darkColorScheme(
  * расхождение по типографике записано в спеку, раздел «Пробелы».
  */
 private val ResultVTypography = Typography(
-    headlineLarge = TextStyle(fontSize = 30.sp, lineHeight = 38.sp),
-    headlineMedium = TextStyle(fontSize = 26.sp, lineHeight = 34.sp),
-    headlineSmall = TextStyle(fontSize = 22.sp, lineHeight = 30.sp),
-    titleLarge = TextStyle(fontSize = 20.sp, lineHeight = 26.sp),
-    titleMedium = TextStyle(fontSize = 14.sp, lineHeight = 22.sp),
-    titleSmall = TextStyle(fontSize = 12.sp, lineHeight = 18.sp),
-    bodyLarge = TextStyle(fontSize = 14.sp, lineHeight = 22.sp),
-    bodyMedium = TextStyle(fontSize = 12.sp, lineHeight = 18.sp),
-    bodySmall = TextStyle(fontSize = 11.sp, lineHeight = 14.sp),
-    labelLarge = TextStyle(fontSize = 12.sp, lineHeight = 18.sp),
-    labelMedium = TextStyle(fontSize = 11.sp, lineHeight = 14.sp),
-    labelSmall = TextStyle(fontSize = 10.sp, lineHeight = 14.sp),
+    headlineLarge = TextStyle(fontFamily = SegoeUi, fontSize = 30.sp, lineHeight = 38.sp),
+    headlineMedium = TextStyle(fontFamily = SegoeUi, fontSize = 26.sp, lineHeight = 34.sp),
+    headlineSmall = TextStyle(fontFamily = SegoeUi, fontSize = 22.sp, lineHeight = 30.sp),
+    titleLarge = TextStyle(fontFamily = SegoeUi, fontSize = 20.sp, lineHeight = 26.sp),
+    titleMedium = TextStyle(fontFamily = SegoeUi, fontSize = 14.sp, lineHeight = 22.sp),
+    titleSmall = TextStyle(fontFamily = SegoeUi, fontSize = 12.sp, lineHeight = 18.sp),
+    bodyLarge = TextStyle(fontFamily = SegoeUi, fontSize = 14.sp, lineHeight = 22.sp),
+    bodyMedium = TextStyle(fontFamily = SegoeUi, fontSize = 12.sp, lineHeight = 18.sp),
+    bodySmall = TextStyle(fontFamily = SegoeUi, fontSize = 11.sp, lineHeight = 14.sp),
+    labelLarge = TextStyle(fontFamily = SegoeUi, fontSize = 12.sp, lineHeight = 18.sp),
+    labelMedium = TextStyle(fontFamily = SegoeUi, fontSize = 11.sp, lineHeight = 14.sp),
+    labelSmall = TextStyle(fontFamily = SegoeUi, fontSize = 10.sp, lineHeight = 14.sp),
 )
 
 private val ResultVShapes = Shapes(

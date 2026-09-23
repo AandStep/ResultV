@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.resultv.android.R
 import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.SegoeUi
 import com.resultv.android.theme.RvRadius
 import com.resultv.android.theme.RvSpace
 
@@ -106,6 +107,7 @@ private val RemoveTouchSize = 22.dp
 // пропорции 1.4. Стиль один на все три текста поля — подпись тега, плейсхолдер
 // и ввод, — чтобы они не разъезжались.
 private val TagTextStyle = TextStyle(
+    fontFamily = SegoeUi,
     fontSize = 12.sp,
     fontWeight = FontWeight.Medium,
     lineHeight = 16.8.sp,
