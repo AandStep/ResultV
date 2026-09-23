@@ -8,10 +8,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
@@ -23,6 +22,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.resultv.android.R
@@ -33,18 +33,17 @@ import com.resultv.android.theme.rvBorder
 /**
  * Кнопка питания — перенос `PowerButton` (Figma 6481:7) из кита ПК.
  *
- * Размер взят не пропорцией с ПК (220 из 862 дали бы здесь 80 dp), а
- * мобильный: на телефоне эта кнопка и есть экран. Отношение иконки к кругу
- * при этом из макета — ровно половина.
+ * Размер — из мобильного макета (Figma 6856:4994): круг 180, глиф 90,
+ * ровно половина, как и на ПК.
  *
  * Кольца прогресса нет намеренно. На ПК признак работы в том, что кнопка
  * ОСТАЁТСЯ вдавленной, пока идёт подключение, и распрямляется в момент
  * успеха: вдавливание и распрямление сами по себе движение. Кольцо обещало
  * бы прогресс, которого никто не считает.
  */
-private val CIRCLE = 200.dp
-private val GLYPH = 100.dp
-private val HALO = 240.dp
+private val CIRCLE = 180.dp
+private val GLYPH = 90.dp
+private val HALO = 216.dp
 
 @Composable
 fun PowerButton(
@@ -94,12 +93,14 @@ fun PowerButton(
     // inset-shadow нет, рисуется радиальным градиентом поверх заливки.
     val inset = if (look == HomeLook.Success) RvColor.blackA25 else RvColor.blackA80
 
-    Box(modifier = modifier.size(HALO), contentAlignment = Alignment.Center) {
+    // Место в раскладке занимает только круг, как в мобильном макете:
+    // ореол выходит за его границы и на отступы до соседей не влияет.
+    Box(modifier = modifier.size(CIRCLE), contentAlignment = Alignment.Center) {
         // Свечение — отдельный диск позади кнопки, плавно уходящий в ноль,
         // чтобы у ореола не было видимого края.
         Box(
             modifier = Modifier
-                .size(HALO)
+                .requiredSize(HALO)
                 .background(
                     Brush.radialGradient(
                         colorStops = arrayOf(
@@ -149,7 +150,7 @@ fun PowerButton(
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
-                    imageVector = Icons.Filled.PowerSettingsNew,
+                    painter = painterResource(R.drawable.ic_power),
                     contentDescription = stringResource(
                         if (look == HomeLook.Success) R.string.action_disconnect
                         else R.string.action_connect,

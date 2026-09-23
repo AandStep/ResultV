@@ -3,8 +3,6 @@ package com.resultv.android.ui.components
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Sort
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -17,6 +15,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.resultv.android.R
@@ -88,7 +87,7 @@ fun ProfileSortMenu(
             modifier = Modifier.size(36.dp),
         ) {
             Icon(
-                imageVector = Icons.Outlined.Sort,
+                painter = painterResource(R.drawable.ic_sort),
                 contentDescription = stringResource(R.string.sort_cd),
                 tint = RvColor.whiteA50,
                 modifier = Modifier.size(20.dp),

@@ -77,13 +77,6 @@ private enum class SettingsSubcategory(
         R.string.settings_group_network, R.string.settings_group_network_desc,
         Icons.Outlined.Public, RvCategory.Main,
     ),
-    // Описание своё, а не `rules_section_smart_subtitle`: тот же текст стоит
-    // заголовком первого раздела ВНУТРИ шторки, и одна и та же фраза читалась
-    // дважды подряд — в шапке и строкой ниже.
-    Routing(
-        R.string.tab_rules, R.string.settings_group_routing_desc,
-        Icons.Outlined.AltRoute, RvCategory.Blue,
-    ),
     Ping(
         R.string.settings_group_ping, R.string.settings_group_ping_desc,
         Icons.Outlined.NetworkPing, RvCategory.Cyan,
@@ -115,19 +108,6 @@ private enum class SettingsSubcategory(
 fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {}) {
     val settings by SettingsRepository.state.collectAsStateWithLifecycle()
     var activeSheet by rememberSaveable { mutableStateOf<SettingsSubcategory?>(null) }
-    // Профили маршрутизации — ВЛОЖЕННАЯ шторка поверх «Правил», а не
-    // отдельный экран. Прошлая версия гасила лист и открывала
-    // полноэкранный маршрут, из-за чего закрытие возвращало в список
-    // настроек, а не туда, откуда её открыли.
-    var routingProfilesOpen by rememberSaveable { mutableStateOf(false) }
-    // Редактор — ТРЕТЬЯ шторка, поверх профилей: закрылась, и ты в списке,
-    // откуда её открыл. Тот же приём, что уровнем выше.
-    var editorOpen by remember { mutableStateOf(false) }
-    var editorProfile by remember { mutableStateOf<RoutingProfile?>(null) }
-    var editorBusy by remember { mutableStateOf(false) }
-    val editorSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val editorScope = rememberCoroutineScope()
-    val routingSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     Column(
@@ -140,8 +120,6 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {
         CategoryHeader(stringResource(R.string.settings_cat_connection))
         SettingsCard {
             SubcategoryRow(SettingsSubcategory.Network) { activeSheet = SettingsSubcategory.Network }
-            HorizontalDivider(color = RvColor.whiteA10)
-            SubcategoryRow(SettingsSubcategory.Routing) { activeSheet = SettingsSubcategory.Routing }
             HorizontalDivider(color = RvColor.whiteA10)
             SubcategoryRow(SettingsSubcategory.Ping) { activeSheet = SettingsSubcategory.Ping }
         }
@@ -235,103 +213,8 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {
                     SettingsSubcategory.Ping -> PingGroup(settings)
                     SettingsSubcategory.Experimental -> ExperimentalGroup(settings)
                     SettingsSubcategory.Appearance -> AppearanceGroup(onBeforeRecreate = { activeSheet = null })
-                    SettingsSubcategory.Routing -> RulesScreen(
-                        // Родительская шторка НЕ гасится: вложенная встаёт
-                        // поверх, и закрытие возвращает сюда же.
-                        onOpenRoutingProfiles = { routingProfilesOpen = true },
-                    )
                     null -> {}
                 }
-            }
-        }
-    }
-
-    if (routingProfilesOpen) {
-        ModalBottomSheet(
-            onDismissRequest = { routingProfilesOpen = false },
-            modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
-            sheetState = routingSheetState,
-            containerColor = RvColor.Grey,
-            dragHandle = { BottomSheetDefaults.DragHandle() },
-        ) {
-            DarkSheetSystemBars()
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                    // Не safe area: её шторка держит сама. Это поле, чтобы
-                    // последняя строка не упиралась в панель навигации.
-                    .padding(bottom = 24.dp),
-            ) {
-                RoutingProfilesSheetContent(
-                    dataDir = LocalContext.current.filesDir.absolutePath,
-                    onEdit = { p ->
-                        editorProfile = p
-                        editorOpen = true
-                    },
-                )
-            }
-        }
-    }
-
-    if (editorOpen) {
-        val ctx = LocalContext.current
-        val dataDir = ctx.filesDir.absolutePath
-        ModalBottomSheet(
-            onDismissRequest = { if (!editorBusy) editorOpen = false },
-            modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
-            sheetState = editorSheetState,
-            containerColor = RvColor.Grey,
-            dragHandle = { BottomSheetDefaults.DragHandle() },
-        ) {
-            DarkSheetSystemBars()
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                    .padding(bottom = 24.dp),
-            ) {
-                RoutingProfileEditorContent(
-                    profile = editorProfile,
-                    busy = editorBusy,
-                    onSave = { edited ->
-                        editorBusy = true
-                        editorScope.launch {
-                            val merged = withContext(Dispatchers.IO) {
-                                runCatching {
-                                    Mobile.mergeRoutingProfile(
-                                        RoutingProfileRepository.storeJson(),
-                                        edited.toJson().toString(),
-                                        false,
-                                    )
-                                }.getOrNull()
-                            }
-                            val state = merged?.let { parseRoutingMergeResult(it) }
-                            if (state == null) {
-                                Toast.makeText(
-                                    ctx,
-                                    ctx.getString(R.string.routing_import_failed, "merge failed"),
-                                    Toast.LENGTH_LONG,
-                                ).show()
-                            } else {
-                                RoutingProfileRepository.replaceAll(state.profiles, state.activeId)
-                                // Ищем по имени и происхождению, а не по id: у
-                                // нового профиля id назначает Go, и до слияния
-                                // его здесь неоткуда взять.
-                                val saved = state.profiles.firstOrNull {
-                                    it.name == edited.name && it.source == edited.source
-                                }
-                                if (saved != null) {
-                                    RoutingProfileCompiler.compile(saved, dataDir)
-                                }
-                                editorOpen = false
-                            }
-                            editorBusy = false
-                        }
-                    },
-                )
             }
         }
     }
@@ -595,7 +478,7 @@ private fun ExperimentalGroup(settings: com.resultv.android.vpn.SettingsState) {
 private fun PingGroup(settings: com.resultv.android.vpn.SettingsState) {
     // Своего заголовка у группы нет, хотя раньше был: с переездом в
     // собственный раздел его рисует шапка шторки, и «Пинг» читался бы дважды
-    // подряд. Та же причина, по которой у Routing описание своё, а не общее.
+    // подряд.
     Column(
         modifier = Modifier.padding(vertical = RvSpace.nest3),
         verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),

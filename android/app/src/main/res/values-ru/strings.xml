@@ -28,7 +28,7 @@
     <string name="home_favorites">ИЗБРАННОЕ</string>
     <string name="home_group_standalone">МОИ СЕРВЕРЫ</string>
     <string name="home_add_server">Добавить сервер</string>
-    <string name="home_add_server_subtitle">Вставьте ссылку или URL подписки</string>
+    <string name="home_paste">Вставить</string>
     <string name="home_stat_download">Загрузка</string>
     <string name="home_stat_upload">Отдача</string>
     <string name="home_banner_duration">ВРЕМЯ</string>

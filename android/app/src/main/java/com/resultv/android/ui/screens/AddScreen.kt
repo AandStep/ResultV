@@ -105,12 +105,6 @@ fun AddScreen(
     val defaultName = stringResource(R.string.add_paste_default_name)
     val msgFileEmpty = stringResource(R.string.add_msg_file_empty)
     val msgNoUrisFile = stringResource(R.string.add_msg_no_valid_uris_file)
-    val msgClipboardEmpty = stringResource(R.string.add_msg_clipboard_empty)
-    val msgNoUrisClipboard = stringResource(R.string.add_msg_no_valid_uris_clipboard)
-    val msgQrEmpty = stringResource(R.string.add_msg_qr_empty)
-    val msgQrUnsupported = stringResource(R.string.add_msg_qr_unsupported)
-    val msgQrImported = stringResource(R.string.add_msg_qr_imported)
-    val msgQrInvalid = stringResource(R.string.add_msg_qr_invalid)
 
     // SAF file picker — accepts any text/* and reads it as UTF-8.
     val filePicker = rememberLauncherForActivityResult(
@@ -167,34 +161,7 @@ fun AddScreen(
                 icon = Icons.Outlined.ContentPaste,
                 title = stringResource(R.string.add_quick_clipboard_title),
                 subtitle = stringResource(R.string.add_quick_clipboard_subtitle),
-                onClick = {
-                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    val text = cm.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString().orEmpty()
-                    if (text.isBlank()) {
-                        importMessage = msgClipboardEmpty
-                        return@QuickAddCard
-                    }
-                    // Smart dispatch: deep-link → DeepLinkImporter (own toast,
-                    // no inline message); single http(s):// URL → fetch +
-                    // auto-import all entries; everything else → line-by-line
-                    // share-link import.
-                    smartClipboardImport(
-                        ctx = ctx,
-                        scope = scope,
-                        text = text,
-                        dataDir = dataDir,
-                        defaultName = defaultName,
-                        msgNoUrisClipboard = msgNoUrisClipboard,
-                        msgImportedClipboard = { n ->
-                            ctx.getString(R.string.add_msg_imported_clipboard, n)
-                        },
-                        msgFetchFailed = ctx.getString(R.string.deeplink_err_fetch),
-                        msgImportedSubscription = { n ->
-                            ctx.getString(R.string.deeplink_imported_subscription, n)
-                        },
-                        onMessage = { importMessage = it },
-                    )
-                },
+                onClick = { pasteFromClipboard(ctx, scope, dataDir) { importMessage = it } },
                 modifier = Modifier.weight(1f),
             )
             QuickAddCard(
@@ -208,17 +175,7 @@ fun AddScreen(
                 icon = Icons.Outlined.QrCodeScanner,
                 title = stringResource(R.string.add_quick_qr_title),
                 subtitle = stringResource(R.string.add_quick_qr_subtitle),
-                onClick = {
-                    launchQrScan(
-                        ctx = ctx,
-                        defaultName = defaultName,
-                        onResult = { msg -> importMessage = msg },
-                        msgEmpty = msgQrEmpty,
-                        msgUnsupported = msgQrUnsupported,
-                        msgImported = msgQrImported,
-                        msgInvalid = msgQrInvalid,
-                    )
-                },
+                onClick = { scanQr(ctx) { importMessage = it } },
                 modifier = Modifier.weight(1f),
             )
         }
@@ -750,6 +707,52 @@ private fun defaultSubscriptionName(url: String): String {
     return runCatching {
         java.net.URI(url).host?.takeIf { it.isNotBlank() } ?: "Subscription"
     }.getOrDefault("Subscription")
+}
+
+/**
+ * «Из буфера»: берёт текст из буфера обмена и отдаёт его [smartClipboardImport].
+ * Общая точка для быстрой карточки здесь и кнопки «Вставить» на главной.
+ */
+internal fun pasteFromClipboard(
+    ctx: Context,
+    scope: CoroutineScope,
+    dataDir: String,
+    onMessage: (String?) -> Unit,
+) {
+    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    val text = cm.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString().orEmpty()
+    if (text.isBlank()) {
+        onMessage(ctx.getString(R.string.add_msg_clipboard_empty))
+        return
+    }
+    // Smart dispatch: deep-link → DeepLinkImporter (own toast, no inline
+    // message); single http(s):// URL → fetch + auto-import all entries;
+    // everything else → line-by-line share-link import.
+    smartClipboardImport(
+        ctx = ctx,
+        scope = scope,
+        text = text,
+        dataDir = dataDir,
+        defaultName = ctx.getString(R.string.add_paste_default_name),
+        msgNoUrisClipboard = ctx.getString(R.string.add_msg_no_valid_uris_clipboard),
+        msgImportedClipboard = { n -> ctx.getString(R.string.add_msg_imported_clipboard, n) },
+        msgFetchFailed = ctx.getString(R.string.deeplink_err_fetch),
+        msgImportedSubscription = { n -> ctx.getString(R.string.deeplink_imported_subscription, n) },
+        onMessage = onMessage,
+    )
+}
+
+/** «Сканер QR» — общая точка для карточки здесь и кнопки на главной. */
+internal fun scanQr(ctx: Context, onMessage: (String) -> Unit) {
+    launchQrScan(
+        ctx = ctx,
+        defaultName = ctx.getString(R.string.add_paste_default_name),
+        onResult = onMessage,
+        msgEmpty = ctx.getString(R.string.add_msg_qr_empty),
+        msgUnsupported = ctx.getString(R.string.add_msg_qr_unsupported),
+        msgImported = ctx.getString(R.string.add_msg_qr_imported),
+        msgInvalid = ctx.getString(R.string.add_msg_qr_invalid),
+    )
 }
 
 /**

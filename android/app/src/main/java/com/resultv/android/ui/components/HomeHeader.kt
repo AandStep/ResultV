@@ -10,14 +10,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Language
-import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -36,13 +34,13 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
 import com.resultv.android.theme.RvColor
 import com.resultv.android.theme.RvIcon
 import com.resultv.android.theme.RvMotion
 import com.resultv.android.theme.RvRadius
-import com.resultv.android.theme.RvSpace
 import com.resultv.android.vpn.VpnState
 import com.resultv.android.vpn.VpnStatus
 
@@ -91,28 +89,36 @@ fun HomeHeader(
             .fillMaxWidth()
             .background(RvColor.Black)
             .windowInsetsPadding(WindowInsets.statusBars)
-            .padding(horizontal = RvSpace.nest1, vertical = RvSpace.nest3),
+            // Макет: поле страницы 12, ряд значков 30. Кнопки здесь 40 ради
+            // пальца, поэтому сверху 12 − 5, а их лишние 8 справа уходят
+            // сдвигом ряда — край глифа ложится на поле страницы, как в макете.
+            .padding(start = HeaderLook.page, end = HeaderLook.page, top = HeaderLook.page - 5.dp),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().height(40.dp),
+            modifier = Modifier.fillMaxWidth().height(HeaderLook.touch),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3),
         ) {
             androidx.compose.foundation.Image(
                 painter = painterResource(R.drawable.resultv_logo),
                 contentDescription = null,
-                modifier = Modifier.size(28.dp),
+                modifier = Modifier.size(width = 24.dp, height = 30.dp),
             )
             Spacer(Modifier.weight(1f))
-            IconButton(onClick = onOpenWebsite, modifier = Modifier.size(40.dp)) {
+            IconButton(
+                onClick = onOpenWebsite,
+                modifier = Modifier.size(HeaderLook.touch).offset(x = 8.dp),
+            ) {
                 Icon(
-                    imageVector = Icons.Outlined.Language,
+                    painter = painterResource(R.drawable.ic_site),
                     contentDescription = stringResource(R.string.header_open_website),
                     tint = RvColor.whiteA50,
                     modifier = Modifier.size(24.dp),
                 )
             }
-            IconButton(onClick = onOpenTelegram, modifier = Modifier.size(40.dp)) {
+            IconButton(
+                onClick = onOpenTelegram,
+                modifier = Modifier.size(HeaderLook.touch).offset(x = 8.dp),
+            ) {
                 Icon(
                     painter = painterResource(R.drawable.ic_telegram),
                     contentDescription = stringResource(R.string.header_open_telegram),
@@ -131,22 +137,28 @@ fun HomeHeader(
                     HomeLook.Error -> R.string.status_error
                 }
             ),
-            style = MaterialTheme.typography.headlineSmall,
+            fontSize = 24.sp,
+            lineHeight = 28.8.sp,
             fontWeight = FontWeight.Bold,
             color = titleColor,
             textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth().padding(top = RvSpace.nest3),
+            // 24 от ряда значков в макете, минус 5 лишних у кнопок 40.
+            modifier = Modifier.fillMaxWidth().padding(top = 24.dp - 5.dp),
         )
     }
+}
+
+private object HeaderLook {
+    val page = 12.dp
+    val touch = 40.dp
 }
 
 /**
  * Плашка времени соединения — `rv-header__time` с ПК.
  *
- * Отступы несимметричны по горизонтали — `nest3` слева и `nest1` справа,
- * те же 1:2, что и 9/18 на ПК, только на ступень телефонной шкалы ниже:
- * слева стоит значок часов со своим воздухом внутри рисунка, и равные
- * отступы читались бы как сдвиг текста влево.
+ * Отступы несимметричны по горизонтали — 8 слева и 12 справа, как в
+ * мобильном макете: слева стоит значок часов со своим воздухом внутри
+ * рисунка, и равные отступы читались бы как сдвиг текста влево.
  *
  * Тикает раз в секунду своим `LaunchedEffect`, чтобы остальная шапка не
  * пересобиралась вместе с таймером.
@@ -199,12 +211,12 @@ private fun UptimeChipBody(connectedAt: Long) {
             // высоты. Процент от высоты даёт ровно это на любом кегле.
             .clip(RoundedCornerShape(percent = 50))
             .background(RvColor.Grey)
-            .padding(start = RvSpace.nest3, top = RvSpace.nest3, bottom = RvSpace.nest3, end = RvSpace.nest2),
+            .padding(start = 8.dp, top = 8.dp, bottom = 8.dp, end = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Icon(
-            imageVector = Icons.Outlined.Schedule,
+            painter = painterResource(R.drawable.ic_clock),
             contentDescription = null,
             tint = RvColor.whiteA50,
             modifier = Modifier.size(14.dp),
@@ -212,6 +224,9 @@ private fun UptimeChipBody(connectedAt: Long) {
         Text(
             text = formatUptime(elapsedSec),
             style = MaterialTheme.typography.labelMedium,
+            fontSize = 12.sp,
+            lineHeight = 13.2.sp,
+            fontWeight = FontWeight.SemiBold,
             color = RvColor.whiteA50,
         )
     }

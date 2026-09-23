@@ -24,6 +24,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.resultv.android.theme.RvColor
 import com.resultv.android.theme.RvMotion
 import com.resultv.android.theme.RvRadius
@@ -36,10 +37,10 @@ import com.resultv.android.theme.RvSpace
  * 50 %, а вместо кривой стоит плоская линия. Иначе страница меняла бы
  * высоту в момент подключения — ровно тогда, когда на неё смотрят.
  *
- * Высота фиксированная: пропорция ПК (158 из 423) дала бы здесь 56 dp, в
- * которые содержимое не влезает.
+ * Метрики — мобильный макет (Figma 6856:4895): высота 120, скругление 20,
+ * поле 14, подписи 12 Semibold, сумма 14 Bold.
  */
-private val TILE_HEIGHT = 112.dp
+private val TILE_HEIGHT = 120.dp
 private val CHART_HEIGHT = 28.dp
 
 @Composable
@@ -63,27 +64,37 @@ fun SpeedTile(
         label = "speedData",
     )
 
+    val labelStyle = MaterialTheme.typography.labelMedium.copy(
+        fontSize = 12.sp,
+        lineHeight = 13.2.sp,
+        fontWeight = FontWeight.SemiBold,
+    )
+
     Card(
         modifier = modifier.height(TILE_HEIGHT),
-        shape = RoundedCornerShape(RvRadius.card),
+        shape = RoundedCornerShape(RvRadius.panel),
         colors = CardDefaults.cardColors(containerColor = RvColor.Grey),
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().fillMaxHeight().padding(RvSpace.nest1),
+            modifier = Modifier.fillMaxWidth().fillMaxHeight().padding(14.dp),
             verticalArrangement = Arrangement.SpaceBetween,
         ) {
-            Column(modifier = Modifier.alpha(dataAlpha)) {
+            Column(
+                modifier = Modifier.alpha(dataAlpha),
+                verticalArrangement = Arrangement.spacedBy(RvSpace.xs),
+            ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(label, style = MaterialTheme.typography.labelMedium, color = RvColor.whiteA50)
-                    Text(rate, style = MaterialTheme.typography.labelMedium, color = RvColor.whiteA50)
+                    Text(label, style = labelStyle, color = RvColor.whiteA50)
+                    Text(rate, style = labelStyle, color = RvColor.whiteA50)
                 }
                 Text(
                     total,
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleMedium,
+                    lineHeight = 19.6.sp,
                     fontWeight = FontWeight.Bold,
                     color = color,
                 )

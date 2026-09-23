@@ -91,7 +91,7 @@ fun ProtocolBadge(text: String, first: Boolean, accent: HomeLook) {
             .height(20.dp)
             .clip(RoundedCornerShape(percent = 50))
             .background(bg)
-            .padding(horizontal = RvSpace.nest3),
+            .padding(horizontal = 6.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(

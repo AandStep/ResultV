@@ -1,5 +1,18 @@
 package com.resultv.android.ui.screens
 
+import android.widget.Toast
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import com.resultv.android.ui.components.DarkSheetSystemBars
+import com.resultv.android.vpn.parseRoutingMergeResult
+import mobile.Mobile
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -481,4 +494,112 @@ private fun ImportLinkDialog(onDismiss: () -> Unit) {
         },
         containerColor = RvColor.Grey,
     )
+}
+
+/**
+ * Шторка «Профили маршрутизации» и поверх неё — редактор профиля.
+ *
+ * Профили — ВЛОЖЕННАЯ шторка поверх страницы правил, а не отдельный экран:
+ * закрытие возвращает туда, откуда её открыли. Редактор — следующая шторка
+ * поверх профилей, тот же приём уровнем выше.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun RoutingProfilesSheets(open: Boolean, onDismiss: () -> Unit) {
+    var editorOpen by remember { mutableStateOf(false) }
+    var editorProfile by remember { mutableStateOf<RoutingProfile?>(null) }
+    var editorBusy by remember { mutableStateOf(false) }
+    val editorSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val editorScope = rememberCoroutineScope()
+    val routingSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    if (open) {
+        ModalBottomSheet(
+            onDismissRequest = onDismiss,
+            modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
+            sheetState = routingSheetState,
+            containerColor = RvColor.Grey,
+            dragHandle = { BottomSheetDefaults.DragHandle() },
+        ) {
+            DarkSheetSystemBars()
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    // Не safe area: её шторка держит сама. Это поле, чтобы
+                    // последняя строка не упиралась в панель навигации.
+                    .padding(bottom = 24.dp),
+            ) {
+                RoutingProfilesSheetContent(
+                    dataDir = LocalContext.current.filesDir.absolutePath,
+                    onEdit = { p ->
+                        editorProfile = p
+                        editorOpen = true
+                    },
+                )
+            }
+        }
+    }
+
+    if (editorOpen) {
+        val ctx = LocalContext.current
+        val dataDir = ctx.filesDir.absolutePath
+        ModalBottomSheet(
+            onDismissRequest = { if (!editorBusy) editorOpen = false },
+            modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
+            sheetState = editorSheetState,
+            containerColor = RvColor.Grey,
+            dragHandle = { BottomSheetDefaults.DragHandle() },
+        ) {
+            DarkSheetSystemBars()
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .padding(bottom = 24.dp),
+            ) {
+                RoutingProfileEditorContent(
+                    profile = editorProfile,
+                    busy = editorBusy,
+                    onSave = { edited ->
+                        editorBusy = true
+                        editorScope.launch {
+                            val merged = withContext(Dispatchers.IO) {
+                                runCatching {
+                                    Mobile.mergeRoutingProfile(
+                                        RoutingProfileRepository.storeJson(),
+                                        edited.toJson().toString(),
+                                        false,
+                                    )
+                                }.getOrNull()
+                            }
+                            val state = merged?.let { parseRoutingMergeResult(it) }
+                            if (state == null) {
+                                Toast.makeText(
+                                    ctx,
+                                    ctx.getString(R.string.routing_import_failed, "merge failed"),
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                            } else {
+                                RoutingProfileRepository.replaceAll(state.profiles, state.activeId)
+                                // Ищем по имени и происхождению, а не по id: у
+                                // нового профиля id назначает Go, и до слияния
+                                // его здесь неоткуда взять.
+                                val saved = state.profiles.firstOrNull {
+                                    it.name == edited.name && it.source == edited.source
+                                }
+                                if (saved != null) {
+                                    RoutingProfileCompiler.compile(saved, dataDir)
+                                }
+                                editorOpen = false
+                            }
+                            editorBusy = false
+                        }
+                    },
+                )
+            }
+        }
+    }
 }

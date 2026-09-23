@@ -1,5 +1,19 @@
 package com.resultv.android.ui.screens
 
+import android.widget.Toast
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import com.resultv.android.theme.SegoeUi
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -18,9 +32,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Bolt
-import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -90,6 +102,7 @@ fun HomeScreen(
     val pingInflight by PingRepository.inflight.collectAsStateWithLifecycle()
     val countries by CountryRepository.results.collectAsStateWithLifecycle()
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     val dataDir = remember(ctx) { ctx.filesDir.absolutePath }
     LaunchedEffect(profilesState.profiles) {
         CountryRepository.resolve(profilesState.profiles, dataDir)
@@ -122,43 +135,53 @@ fun HomeScreen(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = RvSpace.nest1, vertical = RvSpace.nest3),
+            // Ритм мобильного макета (Figma 6856:4885): поле 12, между
+            // крупными блоками 24, панель над карточкой — 16, карточка и
+            // плитки скорости — 8, до кнопок снова 16.
+            .padding(start = HomeGap.page, end = HomeGap.page, top = HomeGap.block, bottom = HomeGap.page),
         horizontalAlignment = Alignment.CenterHorizontally,
-        // Standardised gap between every block on Home — the current-server
-        // card sits the same distance below the power button as the speed
-        // cards sit above "Add server".
-        verticalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
         PowerButton(
             look = homeLook(status),
             enabled = canConnect || canDisconnect,
             onClick = onPowerPressed,
         )
+        Spacer(Modifier.height(HomeGap.block))
 
         // Панель над карточкой: слева таймер соединения, справа замер задержки
         // и сортировка. На ПК эти кнопки живут в шапке карточки, но здесь
         // решено иначе — им место над списком, а не внутри строки выбора.
-        // Высота фиксирована, иначе стандартный IconButton забирает 48 dp и
-        // панель отрывается от карточки.
+        // Высота фиксирована — по плашке времени, 30: иначе стандартный
+        // IconButton забирает 48 dp и панель отрывается от карточки, а без
+        // плашки (она видна только при соединении) ряд прыгал бы по высоте.
+        // Кнопки по 36 ради пальца: между глифами 20, как в макете, и край
+        // последнего глифа сдвигом ложится на поле страницы.
         Row(
-            modifier = Modifier.fillMaxWidth().height(36.dp),
+            modifier = Modifier.fillMaxWidth().height(30.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             UptimeChip(status = status)
             Spacer(Modifier.weight(1f))
-            IconButton(
-                onClick = { PingRepository.refreshAll(profilesState.profiles) },
-                modifier = Modifier.size(36.dp),
+            Row(
+                modifier = Modifier.offset(x = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    imageVector = Icons.Outlined.Bolt,
-                    contentDescription = stringResource(R.string.ping_refresh_cd),
-                    tint = RvColor.whiteA50,
-                    modifier = Modifier.size(RvIcon.glyph),
-                )
+                IconButton(
+                    onClick = { PingRepository.refreshAll(profilesState.profiles) },
+                    modifier = Modifier.size(36.dp),
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_ping),
+                        contentDescription = stringResource(R.string.ping_refresh_cd),
+                        tint = RvColor.whiteA50,
+                        modifier = Modifier.size(RvIcon.glyph),
+                    )
+                }
+                ProfileSortMenu(mode = sortMode, onModeChange = { sortMode = it })
             }
-            ProfileSortMenu(mode = sortMode, onModeChange = { sortMode = it })
         }
+        Spacer(Modifier.height(HomeGap.panel))
 
         // Active profile selector + expandable picker — one Card.
         val listShape = RoundedCornerShape(RvRadius.panel)
@@ -197,12 +220,23 @@ fun HomeScreen(
             }
         }
 
+        Spacer(Modifier.height(HomeGap.tight))
         TrafficStatsRow(active = status is VpnStatus.Connected)
+        Spacer(Modifier.height(HomeGap.panel))
 
-        // Add-server shortcut stays visible in every state — the user
-        // commonly wants to add another profile mid-session without
-        // disconnecting first.
-        AddProfileShortcut(onClick = onOpenAdd)
+        // Кнопки добавления видны в любом состоянии — сервер часто
+        // добавляют посреди сессии, не отключаясь.
+        HomeActions(
+            onAdd = onOpenAdd,
+            onPaste = {
+                pasteFromClipboard(ctx, scope, dataDir) { msg ->
+                    msg?.let { Toast.makeText(ctx, it, Toast.LENGTH_LONG).show() }
+                }
+            },
+            onScan = {
+                scanQr(ctx) { msg -> Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show() }
+            },
+        )
     }
 
     editingProfileId?.let { id ->
@@ -260,7 +294,7 @@ private fun TrafficStatsRow(active: Boolean) {
     val stats by com.resultv.android.vpn.TrafficStats.snapshot.collectAsStateWithLifecycle()
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
+        horizontalArrangement = Arrangement.spacedBy(HomeGap.tight),
     ) {
         SpeedTile(
             label = stringResource(R.string.home_stat_download),
@@ -305,33 +339,30 @@ private fun ActiveProfileRow(
     expanded: Boolean,
     onToggle: () -> Unit,
 ) {
+    // Метрики — ServerItem мобильного макета (Figma 6859:5086).
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(72.dp)
             .background(RvColor.Grey)
             .clickable(onClick = onToggle)
-            .padding(horizontal = RvSpace.nest1),
+            .padding(start = 15.dp, end = 14.dp, top = 14.dp, bottom = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3),
     ) {
         // Общая с ServerRow плитка (см. её KDoc в ServerRow.kt) — здесь
-        // масштаб шапки: 48dp/24dp против 44dp/22dp у строки списка.
+        // масштаб шапки: 46dp/23dp против 44dp/22dp у строки списка.
         // activeCountry уже null всякий раз, когда active == null (см.
         // вычисление в вызывающем коде), так что отдельная ветка не нужна.
         ProfileTile(
             accent = accent,
             isAuto = active?.isAuto ?: false,
             countryCode = activeCountry,
-            size = 48.dp,
-            glyph = 24.dp,
+            size = 46.dp,
+            glyph = 23.dp,
             flagStyle = MaterialTheme.typography.headlineSmall,
         )
 
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(RvSpace.xs),
-        ) {
+        Column(modifier = Modifier.weight(1f)) {
             val shown = when {
                 active == null -> emptyList()
                 active.isAuto -> listOf(stringResource(R.string.badge_auto))
@@ -348,9 +379,14 @@ private fun ActiveProfileRow(
                 text = active?.let { serverDisplayName(it.name, activeCountry) }
                     ?: stringResource(R.string.home_no_profile_selected),
                 style = MaterialTheme.typography.titleMedium,
+                lineHeight = 19.6.sp,
+                fontWeight = FontWeight.Bold,
                 color = RvColor.White,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                // В макете имя сдвинуто на 5 — вровень с текстом бейджа, а
+                // не с краем его капсулы.
+                modifier = Modifier.padding(start = 5.dp),
             )
         }
 
@@ -358,13 +394,17 @@ private fun ActiveProfileRow(
         // на ПК это тоже кнопки шапки, а не отдельная панель над карточкой.
         // Поворот, а не подмена иконки — то же движение, которым шеврон и
         // открывает карточку (парность с ПК).
+        // Глиф в макете смотрит вверх; свёрнутая карточка показывает его
+        // перевёрнутым, раскрытая — как есть.
         Icon(
-            imageVector = Icons.Outlined.ExpandMore,
+            painter = painterResource(R.drawable.ic_menu_arrow),
             contentDescription = stringResource(
                 if (expanded) R.string.action_collapse else R.string.action_expand,
             ),
             tint = RvColor.whiteA50,
-            modifier = Modifier.graphicsLayer { rotationZ = if (expanded) 180f else 0f },
+            modifier = Modifier
+                .size(32.dp)
+                .graphicsLayer { rotationZ = if (expanded) 0f else 180f },
         )
     }
 }
@@ -548,42 +588,104 @@ private fun HomeGroupHeader(group: HomeGroup) {
     }
 }
 
+/** Шаг мобильного макета главной. */
+private object HomeGap {
+    val page = 12.dp
+    val block = 24.dp
+    val panel = 16.dp
+    val tight = 8.dp
+}
+
+/**
+ * Ряд «Добавить / Вставить / QR» — мобильный макет (Figma 6862:5757).
+ * Все три высотой 52 со скруглением 16; «Добавить» — основное действие,
+ * на зелёной подложке 10 %.
+ */
 @Composable
-private fun AddProfileShortcut(onClick: () -> Unit) {
-    val shape = RoundedCornerShape(RvRadius.card)
+private fun HomeActions(onAdd: () -> Unit, onPaste: () -> Unit, onScan: () -> Unit) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .clickable(onClick = onClick)
-            .rvBorder(shape)
-            .background(Color.White.copy(alpha = 0.02f))
-            .padding(horizontal = RvSpace.nest2, vertical = RvSpace.nest2),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(HomeGap.tight),
     ) {
-        Box(
-            modifier = Modifier
-                .size(38.dp)
-                .clip(RoundedCornerShape(RvRadius.chip))
-                .background(Color.White.copy(alpha = 0.07f)),
-            contentAlignment = Alignment.Center,
+        HomeActionButton(
+            onClick = onAdd,
+            fill = RvColor.mainA10,
+            outline = RvColor.mainA10,
+            modifier = Modifier.weight(1f),
         ) {
             Icon(
-                imageVector = Icons.Outlined.Add,
+                painter = painterResource(R.drawable.ic_nav_add),
                 contentDescription = null,
-                tint = RvColor.whiteA50,
+                tint = RvColor.Main,
+                modifier = Modifier.size(RvIcon.glyph),
+            )
+            Text(
+                text = stringResource(R.string.tab_add),
+                style = ActionLabel,
+                fontWeight = FontWeight.Bold,
+                color = RvColor.Main,
             )
         }
-        Column {
-            Text(stringResource(R.string.home_add_server), style = MaterialTheme.typography.titleSmall)
+        HomeActionButton(
+            onClick = onPaste,
+            fill = RvColor.Grey,
+            outline = RvColor.whiteA10,
+            modifier = Modifier.weight(1f),
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_paste),
+                contentDescription = null,
+                tint = RvColor.whiteA50,
+                modifier = Modifier.size(RvIcon.glyph),
+            )
             Text(
-                stringResource(R.string.home_add_server_subtitle),
-                style = MaterialTheme.typography.bodySmall,
+                text = stringResource(R.string.home_paste),
+                style = ActionLabel,
+                fontWeight = FontWeight.SemiBold,
                 color = RvColor.whiteA50,
             )
         }
+        val scanLabel = stringResource(R.string.add_quick_qr_title)
+        HomeActionButton(
+            onClick = onScan,
+            fill = RvColor.Grey,
+            outline = RvColor.whiteA10,
+            modifier = Modifier
+                .width(52.dp)
+                .semantics { contentDescription = scanLabel },
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_qr_scan),
+                contentDescription = null,
+                tint = RvColor.whiteA50,
+                modifier = Modifier.size(RvIcon.glyph),
+            )
+        }
     }
+}
+
+private val ActionLabel = TextStyle(fontFamily = SegoeUi, fontSize = 12.sp, lineHeight = 15.6.sp)
+
+@Composable
+private fun HomeActionButton(
+    onClick: () -> Unit,
+    fill: Color,
+    outline: Color,
+    modifier: Modifier = Modifier,
+    content: @Composable RowScope.() -> Unit,
+) {
+    val shape = RoundedCornerShape(16.dp)
+    Row(
+        modifier = modifier
+            .height(52.dp)
+            .clip(shape)
+            .background(fill)
+            .border(1.dp, outline, shape)
+            .clickable(role = Role.Button, onClick = onClick),
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.xs, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
+        content = content,
+    )
 }
 
 // ───────────────────────── Profile field helpers ──────────────────────────

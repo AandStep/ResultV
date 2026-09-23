@@ -1,0 +1,10 @@
+<!-- Figma ResultV, мобильные макеты (App Design). Контур из экспорта, цвет задаётся tint. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="32dp"
+    android:height="32dp"
+    android:viewportWidth="32"
+    android:viewportHeight="32">
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M22.6667 18.6667L16 12L9.33333 18.6667L22.6667 18.6667Z" />
+</vector>

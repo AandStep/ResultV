@@ -16,19 +16,37 @@ import androidx.annotation.StringRes
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.core.net.toUri
+import androidx.annotation.DrawableRes
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
+import com.resultv.android.ui.screens.RoutingProfilesSheets
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Apps
-import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.List
-import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
@@ -41,7 +59,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.resultv.android.locale.LocaleManager
@@ -92,14 +109,16 @@ private fun openUrl(ctx: Context, url: String) {
     }
 }
 
+/** Порядок и значки — нижняя панель мобильного макета (Figma 6859:5157). */
 private enum class Tab(
     @StringRes val titleRes: Int,
-    val icon: ImageVector,
+    @DrawableRes val icon: Int,
 ) {
-    Home(R.string.tab_home, Icons.Outlined.Home),
-    Proxies(R.string.tab_proxies, Icons.Outlined.List),
-    Add(R.string.tab_add, Icons.Outlined.Add),
-    Settings(R.string.tab_settings, Icons.Outlined.Settings),
+    Home(R.string.tab_home, R.drawable.ic_nav_home),
+    Add(R.string.tab_add, R.drawable.ic_nav_add),
+    Proxies(R.string.tab_proxies, R.drawable.ic_nav_servers),
+    Rules(R.string.tab_rules, R.drawable.ic_nav_rules),
+    Settings(R.string.tab_settings, R.drawable.ic_nav_settings),
 }
 
 class MainActivity : ComponentActivity() {
@@ -337,19 +356,7 @@ private fun AppShell(
                 )
             }
         },
-        bottomBar = {
-            NavigationBar(containerColor = RvColor.Grey) {
-                Tab.entries.forEach { entry ->
-                    val title = stringResource(entry.titleRes)
-                    NavigationBarItem(
-                        selected = tab == entry,
-                        onClick = { tab = entry },
-                        icon = { Icon(entry.icon, contentDescription = title) },
-                        label = { Text(title) },
-                    )
-                }
-            }
-        },
+        bottomBar = { BottomBar(selected = tab, onSelect = { tab = it }) },
     ) { padding ->
         Box(modifier = Modifier.padding(padding)) {
             tabStateHolder.SaveableStateProvider(tab.name) {
@@ -364,6 +371,18 @@ private fun AppShell(
                         dataDir = dataDir,
                         onDone = { tab = Tab.Proxies },
                     )
+                    Tab.Rules -> {
+                        var profilesOpen by rememberSaveable { mutableStateOf(false) }
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .padding(horizontal = 12.dp),
+                        ) {
+                            RulesScreen(onOpenRoutingProfiles = { profilesOpen = true })
+                        }
+                        RoutingProfilesSheets(open = profilesOpen, onDismiss = { profilesOpen = false })
+                    }
                     Tab.Settings -> SettingsScreen(
                         onOpenLogs = { showLogs = true },
                         onOpenCertWizard = { showCertWizard = true },
@@ -387,6 +406,59 @@ private fun AppShell(
     }
 
     RoutingImportSheet(dataDir)
+}
+
+/**
+ * Нижняя панель макета: пять кнопок одними значками, выбранная — на
+ * зелёной подложке 10 %. Подпись уходит в contentDescription, а не на экран.
+ */
+@Composable
+private fun BottomBar(selected: Tab, onSelect: (Tab) -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(RvColor.Grey)
+            .drawBehind {
+                drawLine(
+                    color = RvColor.whiteA20,
+                    start = Offset(0f, 0f),
+                    end = Offset(size.width, 0f),
+                    strokeWidth = 1.dp.toPx(),
+                )
+            }
+            .windowInsetsPadding(WindowInsets.navigationBars)
+            .padding(12.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Tab.entries.forEach { entry ->
+                val isSelected = entry == selected
+                val title = stringResource(entry.titleRes)
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isSelected) RvColor.mainA10 else androidx.compose.ui.graphics.Color.Transparent)
+                        .selectable(
+                            selected = isSelected,
+                            role = Role.Tab,
+                            onClick = { onSelect(entry) },
+                        )
+                        .semantics { contentDescription = title },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        painter = painterResource(entry.icon),
+                        contentDescription = null,
+                        tint = if (isSelected) RvColor.Main else RvColor.whiteA50,
+                        modifier = Modifier.size(24.dp),
+                    )
+                }
+            }
+        }
+    }
 }
 
 /**

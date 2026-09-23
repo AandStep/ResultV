@@ -31,7 +31,7 @@
     <string name="home_favorites">FAVORITES</string>
     <string name="home_group_standalone">MY SERVERS</string>
     <string name="home_add_server">Add server</string>
-    <string name="home_add_server_subtitle">Paste link or subscription URL</string>
+    <string name="home_paste">Paste</string>
     <string name="home_stat_download">Download</string>
     <string name="home_stat_upload">Upload</string>
     <string name="home_banner_duration">UPTIME</string>
