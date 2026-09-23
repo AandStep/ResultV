@@ -38,6 +38,9 @@ const (
 	// resolved to an IP before a TUN connect — the route-exclude/server-pin can't
 	// be built, so dialing the server would loop into the TUN or hit a poisoned IP.
 	ConnectErrorDNSCensored = "dns_censored"
+	// ConnectErrorSuperseded marks a routing reload abandoned because a newer
+	// reload, a disconnect or a fresh connect took over. Not a failure.
+	ConnectErrorSuperseded = "superseded"
 )
 
 func validateEngineConfig(cfg EngineConfig) (string, error) {

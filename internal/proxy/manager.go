@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -163,6 +164,15 @@ type Manager struct {
 	// so Disconnect/GetStatus can call CancelConnect without deadlock)
 	connectCancelMu sync.Mutex
 	connectCancel   context.CancelFunc
+
+	// Routing reloads: the newest one wins. reloadGen is bumped by every
+	// reload and by Connect/Disconnect; reloadMu runs reloads one at a time;
+	// reloadSession (guarded by mu) keeps the session a reload chain is
+	// rebuilding, because a superseded reload has already torn it down.
+	reloadGen     atomic.Uint64
+	reloadMu      sync.Mutex
+	reloadActive  atomic.Bool
+	reloadSession *reloadSession
 
 	// procTracker watches the OS process tree and feeds child-process exe
 	// names back into the engine's app whitelist whenever the user has
@@ -722,6 +732,8 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
 	dnsLeakProtection, enableIPv6 bool) ConnectResultDTO {
 
+	m.invalidateReloads()
+
 	dataDir := resultProxyDataDir()
 	usedCachedPin := false
 	if proxy.ResolvedIP == "" && proxy.IP != "" && net.ParseIP(proxy.IP) == nil {
@@ -959,6 +971,21 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		cancel()
 		m.setConnectCancel(nil)
 	}()
+	if reloadIsStale(ctx) {
+		cancel()
+	}
+	if connectCtx.Err() != nil {
+		m.mu.Lock()
+		m.clearPendingLocked()
+		m.mu.Unlock()
+		m.emitStatus()
+		return ConnectResultDTO{
+			Success:   false,
+			Message:   "Подключение отменено",
+			Reason:    "cancelled before engine start",
+			ErrorCode: "cancelled",
+		}
+	}
 
 	// A force-kill of a prior elevated tunnel session leaves an orphan
 	// "sing-tun Tunnel" adapter holding a stale default route. sing-box reuses
@@ -1693,7 +1720,7 @@ const connectProbeInterval = 250 * time.Millisecond
 //   - Tunnel: the TUN device + routes need a moment, and SS AEAD does a
 //     key-exchange round-trip on the first request, so the budget matches the
 //     old general-tunnel total (~8s) to avoid false failures during warm-up.
-const (
+var (
 	connectProbeDeadlineProxy  = 5 * time.Second
 	connectProbeDeadlineTunnel = 8 * time.Second
 )
@@ -1709,7 +1736,11 @@ func pollProbe(ctx context.Context, deadline, interval time.Duration, attempt fu
 		if ctx.Err() != nil {
 			return false, true, "connect cancelled"
 		}
-		ok, reason = attempt()
+		var done bool
+		ok, reason, done = probeOrCancel(ctx, attempt)
+		if !done {
+			return false, true, "connect cancelled"
+		}
 		if ok {
 			return true, false, ""
 		}
@@ -1719,6 +1750,27 @@ func pollProbe(ctx context.Context, deadline, interval time.Duration, attempt fu
 		if !sleepOrCancel(ctx, interval) {
 			return false, true, "connect cancelled"
 		}
+	}
+}
+
+// probeOrCancel runs one probe attempt but returns as soon as ctx is cancelled;
+// done is false in that case. An abandoned attempt finishes on its own against
+// an engine that is already being stopped.
+func probeOrCancel(ctx context.Context, attempt func() (bool, string)) (ok bool, reason string, done bool) {
+	type outcome struct {
+		ok     bool
+		reason string
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		ok, reason := attempt()
+		ch <- outcome{ok, reason}
+	}()
+	select {
+	case r := <-ch:
+		return r.ok, r.reason, true
+	case <-ctx.Done():
+		return false, "connect cancelled", false
 	}
 }
 
@@ -1773,7 +1825,10 @@ func runPostStartProbe(ctx context.Context, proxyTypeLower, ip string, port, loc
 				return "cancelled", "connect cancelled"
 			}
 			if !ok {
-				quicOK, quicR := hysteria2LivenessProbe(mode, ip, port)
+				quicOK, quicR, done := probeOrCancel(ctx, func() (bool, string) { return hysteria2LivenessProbe(mode, ip, port) })
+				if !done {
+					return "cancelled", "connect cancelled"
+				}
 				if quicOK {
 					return "post_start_probe_failed", "proxy outbound misconfigured: " + r
 				}
@@ -1794,7 +1849,10 @@ func runPostStartProbe(ctx context.Context, proxyTypeLower, ip string, port, loc
 				return "cancelled", "connect cancelled"
 			}
 			if !ok {
-				quicOK, quicR := hysteria2LivenessProbe(mode, ip, port)
+				quicOK, quicR, done := probeOrCancel(ctx, func() (bool, string) { return hysteria2LivenessProbe(mode, ip, port) })
+				if !done {
+					return "cancelled", "connect cancelled"
+				}
 				if quicOK {
 					if r == "" {
 						r = "tunnel e2e probe failed"
@@ -1811,7 +1869,13 @@ func runPostStartProbe(ctx context.Context, proxyTypeLower, ip string, port, loc
 			}
 		}
 	case "wireguard", "amneziawg":
-		_, ok, r := pingWireGuardProbe(ip, port)
+		ok, r, done := probeOrCancel(ctx, func() (bool, string) {
+			_, ok, r := pingWireGuardProbe(ip, port)
+			return ok, r
+		})
+		if !done {
+			return "cancelled", "connect cancelled"
+		}
 		if !ok {
 			if r == "" {
 				r = "wireguard post-start probe failed"
@@ -1847,7 +1911,11 @@ func runPostStartProbe(ctx context.Context, proxyTypeLower, ip string, port, loc
 				if ctx.Err() != nil {
 					return "cancelled", "connect cancelled"
 				}
-				httpOK, httpReason = probeHTTPThroughProxyProbe(wgProxyAddr)
+				var done bool
+				httpOK, httpReason, done = probeOrCancel(ctx, func() (bool, string) { return probeHTTPThroughProxyProbe(wgProxyAddr) })
+				if !done {
+					return "cancelled", "connect cancelled"
+				}
 				if httpOK {
 					break
 				}
@@ -2165,6 +2233,7 @@ func isLocalDNSProbeFailure(reason string) bool {
 
 func (m *Manager) Disconnect() error {
 	disconnectStart := time.Now()
+	m.invalidateReloads()
 	// Abort any in-progress Connect so its goroutines stop. This MUST run before
 	// taking opMu: an in-flight Connect holds opMu across its slow phase, and
 	// cancelling its (cancellable) probe is what lets it release opMu promptly
@@ -2425,30 +2494,96 @@ func (m *Manager) routingListSpecsLocked() []RoutingListSpec {
 }
 
 func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string) ConnectResultDTO {
-	// Serialize against Connect/Disconnect/SetMode (see opMu) — acquired before
-	// mu to preserve the opMu→mu lock ordering.
-	m.opMu.Lock()
-	defer m.opMu.Unlock()
+	gen := m.reloadGen.Add(1)
+	if m.reloadActive.Load() {
+		m.CancelConnect()
+	}
+
+	m.reloadMu.Lock()
+	defer m.reloadMu.Unlock()
+	if m.reloadGen.Load() != gen {
+		return supersededResult()
+	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if !m.connected || m.proxy == nil {
+	if m.connected && m.proxy != nil {
+		m.reloadSession = &reloadSession{
+			proxy:      *m.proxy,
+			mode:       m.mode,
+			killSwitch: m.killSwitch,
+			localPort:  m.localPort,
+			listenLAN:  m.listenLAN,
+			dnsServers: append([]string(nil), m.dnsServers...),
+			tunIPv4:    m.tunIPv4,
+			tunIPv6:    m.tunIPv6,
+			dnsLeak:    m.dnsLeakProtection,
+			enableIPv6: m.enableIPv6,
+		}
+	}
+	sess := m.reloadSession
+	m.mu.Unlock()
+	if sess == nil {
 		return ConnectResultDTO{Success: true, Message: "not connected"}
 	}
 
-	p := *m.proxy
-	mode := m.mode
-	killSwitch := m.killSwitch
-	lPort := m.localPort
-	listenLAN := m.listenLAN
-	dServers := m.dnsServers
-	tIPv4 := m.tunIPv4
-	tIPv6 := m.tunIPv6
-	dnsLeak := m.dnsLeakProtection
-	enIPv6 := m.enableIPv6
+	m.reloadActive.Store(true)
+	stale := func() bool { return m.reloadGen.Load() != gen }
+	res := m.connectOnce(context.WithValue(ctx, reloadStaleKey{}, stale), sess.proxy, sess.mode,
+		routingMode, whitelist, appWhitelist, appForceVPN, sess.killSwitch, sess.localPort,
+		sess.listenLAN, sess.dnsServers, sess.tunIPv4, sess.tunIPv6, sess.dnsLeak, sess.enableIPv6)
+	m.reloadActive.Store(false)
 
-	return m.connectLocked(ctx, p, mode, routingMode, whitelist, appWhitelist, appForceVPN, killSwitch, lPort, listenLAN, dServers, tIPv4, tIPv6, dnsLeak, enIPv6)
+	if stale() {
+		return supersededResult()
+	}
+	m.mu.Lock()
+	m.reloadSession = nil
+	m.mu.Unlock()
+	return res
+}
+
+type reloadSession struct {
+	proxy      ProxyConfig
+	mode       ProxyMode
+	killSwitch bool
+	localPort  int
+	listenLAN  bool
+	dnsServers []string
+	tunIPv4    string
+	tunIPv6    string
+	dnsLeak    bool
+	enableIPv6 bool
+}
+
+type reloadStaleKey struct{}
+
+// reloadIsStale reports whether the reload that started this connect has
+// already been overtaken. Checked right after the connect publishes its cancel
+// func, so a newer reload can never slip between the two and miss it.
+func reloadIsStale(ctx context.Context) bool {
+	stale, ok := ctx.Value(reloadStaleKey{}).(func() bool)
+	return ok && stale()
+}
+
+// invalidateReloads makes every queued or running reload give up: the user's
+// own Connect or Disconnect decides the session from here on.
+func (m *Manager) invalidateReloads() {
+	m.reloadGen.Add(1)
+	m.mu.Lock()
+	m.reloadSession = nil
+	m.mu.Unlock()
+	if m.reloadActive.Load() {
+		m.CancelConnect()
+	}
+}
+
+func supersededResult() ConnectResultDTO {
+	return ConnectResultDTO{
+		Success:   false,
+		Message:   "Применение правил заменено более новым",
+		Reason:    "superseded",
+		ErrorCode: ConnectErrorSuperseded,
+	}
 }
 
 // SessionState reports whether a session is up and whether one is currently
