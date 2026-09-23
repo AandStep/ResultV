@@ -98,22 +98,19 @@
     <string name="settings_data_usage_reset">Reset</string>
     <string name="settings_data_usage_reset_confirm">Reset data usage statistics?</string>
     <string name="settings_group_subscriptions">Subscriptions</string>
-    <string name="settings_group_subscriptions_desc">Refresh and the data sent to the provider.</string>
+    <string name="settings_group_subscriptions_desc">• Refresh  • HWID  • UA</string>
     <string name="settings_group_security">Security</string>
-    <string name="settings_group_security_desc">Connection protection when the proxy drops.</string>
+    <string name="settings_group_security_desc">• Kill Switch</string>
     <string name="settings_group_network">Network</string>
-    <string name="settings_group_network_desc">DNS, IPv6 and local network.</string>
-    <string name="settings_group_appearance">Appearance</string>
-    <string name="settings_group_appearance_desc">Interface language.</string>
+    <string name="settings_group_network_desc">• DNS  • IPv6  • Local network</string>
+    <string name="settings_group_appearance">More settings</string>
+    <string name="settings_group_appearance_desc">• Interface language</string>
 
     <string name="settings_dns_private_warning">Not working? Turn off Private DNS in Android settings.</string>
-    <string name="settings_cat_connection">Connection and routing</string>
-    <string name="settings_cat_security">Security</string>
-    <string name="settings_cat_app">App</string>
     <string name="settings_group_ping">Ping</string>
-    <string name="settings_group_ping_desc">What measures node latency, and for how long.</string>
+    <string name="settings_group_ping_desc">• Probe type  • Test URL  • Timeout</string>
     <string name="settings_group_experimental">Experimental</string>
-    <string name="settings_group_experimental_desc">Rough edges and untested paths. Your own risk.</string>
+    <string name="settings_group_experimental_desc">• Adaptive Smart</string>
 
     <string name="settings_killswitch_title">Enable Kill Switch</string>
     <string name="settings_killswitch_desc">Cuts the internet if the proxy drops.</string>
@@ -350,7 +347,7 @@
 
     <!-- Logs -->
     <string name="settings_group_logs">Logs</string>
-    <string name="settings_group_logs_desc">Connection and app event history.</string>
+    <string name="settings_group_logs_desc">• Connection and app events</string>
     <string name="logs_title">Logs</string>
     <string name="logs_empty">No events yet.</string>
     <string name="logs_save_cd">Save logs</string>

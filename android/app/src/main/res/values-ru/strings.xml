@@ -93,22 +93,19 @@
     <string name="settings_data_usage_reset">Сбросить</string>
     <string name="settings_data_usage_reset_confirm">Сбросить статистику трафика?</string>
     <string name="settings_group_subscriptions">Подписки</string>
-    <string name="settings_group_subscriptions_desc">Обновление и данные для провайдера.</string>
+    <string name="settings_group_subscriptions_desc">• Обновление  • HWID  • UA</string>
     <string name="settings_group_security">Безопасность</string>
-    <string name="settings_group_security_desc">Защита соединения при сбоях.</string>
+    <string name="settings_group_security_desc">• Kill Switch</string>
     <string name="settings_group_network">Сеть</string>
-    <string name="settings_group_network_desc">DNS, IPv6 и локальная сеть.</string>
-    <string name="settings_group_appearance">Оформление</string>
-    <string name="settings_group_appearance_desc">Язык интерфейса.</string>
+    <string name="settings_group_network_desc">• DNS  • IPv6  • Локальная сеть</string>
+    <string name="settings_group_appearance">Дополнительные настройки</string>
+    <string name="settings_group_appearance_desc">• Язык интерфейса</string>
 
     <string name="settings_dns_private_warning">Не работает? Отключите частный DNS в настройках сети Android.</string>
-    <string name="settings_cat_connection">Соединение и маршрутизация</string>
-    <string name="settings_cat_security">Безопасность</string>
-    <string name="settings_cat_app">Приложение</string>
     <string name="settings_group_ping">Пинг</string>
-    <string name="settings_group_ping_desc">Чем и как долго измерять задержку до узлов.</string>
+    <string name="settings_group_ping_desc">• Тип замера  • Тестовый адрес  • Таймаут</string>
     <string name="settings_group_experimental">Экспериментально</string>
-    <string name="settings_group_experimental_desc">Недоделанное и необкатанное. На свой страх.</string>
+    <string name="settings_group_experimental_desc">• Адаптивный Smart</string>
 
     <string name="settings_killswitch_title">Включить Kill Switch</string>
     <string name="settings_killswitch_desc">Обрыв интернета при падении прокси.</string>
@@ -320,7 +317,7 @@
 
     <!-- Logs -->
     <string name="settings_group_logs">Логи</string>
-    <string name="settings_group_logs_desc">События подключения и приложения.</string>
+    <string name="settings_group_logs_desc">• События подключения и приложения</string>
     <string name="logs_title">Логи</string>
     <string name="logs_empty">Событий пока нет.</string>
     <string name="logs_save_cd">Сохранить логи</string>

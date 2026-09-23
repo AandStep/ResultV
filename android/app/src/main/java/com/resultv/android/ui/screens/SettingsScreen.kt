@@ -3,6 +3,9 @@ package com.resultv.android.ui.screens
 import android.app.Activity
 import android.content.Context
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import com.resultv.android.theme.SegoeUi
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -110,54 +113,39 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {
     var activeSheet by rememberSaveable { mutableStateOf<SettingsSubcategory?>(null) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
+    // Макет Settings (Figma 6871:4916): ровный список карточек через 8,
+    // без подзаголовков категорий — у каждой строки свой цвет и пункты.
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = RvSpace.page, vertical = RvSpace.nest2),
-        verticalArrangement = Arrangement.spacedBy(RvSpace.nest1),
+            .padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
     ) {
-        CategoryHeader(stringResource(R.string.settings_cat_connection))
-        SettingsCard {
-            SubcategoryRow(SettingsSubcategory.Network) { activeSheet = SettingsSubcategory.Network }
-            HorizontalDivider(color = RvColor.whiteA10)
-            SubcategoryRow(SettingsSubcategory.Ping) { activeSheet = SettingsSubcategory.Ping }
-        }
-
-        CategoryHeader(stringResource(R.string.settings_cat_security))
-        SettingsCard {
-            SubcategoryRow(SettingsSubcategory.Security) { activeSheet = SettingsSubcategory.Security }
-            if (com.resultv.android.BuildConfig.DNS_ADBLOCK) {
-                HorizontalDivider(color = RvColor.whiteA10)
-                SubcategoryRow(SettingsSubcategory.AdBlock) { activeSheet = SettingsSubcategory.AdBlock }
-            }
-        }
-
-        // Между безопасностью и настройками приложения — тот же порядок, что
-        // на ПК. Заголовок категории и название раздела совпадают намеренно: в
-        // разделе пока одна вещь, и второе имя было бы выдуманной разницей.
-        CategoryHeader(stringResource(R.string.settings_group_experimental))
-        SettingsCard {
-            SubcategoryRow(SettingsSubcategory.Experimental) { activeSheet = SettingsSubcategory.Experimental }
-        }
-
-        CategoryHeader(stringResource(R.string.settings_cat_app))
-        SettingsCard {
-            SubcategoryRow(SettingsSubcategory.Appearance) { activeSheet = SettingsSubcategory.Appearance }
-            HorizontalDivider(color = RvColor.whiteA10)
-            SubcategoryRow(SettingsSubcategory.Subscriptions) { activeSheet = SettingsSubcategory.Subscriptions }
-            HorizontalDivider(color = RvColor.whiteA10)
-            NavRow(
-                label = stringResource(R.string.settings_group_logs),
-                icon = Icons.Outlined.Article,
-                tint = RvCategory.Cyan,
-                onClick = onOpenLogs,
+        listOfNotNull(
+            SettingsSubcategory.Appearance,
+            SettingsSubcategory.Subscriptions,
+            SettingsSubcategory.Security,
+            SettingsSubcategory.AdBlock.takeIf { com.resultv.android.BuildConfig.DNS_ADBLOCK },
+            SettingsSubcategory.Network,
+            SettingsSubcategory.Ping,
+            SettingsSubcategory.Experimental,
+        ).forEach { sub ->
+            SettingsEntry(
+                icon = sub.icon,
+                tint = sub.tint,
+                title = stringResource(sub.labelRes),
+                description = stringResource(sub.descRes),
+                onClick = { activeSheet = sub },
             )
         }
-
-        AppInfoCard()
-
-        Spacer(modifier = Modifier.height(32.dp))
+        SettingsEntry(
+            icon = Icons.Outlined.Article,
+            tint = RvCategory.Cyan,
+            title = stringResource(R.string.settings_group_logs),
+            description = stringResource(R.string.settings_group_logs_desc),
+            onClick = onOpenLogs,
+        )
     }
 
     if (activeSheet != null) {
@@ -220,56 +208,6 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {
     }
 }
 
-@Composable
-private fun CategoryHeader(title: String) {
-    Text(
-        text = title,
-        style = MaterialTheme.typography.labelMedium,
-        color = RvColor.whiteA50,
-        modifier = Modifier.padding(start = RvSpace.nest1, top = RvSpace.nest3, bottom = 0.dp)
-    )
-}
-
-@Composable
-private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
-    val shape = RoundedCornerShape(RvRadius.card)
-    Card(
-        shape = shape,
-        colors = CardDefaults.cardColors(containerColor = RvColor.Grey),
-        modifier = Modifier
-            .fillMaxWidth()
-            .rvBorder(shape),
-    ) {
-        Column {
-            content()
-        }
-    }
-}
-
-@Composable
-private fun SubcategoryRow(subcategory: SettingsSubcategory, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = RvSpace.nest1, vertical = RvSpace.nest2),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
-    ) {
-        SettingIcon(subcategory.icon, subcategory.tint)
-        Text(
-            stringResource(subcategory.labelRes),
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.weight(1f),
-        )
-        Icon(
-            imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-            contentDescription = null,
-            tint = RvColor.iconDefault,
-        )
-    }
-}
-
 /** A settings row that navigates elsewhere (full screen) instead of opening a sheet. */
 @Composable
 internal fun NavRow(
@@ -298,6 +236,53 @@ internal fun NavRow(
             contentDescription = null,
             tint = RvColor.iconDefault,
         )
+    }
+}
+
+/**
+ * Карточка раздела — SettingsItem мобильного макета (Figma 6871:4921): Grey
+ * с обводкой белым 10 %, скругление 20, поле 14; плитка 40 с глифом 22,
+ * заголовок 14 Bold и пункты раздела 10 Semibold.
+ */
+@Composable
+private fun SettingsEntry(
+    icon: ImageVector,
+    tint: CategoryTint,
+    title: String,
+    description: String,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(20.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(RvColor.Grey)
+            .border(1.dp, RvColor.whiteA10, shape)
+            .clickable(onClick = onClick)
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
+    ) {
+        SettingIcon(icon, tint, glyph = 22.dp)
+        Column(verticalArrangement = Arrangement.spacedBy(RvSpace.xs)) {
+            Text(
+                title,
+                fontFamily = SegoeUi,
+                fontSize = 14.sp,
+                lineHeight = 19.6.sp,
+                fontWeight = FontWeight.Bold,
+                color = RvColor.White,
+            )
+            Text(
+                description,
+                fontFamily = SegoeUi,
+                fontSize = 10.sp,
+                lineHeight = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = RvColor.whiteA50,
+            )
+        }
     }
 }
 
@@ -738,35 +723,3 @@ private fun TextFieldRow(
 
 // ─────────────────────────── App Info card ──────────────────────────────────
 
-@Composable
-private fun AppInfoCard() {
-    val ctx = LocalContext.current
-    val versionName = remember(ctx) {
-        runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrDefault("—")
-    }
-
-    SettingsCard {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = RvSpace.nest1, vertical = RvSpace.nest1),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
-        ) {
-            SettingIcon(
-                icon = Icons.Outlined.Info,
-                tint = RvCategory.Violet,
-            )
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    stringResource(R.string.app_name),
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Medium,
-                )
-                Text(
-                    "v$versionName",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = RvColor.whiteA50,
-                )
-            }
-        }
-    }
-}

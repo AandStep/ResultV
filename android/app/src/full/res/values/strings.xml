@@ -50,5 +50,5 @@
     <string name="settings_adblock">Ad blocking</string>
     <string name="settings_adblock_subtitle">Ads and trackers via DNS, including YouTube.</string>
     <string name="settings_group_adblock">Ad blocking</string>
-    <string name="settings_group_adblock_desc">Banners, trackers and browser ads</string>
+    <string name="settings_group_adblock_desc">• Ads in apps and the browser</string>
 </resources>

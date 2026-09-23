@@ -12,6 +12,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.resultv.android.theme.CategoryTint
 import com.resultv.android.theme.RvIcon
+import androidx.compose.ui.unit.Dp
 import com.resultv.android.theme.RvRadius
 
 /**
@@ -23,7 +24,7 @@ import com.resultv.android.theme.RvRadius
  * подложка одной категории вставала под глиф другой.
  */
 @Composable
-fun SettingIcon(icon: ImageVector, tint: CategoryTint) {
+fun SettingIcon(icon: ImageVector, tint: CategoryTint, glyph: Dp = RvIcon.glyph) {
     Box(
         modifier = Modifier
             .size(RvIcon.tile)
@@ -35,7 +36,7 @@ fun SettingIcon(icon: ImageVector, tint: CategoryTint) {
             imageVector = icon,
             contentDescription = null,
             tint = tint.glyph,
-            modifier = Modifier.size(RvIcon.glyph),
+            modifier = Modifier.size(glyph),
         )
     }
 }
