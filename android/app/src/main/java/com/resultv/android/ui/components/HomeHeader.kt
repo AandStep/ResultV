@@ -227,6 +227,10 @@ private fun UptimeChipBody(connectedAt: Long) {
             fontSize = 12.sp,
             lineHeight = 13.2.sp,
             fontWeight = FontWeight.SemiBold,
+            // Коробка строки держит место под выносные вниз, а у цифр их нет:
+            // по центру коробки они смотрятся ниже значка часов. Подъём снят
+            // замером на телефоне — центр цифр совпадает с центром плашки.
+            modifier = Modifier.offset(y = (-1.8).dp),
             color = RvColor.whiteA50,
         )
     }
