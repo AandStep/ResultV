@@ -1648,6 +1648,11 @@ func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode Pro
 	m.dnsLeakProtection = dnsLeakProtection
 	m.startProcessTrackerLocked()
 	m.startHealthWatchdogLocked(proxy, mode)
+	// disconnectLocked above dropped the priority bump; without this the
+	// reconnected session runs at Normal priority (see connectOnce).
+	if err := sys.RaiseProcessPriority(); err != nil {
+		m.log.Warning(fmt.Sprintf("[СИСТЕМА] Не удалось повысить приоритет процесса: %v", err))
+	}
 	m.emitStatusLocked()
 
 	if proxy.SubscriptionURL != "" {
