@@ -504,6 +504,8 @@ type SBOutboundTLS struct {
 	CipherSuites []string   `json:"cipher_suites,omitempty"`
 	UTLS         *SBUTLS    `json:"utls,omitempty"`
 	Reality      *SBReality `json:"reality,omitempty"`
+	// HandshakeTimeout is set for hysteria2 only, see hysteria2HandshakeTimeout.
+	HandshakeTimeout string `json:"handshake_timeout,omitempty"`
 }
 
 type SBEndpoint struct {
