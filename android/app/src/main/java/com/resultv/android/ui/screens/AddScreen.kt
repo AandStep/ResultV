@@ -6,9 +6,7 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.annotation.DrawableRes
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -17,13 +15,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.resultv.android.theme.SegoeUi
+import com.resultv.android.ui.components.RvBigButton
 import com.resultv.android.ui.components.RvButton
 import com.resultv.android.ui.components.RvButtonColors
 import com.resultv.android.ui.components.RvButtonLabel
@@ -159,20 +157,20 @@ fun AddScreen(
     ) {
         // Быстрые источники: файл, буфер, QR — плитки BigBtn макета.
         Row(horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3)) {
-            BigBtn(
-                icon = R.drawable.ic_upload_file,
+            RvBigButton(
+                icon = painterResource(R.drawable.ic_upload_file),
                 label = stringResource(R.string.add_quick_file_title),
                 onClick = { filePicker.launch(arrayOf("*/*")) },
                 modifier = Modifier.weight(1f),
             )
-            BigBtn(
-                icon = R.drawable.ic_paste,
+            RvBigButton(
+                icon = painterResource(R.drawable.ic_paste),
                 label = stringResource(R.string.add_quick_clipboard_title),
                 onClick = { pasteFromClipboard(ctx, scope, dataDir) { importMessage = it } },
                 modifier = Modifier.weight(1f),
             )
-            BigBtn(
-                icon = R.drawable.ic_qr_scan,
+            RvBigButton(
+                icon = painterResource(R.drawable.ic_qr_scan),
                 label = stringResource(R.string.add_quick_qr_title),
                 onClick = { scanQr(ctx) { importMessage = it } },
                 modifier = Modifier.weight(1f),
@@ -188,37 +186,6 @@ fun AddScreen(
         }
 
         LinkPane(dataDir = dataDir, onDone = onDone)
-    }
-}
-
-// ───────────────────────────── BigBtn ─────────────────────────────
-
-/** Плитка быстрого источника — компонент BigBtn макета: 106 в высоту, значок 32. */
-@Composable
-private fun BigBtn(
-    @DrawableRes icon: Int,
-    label: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val shape = RoundedCornerShape(16.dp)
-    Column(
-        modifier = modifier
-            .height(106.dp)
-            .clip(shape)
-            .background(RvColor.Grey)
-            .border(1.dp, RvColor.whiteA10, shape)
-            .clickable(role = Role.Button, onClick = onClick),
-        verticalArrangement = Arrangement.spacedBy(RvSpace.nest3, Alignment.CenterVertically),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(
-            painter = painterResource(icon),
-            contentDescription = null,
-            tint = RvColor.whiteA50,
-            modifier = Modifier.size(32.dp),
-        )
-        Text(label, style = RvButtonLabel, fontWeight = FontWeight.Bold, color = RvColor.whiteA50)
     }
 }
 

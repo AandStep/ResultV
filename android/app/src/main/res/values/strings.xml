@@ -11,6 +11,7 @@
     <string name="tab_proxies">Proxies</string>
     <string name="tab_add">Add</string>
     <string name="tab_rules">Rules</string>
+    <string name="rules_title">Smart Rules</string>
     <string name="tab_settings">Settings</string>
     <string name="servers_title">Server list</string>
     <string name="servers_search">Search servers...</string>
@@ -98,7 +99,6 @@
     <string name="settings_data_usage_reset_confirm">Reset data usage statistics?</string>
     <string name="settings_group_subscriptions">Subscriptions</string>
     <string name="settings_group_subscriptions_desc">Refresh and the data sent to the provider.</string>
-    <string name="settings_group_routing_desc">Tunnel mode and the exceptions to it.</string>
     <string name="settings_group_security">Security</string>
     <string name="settings_group_security_desc">Connection protection when the proxy drops.</string>
     <string name="settings_group_network">Network</string>
@@ -324,35 +324,28 @@
     <string name="deeplink_imported_profiles">Imported %1$d profile(s)</string>
 
     <!-- Rules screen -->
-    <string name="rules_section_smart_title">Smart routing</string>
-    <string name="rules_section_smart_subtitle">Pick how traffic is routed through the tunnel.</string>
-    <string name="rules_mode_global">Global</string>
-    <string name="rules_mode_global_subtitle">All system traffic goes through the selected proxy.</string>
+    <string name="rules_mode_global">Global mode</string>
     <string name="rules_mode_smart">Smart mode</string>
-    <string name="rules_mode_smart_subtitle">Only blocked resources go through the proxy.</string>
-    <string name="rules_section_domains_title">Domain exclusions</string>
-    <string name="rules_section_domains_subtitle_global">These hosts always connect directly, bypassing the proxy.</string>
-    <string name="rules_section_domains_subtitle_smart">These hosts are forced through the proxy.</string>
-    <string name="rules_domain_placeholder">e.g. yandex.ru</string>
+    <string name="rules_domain_placeholder">Enter an IP or host and press Enter to add</string>
     <string name="rules_shadow_covered">Already covered by \"%1$s\"</string>
     <string name="rules_shadow_overrides">Will shadow existing entries: %1$s</string>
-    <string name="rules_section_perapp_title">Per-app routing</string>
-    <string name="rules_section_perapp_subtitle">Pick which installed apps go through the VPN.</string>
-    <string name="rules_tab_out_of_vpn">Out of VPN</string>
-    <string name="rules_tab_into_vpn">Into VPN</string>
-    <string name="rules_tab_block">Block</string>
     <string name="rules_badge_blocked">blocked</string>
     <string name="rules_badge_auto_vpn">auto: through VPN</string>
     <string name="rules_apps_needs_q">Needs Android 10 or newer — this device can\'t tell which app a connection belongs to.</string>
-    <string name="rules_domain_moved_from">Moved here from “%1$s”</string>
-    <string name="rules_tab_out_of_vpn_hint">These apps skip the tunnel entirely.</string>
-    <string name="rules_tab_into_vpn_hint">These apps always go through the tunnel.</string>
-    <string name="rules_tab_out_of_vpn_hint_domains">These sites skip the tunnel entirely.</string>
-    <string name="rules_tab_into_vpn_hint_domains">These sites always go through the tunnel.</string>
-    <string name="rules_tab_block_hint_domains">These sites do not open while the VPN is on.</string>
-    <string name="rules_tab_block_hint">These apps get no network while the VPN is on.</string>
     <string name="rules_app_search">Search apps</string>
     <string name="rules_app_selected_count">%1$d selected</string>
+    <string name="rules_sites_vpn">Sites through the VPN</string>
+    <string name="rules_sites_vpn_desc">If a site turned out not to be on the smart-mode list, you can add it yourself.</string>
+    <string name="rules_sites_direct">Sites direct</string>
+    <string name="rules_sites_direct_desc">Sites added to this list will not go through the VPN.</string>
+    <string name="rules_apps_vpn">Apps through the VPN</string>
+    <string name="rules_apps_vpn_desc">All traffic from these apps goes into the tunnel.</string>
+    <string name="rules_apps_direct">Apps direct</string>
+    <string name="rules_apps_direct_desc">All traffic from these apps will not go through the VPN.</string>
+    <string name="rules_profiles_desc">Set up your own routing here, or use the one your provider ships</string>
+    <string name="rules_clear_list">Clear the list</string>
+    <string name="rules_confirm_clear_sites">Remove every site from the list?</string>
+    <string name="rules_confirm_clear_apps">Remove every app from the list?</string>
     <string name="rules_app_system_tag">system</string>
 
     <!-- Logs -->

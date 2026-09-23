@@ -108,6 +108,12 @@ object RoutingRulesRepository {
     fun removeDomain(domain: String, action: RuleAction) =
         mutate { it.copy(domains = it.domains.withoutAction(domain, action)) }
 
+    /** Очищает один список целиком — корзина в шапке секции. */
+    @Synchronized
+    fun clearDomains(action: RuleAction) = mutate { st ->
+        st.copy(domains = st.domains.listFor(action).fold(st.domains) { d, v -> d.withoutAction(v, action) })
+    }
+
     /** Domains sent to the engine as `domain_suffix` → direct (Global only). */
     fun engineOutOfVpn(): List<String> = _state.value.domains.outOfVpn
 

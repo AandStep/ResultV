@@ -121,7 +121,7 @@ private enum class Tab(
     Home(R.string.tab_home, R.drawable.ic_nav_home),
     Add(R.string.tab_add, R.drawable.ic_nav_add, headerRes = R.string.home_add_server),
     Proxies(R.string.tab_proxies, R.drawable.ic_nav_servers, ownHeader = true),
-    Rules(R.string.tab_rules, R.drawable.ic_nav_rules),
+    Rules(R.string.tab_rules, R.drawable.ic_nav_rules, headerRes = R.string.rules_title),
     Settings(R.string.tab_settings, R.drawable.ic_nav_settings),
 }
 

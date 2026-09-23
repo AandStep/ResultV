@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -49,7 +50,6 @@ import androidx.compose.ui.unit.sp
 import com.resultv.android.R
 import com.resultv.android.theme.RvColor
 import com.resultv.android.theme.SegoeUi
-import com.resultv.android.theme.RvRadius
 import com.resultv.android.theme.RvSpace
 
 /**
@@ -81,36 +81,38 @@ internal fun tagDraftEdit(text: String): TagDraftEdit {
 // Метрики скопированы из kit/TagField.css на ПК (Figma "ResultV" → App Design,
 // ряд `SmartRules`), чтобы поле читалось одинаково на обеих платформах.
 //
-// Коробка: заливка Dark Grey, скругление 24, отступ 16, зазор 10, рамка
-// фокуса Main-color 20 %. Рамки в покое нет — только заливка.
-// Тег: заливка Light Gray, скругление 100, отступы 6/10/8/10, зазор 4,
-// подпись белым 50 % (кегль — см. TagTextStyle), крестик 14.
-private val FieldShape = RoundedCornerShape(RvRadius.card)
-private val FieldPadding = RvSpace.nest1
+// Мобильный макет (Textarea, Figma 6869:4942): заливка Dark Grey, скругление
+// 16, отступ 12, зазор 8, рамка фокуса Main-color 20 %; в покое только заливка.
+// Тег (6869:5068): высота 26, Light Gray, капсула, подпись 10 Semibold
+// белым 50 %, крестик 12.
+private val FieldShape = RoundedCornerShape(16.dp)
+private val FieldPadding = 12.dp
 private val FieldGap = RvSpace.nest3
 private val ChipShape = RoundedCornerShape(100.dp)
 
-// На ПК высота фиксирована (156px). На телефоне это съело бы шестую часть
-// экрана, поэтому взят минимум: поле сразу читается коробкой, а не строкой,
-// и растёт под теги.
-private val FieldMinHeight = 112.dp
+// В макете поле 140; здесь это минимум — под теги оно растёт.
+private val FieldMinHeight = 140.dp
 
 // Крестик рисуется в 14 dp, как на ПК, но мышиная цель там не годится для
 // пальца — иконка живёт в прозрачном боксе побольше, а отступ тега справа
 // уменьшен на ту же величину, чтобы видимая геометрия осталась прежней.
-private val RemoveIconSize = 14.dp
+private val RemoveIconSize = 12.dp
 private val RemoveTouchSize = 22.dp
 
-// Единственное сознательное отступление от метрик ПК: там подпись 14, здесь 12.
-// На мониторе теги стоят в широком поле, на телефоне тот же кегль рядом с
-// остальным текстом секции читался крупно. Межстрочный оставлен в той же
-// пропорции 1.4. Стиль один на все три текста поля — подпись тега, плейсхолдер
-// и ввод, — чтобы они не разъезжались.
+// Ввод и плейсхолдер — 12 Semibold, межстрочный 1.4, как подсказка в макете.
 private val TagTextStyle = TextStyle(
     fontFamily = SegoeUi,
     fontSize = 12.sp,
-    fontWeight = FontWeight.Medium,
+    fontWeight = FontWeight.SemiBold,
     lineHeight = 16.8.sp,
+)
+
+// Подпись тега — 10 Semibold, межстрочный 1.1.
+private val ChipTextStyle = TextStyle(
+    fontFamily = SegoeUi,
+    fontSize = 10.sp,
+    fontWeight = FontWeight.SemiBold,
+    lineHeight = 11.sp,
 )
 
 /**
@@ -159,10 +161,7 @@ fun TagField(
             .fillMaxWidth()
             .heightIn(min = FieldMinHeight)
             // На ПК три ступени: страница #141414 → поле #171717 → тег #1f1f1f.
-            // Здесь шторка настроек уже залита тем же серым, что и RvColor.Grey,
-            // поэтому взять его же под поле значило бы слить коробку с фоном:
-            // ступень задаётся подъёмом белым, а тег поднимается до RvColor.LightGray.
-            .background(Color.White.copy(alpha = 0.04f), FieldShape)
+            .background(RvColor.DarkGrey, FieldShape)
             // Рамка только в фокусе, как на ПК: в покое коробку держит заливка.
             .border(
                 width = 1.dp,
@@ -241,23 +240,17 @@ fun TagField(
 private fun TagChip(label: String, onRemove: () -> Unit) {
     Row(
         modifier = Modifier
+            .height(26.dp)
             .background(RvColor.LightGray, ChipShape)
-            .padding(
-                start = RvSpace.nest3,
-                // Прозрачное поле крестика шире самой иконки на 4 dp с каждой
-                // стороны, поэтому отступ тега справа меньше отступа слева —
-                // компенсация под шкалу RvSpace, а не точный пиксельный расчёт,
-                // как было на ПК.
-                end = RvSpace.xs,
-                top = RvSpace.xs,
-                bottom = RvSpace.nest3,
-            ),
+            // Прозрачное поле крестика (22) шире иконки (12) на 5 с каждой
+            // стороны: справа 10 − 5, и между подписью и глифом те же 6 − 5.
+            .padding(start = 10.dp, end = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(0.dp),
+        horizontalArrangement = Arrangement.spacedBy(1.dp),
     ) {
         Text(
             label,
-            style = TagTextStyle,
+            style = ChipTextStyle,
             color = Color.White.copy(alpha = 0.5f),
         )
         Box(

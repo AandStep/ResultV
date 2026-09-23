@@ -10,6 +10,7 @@
     <string name="tab_proxies">Серверы</string>
     <string name="tab_add">Добавить</string>
     <string name="tab_rules">Правила</string>
+    <string name="rules_title">Умные правила</string>
     <string name="tab_settings">Настройки</string>
     <string name="servers_title">Список серверов</string>
     <string name="servers_search">Поиск серверов...</string>
@@ -93,7 +94,6 @@
     <string name="settings_data_usage_reset_confirm">Сбросить статистику трафика?</string>
     <string name="settings_group_subscriptions">Подписки</string>
     <string name="settings_group_subscriptions_desc">Обновление и данные для провайдера.</string>
-    <string name="settings_group_routing_desc">Режим туннеля и исключения из него.</string>
     <string name="settings_group_security">Безопасность</string>
     <string name="settings_group_security_desc">Защита соединения при сбоях.</string>
     <string name="settings_group_network">Сеть</string>
@@ -294,35 +294,28 @@
     <string name="deeplink_imported_profiles">Добавлено профилей: %1$d</string>
 
     <!-- Rules screen -->
-    <string name="rules_section_smart_title">Маршрутизация</string>
-    <string name="rules_section_smart_subtitle">Выберите, как направлять трафик через туннель.</string>
-    <string name="rules_mode_global">Глобальный</string>
-    <string name="rules_mode_global_subtitle">Весь трафик системы идёт через выбранный прокси.</string>
+    <string name="rules_mode_global">Глобальный режим</string>
     <string name="rules_mode_smart">Умный режим</string>
-    <string name="rules_mode_smart_subtitle">Через прокси идут только заблокированные ресурсы.</string>
-    <string name="rules_section_domains_title">Исключения по доменам</string>
-    <string name="rules_section_domains_subtitle_global">Эти хосты идут напрямую в обход прокси.</string>
-    <string name="rules_section_domains_subtitle_smart">Эти хосты идут принудительно через прокси.</string>
-    <string name="rules_domain_placeholder">например, yandex.ru</string>
+    <string name="rules_domain_placeholder">Введите IP или хост и нажмите Enter, чтобы добавить</string>
     <string name="rules_shadow_covered">Уже покрыт «%1$s»</string>
     <string name="rules_shadow_overrides">Перекроет существующие: %1$s</string>
-    <string name="rules_section_perapp_title">Маршрутизация по приложениям</string>
-    <string name="rules_section_perapp_subtitle">Выберите, какие приложения идут через VPN.</string>
-    <string name="rules_tab_out_of_vpn">Из ВПН</string>
-    <string name="rules_tab_into_vpn">В ВПН</string>
-    <string name="rules_tab_block">Запретить</string>
     <string name="rules_badge_blocked">запрещён</string>
     <string name="rules_badge_auto_vpn">авто: через VPN</string>
     <string name="rules_apps_needs_q">Нужен Android 10 или новее — это устройство не определяет, какому приложению принадлежит соединение.</string>
-    <string name="rules_domain_moved_from">Перенесён сюда из «%1$s»</string>
-    <string name="rules_tab_out_of_vpn_hint">Эти приложения идут мимо туннеля.</string>
-    <string name="rules_tab_into_vpn_hint">Эти приложения всегда идут через туннель.</string>
-    <string name="rules_tab_out_of_vpn_hint_domains">Эти сайты идут мимо туннеля.</string>
-    <string name="rules_tab_into_vpn_hint_domains">Эти сайты всегда идут через туннель.</string>
-    <string name="rules_tab_block_hint_domains">Эти сайты не открываются, пока VPN включён.</string>
-    <string name="rules_tab_block_hint">Эти приложения остаются без сети, пока VPN включён.</string>
     <string name="rules_app_search">Поиск приложений</string>
     <string name="rules_app_selected_count">Выбрано: %1$d</string>
+    <string name="rules_sites_vpn">Сайты через ВПН</string>
+    <string name="rules_sites_vpn_desc">Если сайт оказался не в списке умного режима, его можно добавить самостоятельно.</string>
+    <string name="rules_sites_direct">Сайты напрямую</string>
+    <string name="rules_sites_direct_desc">Сайты, добавленные в этот список, не пойдут в ВПН.</string>
+    <string name="rules_apps_vpn">Приложения через ВПН</string>
+    <string name="rules_apps_vpn_desc">Весь трафик этих приложений пойдёт в туннель.</string>
+    <string name="rules_apps_direct">Приложения напрямую</string>
+    <string name="rules_apps_direct_desc">Весь трафик этих приложений не пойдёт в ВПН.</string>
+    <string name="rules_profiles_desc">Здесь вы можете настроить собственную маршрутизацию или использовать маршрутизацию провайдера</string>
+    <string name="rules_clear_list">Очистить список</string>
+    <string name="rules_confirm_clear_sites">Убрать из списка все сайты?</string>
+    <string name="rules_confirm_clear_apps">Убрать из списка все приложения?</string>
     <string name="rules_app_system_tag">система</string>
 
     <!-- Logs -->
