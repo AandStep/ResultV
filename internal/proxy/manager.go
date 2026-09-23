@@ -1657,7 +1657,7 @@ func runPostStartProbe(ctx context.Context, proxyTypeLower, ip string, port, loc
 		}
 	case "wireguard", "amneziawg":
 		ok, r, done := probeOrCancel(ctx, func() (bool, string) {
-			_, ok, r := pingWireGuardProbe(ip, port)
+			_, ok, r := pingWireGuardProbe(ip, port, wireGuardProbeDefaultBudget)
 			return ok, r
 		})
 		if !done {
@@ -2505,7 +2505,7 @@ func (m *Manager) Ping(ip string, port int, proxyType string, node ProxyConfig, 
 		})
 	default:
 		return m.withDeadline(timeout, "", func() PingResultDTO {
-			return m.pingDirect(ip, port, proxyType)
+			return m.pingDirect(ip, port, proxyType, time.Now().Add(timeout))
 		})
 	}
 }
@@ -2658,7 +2658,7 @@ func (m *Manager) pingViaNode(node ProxyConfig, proxyType string, opts PingOptio
 
 // pingDirect is the original probe table: a measurement to the node's own
 // address, with the probe picked by protocol. It is what PingTypeAuto runs.
-func (m *Manager) pingDirect(ip string, port int, proxyType string) PingResultDTO {
+func (m *Manager) pingDirect(ip string, port int, proxyType string, deadline time.Time) PingResultDTO {
 	m.mu.Lock()
 	mode := m.mode
 	connected := m.connected
@@ -2687,7 +2687,7 @@ func (m *Manager) pingDirect(ip string, port int, proxyType string) PingResultDT
 		if isHysteria2 {
 			latency, reachable, reason, checkType = pingHysteria2LANProbe(dialHost, port)
 		} else if isWireGuard {
-			latency, reachable, reason = pingWireGuardLANProbe(dialHost, port)
+			latency, reachable, reason = pingWireGuardLANProbe(dialHost, port, time.Until(deadline))
 			checkType = "udp_lan_bind"
 		} else {
 			latency, reachable, reason = pingLANProbe(dialHost, port)
@@ -2696,7 +2696,7 @@ func (m *Manager) pingDirect(ip string, port int, proxyType string) PingResultDT
 	} else if isHysteria2 {
 		latency, reachable, reason, checkType = pingHysteria2Probe(dialHost, port)
 	} else if isWireGuard {
-		latency, reachable, reason = pingWireGuardProbe(dialHost, port)
+		latency, reachable, reason = pingWireGuardProbe(dialHost, port, time.Until(deadline))
 		checkType = "udp"
 	} else {
 		latency, reachable, reason = pingTCPProbe(dialHost, port)
@@ -3017,7 +3017,7 @@ func (m *Manager) probeProxyAlive(proxy ProxyConfig, mode ProxyMode) (bool, stri
 			_, reachable, reason, _ := pingHysteria2LANProbe(proxy.IP, proxy.Port)
 			return reachable, reason
 		case "WIREGUARD", "AMNEZIAWG":
-			_, reachable, reason := pingWireGuardLANProbe(proxy.IP, proxy.Port)
+			_, reachable, reason := pingWireGuardLANProbe(proxy.IP, proxy.Port, wireGuardProbeDefaultBudget)
 			return reachable, reason
 		default:
 			_, reachable, reason := pingLANProbe(proxy.IP, proxy.Port)
@@ -3030,7 +3030,7 @@ func (m *Manager) probeProxyAlive(proxy ProxyConfig, mode ProxyMode) (bool, stri
 		_, reachable, reason, _ := pingHysteria2Probe(proxy.IP, proxy.Port)
 		return reachable, reason
 	case "WIREGUARD", "AMNEZIAWG":
-		_, reachable, reason := pingWireGuardProbe(proxy.IP, proxy.Port)
+		_, reachable, reason := pingWireGuardProbe(proxy.IP, proxy.Port, wireGuardProbeDefaultBudget)
 		return reachable, reason
 	default:
 		_, reachable, reason := pingTCPProbe(proxy.IP, proxy.Port)

@@ -270,3 +270,53 @@ func TestPingICMPResolveCannotEatTheProbeBudget(t *testing.T) {
 	default:
 	}
 }
+
+func TestPingAutoWireGuardProbeGetsBudgetWithinTimeout(t *testing.T) {
+	old := pingWireGuardProbe
+	defer func() { pingWireGuardProbe = old }()
+	var got time.Duration
+	pingWireGuardProbe = func(_ string, _ int, budget time.Duration) (int64, bool, string) {
+		got = budget
+		return -1, true, ""
+	}
+	m := &Manager{}
+	res := m.Ping("1.2.3.4", 51820, "AMNEZIAWG", ProxyConfig{}, PingOptions{Type: config.PingTypeAuto, Timeout: 3 * time.Second})
+	if !res.Reachable {
+		t.Fatalf("got %+v", res)
+	}
+	if got <= 0 || got > 3*time.Second {
+		t.Fatalf("budget %v", got)
+	}
+}
+
+func TestWireGuardProbeBudgetsFitTotal(t *testing.T) {
+	for _, total := range []time.Duration{time.Second, 3 * time.Second, 10 * time.Second} {
+		icmp, udp := wireGuardProbeBudgets(total)
+		if icmp <= 0 || udp <= 0 || icmp+udp+pingBudgetMargin > total {
+			t.Fatalf("total %v: icmp %v udp %v", total, icmp, udp)
+		}
+	}
+	icmp, udp := wireGuardProbeBudgets(wireGuardProbeDefaultBudget)
+	if icmp != 2*time.Second || udp != time.Second {
+		t.Fatalf("default: icmp %v udp %v", icmp, udp)
+	}
+}
+
+// A host that answers neither ICMP nor UDP — the AmneziaWG server that
+// reported a timeout on every auto ping — must get its verdict inside the budget.
+func TestPingWireGuardSilentHostFinishesWithinBudget(t *testing.T) {
+	old := pingICMPProbe
+	defer func() { pingICMPProbe = old }()
+	pingICMPProbe = func(_, _ string, timeout time.Duration) (int64, bool) {
+		time.Sleep(timeout)
+		return 0, false
+	}
+	start := time.Now()
+	_, ok, reason := PingWireGuard("192.0.2.1", 51820, time.Second)
+	if elapsed := time.Since(start); elapsed >= time.Second {
+		t.Fatalf("took %v", elapsed)
+	}
+	if !ok {
+		t.Fatalf("reason=%q", reason)
+	}
+}

@@ -19,6 +19,7 @@ import (
 	"errors"
 	"net"
 	"testing"
+	"time"
 )
 
 func TestIsEngineTunIPv4(t *testing.T) {
@@ -62,7 +63,7 @@ func TestPingProxyUDPLANBind_ReturnsLanBindUnavailableWhenNoInterface(t *testing
 		return nil, errors.New("no iface")
 	}
 
-	latency, reachable, reason := PingProxyUDPLANBind("1.2.3.4", 443)
+	latency, reachable, reason := PingProxyUDPLANBind("1.2.3.4", 443, time.Second)
 	if reachable || latency != 0 || reason != "lan_bind_unavailable" {
 		t.Fatalf("unexpected result: latency=%d reachable=%v reason=%q", latency, reachable, reason)
 	}

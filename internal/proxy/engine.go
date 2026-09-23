@@ -2399,7 +2399,7 @@ func PingHysteria2QUIC(ip string, port int) (latencyMs int64, reachable bool, re
 	return 0, false, r, "quic_handshake"
 }
 
-func PingProxyUDP(ip string, port int) (latencyMs int64, reachable bool, reason string) {
+func PingProxyUDP(ip string, port int, wait time.Duration) (latencyMs int64, reachable bool, reason string) {
 	addr := net.JoinHostPort(ip, fmt.Sprintf("%d", port))
 	conn, err := net.DialTimeout("udp", addr, 3*time.Second)
 	if err != nil {
@@ -2407,7 +2407,7 @@ func PingProxyUDP(ip string, port int) (latencyMs int64, reachable bool, reason 
 	}
 	defer conn.Close()
 
-	_ = conn.SetDeadline(time.Now().Add(1 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(wait))
 	start := time.Now()
 	_, _ = conn.Write([]byte{0x00})
 	buf := make([]byte, 1)
@@ -2435,12 +2435,31 @@ func PingProxyUDP(ip string, port int) (latencyMs int64, reachable bool, reason 
 // probe can only confirm the host didn't actively refuse). An ICMP echo to the
 // host measures the real network round-trip independent of the VPN transport;
 // only when ICMP is blocked do we fall back to the UDP liveness probe (which
-// returns -1ms → shown as "—").
-func PingWireGuard(ip string, port int) (latencyMs int64, reachable bool, reason string) {
-	if ms, ok := pingICMPHost(ip, ""); ok {
+// returns -1ms → shown as "—"). Both steps together stay inside budget.
+func PingWireGuard(ip string, port int, budget time.Duration) (latencyMs int64, reachable bool, reason string) {
+	icmpWait, udpWait := wireGuardProbeBudgets(budget)
+	if ms, ok := pingICMPProbe(ip, "", icmpWait); ok {
 		return ms, true, ""
 	}
-	return PingProxyUDP(ip, port)
+	return PingProxyUDP(ip, port, udpWait)
+}
+
+// wireGuardProbeDefaultBudget is for callers without a deadline of their own:
+// it splits into the 2 s ICMP + 1 s UDP these probes always used.
+const wireGuardProbeDefaultBudget = 3*time.Second + pingBudgetMargin
+
+// wireGuardProbeBudgets splits one budget between the ICMP echo and the UDP
+// fallback that runs after it.
+func wireGuardProbeBudgets(total time.Duration) (icmp, udp time.Duration) {
+	udp = total / 3
+	if udp > time.Second {
+		udp = time.Second
+	}
+	icmp = total - udp - pingBudgetMargin
+	if icmp < 0 {
+		icmp = 0
+	}
+	return icmp, udp
 }
 
 func pingReasonFromError(err error) string {

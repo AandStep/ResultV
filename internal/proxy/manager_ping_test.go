@@ -159,11 +159,11 @@ func TestManagerPing_TunnelUsesLANProbeForWireGuard(t *testing.T) {
 		tcpCalled++
 		return 4, true, ""
 	}
-	pingWireGuardProbe = func(_ string, _ int) (int64, bool, string) {
+	pingWireGuardProbe = func(_ string, _ int, _ time.Duration) (int64, bool, string) {
 		wgCalled++
 		return 4, true, ""
 	}
-	pingWireGuardLANProbe = func(_ string, _ int) (int64, bool, string) {
+	pingWireGuardLANProbe = func(_ string, _ int, _ time.Duration) (int64, bool, string) {
 		wgLANCalled++
 		return -1, true, ""
 	}
@@ -221,11 +221,11 @@ func TestProbeProxyAlive_TunnelUsesLANProbeForWireGuard(t *testing.T) {
 
 	wgCalled := 0
 	wgLANCalled := 0
-	pingWireGuardProbe = func(_ string, _ int) (int64, bool, string) {
+	pingWireGuardProbe = func(_ string, _ int, _ time.Duration) (int64, bool, string) {
 		wgCalled++
 		return 0, false, "timeout"
 	}
-	pingWireGuardLANProbe = func(_ string, _ int) (int64, bool, string) {
+	pingWireGuardLANProbe = func(_ string, _ int, _ time.Duration) (int64, bool, string) {
 		wgLANCalled++
 		return -1, true, ""
 	}
