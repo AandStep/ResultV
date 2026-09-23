@@ -654,7 +654,7 @@ func applyTLSAndTransport(out *SBOutbound, extra map[string]interface{}, default
 			UTLS:       &SBUTLS{Enabled: true, Fingerprint: fp},
 		}
 		if pbk != "" {
-			tlsObj.Reality = &SBReality{Enabled: true, PublicKey: pbk, ShortID: sid}
+			tlsObj.Reality = &SBReality{Enabled: true, PublicKey: pbk, ShortID: sid, SupportX25519MLKEM768: true}
 		}
 		out.TLS = tlsObj
 		if alpnStr := getStringField(extra, "alpn", ""); alpnStr != "" {

@@ -589,6 +589,10 @@ type SBReality struct {
 	Enabled   bool   `json:"enabled"`
 	PublicKey string `json:"public_key"`
 	ShortID   string `json:"short_id,omitempty"`
+
+	// Xray clients never strip the X25519MLKEM768 key share, and REALITY
+	// servers since Xray-core v26.9.8 reject a ClientHello without it.
+	SupportX25519MLKEM768 bool `json:"support_x25519mlkem768,omitempty"`
 }
 
 type SBOutboundTransport struct {
