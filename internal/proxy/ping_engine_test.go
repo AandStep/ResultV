@@ -18,7 +18,6 @@ package proxy
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -124,12 +123,26 @@ func TestBuildPingProbeConfigBindsOnlyWhenAsked(t *testing.T) {
 	}
 }
 
-func TestBuildPingProbeConfigRejectsWireGuard(t *testing.T) {
-	node := vlessProbeNode()
-	node.Type = "WIREGUARD"
-	_, err := BuildPingProbeConfig(node, 14999, "")
-	if !errors.Is(err, errPingProbeUnsupported) {
-		t.Fatalf("WireGuard carries no arbitrary TCP; want errPingProbeUnsupported, got %v", err)
+func TestBuildPingProbeConfigWireGuardStaysOffLiveSession(t *testing.T) {
+	node := ProxyConfig{
+		ID: "wg1", IP: "203.0.113.20", Port: 51820, Type: "AMNEZIAWG",
+		Extra: json.RawMessage(`{"private_key":"k","public_key":"p","system":true,"name":"wg0","listen_port":51820,"persistent_keepalive_interval":25}`),
+	}
+	cfg, err := BuildPingProbeConfig(node, 14999, "192.168.1.5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Route == nil || cfg.Route.Final != wireguardEndpointTag || len(cfg.Endpoints) != 1 {
+		t.Fatalf("route %+v endpoints %d", cfg.Route, len(cfg.Endpoints))
+	}
+	ep := cfg.Endpoints[0]
+	if ep.System || ep.Name != "" || ep.ListenPort != 0 || ep.Peers[0].PersistentKeepaliveInterval != 0 {
+		t.Fatalf("probe endpoint would collide with the live session: %+v", ep)
+	}
+	for _, out := range cfg.Outbounds {
+		if out.Tag == "direct" && out.Inet4BindAddress != "192.168.1.5" {
+			t.Fatalf("endpoint must reach the server via the physical adapter, got %q", out.Inet4BindAddress)
+		}
 	}
 }
 

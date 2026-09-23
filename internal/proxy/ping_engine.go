@@ -60,10 +60,21 @@ func BuildPingProbeConfig(proxy ProxyConfig, listenPort int, bindIPv4 string) (S
 	// The probe engine's DNS block below has the same shape tunnel mode builds —
 	// the hosts record when the server is pinned, the system resolver when it is
 	// not — so it asks for the tag the same way.
-	outbounds := buildOutbounds(proxy, serverDomainResolverTag(proxy, ProxyModeTunnel, nil), "")
+	resolverTag := serverDomainResolverTag(proxy, ProxyModeTunnel, nil)
+	outbounds := buildOutbounds(proxy, resolverTag, "")
+	endpoints, err := pingProbeEndpoints(proxy, resolverTag)
+	if err != nil {
+		return SingBoxConfig{}, err
+	}
+	// A WireGuard endpoint reaches its server through "direct", so that is the
+	// outbound to pin.
+	final, serverOut := "proxy", "proxy"
+	if len(endpoints) > 0 {
+		final, serverOut = wireguardEndpointTag, "direct"
+	}
 	found := false
 	for i := range outbounds {
-		if outbounds[i].Tag != "proxy" {
+		if outbounds[i].Tag != serverOut {
 			continue
 		}
 		found = true
@@ -84,7 +95,8 @@ func BuildPingProbeConfig(proxy ProxyConfig, listenPort int, bindIPv4 string) (S
 		Log:       &SBLog{Level: "error"},
 		Inbounds:  []SBInbound{{Type: "mixed", Tag: pingProbeInboundTag, Listen: "127.0.0.1", ListenPort: listenPort}},
 		Outbounds: outbounds,
-		Route:     &SBRoute{Final: "proxy"},
+		Endpoints: endpoints,
+		Route:     &SBRoute{Final: final},
 	}
 
 	// The host of the test URL is never resolved here: with the default
@@ -114,6 +126,26 @@ func BuildPingProbeConfig(proxy ProxyConfig, listenPort int, bindIPv4 string) (S
 	return cfg, nil
 }
 
+// pingProbeEndpoints is the node's WireGuard endpoint, stripped of whatever
+// would collide with a live session of the same node: a system interface, its
+// name and a fixed listen port. Keepalive is off so the device stays silent
+// until the probe asks for a handshake.
+func pingProbeEndpoints(proxy ProxyConfig, resolverTag string) ([]SBEndpoint, error) {
+	endpoints, err := buildEndpoints(proxy, resolverTag)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", errPingProbeUnsupported, err)
+	}
+	for i := range endpoints {
+		endpoints[i].System = false
+		endpoints[i].Name = ""
+		endpoints[i].ListenPort = 0
+		for j := range endpoints[i].Peers {
+			endpoints[i].Peers[j].PersistentKeepaliveInterval = 0
+		}
+	}
+	return endpoints, nil
+}
+
 // pingProbeEngineCeiling bounds how long the throwaway engine is given to shut
 // down. Mirrors the main engine's teardown ceiling: a leaked instance is
 // collected eventually, a frozen sweep is not.
@@ -141,34 +173,29 @@ func classifyPingFetch(resp *http.Response, err error) (bool, string) {
 	return true, ""
 }
 
-// pingThroughNode measures how long the node takes to deliver testURL.
-//
-// The clock covers the node handshake, the CONNECT, the TLS session to the
-// target and the wait for response headers — everything the user is actually
-// waiting on. Starting the engine is NOT in the figure: that is our cost, not
-// the node's.
-func pingThroughNode(ctx context.Context, proxy ProxyConfig, method, testURL, bindIPv4 string) (latencyMs int64, reachable bool, reason string) {
-	port := getFreeLocalPort(0)
+// startPingProbeEngine starts the throwaway engine for proxy with its mixed
+// inbound on port. reason is non-empty when it could not be started.
+func startPingProbeEngine(ctx context.Context, proxy ProxyConfig, port int, bindIPv4 string) (boxCtx context.Context, stop func(), reason string) {
 	cfg, err := BuildPingProbeConfig(proxy, port, bindIPv4)
 	if err != nil {
 		if errors.Is(err, errPingProbeUnsupported) {
-			return 0, false, "unsupported_for_protocol"
+			return nil, nil, "unsupported_for_protocol"
 		}
-		return 0, false, "engine_config_failed"
+		return nil, nil, "engine_config_failed"
 	}
 
 	configJSON, err := json.Marshal(cfg)
 	if err != nil {
-		return 0, false, "engine_config_failed"
+		return nil, nil, "engine_config_failed"
 	}
 
 	boxCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	boxCtx = extendedBoxContext(boxCtx)
 
 	var options option.Options
 	if err := singjson.UnmarshalContext(boxCtx, configJSON, &options); err != nil {
-		return 0, false, "engine_config_failed"
+		cancel()
+		return nil, nil, "engine_config_failed"
 	}
 
 	// No PlatformLogWriter, no traffic tracker and no logger on the teardown
@@ -180,23 +207,52 @@ func pingThroughNode(ctx context.Context, proxy ProxyConfig, method, testURL, bi
 	// "Закрываем N соединений перед остановкой" in the user's own log.
 	instance, err := box.New(box.Options{Context: boxCtx, Options: options})
 	if err != nil {
-		return 0, false, "engine_start_failed"
+		cancel()
+		return nil, nil, "engine_start_failed"
+	}
+	stop = func() {
+		closeInstanceBounded(instance, boxCtx, pingProbeEngineCeiling, nil)
+		cancel()
 	}
 	if err := instance.Start(); err != nil {
-		closeInstanceBounded(instance, boxCtx, pingProbeEngineCeiling, nil)
-		return 0, false, "engine_start_failed"
+		stop()
+		return nil, nil, "engine_start_failed"
 	}
-	defer closeInstanceBounded(instance, boxCtx, pingProbeEngineCeiling, nil)
+	if err := applyAWG31(boxCtx, awg31KnobsFor(proxy), nil); err != nil {
+		stop()
+		return nil, nil, "engine_start_failed"
+	}
+	return boxCtx, stop, ""
+}
+
+// pingThroughNode measures how long the node takes to deliver testURL.
+//
+// The clock covers the node handshake, the CONNECT, the TLS session to the
+// target and the wait for response headers — everything the user is actually
+// waiting on. Starting the engine is NOT in the figure: that is our cost, not
+// the node's.
+func pingThroughNode(ctx context.Context, proxy ProxyConfig, method, testURL, bindIPv4 string) (latencyMs int64, reachable bool, reason string) {
+	port := getFreeLocalPort(0)
+	_, stop, reason := startPingProbeEngine(ctx, proxy, port, bindIPv4)
+	if reason != "" {
+		return 0, false, reason
+	}
+	defer stop()
 
 	proxyURL, err := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
 	if err != nil {
 		return 0, false, "engine_config_failed"
 	}
+	return fetchPingVia(ctx, &http.Transport{
+		Proxy:             http.ProxyURL(proxyURL),
+		DisableKeepAlives: true,
+	}, method, testURL)
+}
+
+// fetchPingVia times testURL fetched over transport.
+func fetchPingVia(ctx context.Context, transport *http.Transport, method, testURL string) (int64, bool, string) {
 	client := &http.Client{
-		Transport: &http.Transport{
-			Proxy:             http.ProxyURL(proxyURL),
-			DisableKeepAlives: true,
-		},
+		Transport: transport,
 		// Redirects are not followed: the first answer already proves the node
 		// carried the request, and chasing a redirect would measure a second
 		// host instead of this one.

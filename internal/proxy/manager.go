@@ -134,6 +134,9 @@ type Manager struct {
 	mode         ProxyMode
 	proxy        *ProxyConfig
 	pendingProxy *ProxyConfig
+	// wgProbes are the WireGuard handshake probes in flight; a connect to the
+	// same node cancels them (see startWireGuardProbe).
+	wgProbes map[*wireGuardProbe]struct{}
 	pendingMode  ProxyMode
 	killSwitch   bool
 	routingMode  RoutingMode
@@ -247,6 +250,7 @@ var pingHysteria2StrictProbe = PingHysteria2QUICStrict
 var pingHysteria2StrictLANProbe = PingHysteria2QUICStrictLANBind
 var pingWireGuardProbe = PingWireGuard
 var pingWireGuardLANProbe = PingWireGuardLANBind
+var pingWireGuardHandshakeProbe = pingWireGuardHandshake
 var probeHTTPThroughProxyProbe = probeHTTPThroughProxy
 var probeProxyHealthProbe = probeProxyHealth
 var probeTunnelHealthProbe = probeTunnelHealth
@@ -2499,6 +2503,13 @@ func (m *Manager) Ping(ip string, port int, proxyType string, node ProxyConfig, 
 	switch opts.Type {
 	case config.PingTypeHTTPGet, config.PingTypeHTTPHead:
 		return m.pingViaNode(node, proxyType, opts, timeout)
+	case config.PingTypeAuto:
+		if isWireGuardType(proxyType) && strings.TrimSpace(node.IP) != "" {
+			return m.pingWireGuardAuto(ip, port, proxyType, node, opts, timeout)
+		}
+		return m.withDeadline(timeout, "", func() PingResultDTO {
+			return m.pingDirect(ip, port, proxyType, time.Now().Add(timeout))
+		})
 	case config.PingTypeICMP:
 		return m.withDeadline(timeout, "icmp", func() PingResultDTO {
 			return m.pingICMPOnly(ip, timeout)
@@ -2620,10 +2631,6 @@ func (m *Manager) pingViaNode(node ProxyConfig, proxyType string, opts PingOptio
 		checkType, method = "http_head", http.MethodHead
 	}
 
-	pt := strings.ToUpper(strings.TrimSpace(proxyType))
-	if pt == "WIREGUARD" || pt == "AMNEZIAWG" {
-		return PingResultDTO{Reachable: false, Reason: "unsupported_for_protocol", CheckType: checkType}
-	}
 	if strings.TrimSpace(node.IP) == "" {
 		return PingResultDTO{Reachable: false, Reason: "node_not_found", CheckType: checkType}
 	}
@@ -2631,29 +2638,183 @@ func (m *Manager) pingViaNode(node ProxyConfig, proxyType string, opts PingOptio
 		return PingResultDTO{Reachable: false, Reason: "bad_test_url", CheckType: checkType}
 	}
 
+	wireGuard := isWireGuardType(proxyType)
+	if wireGuard {
+		dialer, inUse := m.wireGuardSession(node)
+		if dialer != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+			ms, ok, reason := pingThroughLiveWireGuard(ctx, dialer, method, opts.URL, pingResolveShare(timeout))
+			return PingResultDTO{Reachable: ok, LatencyMs: ms, Reason: reason, CheckType: checkType}
+		}
+		if inUse {
+			return m.pingWireGuardLiveness(node.IP, node.Port, proxyType, timeout)
+		}
+	}
+
 	// The budget starts AFTER the slot is won. Counting queue time against it
 	// would report a false timeout for every node that merely waited its turn.
 	pingEngineSem <- struct{}{}
 	defer func() { <-pingEngineSem }()
 
-	bindIPv4 := ""
-	m.mu.Lock()
-	tunnelSession := m.connected && m.mode == ProxyModeTunnel
-	m.mu.Unlock()
-	if tunnelSession {
-		if local, err := pickLANBindIPv4(); err == nil && local != nil {
-			bindIPv4 = local.String()
-		}
-	}
+	bindIPv4 := m.pingBindIPv4()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	if wireGuard {
+		probeCtx, done, ok := m.startWireGuardProbe(ctx, node)
+		if !ok {
+			return m.pingWireGuardLiveness(node.IP, node.Port, proxyType, timeout)
+		}
+		defer done()
+		ctx = probeCtx
+	}
 
 	ms, ok, reason := pingThroughNodeProbe(ctx, node, method, opts.URL, bindIPv4)
 	if !ok {
 		return PingResultDTO{Reachable: false, Reason: reason, CheckType: checkType}
 	}
 	return PingResultDTO{Reachable: true, LatencyMs: ms, CheckType: checkType}
+}
+
+func isWireGuardType(proxyType string) bool {
+	pt := strings.ToUpper(strings.TrimSpace(proxyType))
+	return pt == "WIREGUARD" || pt == "AMNEZIAWG"
+}
+
+// wireGuardSession reports whether node is the one our session carries or is
+// connecting to, and the session's dialer once it is up. Such a node must not
+// be handshaken by a probe: the server moves the peer to whoever handshook
+// last, and the session's replies would go to the probe.
+func (m *Manager) wireGuardSession(node ProxyConfig) (dialer wireGuardDialer, inUse bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.pendingProxy != nil && sameWireGuardNode(*m.pendingProxy, node) {
+		return nil, true
+	}
+	if !m.connected || m.proxy == nil || !sameWireGuardNode(*m.proxy, node) {
+		return nil, false
+	}
+	dialer, _ = m.engine.(wireGuardDialer)
+	return dialer, true
+}
+
+func sameWireGuardNode(a, b ProxyConfig) bool {
+	if a.ID != "" && a.ID == b.ID {
+		return true
+	}
+	return a.IP == b.IP && a.Port == b.Port
+}
+
+// startWireGuardProbe registers a handshaking probe of node, so that a connect
+// to the same node cancels it (see setPendingLocked). ok is false when the node
+// is already in use by the session.
+func (m *Manager) startWireGuardProbe(parent context.Context, node ProxyConfig) (ctx context.Context, done func(), ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.pendingProxy != nil && sameWireGuardNode(*m.pendingProxy, node) {
+		return nil, nil, false
+	}
+	if m.connected && m.proxy != nil && sameWireGuardNode(*m.proxy, node) {
+		return nil, nil, false
+	}
+	ctx, cancel := context.WithCancel(parent)
+	probe := &wireGuardProbe{node: node, cancel: cancel}
+	if m.wgProbes == nil {
+		m.wgProbes = make(map[*wireGuardProbe]struct{})
+	}
+	m.wgProbes[probe] = struct{}{}
+	return ctx, func() {
+		cancel()
+		m.mu.Lock()
+		delete(m.wgProbes, probe)
+		m.mu.Unlock()
+	}, true
+}
+
+type wireGuardProbe struct {
+	node   ProxyConfig
+	cancel context.CancelFunc
+}
+
+// cancelWireGuardProbesLocked stops every probe handshaking with node.
+// Caller holds m.mu.
+func (m *Manager) cancelWireGuardProbesLocked(node ProxyConfig) {
+	for probe := range m.wgProbes {
+		if sameWireGuardNode(probe.node, node) {
+			probe.cancel()
+		}
+	}
+}
+
+// pingBindIPv4 is the physical adapter's address during a tunnel session, so
+// a probe reaches the server instead of looping through our own TUN.
+func (m *Manager) pingBindIPv4() string {
+	m.mu.Lock()
+	tunnelSession := m.connected && m.mode == ProxyModeTunnel
+	m.mu.Unlock()
+	if !tunnelSession {
+		return ""
+	}
+	if local, err := pickLANBindIPv4(); err == nil && local != nil {
+		return local.String()
+	}
+	return ""
+}
+
+// pingWireGuardAuto measures a WireGuard/AmneziaWG node by ICMP when the host
+// answers it, otherwise by the only thing the server itself answers: a
+// handshake, or for the session's node a request through that session.
+func (m *Manager) pingWireGuardAuto(ip string, port int, proxyType string, node ProxyConfig, opts PingOptions, timeout time.Duration) PingResultDTO {
+	start := time.Now()
+	bindIPv4 := m.pingBindIPv4()
+
+	icmpBudget := timeout / 3
+	if icmpBudget > time.Second {
+		icmpBudget = time.Second
+	}
+	if host := resolvePingHostBounded(ip, pingResolveShare(timeout)); host != "" {
+		if ms, ok := pingICMPProbe(host, bindIPv4, icmpBudget); ok {
+			return PingResultDTO{Reachable: true, LatencyMs: ms, CheckType: "icmp"}
+		}
+	}
+	remaining := timeout - time.Since(start)
+
+	dialer, inUse := m.wireGuardSession(node)
+	if dialer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), remaining)
+		defer cancel()
+		testURL := opts.URL
+		if testURL == "" {
+			testURL = config.DefaultPingTestURL
+		}
+		ms, ok, reason := pingThroughLiveWireGuard(ctx, dialer, http.MethodHead, testURL, pingResolveShare(remaining))
+		return PingResultDTO{Reachable: ok, LatencyMs: ms, Reason: reason, CheckType: "tunnel_http"}
+	}
+	if inUse {
+		return m.pingWireGuardLiveness(ip, port, proxyType, remaining)
+	}
+
+	// The budget starts after the slot is won, as in pingViaNode.
+	pingEngineSem <- struct{}{}
+	defer func() { <-pingEngineSem }()
+	parent, cancel := context.WithTimeout(context.Background(), remaining)
+	defer cancel()
+	ctx, done, ok := m.startWireGuardProbe(parent, node)
+	if !ok {
+		return m.pingWireGuardLiveness(ip, port, proxyType, remaining)
+	}
+	defer done()
+	ms, ok, reason := pingWireGuardHandshakeProbe(ctx, node, bindIPv4)
+	return PingResultDTO{Reachable: ok, LatencyMs: ms, Reason: reason, CheckType: "handshake"}
+}
+
+// pingWireGuardLiveness is the probe for a node that may not be handshaken
+// while its session is still coming up: ICMP, else "did not refuse".
+func (m *Manager) pingWireGuardLiveness(ip string, port int, proxyType string, budget time.Duration) PingResultDTO {
+	return m.withDeadline(budget, "", func() PingResultDTO {
+		return m.pingDirect(ip, port, proxyType, time.Now().Add(budget))
+	})
 }
 
 // pingDirect is the original probe table: a measurement to the node's own
@@ -3269,6 +3430,7 @@ func (m *Manager) setPendingLocked(proxy ProxyConfig, mode ProxyMode) {
 	p := proxy
 	m.pendingProxy = &p
 	m.pendingMode = mode
+	m.cancelWireGuardProbesLocked(proxy)
 }
 
 func (m *Manager) clearPendingLocked() {
