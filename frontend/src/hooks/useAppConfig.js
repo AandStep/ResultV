@@ -21,6 +21,8 @@ import wailsAPI from "../utils/wailsAPI";
 import { detectCountry } from "../utils/network";
 import { mergeSubscriptionRefreshCountries } from "../utils/proxyParser";
 
+const RULES_PUSH_DEBOUNCE_MS = 400;
+
 const defaultSettings = {
     autostart: false,
     killswitch: false,
@@ -205,14 +207,24 @@ export const useAppConfig = (addLog) => {
     }, [addLog]);
 
     
+    // Переключатели подряд уходят одним UpdateRules: каждый вызов переподключает
+    // сессию. Таймер шлёт свежие правила и переживает пропуск syncRoutingLists.
+    const latestRulesRef = useRef(routingRules);
+    latestRulesRef.current = routingRules;
+    const rulesPushTimerRef = useRef(null);
     useEffect(() => {
         if (!isConfigLoaded) return;
         if (skipNextRulesPushRef.current) {
             skipNextRulesPushRef.current = false;
             return;
         }
-        wailsAPI.updateRules(routingRules).catch(err => console.error("UpdateRules err:", err));
+        clearTimeout(rulesPushTimerRef.current);
+        rulesPushTimerRef.current = setTimeout(() => {
+            rulesPushTimerRef.current = null;
+            wailsAPI.updateRules(latestRulesRef.current).catch(err => console.error("UpdateRules err:", err));
+        }, RULES_PUSH_DEBOUNCE_MS);
     }, [routingRules, isConfigLoaded]);
+    useEffect(() => () => clearTimeout(rulesPushTimerRef.current), []);
 
     // Reflects a fresh routingLists array (from AddRoutingList/UpdateRoutingList/
     // DeleteRoutingList/RefreshRoutingList or a post-mutation getConfig refetch)
