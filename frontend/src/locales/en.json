@@ -609,7 +609,10 @@
     "rekeyTimeout": "Rekey timeout",
     "rejectAfter": "Reject after",
     "keepaliveTimeout": "Keepalive timeout",
-    "maxHandshakes": "Max handshakes"
+    "maxHandshakes": "Max handshakes",
+    "awg31": "AWG 3.1",
+    "randomTrailers": "Random trailers",
+    "disableCookies": "Disable cookie replies"
   },
   "logs": {
     "title": "Event Logs",

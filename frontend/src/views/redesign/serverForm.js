@@ -85,7 +85,22 @@ export const AMNEZIA_AWG3_KEYS = [
   "max_handshake_attempts",
 ];
 
-const AMNEZIA_KEYS = [...AMNEZIA_INT_KEYS, ...AMNEZIA_STR_KEYS, ...AMNEZIA_AWG3_KEYS];
+/* Переключатели AmneziaWG 3.1. В форме это "on", "off" или "" — не задано:
+   незаданный ключ в конфиг не пишется, заданный "off" пишется как есть. */
+export const AMNEZIA_AWG31_KEYS = ["random_trailers", "disable_cookies"];
+/* Ручки, которые остаются полями и при вставке обфускации JSON-ом. */
+export const AMNEZIA_FIELD_KEYS = [...AMNEZIA_AWG3_KEYS, ...AMNEZIA_AWG31_KEYS];
+
+const AMNEZIA_KEYS = [...AMNEZIA_INT_KEYS, ...AMNEZIA_STR_KEYS, ...AMNEZIA_FIELD_KEYS];
+
+export const awgSwitchValue = (v) => {
+  if (v === true) return "on";
+  if (v === false) return "off";
+  const s = String(v ?? "").trim().toLowerCase();
+  if (["on", "true", "1", "yes", "enabled", "enable"].includes(s)) return "on";
+  if (["off", "false", "0", "no", "disabled", "disable"].includes(s)) return "off";
+  return String(v ?? "").trim();
+};
 
 const EMPTY_AMNEZIA = Object.fromEntries(AMNEZIA_KEYS.map((k) => [k, ""]));
 
@@ -109,7 +124,7 @@ export const amneziaFromObject = (raw) => {
   for (const k of AMNEZIA_KEYS) {
     const v = raw[k];
     if (v === undefined || v === null || v === "") continue;
-    out[k] = String(v);
+    out[k] = AMNEZIA_AWG31_KEYS.includes(k) ? awgSwitchValue(v) : String(v);
   }
   return out;
 };
@@ -122,7 +137,7 @@ export const amneziaToObject = (fields) => {
     const n = Number(s);
     if (Number.isFinite(n) && n >= 0) obj[k] = n;
   }
-  for (const k of [...AMNEZIA_STR_KEYS, ...AMNEZIA_AWG3_KEYS]) {
+  for (const k of [...AMNEZIA_STR_KEYS, ...AMNEZIA_FIELD_KEYS]) {
     const s = String(fields?.[k] ?? "").trim();
     if (s) obj[k] = s;
   }
@@ -203,7 +218,7 @@ function amneziaOf(wg) {
   if (!wg?.amneziaUseRaw) return amneziaToObject(wg?.amnezia);
 
   const awg3 = {};
-  for (const k of AMNEZIA_AWG3_KEYS) {
+  for (const k of AMNEZIA_FIELD_KEYS) {
     const v = String(wg?.amnezia?.[k] ?? "").trim();
     if (v) awg3[k] = v;
   }
