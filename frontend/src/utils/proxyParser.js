@@ -761,6 +761,9 @@ const parseWireGuardConf = (content) => {
         rejectaftertime: "reject_after_time",
         keepalivetimeout: "keepalive_timeout",
         maxhandshakeattempts: "max_handshake_attempts",
+        // AmneziaWG 3.1 switches (on/off).
+        randomtrailers: "random_trailers",
+        disablecookies: "disable_cookies",
     };
     for (const key of amneziaIntKeys) {
         if (iface[key] != null && String(iface[key]).trim() !== "") {

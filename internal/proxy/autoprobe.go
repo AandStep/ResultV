@@ -466,9 +466,9 @@ func probeTransport(e config.ProxyEntry, dialHost string) (rtt int64, ok bool, s
 		return rtt, ok, stage, reason
 	case "WIREGUARD", "AMNEZIAWG":
 		if lan {
-			rtt, ok, reason = pingWireGuardLANProbe(dialHost, e.Port)
+			rtt, ok, reason = pingWireGuardLANProbe(dialHost, e.Port, wireGuardProbeDefaultBudget)
 		} else {
-			rtt, ok, reason = pingWireGuardProbe(dialHost, e.Port)
+			rtt, ok, reason = pingWireGuardProbe(dialHost, e.Port, wireGuardProbeDefaultBudget)
 		}
 		return rtt, ok, "udp", reason
 	default:

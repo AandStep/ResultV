@@ -195,7 +195,7 @@ func PingProxyLANBind(host string, port int) (latencyMs int64, reachable bool, r
 	return elapsed.Milliseconds(), true, ""
 }
 
-func PingProxyUDPLANBind(host string, port int) (latencyMs int64, reachable bool, reason string) {
+func PingProxyUDPLANBind(host string, port int, wait time.Duration) (latencyMs int64, reachable bool, reason string) {
 	local, err := pickLANBindIPv4()
 	if err != nil {
 		return 0, false, "lan_bind_unavailable"
@@ -210,7 +210,7 @@ func PingProxyUDPLANBind(host string, port int) (latencyMs int64, reachable bool
 	}
 	defer conn.Close()
 
-	_ = conn.SetDeadline(time.Now().Add(1 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(wait))
 	start := time.Now()
 	_, _ = conn.Write([]byte{0x00})
 	buf := make([]byte, 1)
@@ -233,15 +233,16 @@ func PingProxyUDPLANBind(host string, port int) (latencyMs int64, reachable bool
 // the ICMP echo from the physical LAN adapter so the probe reaches the real
 // server instead of looping through the TUN default route. Falls back to the
 // LAN-bound UDP liveness probe when ICMP is blocked.
-func PingWireGuardLANBind(host string, port int) (latencyMs int64, reachable bool, reason string) {
+func PingWireGuardLANBind(host string, port int, budget time.Duration) (latencyMs int64, reachable bool, reason string) {
 	source := ""
 	if ip, err := pickLANBindIPv4(); err == nil && ip != nil {
 		source = ip.String()
 	}
-	if ms, ok := pingICMPHost(host, source); ok {
+	icmpWait, udpWait := wireGuardProbeBudgets(budget)
+	if ms, ok := pingICMPProbe(host, source, icmpWait); ok {
 		return ms, true, ""
 	}
-	return PingProxyUDPLANBind(host, port)
+	return PingProxyUDPLANBind(host, port, udpWait)
 }
 
 func PingHysteria2QUICLANBind(host string, port int) (latencyMs int64, reachable bool, reason, checkType string) {

@@ -271,7 +271,7 @@
     "subscription_user_agent": {
       "title": "User agent",
       "desc": "Empty — the default ResultV header.",
-      "placeholder": "ResultV/3.5.1/Windows/11_10.0.26200"
+      "placeholder": "ResultV/3.5.2/Windows/11_10.0.26200"
     },
     "dns": {
       "title": "DNS Servers",
@@ -609,7 +609,10 @@
     "rekeyTimeout": "Rekey timeout",
     "rejectAfter": "Reject after",
     "keepaliveTimeout": "Keepalive timeout",
-    "maxHandshakes": "Max handshakes"
+    "maxHandshakes": "Max handshakes",
+    "awg31": "AWG 3.1",
+    "randomTrailers": "Random trailers",
+    "disableCookies": "Disable cookie replies"
   },
   "logs": {
     "title": "Event Logs",

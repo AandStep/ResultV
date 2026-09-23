@@ -499,13 +499,12 @@ func (a *App) applyRoutingRulesAndReconnect(rr config.RoutingRules) error {
 	if a.proxy == nil {
 		return nil
 	}
-	status := a.proxy.GetStatus()
-	if !status.IsConnected || status.CurrentProxy == nil {
-		return nil
-	}
 	result := a.proxy.ReconnectWithRoutingRules(
 		a.ctx, proxy.RoutingMode(rr.Mode), rr.Whitelist, rr.AppWhitelist, rr.AppForceVPN,
 	)
+	if result.ErrorCode == proxy.ConnectErrorSuperseded {
+		return nil
+	}
 	if !result.Success {
 		return fmt.Errorf("%s", result.Message)
 	}

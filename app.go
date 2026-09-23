@@ -1418,12 +1418,8 @@ func (a *App) UpdateRules(rules config.RoutingRules) error {
 		rules.AdaptiveSmartBlockBrowserDoH,
 	)
 
-	status := a.proxy.GetStatus()
-	if !status.IsConnected || status.CurrentProxy == nil {
-		return nil
-	}
-
-	cur := *status.CurrentProxy
+	// Без проверки IsConnected: пока предыдущая перезагрузка переподключается,
+	// сессия формально лежит, и новые правила иначе потерялись бы.
 	result := a.proxy.ReconnectWithRoutingRules(
 		a.ctx,
 		proxy.RoutingMode(rules.Mode),
@@ -1431,7 +1427,11 @@ func (a *App) UpdateRules(rules config.RoutingRules) error {
 		rules.AppWhitelist,
 		rules.AppForceVPN,
 	)
-	if !result.Success {
+	if result.ErrorCode == proxy.ConnectErrorSuperseded || result.Message == "not connected" {
+		return nil
+	}
+	status := a.proxy.GetStatus()
+	if !result.Success || status.CurrentProxy == nil {
 		a.log.Error(fmt.Sprintf("Ошибка применения правил маршрутизации: %s", result.Message))
 		if a.tray != nil {
 			a.tray.SetDisconnected()
@@ -1441,6 +1441,7 @@ func (a *App) UpdateRules(rules config.RoutingRules) error {
 		return fmt.Errorf("%s", result.Message)
 	}
 
+	cur := *status.CurrentProxy
 	a.log.Info("[PROXY] Правила маршрутизации применены")
 	if a.tray != nil {
 		a.tray.SetConnectedProxy(a.resolveProxyID(cur), fmt.Sprintf("%s:%d", cur.IP, cur.Port))

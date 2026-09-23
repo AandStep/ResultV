@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -133,6 +134,9 @@ type Manager struct {
 	mode         ProxyMode
 	proxy        *ProxyConfig
 	pendingProxy *ProxyConfig
+	// wgProbes are the WireGuard handshake probes in flight; a connect to the
+	// same node cancels them (see startWireGuardProbe).
+	wgProbes map[*wireGuardProbe]struct{}
 	pendingMode  ProxyMode
 	killSwitch   bool
 	routingMode  RoutingMode
@@ -163,6 +167,15 @@ type Manager struct {
 	// so Disconnect/GetStatus can call CancelConnect without deadlock)
 	connectCancelMu sync.Mutex
 	connectCancel   context.CancelFunc
+
+	// Routing reloads: the newest one wins. reloadGen is bumped by every
+	// reload and by Connect/Disconnect; reloadMu runs reloads one at a time;
+	// reloadSession (guarded by mu) keeps the session a reload chain is
+	// rebuilding, because a superseded reload has already torn it down.
+	reloadGen     atomic.Uint64
+	reloadMu      sync.Mutex
+	reloadActive  atomic.Bool
+	reloadSession *reloadSession
 
 	// procTracker watches the OS process tree and feeds child-process exe
 	// names back into the engine's app whitelist whenever the user has
@@ -237,6 +250,7 @@ var pingHysteria2StrictProbe = PingHysteria2QUICStrict
 var pingHysteria2StrictLANProbe = PingHysteria2QUICStrictLANBind
 var pingWireGuardProbe = PingWireGuard
 var pingWireGuardLANProbe = PingWireGuardLANBind
+var pingWireGuardHandshakeProbe = pingWireGuardHandshake
 var probeHTTPThroughProxyProbe = probeHTTPThroughProxy
 var probeProxyHealthProbe = probeProxyHealth
 var probeTunnelHealthProbe = probeTunnelHealth
@@ -722,6 +736,8 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
 	dnsLeakProtection, enableIPv6 bool) ConnectResultDTO {
 
+	m.invalidateReloads()
+
 	dataDir := resultProxyDataDir()
 	usedCachedPin := false
 	if proxy.ResolvedIP == "" && proxy.IP != "" && net.ParseIP(proxy.IP) == nil {
@@ -959,6 +975,21 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		cancel()
 		m.setConnectCancel(nil)
 	}()
+	if reloadIsStale(ctx) {
+		cancel()
+	}
+	if connectCtx.Err() != nil {
+		m.mu.Lock()
+		m.clearPendingLocked()
+		m.mu.Unlock()
+		m.emitStatus()
+		return ConnectResultDTO{
+			Success:   false,
+			Message:   "Подключение отменено",
+			Reason:    "cancelled before engine start",
+			ErrorCode: "cancelled",
+		}
+	}
 
 	// A force-kill of a prior elevated tunnel session leaves an orphan
 	// "sing-tun Tunnel" adapter holding a stale default route. sing-box reuses
@@ -1455,214 +1486,6 @@ func dnsOverrideServers(custom []string) []string {
 	return out
 }
 
-// connectLocked is the internal reconnect path used by SetMode/ReconnectWithRoutingRules.
-// Caller must hold m.mu.
-func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode ProxyMode,
-	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
-	killSwitch bool,
-	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
-	dnsLeakProtection, enableIPv6 bool) ConnectResultDTO {
-	if m.connected {
-		m.disconnectLocked()
-	}
-
-	if proxy.SubscriptionURL != "" {
-		m.log.Info(fmt.Sprintf("[PROXY] Подключение (%s)...", proxy.Type))
-	} else {
-		m.log.Info(fmt.Sprintf("[PROXY] Подключение к %s:%d (%s)...", proxy.IP, proxy.Port, proxy.Type))
-	}
-
-	proxyTypeLower := strings.ToLower(strings.TrimSpace(proxy.Type))
-	isEndpointProtocol := proxyTypeLower == "wireguard" || proxyTypeLower == "amneziawg"
-
-	if isEndpointProtocol && mode == ProxyModeProxy {
-		return ConnectResultDTO{
-			Success:   false,
-			Message:   "Протоколы WireGuard и AmneziaWG не поддерживают Proxy-режим. Пожалуйста, включите Tunnel режим.",
-			Reason:    "proxy mode not supported for udp endpoints",
-			ErrorCode: "proxy_not_supported",
-		}
-	}
-
-	if mode == ProxyModeTunnel && !isAdminCheck() {
-		return ConnectResultDTO{
-			Success:      false,
-			Message:      "Для tunnel режима нужны права администратора",
-			TunnelFailed: true,
-			Reason:       "administrator privileges required",
-			ErrorCode:    ConnectErrorTunPrivileges,
-		}
-	}
-
-	actualLocalPort := localPort
-	if actualLocalPort == 0 {
-		actualLocalPort = getFreeLocalPort(14081)
-	}
-	listenHost := "127.0.0.1"
-	if listenLAN {
-		listenHost = "0.0.0.0"
-	}
-
-	effectiveAppWhitelist := m.effectiveAppWhitelist(appWhitelist)
-
-	m.warnProbeDomainOverlap(mode, proxyTypeLower, whitelist)
-
-	engineCfg := EngineConfig{
-		Proxy:             proxy,
-		Mode:              mode,
-		ListenAddr:        fmt.Sprintf("%s:%d", listenHost, actualLocalPort),
-		RoutingMode:       routingMode,
-		Whitelist:         whitelist,
-		AppWhitelist:      effectiveAppWhitelist,
-		AppForceVPN:       append([]string(nil), appForceVPN...),
-		KillSwitch:        killSwitch,
-		LocalPort:         actualLocalPort,
-		DNSServers:        dnsServers,
-		TunIPv4:           tunIPv4,
-		TunIPv6:           tunIPv6,
-		EnableIPv6:        enableIPv6,
-		TunStack:          m.tunStack,
-		DNSLeakProtection: dnsLeakProtection,
-		DataDir:           resultProxyDataDir(),
-	}
-	engineCfg.RoutingLists = m.routingListSpecsLocked()
-	engineCfg.RoutingOrder = m.routingOrderLocked()
-	m.applyAdaptiveSmartLocked(&engineCfg)
-	// Smart mode needs the censored block-list in the engine config so
-	// buildRoute can tunnel those domains/ranges while everything else goes
-	// direct. Only populated for Smart — Global/Whitelist ignore it.
-	if routingMode == ModeSmart && m.router != nil {
-		engineCfg.BlockedDomains = m.router.GetBlockedDomains()
-		engineCfg.BlockedCIDRs = m.router.GetBlockedCIDRs()
-		// Pre-compile the block-list into a binary rule-set so the engine does
-		// not have to parse and index ~78k domain_suffix entries out of the
-		// config on every connect. Not fatal: buildRoute falls back to inline.
-		if path, err := CompileSmartRuleSet(engineCfg.DataDir, engineCfg.BlockedDomains); err != nil {
-			m.log.Warning(fmt.Sprintf("[SMART] Rule-set не скомпилирован, используется инлайн-список: %v", err))
-		} else {
-			engineCfg.SmartRuleSetPath = path
-		}
-	}
-	if code, err := validateEngineConfig(engineCfg); err != nil {
-		return ConnectResultDTO{
-			Success:   false,
-			Message:   err.Error(),
-			Reason:    err.Error(),
-			ErrorCode: code,
-		}
-	}
-
-	m.setPendingLocked(proxy, mode)
-
-	// Pin the resolved server IP (see Connect for rationale) so sing-box and the
-	// kill switch never depend on a live resolver mid-session. Skip when already
-	// pinned (carried over from the prior connect via m.proxy) — a censored
-	// server's OS resolve only burns its timeout to fail.
-	if proxy.ResolvedIP == "" {
-		if resolved := resolvePinnedServerIP(proxy.IP); resolved != "" {
-			proxy.ResolvedIP = resolved
-			engineCfg.Proxy.ResolvedIP = resolved
-		}
-	}
-	// Full backend set for the hosts-pin (see ProxyConfig.ResolvedIPs) — lets a
-	// CDN/multi-IP server fail over across backends mid-session instead of dying
-	// with one. Empty for literals / censored resolver → falls back to the pin.
-	if len(proxy.ResolvedIPs) == 0 {
-		if all := resolveAllServerIPs(proxy.IP); len(all) > 0 {
-			proxy.ResolvedIPs = all
-			engineCfg.Proxy.ResolvedIPs = all
-		}
-	}
-
-	if startErr, tunnelFailed, reason, errorCode := m.startEngine(ctx, engineCfg); startErr != nil {
-		m.clearPendingLocked()
-		m.emitStatusLocked()
-		m.log.Error(fmt.Sprintf("[PROXY] Ошибка запуска движка: %v", startErr))
-		return ConnectResultDTO{
-			Success:      false,
-			Message:      fmt.Sprintf("Ошибка запуска: %v", startErr),
-			TunnelFailed: tunnelFailed,
-			Reason:       reason,
-			ErrorCode:    errorCode,
-		}
-	}
-
-	m.emitStatusLocked()
-
-	probeCtxLocked := ctx
-	if probeCtxLocked == nil {
-		probeCtxLocked = context.Background()
-	}
-	proxyExtraLocked := parseExtra(proxy)
-	if code, reason := runPostStartProbe(probeCtxLocked, proxyTypeLower, proxy.IP, proxy.Port, actualLocalPort, mode, proxyExtraLocked); code != "" {
-		_ = m.engine.Stop()
-		m.clearPendingLocked()
-		m.emitStatusLocked()
-		return ConnectResultDTO{
-			Success:   false,
-			Message:   reason,
-			Reason:    reason,
-			ErrorCode: code,
-		}
-	}
-
-	var gpoConflict bool
-	if mode == ProxyModeProxy && m.sysProxy != nil {
-		proxyAddr := fmt.Sprintf("127.0.0.1:%d", actualLocalPort)
-		if err := m.sysProxy.Set(proxyAddr, whitelist); err != nil {
-			m.log.Warning(fmt.Sprintf("[PROXY] Ошибка установки системного прокси: %v", err))
-		} else {
-			m.log.Success("[СИСТЕМА] Системный прокси применён успешно")
-		}
-	} else if mode == ProxyModeTunnel && proxyTypeLower == "amneziawg" && m.sysProxy != nil {
-		if err := m.sysProxy.Disable(); err != nil {
-			m.log.Warning(fmt.Sprintf("[СИСТЕМА] Ошибка сброса системного прокси для туннеля AMNEZIAWG: %v", err))
-		}
-	}
-
-	// See main Connect() for the full rationale. Tunnel + non-WG/AWG also
-	// needs adapter DNS unified to neutralize Smart Multi-Homed Resolution.
-	m.applySystemDNSOverride(isEndpointProtocol, dnsServers)
-	m.applyTunnelAdapterDNS(mode, tunIPv4)
-
-	m.captureLiveServerIP(&proxy)
-	m.clearPendingLocked()
-	m.connected = true
-	m.mode = mode
-	m.proxy = &proxy
-	m.killSwitch = killSwitch
-	m.routingMode = routingMode
-	m.whitelist = append([]string(nil), whitelist...)
-	m.appWhitelist = append([]string(nil), appWhitelist...)
-	m.appForceVPN = append([]string(nil), appForceVPN...)
-	m.connectedAt = time.Now()
-	m.prevUp = 0
-	m.prevDown = 0
-	m.lastTick = time.Time{}
-	m.localPort = actualLocalPort
-	m.listenLAN = listenLAN
-	m.dnsServers = dnsServers
-	m.tunIPv4 = tunIPv4
-	m.tunIPv6 = tunIPv6
-	m.enableIPv6 = enableIPv6
-	m.dnsLeakProtection = dnsLeakProtection
-	m.startProcessTrackerLocked()
-	m.startHealthWatchdogLocked(proxy, mode)
-	m.emitStatusLocked()
-
-	if proxy.SubscriptionURL != "" {
-		m.log.Success(fmt.Sprintf("[PROXY] Подключено (%s)", proxy.Type))
-	} else {
-		m.log.Success(fmt.Sprintf("[PROXY] Подключено к %s:%d (%s)", proxy.IP, proxy.Port, proxy.Type))
-	}
-
-	return ConnectResultDTO{
-		Success:     true,
-		Message:     "Подключено",
-		GPOConflict: gpoConflict,
-	}
-}
-
 func sleepOrCancel(ctx context.Context, d time.Duration) bool {
 	select {
 	case <-time.After(d):
@@ -1688,7 +1511,7 @@ const connectProbeInterval = 250 * time.Millisecond
 //   - Tunnel: the TUN device + routes need a moment, and SS AEAD does a
 //     key-exchange round-trip on the first request, so the budget matches the
 //     old general-tunnel total (~8s) to avoid false failures during warm-up.
-const (
+var (
 	connectProbeDeadlineProxy  = 5 * time.Second
 	connectProbeDeadlineTunnel = 8 * time.Second
 )
@@ -1704,7 +1527,11 @@ func pollProbe(ctx context.Context, deadline, interval time.Duration, attempt fu
 		if ctx.Err() != nil {
 			return false, true, "connect cancelled"
 		}
-		ok, reason = attempt()
+		var done bool
+		ok, reason, done = probeOrCancel(ctx, attempt)
+		if !done {
+			return false, true, "connect cancelled"
+		}
 		if ok {
 			return true, false, ""
 		}
@@ -1714,6 +1541,27 @@ func pollProbe(ctx context.Context, deadline, interval time.Duration, attempt fu
 		if !sleepOrCancel(ctx, interval) {
 			return false, true, "connect cancelled"
 		}
+	}
+}
+
+// probeOrCancel runs one probe attempt but returns as soon as ctx is cancelled;
+// done is false in that case. An abandoned attempt finishes on its own against
+// an engine that is already being stopped.
+func probeOrCancel(ctx context.Context, attempt func() (bool, string)) (ok bool, reason string, done bool) {
+	type outcome struct {
+		ok     bool
+		reason string
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		ok, reason := attempt()
+		ch <- outcome{ok, reason}
+	}()
+	select {
+	case r := <-ch:
+		return r.ok, r.reason, true
+	case <-ctx.Done():
+		return false, "connect cancelled", false
 	}
 }
 
@@ -1768,7 +1616,10 @@ func runPostStartProbe(ctx context.Context, proxyTypeLower, ip string, port, loc
 				return "cancelled", "connect cancelled"
 			}
 			if !ok {
-				quicOK, quicR := hysteria2LivenessProbe(mode, ip, port)
+				quicOK, quicR, done := probeOrCancel(ctx, func() (bool, string) { return hysteria2LivenessProbe(mode, ip, port) })
+				if !done {
+					return "cancelled", "connect cancelled"
+				}
 				if quicOK {
 					return "post_start_probe_failed", "proxy outbound misconfigured: " + r
 				}
@@ -1789,7 +1640,10 @@ func runPostStartProbe(ctx context.Context, proxyTypeLower, ip string, port, loc
 				return "cancelled", "connect cancelled"
 			}
 			if !ok {
-				quicOK, quicR := hysteria2LivenessProbe(mode, ip, port)
+				quicOK, quicR, done := probeOrCancel(ctx, func() (bool, string) { return hysteria2LivenessProbe(mode, ip, port) })
+				if !done {
+					return "cancelled", "connect cancelled"
+				}
 				if quicOK {
 					if r == "" {
 						r = "tunnel e2e probe failed"
@@ -1806,7 +1660,13 @@ func runPostStartProbe(ctx context.Context, proxyTypeLower, ip string, port, loc
 			}
 		}
 	case "wireguard", "amneziawg":
-		_, ok, r := pingWireGuardProbe(ip, port)
+		ok, r, done := probeOrCancel(ctx, func() (bool, string) {
+			_, ok, r := pingWireGuardProbe(ip, port, wireGuardProbeDefaultBudget)
+			return ok, r
+		})
+		if !done {
+			return "cancelled", "connect cancelled"
+		}
 		if !ok {
 			if r == "" {
 				r = "wireguard post-start probe failed"
@@ -1842,7 +1702,11 @@ func runPostStartProbe(ctx context.Context, proxyTypeLower, ip string, port, loc
 				if ctx.Err() != nil {
 					return "cancelled", "connect cancelled"
 				}
-				httpOK, httpReason = probeHTTPThroughProxyProbe(wgProxyAddr)
+				var done bool
+				httpOK, httpReason, done = probeOrCancel(ctx, func() (bool, string) { return probeHTTPThroughProxyProbe(wgProxyAddr) })
+				if !done {
+					return "cancelled", "connect cancelled"
+				}
 				if httpOK {
 					break
 				}
@@ -2160,6 +2024,7 @@ func isLocalDNSProbeFailure(reason string) bool {
 
 func (m *Manager) Disconnect() error {
 	disconnectStart := time.Now()
+	m.invalidateReloads()
 	// Abort any in-progress Connect so its goroutines stop. This MUST run before
 	// taking opMu: an in-flight Connect holds opMu across its slow phase, and
 	// cancelling its (cancellable) probe is what lets it release opMu promptly
@@ -2287,56 +2152,29 @@ func (m *Manager) disconnectLocked() error {
 }
 
 func (m *Manager) SetMode(mode ProxyMode) error {
-	// Serialize against Connect/Disconnect/ReconnectWithRoutingRules (see opMu).
-	m.opMu.Lock()
-	defer m.opMu.Unlock()
-
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if m.mode == mode {
+	live := m.connected || m.reloadSession != nil
+	if !live {
+		changed := m.mode != mode
+		m.mode = mode
+		m.mu.Unlock()
+		if changed {
+			m.log.Info(fmt.Sprintf("[PROXY] Режим изменен: %s", mode))
+		}
 		return nil
 	}
-
-	wasConnected := m.connected
-	proxy := m.proxy
-	killSwitch := m.killSwitch
-	routingMode := m.routingMode
-	whitelist := append([]string(nil), m.whitelist...)
-	appWhitelist := append([]string(nil), m.appWhitelist...)
-	appForceVPN := append([]string(nil), m.appForceVPN...)
-
-	if wasConnected {
-		m.disconnectLocked()
+	if m.connected && m.mode == mode && m.reloadSession == nil {
+		m.mu.Unlock()
+		return nil
 	}
+	m.mu.Unlock()
 
-	m.mode = mode
 	m.log.Info(fmt.Sprintf("[PROXY] Режим изменен: %s", mode))
-
-	if wasConnected && proxy != nil {
-		res := m.connectLocked(
-			m.ctx,
-			*proxy,
-			mode,
-			routingMode,
-			whitelist,
-			appWhitelist,
-			appForceVPN,
-			killSwitch,
-			m.localPort,
-			m.listenLAN,
-			m.dnsServers,
-			m.tunIPv4,
-			m.tunIPv6,
-			m.dnsLeakProtection,
-			m.enableIPv6,
-		)
-		if !res.Success {
-			return fmt.Errorf("reconnect after mode switch failed: %s", res.Message)
-		}
+	res := m.reload(m.ctx, func(s *reloadSession) { s.mode = mode })
+	if res.Success || res.ErrorCode == ConnectErrorSuperseded {
+		return nil
 	}
-
-	return nil
+	return fmt.Errorf("reconnect after mode switch failed: %s", res.Message)
 }
 
 func (m *Manager) SetTunStack(stack string) {
@@ -2420,30 +2258,133 @@ func (m *Manager) routingListSpecsLocked() []RoutingListSpec {
 }
 
 func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string) ConnectResultDTO {
-	// Serialize against Connect/Disconnect/SetMode (see opMu) — acquired before
-	// mu to preserve the opMu→mu lock ordering.
-	m.opMu.Lock()
-	defer m.opMu.Unlock()
+	return m.reload(ctx, func(s *reloadSession) {
+		s.routingMode = routingMode
+		s.whitelist = append([]string(nil), whitelist...)
+		s.appWhitelist = append([]string(nil), appWhitelist...)
+		s.appForceVPN = append([]string(nil), appForceVPN...)
+	})
+}
+
+// reload rebuilds the live session with change applied. The newest reload
+// wins: it cancels one still establishing, and changes accumulate in
+// reloadSession, so an overtaken reload's change is carried by the next one.
+func (m *Manager) reload(ctx context.Context, change func(*reloadSession)) ConnectResultDTO {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	gen := m.reloadGen.Add(1)
+	m.mu.Lock()
+	if m.connected && m.proxy != nil {
+		m.reloadSession = m.sessionSnapshotLocked()
+	}
+	if m.reloadSession != nil {
+		change(m.reloadSession)
+	}
+	m.mu.Unlock()
+	if m.reloadActive.Load() {
+		m.CancelConnect()
+	}
+
+	m.reloadMu.Lock()
+	defer m.reloadMu.Unlock()
+	if m.reloadGen.Load() != gen {
+		return supersededResult()
+	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if !m.connected || m.proxy == nil {
+	var sess reloadSession
+	if m.reloadSession != nil {
+		sess = *m.reloadSession
+	}
+	has := m.reloadSession != nil
+	m.mu.Unlock()
+	if !has {
 		return ConnectResultDTO{Success: true, Message: "not connected"}
 	}
 
-	p := *m.proxy
-	mode := m.mode
-	killSwitch := m.killSwitch
-	lPort := m.localPort
-	listenLAN := m.listenLAN
-	dServers := m.dnsServers
-	tIPv4 := m.tunIPv4
-	tIPv6 := m.tunIPv6
-	dnsLeak := m.dnsLeakProtection
-	enIPv6 := m.enableIPv6
+	m.reloadActive.Store(true)
+	stale := func() bool { return m.reloadGen.Load() != gen }
+	res := m.connectOnce(context.WithValue(ctx, reloadStaleKey{}, stale), sess.proxy, sess.mode,
+		sess.routingMode, sess.whitelist, sess.appWhitelist, sess.appForceVPN, sess.killSwitch,
+		sess.localPort, sess.listenLAN, sess.dnsServers, sess.tunIPv4, sess.tunIPv6,
+		sess.dnsLeak, sess.enableIPv6)
+	m.reloadActive.Store(false)
 
-	return m.connectLocked(ctx, p, mode, routingMode, whitelist, appWhitelist, appForceVPN, killSwitch, lPort, listenLAN, dServers, tIPv4, tIPv6, dnsLeak, enIPv6)
+	if stale() {
+		return supersededResult()
+	}
+	m.mu.Lock()
+	m.reloadSession = nil
+	m.mu.Unlock()
+	return res
+}
+
+func (m *Manager) sessionSnapshotLocked() *reloadSession {
+	return &reloadSession{
+		proxy:        *m.proxy,
+		mode:         m.mode,
+		routingMode:  m.routingMode,
+		whitelist:    append([]string(nil), m.whitelist...),
+		appWhitelist: append([]string(nil), m.appWhitelist...),
+		appForceVPN:  append([]string(nil), m.appForceVPN...),
+		killSwitch:   m.killSwitch,
+		localPort:    m.localPort,
+		listenLAN:    m.listenLAN,
+		dnsServers:   append([]string(nil), m.dnsServers...),
+		tunIPv4:      m.tunIPv4,
+		tunIPv6:      m.tunIPv6,
+		dnsLeak:      m.dnsLeakProtection,
+		enableIPv6:   m.enableIPv6,
+	}
+}
+
+type reloadSession struct {
+	proxy        ProxyConfig
+	mode         ProxyMode
+	routingMode  RoutingMode
+	whitelist    []string
+	appWhitelist []string
+	appForceVPN  []string
+	killSwitch   bool
+	localPort    int
+	listenLAN    bool
+	dnsServers   []string
+	tunIPv4      string
+	tunIPv6      string
+	dnsLeak      bool
+	enableIPv6   bool
+}
+
+type reloadStaleKey struct{}
+
+// reloadIsStale reports whether the reload that started this connect has
+// already been overtaken. Checked right after the connect publishes its cancel
+// func, so a newer reload can never slip between the two and miss it.
+func reloadIsStale(ctx context.Context) bool {
+	stale, ok := ctx.Value(reloadStaleKey{}).(func() bool)
+	return ok && stale()
+}
+
+// invalidateReloads makes every queued or running reload give up: the user's
+// own Connect or Disconnect decides the session from here on.
+func (m *Manager) invalidateReloads() {
+	m.reloadGen.Add(1)
+	m.mu.Lock()
+	m.reloadSession = nil
+	m.mu.Unlock()
+	if m.reloadActive.Load() {
+		m.CancelConnect()
+	}
+}
+
+func supersededResult() ConnectResultDTO {
+	return ConnectResultDTO{
+		Success:   false,
+		Message:   "Применение правил заменено более новым",
+		Reason:    "superseded",
+		ErrorCode: ConnectErrorSuperseded,
+	}
 }
 
 // SessionState reports whether a session is up and whether one is currently
@@ -2562,13 +2503,20 @@ func (m *Manager) Ping(ip string, port int, proxyType string, node ProxyConfig, 
 	switch opts.Type {
 	case config.PingTypeHTTPGet, config.PingTypeHTTPHead:
 		return m.pingViaNode(node, proxyType, opts, timeout)
+	case config.PingTypeAuto:
+		if isWireGuardType(proxyType) && strings.TrimSpace(node.IP) != "" {
+			return m.pingWireGuardAuto(ip, port, proxyType, node, opts, timeout)
+		}
+		return m.withDeadline(timeout, "", func() PingResultDTO {
+			return m.pingDirect(ip, port, proxyType, time.Now().Add(timeout))
+		})
 	case config.PingTypeICMP:
 		return m.withDeadline(timeout, "icmp", func() PingResultDTO {
 			return m.pingICMPOnly(ip, timeout)
 		})
 	default:
 		return m.withDeadline(timeout, "", func() PingResultDTO {
-			return m.pingDirect(ip, port, proxyType)
+			return m.pingDirect(ip, port, proxyType, time.Now().Add(timeout))
 		})
 	}
 }
@@ -2683,10 +2631,6 @@ func (m *Manager) pingViaNode(node ProxyConfig, proxyType string, opts PingOptio
 		checkType, method = "http_head", http.MethodHead
 	}
 
-	pt := strings.ToUpper(strings.TrimSpace(proxyType))
-	if pt == "WIREGUARD" || pt == "AMNEZIAWG" {
-		return PingResultDTO{Reachable: false, Reason: "unsupported_for_protocol", CheckType: checkType}
-	}
 	if strings.TrimSpace(node.IP) == "" {
 		return PingResultDTO{Reachable: false, Reason: "node_not_found", CheckType: checkType}
 	}
@@ -2694,23 +2638,37 @@ func (m *Manager) pingViaNode(node ProxyConfig, proxyType string, opts PingOptio
 		return PingResultDTO{Reachable: false, Reason: "bad_test_url", CheckType: checkType}
 	}
 
+	wireGuard := isWireGuardType(proxyType)
+	if wireGuard {
+		dialer, inUse := m.wireGuardSession(node)
+		if dialer != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+			ms, ok, reason := pingThroughLiveWireGuard(ctx, dialer, method, opts.URL, pingResolveShare(timeout))
+			return PingResultDTO{Reachable: ok, LatencyMs: ms, Reason: reason, CheckType: checkType}
+		}
+		if inUse {
+			return m.pingWireGuardLiveness(node.IP, node.Port, proxyType, timeout)
+		}
+	}
+
 	// The budget starts AFTER the slot is won. Counting queue time against it
 	// would report a false timeout for every node that merely waited its turn.
 	pingEngineSem <- struct{}{}
 	defer func() { <-pingEngineSem }()
 
-	bindIPv4 := ""
-	m.mu.Lock()
-	tunnelSession := m.connected && m.mode == ProxyModeTunnel
-	m.mu.Unlock()
-	if tunnelSession {
-		if local, err := pickLANBindIPv4(); err == nil && local != nil {
-			bindIPv4 = local.String()
-		}
-	}
+	bindIPv4 := m.pingBindIPv4()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	if wireGuard {
+		probeCtx, done, ok := m.startWireGuardProbe(ctx, node)
+		if !ok {
+			return m.pingWireGuardLiveness(node.IP, node.Port, proxyType, timeout)
+		}
+		defer done()
+		ctx = probeCtx
+	}
 
 	ms, ok, reason := pingThroughNodeProbe(ctx, node, method, opts.URL, bindIPv4)
 	if !ok {
@@ -2719,9 +2677,149 @@ func (m *Manager) pingViaNode(node ProxyConfig, proxyType string, opts PingOptio
 	return PingResultDTO{Reachable: true, LatencyMs: ms, CheckType: checkType}
 }
 
+func isWireGuardType(proxyType string) bool {
+	pt := strings.ToUpper(strings.TrimSpace(proxyType))
+	return pt == "WIREGUARD" || pt == "AMNEZIAWG"
+}
+
+// wireGuardSession reports whether node is the one our session carries or is
+// connecting to, and the session's dialer once it is up. Such a node must not
+// be handshaken by a probe: the server moves the peer to whoever handshook
+// last, and the session's replies would go to the probe.
+func (m *Manager) wireGuardSession(node ProxyConfig) (dialer wireGuardDialer, inUse bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.pendingProxy != nil && sameWireGuardNode(*m.pendingProxy, node) {
+		return nil, true
+	}
+	if !m.connected || m.proxy == nil || !sameWireGuardNode(*m.proxy, node) {
+		return nil, false
+	}
+	dialer, _ = m.engine.(wireGuardDialer)
+	return dialer, true
+}
+
+func sameWireGuardNode(a, b ProxyConfig) bool {
+	if a.ID != "" && a.ID == b.ID {
+		return true
+	}
+	return a.IP == b.IP && a.Port == b.Port
+}
+
+// startWireGuardProbe registers a handshaking probe of node, so that a connect
+// to the same node cancels it (see setPendingLocked). ok is false when the node
+// is already in use by the session.
+func (m *Manager) startWireGuardProbe(parent context.Context, node ProxyConfig) (ctx context.Context, done func(), ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.pendingProxy != nil && sameWireGuardNode(*m.pendingProxy, node) {
+		return nil, nil, false
+	}
+	if m.connected && m.proxy != nil && sameWireGuardNode(*m.proxy, node) {
+		return nil, nil, false
+	}
+	ctx, cancel := context.WithCancel(parent)
+	probe := &wireGuardProbe{node: node, cancel: cancel}
+	if m.wgProbes == nil {
+		m.wgProbes = make(map[*wireGuardProbe]struct{})
+	}
+	m.wgProbes[probe] = struct{}{}
+	return ctx, func() {
+		cancel()
+		m.mu.Lock()
+		delete(m.wgProbes, probe)
+		m.mu.Unlock()
+	}, true
+}
+
+type wireGuardProbe struct {
+	node   ProxyConfig
+	cancel context.CancelFunc
+}
+
+// cancelWireGuardProbesLocked stops every probe handshaking with node.
+// Caller holds m.mu.
+func (m *Manager) cancelWireGuardProbesLocked(node ProxyConfig) {
+	for probe := range m.wgProbes {
+		if sameWireGuardNode(probe.node, node) {
+			probe.cancel()
+		}
+	}
+}
+
+// pingBindIPv4 is the physical adapter's address during a tunnel session, so
+// a probe reaches the server instead of looping through our own TUN.
+func (m *Manager) pingBindIPv4() string {
+	m.mu.Lock()
+	tunnelSession := m.connected && m.mode == ProxyModeTunnel
+	m.mu.Unlock()
+	if !tunnelSession {
+		return ""
+	}
+	if local, err := pickLANBindIPv4(); err == nil && local != nil {
+		return local.String()
+	}
+	return ""
+}
+
+// pingWireGuardAuto measures a WireGuard/AmneziaWG node by ICMP when the host
+// answers it, otherwise by the only thing the server itself answers: a
+// handshake, or for the session's node a request through that session.
+func (m *Manager) pingWireGuardAuto(ip string, port int, proxyType string, node ProxyConfig, opts PingOptions, timeout time.Duration) PingResultDTO {
+	start := time.Now()
+	bindIPv4 := m.pingBindIPv4()
+
+	icmpBudget := timeout / 3
+	if icmpBudget > time.Second {
+		icmpBudget = time.Second
+	}
+	if host := resolvePingHostBounded(ip, pingResolveShare(timeout)); host != "" {
+		if ms, ok := pingICMPProbe(host, bindIPv4, icmpBudget); ok {
+			return PingResultDTO{Reachable: true, LatencyMs: ms, CheckType: "icmp"}
+		}
+	}
+	remaining := timeout - time.Since(start)
+
+	dialer, inUse := m.wireGuardSession(node)
+	if dialer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), remaining)
+		defer cancel()
+		testURL := opts.URL
+		if testURL == "" {
+			testURL = config.DefaultPingTestURL
+		}
+		ms, ok, reason := pingThroughLiveWireGuard(ctx, dialer, http.MethodHead, testURL, pingResolveShare(remaining))
+		return PingResultDTO{Reachable: ok, LatencyMs: ms, Reason: reason, CheckType: "tunnel_http"}
+	}
+	if inUse {
+		return m.pingWireGuardLiveness(ip, port, proxyType, remaining)
+	}
+
+	// The budget starts after the slot is won, as in pingViaNode.
+	pingEngineSem <- struct{}{}
+	defer func() { <-pingEngineSem }()
+	parent, cancel := context.WithTimeout(context.Background(), remaining)
+	defer cancel()
+	ctx, done, ok := m.startWireGuardProbe(parent, node)
+	if !ok {
+		return m.pingWireGuardLiveness(ip, port, proxyType, remaining)
+	}
+	defer done()
+	ms, ok, reason := pingWireGuardHandshakeProbe(ctx, node, bindIPv4)
+	return PingResultDTO{Reachable: ok, LatencyMs: ms, Reason: reason, CheckType: "handshake"}
+}
+
+// pingWireGuardLiveness is the probe for a node that may not be handshaken
+// while its session is still coming up: ICMP, else "did not refuse".
+func (m *Manager) pingWireGuardLiveness(ip string, port int, proxyType string, budget time.Duration) PingResultDTO {
+	return m.withDeadline(budget, "", func() PingResultDTO {
+		return m.pingDirect(ip, port, proxyType, time.Now().Add(budget))
+	})
+}
+
 // pingDirect is the original probe table: a measurement to the node's own
 // address, with the probe picked by protocol. It is what PingTypeAuto runs.
-func (m *Manager) pingDirect(ip string, port int, proxyType string) PingResultDTO {
+func (m *Manager) pingDirect(ip string, port int, proxyType string, deadline time.Time) PingResultDTO {
 	m.mu.Lock()
 	mode := m.mode
 	connected := m.connected
@@ -2750,7 +2848,7 @@ func (m *Manager) pingDirect(ip string, port int, proxyType string) PingResultDT
 		if isHysteria2 {
 			latency, reachable, reason, checkType = pingHysteria2LANProbe(dialHost, port)
 		} else if isWireGuard {
-			latency, reachable, reason = pingWireGuardLANProbe(dialHost, port)
+			latency, reachable, reason = pingWireGuardLANProbe(dialHost, port, time.Until(deadline))
 			checkType = "udp_lan_bind"
 		} else {
 			latency, reachable, reason = pingLANProbe(dialHost, port)
@@ -2759,7 +2857,7 @@ func (m *Manager) pingDirect(ip string, port int, proxyType string) PingResultDT
 	} else if isHysteria2 {
 		latency, reachable, reason, checkType = pingHysteria2Probe(dialHost, port)
 	} else if isWireGuard {
-		latency, reachable, reason = pingWireGuardProbe(dialHost, port)
+		latency, reachable, reason = pingWireGuardProbe(dialHost, port, time.Until(deadline))
 		checkType = "udp"
 	} else {
 		latency, reachable, reason = pingTCPProbe(dialHost, port)
@@ -3080,7 +3178,7 @@ func (m *Manager) probeProxyAlive(proxy ProxyConfig, mode ProxyMode) (bool, stri
 			_, reachable, reason, _ := pingHysteria2LANProbe(proxy.IP, proxy.Port)
 			return reachable, reason
 		case "WIREGUARD", "AMNEZIAWG":
-			_, reachable, reason := pingWireGuardLANProbe(proxy.IP, proxy.Port)
+			_, reachable, reason := pingWireGuardLANProbe(proxy.IP, proxy.Port, wireGuardProbeDefaultBudget)
 			return reachable, reason
 		default:
 			_, reachable, reason := pingLANProbe(proxy.IP, proxy.Port)
@@ -3093,7 +3191,7 @@ func (m *Manager) probeProxyAlive(proxy ProxyConfig, mode ProxyMode) (bool, stri
 		_, reachable, reason, _ := pingHysteria2Probe(proxy.IP, proxy.Port)
 		return reachable, reason
 	case "WIREGUARD", "AMNEZIAWG":
-		_, reachable, reason := pingWireGuardProbe(proxy.IP, proxy.Port)
+		_, reachable, reason := pingWireGuardProbe(proxy.IP, proxy.Port, wireGuardProbeDefaultBudget)
 		return reachable, reason
 	default:
 		_, reachable, reason := pingTCPProbe(proxy.IP, proxy.Port)
@@ -3332,6 +3430,7 @@ func (m *Manager) setPendingLocked(proxy ProxyConfig, mode ProxyMode) {
 	p := proxy
 	m.pendingProxy = &p
 	m.pendingMode = mode
+	m.cancelWireGuardProbesLocked(proxy)
 }
 
 func (m *Manager) clearPendingLocked() {

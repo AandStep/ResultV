@@ -97,3 +97,19 @@ func TestBuildProxyOutboundHysteria2_DefaultALPNAndSNI(t *testing.T) {
 		t.Fatalf("unexpected default ALPN: %+v", out.TLS.ALPN)
 	}
 }
+
+// Рукопожатие hy2 общее для всех соединений сессии. При встроенных 15 с
+// один потерянный сетью UDP-поток держит всю сессию дольше пробы подключения;
+// короткий тайм-аут отпускает его, и следующее соединение открывает новый.
+func TestBuildProxyOutboundHysteria2_ShortHandshakeTimeout(t *testing.T) {
+	for _, extra := range []map[string]interface{}{
+		{"password": "secret"},
+		{"password": "secret", "sni": "hy.example.com"},
+	} {
+		extraRaw, _ := json.Marshal(extra)
+		out := buildProxyOutbound(ProxyConfig{IP: "hy.example.com", Port: 443, Type: "hysteria2", Extra: extraRaw})
+		if out.TLS == nil || out.TLS.HandshakeTimeout != hysteria2HandshakeTimeout {
+			t.Fatalf("extra %v: handshake_timeout = %+v, want %q", extra, out.TLS, hysteria2HandshakeTimeout)
+		}
+	}
+}

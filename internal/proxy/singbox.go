@@ -37,6 +37,7 @@ import (
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/bufio"
 	singjson "github.com/sagernet/sing/common/json"
+	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
 
@@ -715,6 +716,22 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 	e.boxCtx = boxCtx
 	e.coreLog = coreLog
 	return nil
+}
+
+// DialWireGuard dials through the live session's WireGuard endpoint directly,
+// past the route rules, so a measurement cannot be sent direct by Smart mode.
+func (e *SingBoxEngine) DialWireGuard(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	e.mu.Lock()
+	boxCtx := e.boxCtx
+	e.mu.Unlock()
+	if boxCtx == nil {
+		return nil, errors.New("engine is not running")
+	}
+	endpoint, err := wgEndpointFrom(boxCtx)
+	if err != nil {
+		return nil, err
+	}
+	return endpoint.DialContext(ctx, network, destination)
 }
 
 // closeTrackedConnections closes every connection the core is tracking, before

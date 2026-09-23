@@ -74,14 +74,14 @@ func TestProbeTransport_UsesLANBindForHysteria2AndWireGuard(t *testing.T) {
 		t.Error("HYSTERIA2: ожидали LAN-bind пробу")
 		return 0, false, "", ""
 	}
-	pingWireGuardProbe = func(_ string, _ int) (int64, bool, string) {
+	pingWireGuardProbe = func(_ string, _ int, _ time.Duration) (int64, bool, string) {
 		t.Error("WIREGUARD: ожидали LAN-bind пробу")
 		return 0, false, ""
 	}
 	pingHysteria2StrictLANProbe = func(_ string, _ int, _ string) (int64, bool, string, string) {
 		return 11, true, "", "quic_handshake_lan_bind"
 	}
-	pingWireGuardLANProbe = func(_ string, _ int) (int64, bool, string) { return 22, true, "" }
+	pingWireGuardLANProbe = func(_ string, _ int, _ time.Duration) (int64, bool, string) { return 22, true, "" }
 
 	hyNode := config.ProxyEntry{IP: "1.1.1.1", Port: 443, Type: "HYSTERIA2"}
 	if rtt, ok, stage, _ := probeTransport(hyNode, hyNode.IP); !ok || rtt != 11 || stage != "quic_handshake_lan_bind" {

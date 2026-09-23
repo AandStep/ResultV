@@ -245,3 +245,49 @@ func TestProbeHTTPThroughProxy_RejectsGatewayErrorFromLocalInbound(t *testing.T)
 		t.Fatal("ожидали непустую причину отказа")
 	}
 }
+
+// Отмена не ждёт попытку, которая уже висит: иначе остановка подключения
+// стоит лишний тайм-аут пробы.
+func TestPollProbe_CancelInterruptsHangingAttempt(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	start := time.Now()
+	ok, cancelled, _ := pollProbe(ctx, 8*time.Second, 50*time.Millisecond, func() (bool, string) {
+		time.Sleep(2 * time.Second)
+		return false, "timeout"
+	})
+	if ok || !cancelled {
+		t.Fatalf("ожидали отмену, получили ok=%v cancelled=%v", ok, cancelled)
+	}
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("отмена ждала висящую попытку: %v", elapsed)
+	}
+}
+
+// Проба живости hy2 после неудачной e2e-пробы тоже не держит отменённое
+// подключение.
+func TestRunPostStartProbe_Hysteria2CancelInterruptsLivenessProbe(t *testing.T) {
+	oldHTTP, oldLAN := probeHTTPThroughProxyProbe, pingHysteria2LANProbe
+	defer func() { probeHTTPThroughProxyProbe, pingHysteria2LANProbe = oldHTTP, oldLAN }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	probeHTTPThroughProxyProbe = func(string) (bool, string) { return false, "timeout" }
+	pingHysteria2LANProbe = func(string, int) (int64, bool, string, string) {
+		cancel()
+		time.Sleep(2 * time.Second)
+		return 0, true, "", ""
+	}
+
+	prevDeadline := connectProbeDeadlineTunnel
+	connectProbeDeadlineTunnel = 100 * time.Millisecond
+	defer func() { connectProbeDeadlineTunnel = prevDeadline }()
+
+	start := time.Now()
+	code, _ := runPostStartProbe(ctx, "hysteria2", "1.2.3.4", 443, 1080, ProxyModeTunnel)
+	if code != "cancelled" {
+		t.Fatalf("ожидали cancelled, получили %q", code)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("отмена ждала пробу живости: %v", elapsed)
+	}
+}

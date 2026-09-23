@@ -71,7 +71,8 @@ func embeddedRoutingListDeclarations(embedded map[string]proxy.ParsedRoutingList
 //
 // `activate` marks the profile as the one in force. True when the user just
 // said yes to this subscription's routing; false on a background refresh, which
-// must not quietly take over from whatever they chose since.
+// must not quietly take over from whatever they chose since — and must not
+// restart a live session either: the refreshed rules apply on the next connect.
 func (a *App) syncSubscriptionRoutingProfile(
 	subID string,
 	provided []config.RoutingList,
@@ -151,7 +152,7 @@ func (a *App) syncSubscriptionRoutingProfile(
 			return err
 		}
 		if droppedLegacy {
-			return a.applyRoutingRulesAndReconnect(a.config.GetConfig().RoutingRules)
+			return a.applySubscriptionRouting(activate)
 		}
 		return nil
 	}
@@ -163,7 +164,17 @@ func (a *App) syncSubscriptionRoutingProfile(
 	if _, cerr := a.compileRoutingProfile(saved, false); cerr != nil {
 		a.log.Warning(fmt.Sprintf("Маршрутизация подписки %q сохранена, но правила не собраны: %v", sub.Name, cerr))
 	}
-	return a.applyRoutingRulesAndReconnect(a.config.GetConfig().RoutingRules)
+	return a.applySubscriptionRouting(activate)
+}
+
+// applySubscriptionRouting hands the stored rules to the engine. Only a user
+// decision reconnects; a refresh leaves them for the next connect.
+func (a *App) applySubscriptionRouting(reconnect bool) error {
+	if reconnect {
+		return a.applyRoutingRulesAndReconnect(a.config.GetConfig().RoutingRules)
+	}
+	a.syncRoutingListSpecs()
+	return nil
 }
 
 // addProfileTokens appends inline rules to the right pair of fields.

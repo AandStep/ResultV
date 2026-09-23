@@ -34,7 +34,7 @@ import { useEffect, useState } from "react";
 import { Button, Dialog, Field, Select, Textarea, Tumbler } from "../../components/kit";
 import { VPN_NETWORK_OPTIONS } from "../../utils/proxyParser";
 import {
-  AMNEZIA_AWG3_KEYS,
+  AMNEZIA_FIELD_KEYS,
   AMNEZIA_INT_KEYS,
   AMNEZIA_STR_KEYS,
   PLAIN_TYPES,
@@ -100,6 +100,9 @@ export const SERVER_EDITOR_TEXT = {
   rejectAfter: "Reject after",
   keepaliveTimeout: "Keepalive timeout",
   maxHandshakes: "Max handshakes",
+  awg31: "AWG 3.1",
+  randomTrailers: "Случайные хвосты",
+  disableCookies: "Отключить cookie-ответы",
 };
 
 /* Тайминги AWG 3.0 идут парами «ключ — подпись»: подписи у них длиннее
@@ -115,7 +118,7 @@ const AWG3_TIMINGS = [
 /*
  * Что именно заменяет собой JSON. Только классический набор — junk-пакеты,
  * размеры, заголовки и signature-пакеты: у провайдеров обфускация приходит
- * такой, и вставляют её целиком. Ручки AWG 3.0 в него не входят, они остаются
+ * такой, и вставляют её целиком. Ручки AWG 3.0 и 3.1 в него не входят, они остаются
  * полями в обоих видах.
  */
 const AMNEZIA_JSON_KEYS = [...AMNEZIA_INT_KEYS, ...AMNEZIA_STR_KEYS];
@@ -182,6 +185,11 @@ export default function ServerEditor({
     const { value } = event.target;
     setForm((f) => ({ ...f, tf: { ...f.tf, [key]: value } }));
   };
+  const flagAm = (key) => (on) =>
+    setForm((f) => ({
+      ...f,
+      wg: { ...f.wg, amnezia: { ...f.wg.amnezia, [key]: on ? "on" : "off" } },
+    }));
   const setAm = (key) => (event) => {
     const { value } = event.target;
     setForm((f) => ({
@@ -223,7 +231,7 @@ export default function ServerEditor({
     });
 
   /*
-   * Вставленный блок мог прийти с ручками AWG 3.0 внутри. Они переезжают в свои
+   * Вставленный блок мог прийти с ручками AWG 3.0 и 3.1 внутри. Они переезжают в свои
    * поля, а из текста уходят: иначе одно и то же значение стояло бы в двух
    * местах сразу, и было бы непонятно, какое из них поедет в конфиг.
    *
@@ -241,7 +249,7 @@ export default function ServerEditor({
         return f;
       }
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return f;
-      const moved = AMNEZIA_AWG3_KEYS.filter((k) => parsed[k] != null && parsed[k] !== "");
+      const moved = AMNEZIA_FIELD_KEYS.filter((k) => parsed[k] != null && parsed[k] !== "");
       if (moved.length === 0) return f;
 
       const amnezia = { ...f.wg.amnezia };
@@ -543,6 +551,24 @@ export default function ServerEditor({
                   onChange={setAm(key)}
                 />
               ))}
+            </Grid>
+
+            <div className="rv-server-editor__caption">
+              <span>{text.awg31}</span>
+            </div>
+            <Grid>
+              <Row label={text.randomTrailers}>
+                <Tumbler
+                  checked={form.wg.amnezia.random_trailers === "on"}
+                  onChange={flagAm("random_trailers")}
+                />
+              </Row>
+              <Row label={text.disableCookies}>
+                <Tumbler
+                  checked={form.wg.amnezia.disable_cookies === "on"}
+                  onChange={flagAm("disable_cookies")}
+                />
+              </Row>
             </Grid>
           </>
         )}

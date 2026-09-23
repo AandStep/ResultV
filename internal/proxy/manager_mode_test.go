@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"resultproxy-wails/internal/logger"
 )
@@ -327,7 +328,7 @@ func TestConnect_WireGuardTunnelFailsWhenE2EProbeFails(t *testing.T) {
 	prevWG := pingWireGuardProbe
 	prevHTTP := probeHTTPThroughProxyProbe
 	isAdminCheck = func() bool { return true }
-	pingWireGuardProbe = func(ip string, port int) (int64, bool, string) {
+	pingWireGuardProbe = func(ip string, port int, _ time.Duration) (int64, bool, string) {
 		return 5, true, ""
 	}
 	probeHTTPThroughProxyProbe = func(string) (bool, string) { return false, "timeout" }
@@ -378,7 +379,7 @@ func TestConnect_WireGuardPostStartProbeSuccess(t *testing.T) {
 	prevWG := pingWireGuardProbe
 	prevHTTP := probeHTTPThroughProxyProbe
 	isAdminCheck = func() bool { return true }
-	pingWireGuardProbe = func(ip string, port int) (int64, bool, string) {
+	pingWireGuardProbe = func(ip string, port int, _ time.Duration) (int64, bool, string) {
 		return 5, true, ""
 	}
 	probeHTTPThroughProxyProbe = func(string) (bool, string) { return true, "" }
@@ -423,7 +424,7 @@ func TestConnect_AmneziaWGTunnelFailsWhenE2EProbeFails(t *testing.T) {
 	prevWG := pingWireGuardProbe
 	prevHTTP := probeHTTPThroughProxyProbe
 	isAdminCheck = func() bool { return true }
-	pingWireGuardProbe = func(ip string, port int) (int64, bool, string) {
+	pingWireGuardProbe = func(ip string, port int, _ time.Duration) (int64, bool, string) {
 		return 5, true, ""
 	}
 	httpCalls := 0
@@ -478,7 +479,7 @@ func TestConnect_WireGuardTunnelE2EProbeRetriesThreeTimes(t *testing.T) {
 	prevWG := pingWireGuardProbe
 	prevHTTP := probeHTTPThroughProxyProbe
 	isAdminCheck = func() bool { return true }
-	pingWireGuardProbe = func(ip string, port int) (int64, bool, string) {
+	pingWireGuardProbe = func(ip string, port int, _ time.Duration) (int64, bool, string) {
 		return 5, true, ""
 	}
 	httpCalls := 0
@@ -622,7 +623,7 @@ func TestConnect_AmneziaWGTunnelStopsSessionWhenE2EProbeFails(t *testing.T) {
 	prevWG := pingWireGuardProbe
 	prevHTTP := probeHTTPThroughProxyProbe
 	isAdminCheck = func() bool { return true }
-	pingWireGuardProbe = func(ip string, port int) (int64, bool, string) {
+	pingWireGuardProbe = func(ip string, port int, _ time.Duration) (int64, bool, string) {
 		return 5, true, ""
 	}
 	httpCalls := 0
@@ -680,7 +681,7 @@ func TestConnect_AmneziaWGTunnelClearsSystemProxy(t *testing.T) {
 	prevWG := pingWireGuardProbe
 	prevHTTP := probeHTTPThroughProxyProbe
 	isAdminCheck = func() bool { return true }
-	pingWireGuardProbe = func(ip string, port int) (int64, bool, string) {
+	pingWireGuardProbe = func(ip string, port int, _ time.Duration) (int64, bool, string) {
 		return 5, true, ""
 	}
 	probeHTTPThroughProxyProbe = func(string) (bool, string) { return true, "" }
