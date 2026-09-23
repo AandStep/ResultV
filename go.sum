@@ -523,8 +523,6 @@ github.com/shtorm-7/sing-vmess v0.2.8-extended-1.0.0 h1:OjvqZOhYSi9eIJGYC0iPDPqv
 github.com/shtorm-7/sing-vmess v0.2.8-extended-1.0.0/go.mod h1:P11scgTxMxVVQ8dlM27yNm3Cro40mD0+gHbnqrNGDuY=
 github.com/shtorm-7/tailscale v1.102.1-sing-box-1.14-mod.5-extended-1.0.3 h1:cji5tRY667BMIwlzHvuIf51J2H/c8WPZYoOFNDtbbsA=
 github.com/shtorm-7/tailscale v1.102.1-sing-box-1.14-mod.5-extended-1.0.3/go.mod h1:+1R9TnmCDbxb7h7ZOBKxi5UI6aWf+polOO/fc0WB/4o=
-github.com/shtorm-7/wireguard-go v0.0.6-extended-1.6.1 h1:aPKSNxyu5VGqSLvDKoNRP/lnSCxS2sRKuzxDBWX99wo=
-github.com/shtorm-7/wireguard-go v0.0.6-extended-1.6.1/go.mod h1:1VZmkU7yPAZVE0XKufUqqAhEY1RnWUcyZLmry85y+7A=
 github.com/shtorm-7/workerpool v0.5.0 h1:NPZuNgyH0EUm4aQsTL09xR1iV+7GCFw6jX9Z4aAVp2s=
 github.com/shtorm-7/workerpool v0.5.0/go.mod h1:NI0pUZgmGu0BdKO9j3mct1DNZmgXbyTS9foorljdH6E=
 github.com/smallstep/pkcs7 v0.1.1 h1:x+rPdt2W088V9Vkjho4KtoggyktZJlMduZAtRHm68LU=

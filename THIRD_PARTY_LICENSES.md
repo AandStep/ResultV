@@ -17,6 +17,19 @@ The vendored copy has been modified by ResultV. Original package comment:
 
 ---
 
+## shtorm-7/wireguard-go
+
+- **Source**: https://github.com/shtorm-7/wireguard-go v0.0.6-extended-1.6.1
+- **Location**: `third_party/wireguard-go/` (wired in via `replace` in `go.mod`)
+- **License**: MIT (see `third_party/wireguard-go/LICENSE`)
+
+The vendored copy has been modified by ResultV: handshake messages are sliced
+to their own size before MACs are added (`device/send.go`), so random trailers
+no longer overwrite MAC1/MAC2. `device/padding_test.go` was dropped because it
+no longer compiles against the fork. Drop the copy once upstream ships the fix.
+
+---
+
 ## Go module dependencies
 
 All other dependencies are consumed as normal Go modules and are not

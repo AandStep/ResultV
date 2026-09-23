@@ -270,7 +270,7 @@ require (
 
 replace github.com/sagernet/sing => github.com/shtorm-7/sing v0.9.0-beta.4-extended-1.2.1
 
-replace github.com/sagernet/wireguard-go => github.com/shtorm-7/wireguard-go v0.0.6-extended-1.6.1
+replace github.com/sagernet/wireguard-go => ./third_party/wireguard-go
 
 replace github.com/sagernet/tailscale => github.com/shtorm-7/tailscale v1.102.1-sing-box-1.14-mod.5-extended-1.0.3
 
