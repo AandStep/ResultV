@@ -21,6 +21,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 )
 
 func vlessProbeNode() ProxyConfig {
@@ -171,3 +172,57 @@ func TestClassifyPingFetchReportsTransportError(t *testing.T) {
 // session's real events. The fix is the absent parameter, not a quieter call
 // site: with no logger in the signature there is nothing to pass by mistake.
 var _ func(context.Context, ProxyConfig, string, string, string) (int64, bool, string) = pingThroughNode
+
+// Свежее ядро рвёт первое hy2-соединение стартовым ResetNetwork («network
+// changed» через пару миллисекунд), и без повтора hy2-узел в пинге всегда
+// выглядел мёртвым.
+func TestFetchPingRetriesInstantFailureOnce(t *testing.T) {
+	calls := 0
+	ms, ok, reason := fetchPing(context.Background(), func() (time.Duration, bool, string) {
+		calls++
+		if calls == 1 {
+			return 2 * time.Millisecond, false, "connection_closed"
+		}
+		return 180 * time.Millisecond, true, ""
+	})
+	if !ok || calls != 2 || ms != 180 {
+		t.Fatalf("want retry and second latency: ok=%v calls=%d ms=%d reason=%q", ok, calls, ms, reason)
+	}
+}
+
+func TestFetchPingGivesUpAfterBudget(t *testing.T) {
+	calls := 0
+	_, ok, reason := fetchPing(context.Background(), func() (time.Duration, bool, string) {
+		calls++
+		return 3 * time.Second, false, "timeout"
+	})
+	if ok || calls != pingAttempts || reason != "timeout" {
+		t.Fatalf("dead node: ok=%v calls=%d reason=%q", ok, calls, reason)
+	}
+}
+
+func TestFetchPingStopsWhenContextEnds(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := 0
+	_, ok, _ := fetchPing(ctx, func() (time.Duration, bool, string) {
+		calls++
+		cancel()
+		return time.Second, false, "timeout"
+	})
+	if ok || calls != 1 {
+		t.Fatalf("no retry past the ping timeout: ok=%v calls=%d", ok, calls)
+	}
+}
+
+func TestBuildPingProbeConfigShortensHysteria2Handshake(t *testing.T) {
+	extra, _ := json.Marshal(map[string]interface{}{"password": "x"})
+	cfg, err := BuildPingProbeConfig(ProxyConfig{IP: "1.2.3.4", Port: 443, Type: "hysteria2", Extra: extra}, 14999, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range cfg.Outbounds {
+		if o.Tag == "proxy" && (o.TLS == nil || o.TLS.HandshakeTimeout != pingHysteria2HandshakeTimeout) {
+			t.Fatalf("ping engine hy2 handshake_timeout = %+v", o.TLS)
+		}
+	}
+}

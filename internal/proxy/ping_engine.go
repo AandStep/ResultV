@@ -52,6 +52,10 @@ const pingProbeInboundTag = "ping-probe-in"
 // next to that risk.
 //
 // bindIPv4, when non-empty, pins the node dial to the physical adapter.
+// pingHysteria2HandshakeTimeout leaves room for a second flow inside the default
+// 3 s ping budget when the network drops the first one.
+const pingHysteria2HandshakeTimeout = "1500ms"
+
 func BuildPingProbeConfig(proxy ProxyConfig, listenPort int, bindIPv4 string) (SingBoxConfig, error) {
 	// The probe engine's DNS block below has the same shape tunnel mode builds —
 	// the hosts record when the server is pinned, the system resolver when it is
@@ -65,6 +69,9 @@ func BuildPingProbeConfig(proxy ProxyConfig, listenPort int, bindIPv4 string) (S
 		found = true
 		if bindIPv4 != "" {
 			outbounds[i].Inet4BindAddress = bindIPv4
+		}
+		if outbounds[i].Type == "hysteria2" && outbounds[i].TLS != nil {
+			outbounds[i].TLS.HandshakeTimeout = pingHysteria2HandshakeTimeout
 		}
 	}
 	if !found {
@@ -198,18 +205,40 @@ func pingThroughNode(ctx context.Context, proxy ProxyConfig, method, testURL, bi
 		},
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, testURL, nil)
-	if err != nil {
+	if _, err := http.NewRequestWithContext(ctx, method, testURL, nil); err != nil {
 		return 0, false, "bad_test_url"
 	}
+	return fetchPing(ctx, func() (time.Duration, bool, string) {
+		req, _ := http.NewRequestWithContext(ctx, method, testURL, nil)
+		start := time.Now()
+		resp, err := client.Do(req)
+		elapsed := time.Since(start)
+		if resp != nil {
+			resp.Body.Close()
+		}
+		ok, reason := classifyPingFetch(resp, err)
+		return elapsed, ok, reason
+	})
+}
 
-	start := time.Now()
-	resp, err := client.Do(req)
-	elapsed := time.Since(start)
-	if resp != nil {
-		defer resp.Body.Close()
+// pingAttempts bounds how often one measurement is repeated inside its time
+// budget. A fresh engine closes its first hysteria2/TUIC connection with its own
+// startup ResetNetwork, and the network drops part of new QUIC flows outright;
+// a live session survives both by opening the next connection, so does the ping.
+const pingAttempts = 3
+
+func fetchPing(ctx context.Context, attempt func() (time.Duration, bool, string)) (int64, bool, string) {
+	var (
+		elapsed time.Duration
+		ok      bool
+		reason  string
+	)
+	for i := 0; i < pingAttempts && !ok; i++ {
+		if i > 0 && ctx.Err() != nil {
+			break
+		}
+		elapsed, ok, reason = attempt()
 	}
-	ok, reason := classifyPingFetch(resp, err)
 	if !ok {
 		return 0, false, reason
 	}
