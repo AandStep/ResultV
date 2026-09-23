@@ -1,16 +1,25 @@
 package com.resultv.android.ui.screens
 
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.automirrored.outlined.List
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Bolt
+import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
+import com.resultv.android.theme.SegoeUi
+import com.resultv.android.ui.components.RvButton
+import com.resultv.android.ui.components.RvButtonColors
+import com.resultv.android.ui.components.RvButtonLabel
 import android.widget.Toast
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
-import com.resultv.android.ui.components.DarkSheetSystemBars
 import com.resultv.android.vpn.parseRoutingMergeResult
 import mobile.Mobile
 import androidx.compose.foundation.background
@@ -21,21 +30,17 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AltRoute
-import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -58,12 +63,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
-import com.resultv.android.theme.rvBorder
 import com.resultv.android.theme.RvCategory
 import com.resultv.android.theme.RvColor
-import com.resultv.android.theme.RvRadius
 import com.resultv.android.theme.RvSpace
-import com.resultv.android.ui.components.SettingIcon
 import com.resultv.android.vpn.DeepLinkImporter
 import com.resultv.android.vpn.ROUTING_ACTIONS
 import com.resultv.android.vpn.RoutingProfile
@@ -95,25 +97,18 @@ import kotlinx.coroutines.withContext
  * счётчик direct.
  */
 
-private val CardShape = RoundedCornerShape(RvRadius.card)
-private val BadgeShape = RoundedCornerShape(RvRadius.chip)
+private val CardShape = RoundedCornerShape(20.dp)
+private val Muted = RvColor.whiteA50
 
-/** Подъём над заливкой шторки — тот же, что у поля-тегов в «Правилах». */
-private val CardFill = Color.White.copy(alpha = 0.04f)
-private val ActiveBorder = RvColor.Main.copy(alpha = 0.45f)
-private val Muted = Color.White.copy(alpha = 0.50f)
-
-/**
- * Цвет счётчика — цвет действия. Правило ПК, но приглушённое: там оно на
- * половине непрозрачности, здесь на 0.8. Половина на почти чёрном фоне
- * телефона уже не читается в 13sp, а полная яркость делает вторую строку
- * карточки громче названия.
- */
+/** Цвет счётчика — цвет действия, как в макете (Figma 6887:5064). */
 private fun countColor(action: String): Color = when (action) {
-    "direct" -> RvColor.Main.copy(alpha = 0.8f)
-    "proxy" -> RvColor.Second.copy(alpha = 0.8f)
-    else -> RvColor.Errors.copy(alpha = 0.8f)
+    "direct" -> RvColor.Main
+    "proxy" -> RvColor.Second
+    else -> RvColor.Errors
 }
+
+private val CardTitle = TextStyle(fontFamily = SegoeUi, fontSize = 12.sp, lineHeight = 15.6.sp, fontWeight = FontWeight.Bold)
+private val CardMeta = TextStyle(fontFamily = SegoeUi, fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.SemiBold)
 
 @Composable
 fun RoutingProfilesSheetContent(
@@ -149,34 +144,9 @@ fun RoutingProfilesSheetContent(
         }
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(RvSpace.nest1)) {
-        // Шапка — та же, что у всех шторок настроек: значок 36 dp, заголовок,
-        // подпись. Крестика нет: у шторки есть ручка, свайп и «назад».
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
-        ) {
-            SettingIcon(
-                icon = Icons.Outlined.AltRoute,
-                tint = RvCategory.Blue,
-            )
-            Column {
-                Text(
-                    stringResource(R.string.routing_profiles_title),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    stringResource(R.string.routing_profiles_subtitle),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = RvColor.whiteA50,
-                )
-            }
-        }
-
+    Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
         if (active != null) {
-            Section(stringResource(R.string.routing_profiles_active)) {
+            Section(stringResource(R.string.routing_profiles_active), Icons.Outlined.Shield) {
                 ProfileCard(
                     profile = active,
                     isActive = true,
@@ -196,7 +166,7 @@ fun RoutingProfilesSheetContent(
         }
 
         if (rest.isNotEmpty()) {
-            Section(stringResource(R.string.routing_profiles_all)) {
+            Section(stringResource(R.string.routing_profiles_all), Icons.AutoMirrored.Outlined.List) {
                 rest.forEach { profile ->
                     ProfileCard(
                         profile = profile,
@@ -220,38 +190,32 @@ fun RoutingProfilesSheetContent(
             )
         }
 
-        // «Создать профиль» из макета появится вместе с редактором: кнопка без
-        // него обещала бы то, чего нет.
-        Section(stringResource(R.string.routing_profiles_actions)) {
+        Section(stringResource(R.string.routing_profiles_actions), Icons.Outlined.Bolt) {
             Row(horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3)) {
-                Button(
+                RvButton(
                     onClick = { onEdit(null) },
-                    modifier = Modifier.weight(1f).height(52.dp),
-                    shape = CardShape,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = CardFill,
-                        contentColor = Color.White,
-                    ),
+                    fill = RvButtonColors.greenFill,
+                    outline = RvButtonColors.greenOutline,
+                    modifier = Modifier.weight(1f),
                 ) {
                     Text(
                         stringResource(R.string.routing_profiles_create),
-                        fontSize = 15.sp,
+                        style = RvButtonLabel,
                         fontWeight = FontWeight.Bold,
+                        color = RvColor.Main,
                     )
                 }
-                Button(
+                RvButton(
                     onClick = { showImport = true },
-                    modifier = Modifier.weight(1f).height(52.dp),
-                    shape = CardShape,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = RvColor.Main.copy(alpha = 0.14f),
-                        contentColor = RvColor.Main,
-                    ),
+                    fill = RvButtonColors.greyFill,
+                    outline = RvButtonColors.greyOutline,
+                    modifier = Modifier.weight(1f),
                 ) {
                     Text(
                         stringResource(R.string.routing_profiles_import),
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
+                        style = RvButtonLabel,
+                        fontWeight = FontWeight.SemiBold,
+                        color = RvColor.whiteA50,
                     )
                 }
             }
@@ -289,15 +253,21 @@ fun RoutingProfilesSheetContent(
     }
 }
 
-/** Раздел: подпись белым 50 % и содержимое под ней. */
+/** Раздел: подпись группы и карточки под ней через 8. */
 @Composable
-private fun Section(label: String, content: @Composable () -> Unit) {
+private fun Section(label: String, icon: ImageVector, content: @Composable () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(RvSpace.nest3)) {
-        Text(label, fontSize = 14.sp, color = Muted)
+        SheetGroupLabel(label, icon)
         content()
     }
 }
 
+/**
+ * Карточка профиля — ProfileItem макета (Figma 6887:5058 / 5082): поле 14,
+ * скругление 20, плитка 40 с глобусом 20, название 12 Bold и счётчики 10.
+ * Активная — Main 10 % с зелёной обводкой 30 %, остальные — Grey с белой 6 %
+ * и кнопками правки и удаления (круги 32).
+ */
 @Composable
 private fun ProfileCard(
     profile: RoutingProfile,
@@ -313,26 +283,18 @@ private fun ProfileCard(
         modifier = Modifier
             .fillMaxWidth()
             .clip(CardShape)
-            .background(CardFill)
-            // Активный профиль держит свой зелёный контур: это признак
-            // выбора, а не обводка интерактивного элемента, и градиент его
-            // стёр бы.
-            .then(
-                if (isActive) Modifier.border(1.dp, ActiveBorder, CardShape)
-                else Modifier.rvBorder(CardShape)
-            )
+            .background(if (isActive) RvColor.mainA10 else RvColor.Grey)
+            .border(1.dp, if (isActive) RvColor.Main.copy(alpha = 0.3f) else RvColor.whiteA06, CardShape)
             .clickable(enabled = !busy, onClick = onSelect)
-            .padding(start = RvSpace.nest2, end = RvSpace.xs, top = RvSpace.nest2, bottom = RvSpace.nest2),
+            .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
         Box(
             modifier = Modifier
-                .size(44.dp)
-                .clip(BadgeShape)
-                .background(
-                    if (isActive) RvColor.Main.copy(alpha = 0.16f) else RvColor.LightGray
-                ),
+                .size(40.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(if (isActive) RvCategory.Main.tile else RvColor.LightGray),
             contentAlignment = Alignment.Center,
         ) {
             if (busy) {
@@ -343,10 +305,10 @@ private fun ProfileCard(
                 )
             } else {
                 Icon(
-                    Icons.Outlined.Public,
+                    Icons.Filled.Public,
                     contentDescription = null,
-                    tint = if (isActive) RvColor.Main else Muted,
-                    modifier = Modifier.size(22.dp),
+                    tint = if (isActive) RvCategory.Main.glyph else Muted,
+                    modifier = Modifier.size(20.dp),
                 )
             }
         }
@@ -354,68 +316,74 @@ private fun ProfileCard(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(RvSpace.xs),
         ) {
-            Text(
-                profile.name,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-            )
+            Text(profile.name, style = CardTitle, color = RvColor.White, maxLines = 1)
             if (profile.publisherName.isNotEmpty()) {
                 Text(
                     stringResource(R.string.routing_sheet_publisher, profile.publisherName),
-                    fontSize = 13.sp,
-                    color = RvColor.whiteA50,
+                    style = CardMeta,
+                    color = Muted,
                     maxLines = 1,
                 )
             }
             Counts(profile)
             when {
                 profile.lastError.isNotEmpty() -> {
-                    Text(profile.lastError, fontSize = 13.sp, color = RvColor.Errors)
+                    Text(profile.lastError, style = CardMeta, color = RvColor.Errors)
                     RebuildLink(onRebuild, busy)
                 }
                 // «Не собран» показывается только когда правил нет НИ У ОДНОГО
                 // действия: у профиля из одних proxy-правил два других пусты
                 // законно, и жаловаться там не на что.
                 ROUTING_ACTIONS.none { ready[it] == true } -> {
-                    Text(
-                        stringResource(R.string.routing_profiles_not_built),
-                        fontSize = 13.sp,
-                        color = RvColor.whiteA50,
-                    )
+                    Text(stringResource(R.string.routing_profiles_not_built), style = CardMeta, color = Muted)
                     RebuildLink(onRebuild, busy)
                 }
             }
         }
-        // Две кнопки — одной группой, иначе между ними встаёт шаг строки
-        // (14 dp) поверх собственных полей IconButton, и корзина отъезжает от
-        // карандаша дальше, чем карандаш от текста.
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(0.dp),
-        ) {
-            // Карандаш у каждой строки, включая профиль подписки: на ПК onEdit
-            // тоже передаётся безусловно (RoutingProfilesDialog.jsx:75). Правка
-            // профиля подписки осмысленна — происхождение и ссылки на списки
-            // переживают её (см. UpsertRoutingProfile), — хотя следующая
-            // синхронизация правила перепишет.
-            IconButton(onClick = onEdit, enabled = !busy, modifier = Modifier.size(40.dp)) {
-                Icon(
-                    Icons.Outlined.Edit,
-                    contentDescription = stringResource(R.string.routing_editor_edit_title),
+        // У активного кнопок в макете нет: тап по нему выключает профиль, а
+        // правят и удаляют его из общего списка, куда он вернётся.
+        if (!isActive) {
+            Row(horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3)) {
+                CircleAction(
+                    icon = Icons.Filled.Edit,
+                    label = stringResource(R.string.routing_editor_edit_title),
+                    fill = RvColor.LightGray,
                     tint = Muted,
-                    modifier = Modifier.size(20.dp),
+                    enabled = !busy,
+                    onClick = onEdit,
                 )
-            }
-            IconButton(onClick = onDelete, enabled = !busy, modifier = Modifier.size(40.dp)) {
-                Icon(
-                    Icons.Outlined.DeleteOutline,
-                    contentDescription = stringResource(R.string.routing_profiles_delete),
-                    tint = Muted,
-                    modifier = Modifier.size(20.dp),
+                CircleAction(
+                    icon = Icons.Filled.Delete,
+                    label = stringResource(R.string.routing_profiles_delete),
+                    fill = RvColor.errorsA10,
+                    tint = RvColor.Errors,
+                    enabled = !busy,
+                    onClick = onDelete,
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun CircleAction(
+    icon: ImageVector,
+    label: String,
+    fill: Color,
+    tint: Color,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(32.dp)
+            .clip(CircleShape)
+            .background(fill)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp))
     }
 }
 
@@ -426,7 +394,7 @@ private fun RebuildLink(onClick: () -> Unit, busy: Boolean) {
         enabled = !busy,
         contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
     ) {
-        Text(stringResource(R.string.routing_profiles_rebuild), fontSize = 13.sp)
+        Text(stringResource(R.string.routing_profiles_rebuild), style = CardMeta, color = RvColor.Main)
     }
 }
 
@@ -442,14 +410,9 @@ private fun Counts(profile: RoutingProfile) {
         if (n > 0) action to n else null
     }
     if (parts.isEmpty()) return
-    Row(horizontalArrangement = Arrangement.spacedBy(RvSpace.xs)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3)) {
         parts.forEach { (action, n) ->
-            Text(
-                "• $n $action",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-                color = countColor(action),
-            )
+            Text("• $n $action", style = CardMeta, color = countColor(action))
         }
     }
 }
@@ -514,92 +477,81 @@ fun RoutingProfilesSheets(open: Boolean, onDismiss: () -> Unit) {
     val routingSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     if (open) {
-        ModalBottomSheet(
-            onDismissRequest = onDismiss,
-            modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
+        SettingsSheet(
+            icon = Icons.Outlined.AltRoute,
+            tint = RvCategory.Main,
+            title = stringResource(R.string.routing_profiles_title),
+            description = stringResource(R.string.routing_profiles_subtitle),
             sheetState = routingSheetState,
-            containerColor = RvColor.Grey,
-            dragHandle = { BottomSheetDefaults.DragHandle() },
+            onDismiss = onDismiss,
         ) {
-            DarkSheetSystemBars()
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                    // Не safe area: её шторка держит сама. Это поле, чтобы
-                    // последняя строка не упиралась в панель навигации.
-                    .padding(bottom = 24.dp),
-            ) {
-                RoutingProfilesSheetContent(
-                    dataDir = LocalContext.current.filesDir.absolutePath,
-                    onEdit = { p ->
-                        editorProfile = p
-                        editorOpen = true
-                    },
-                )
-            }
+            RoutingProfilesSheetContent(
+                dataDir = LocalContext.current.filesDir.absolutePath,
+                onEdit = { p ->
+                    editorProfile = p
+                    editorOpen = true
+                },
+            )
         }
     }
 
     if (editorOpen) {
         val ctx = LocalContext.current
         val dataDir = ctx.filesDir.absolutePath
-        ModalBottomSheet(
-            onDismissRequest = { if (!editorBusy) editorOpen = false },
-            modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
+        val isEdit = editorProfile?.id?.isNotEmpty() == true
+        SettingsSheet(
+            icon = if (isEdit) Icons.Filled.Edit else Icons.Outlined.Add,
+            tint = RvCategory.Main,
+            title = stringResource(
+                if (isEdit) R.string.routing_editor_edit_title else R.string.routing_editor_create_title,
+            ),
+            description = if (isEdit) {
+                stringResource(R.string.routing_editor_edit_subtitle_named, editorProfile?.name.orEmpty())
+            } else {
+                stringResource(R.string.routing_editor_create_subtitle)
+            },
             sheetState = editorSheetState,
-            containerColor = RvColor.Grey,
-            dragHandle = { BottomSheetDefaults.DragHandle() },
+            onDismiss = { if (!editorBusy) editorOpen = false },
         ) {
-            DarkSheetSystemBars()
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                    .padding(bottom = 24.dp),
-            ) {
-                RoutingProfileEditorContent(
-                    profile = editorProfile,
-                    busy = editorBusy,
-                    onSave = { edited ->
-                        editorBusy = true
-                        editorScope.launch {
-                            val merged = withContext(Dispatchers.IO) {
-                                runCatching {
-                                    Mobile.mergeRoutingProfile(
-                                        RoutingProfileRepository.storeJson(),
-                                        edited.toJson().toString(),
-                                        false,
-                                    )
-                                }.getOrNull()
-                            }
-                            val state = merged?.let { parseRoutingMergeResult(it) }
-                            if (state == null) {
-                                Toast.makeText(
-                                    ctx,
-                                    ctx.getString(R.string.routing_import_failed, "merge failed"),
-                                    Toast.LENGTH_LONG,
-                                ).show()
-                            } else {
-                                RoutingProfileRepository.replaceAll(state.profiles, state.activeId)
-                                // Ищем по имени и происхождению, а не по id: у
-                                // нового профиля id назначает Go, и до слияния
-                                // его здесь неоткуда взять.
-                                val saved = state.profiles.firstOrNull {
-                                    it.name == edited.name && it.source == edited.source
-                                }
-                                if (saved != null) {
-                                    RoutingProfileCompiler.compile(saved, dataDir)
-                                }
-                                editorOpen = false
-                            }
-                            editorBusy = false
+            RoutingProfileEditorContent(
+                profile = editorProfile,
+                busy = editorBusy,
+                onSave = { edited ->
+                    editorBusy = true
+                    editorScope.launch {
+                        val merged = withContext(Dispatchers.IO) {
+                            runCatching {
+                                Mobile.mergeRoutingProfile(
+                                    RoutingProfileRepository.storeJson(),
+                                    edited.toJson().toString(),
+                                    false,
+                                )
+                            }.getOrNull()
                         }
-                    },
-                )
-            }
+                        val state = merged?.let { parseRoutingMergeResult(it) }
+                        if (state == null) {
+                            Toast.makeText(
+                                ctx,
+                                ctx.getString(R.string.routing_import_failed, "merge failed"),
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        } else {
+                            RoutingProfileRepository.replaceAll(state.profiles, state.activeId)
+                            // Ищем по имени и происхождению, а не по id: у
+                            // нового профиля id назначает Go, и до слияния
+                            // его здесь неоткуда взять.
+                            val saved = state.profiles.firstOrNull {
+                                it.name == edited.name && it.source == edited.source
+                            }
+                            if (saved != null) {
+                                RoutingProfileCompiler.compile(saved, dataDir)
+                            }
+                            editorOpen = false
+                        }
+                        editorBusy = false
+                    }
+                },
+            )
         }
     }
 }

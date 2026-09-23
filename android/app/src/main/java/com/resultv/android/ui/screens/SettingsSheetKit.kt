@@ -146,18 +146,29 @@ internal fun SettingsSheet(
     }
 }
 
+/** Подпись группы: значок 14 и текст 12 Semibold; цвет — белый 50 % или цвет действия. */
+@Composable
+internal fun SheetGroupLabel(label: String, icon: ImageVector, color: Color = RvColor.whiteA50) {
+    Row(
+        modifier = Modifier.padding(start = RvSpace.xs),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(14.dp))
+        Text(label, style = GroupLabelStyle, color = color)
+    }
+}
+
 /** Группа: подпись (значок 14 + текст 12) над карточкой Grey с обводкой белым 6 %. */
 @Composable
-internal fun SheetGroup(label: String, icon: ImageVector, content: @Composable ColumnScope.() -> Unit) {
+internal fun SheetGroup(
+    label: String,
+    icon: ImageVector,
+    labelColor: Color = RvColor.whiteA50,
+    content: @Composable ColumnScope.() -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(RvSpace.nest3)) {
-        Row(
-            modifier = Modifier.padding(start = RvSpace.xs),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Icon(icon, contentDescription = null, tint = RvColor.whiteA50, modifier = Modifier.size(14.dp))
-            Text(label, style = GroupLabelStyle, color = RvColor.whiteA50)
-        }
+        SheetGroupLabel(label, icon, labelColor)
         val shape = RoundedCornerShape(20.dp)
         Column(
             modifier = Modifier
