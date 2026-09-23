@@ -23,11 +23,13 @@ The vendored copy has been modified by ResultV. Original package comment:
 - **Location**: `third_party/wireguard-go/` (wired in via `replace` in `go.mod`)
 - **License**: MIT (see `third_party/wireguard-go/LICENSE`)
 
-The vendored copy has been modified by ResultV: handshake messages are sliced
-to their own size before MACs are added (`device/send.go`), so random trailers
-no longer overwrite MAC1/MAC2, and transport packets injected through
-`InputPacket` get room for trailers instead of overrunning their buffer. `device/padding_test.go` was dropped because it
-no longer compiles against the fork. Drop the copy once upstream ships the fix.
+The vendored copy has been modified by ResultV (`device/send.go`):
+handshake messages are sliced to their own size before MACs are added, so
+random trailers no longer overwrite MAC1/MAC2, and transport packets injected
+through `InputPacket` get room for trailers instead of overrunning their
+buffer. `device/random_trailers_test.go` covers both. `device/padding_test.go`
+was dropped and `device/endpoint_resolver_test.go` adjusted because they no
+longer compiled against the fork. Drop the copy once upstream ships the fix.
 
 ---
 
