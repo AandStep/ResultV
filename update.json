@@ -1,5 +1,5 @@
 {
-  "version": "",
+  "version": "3.5.2",
   "releaseTitle": {
     "ru": "Hotfix для AWG 3.1",
     "en": "Hotfix for AWG 3.1"
@@ -12,5 +12,31 @@
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",
-  "platforms": {}
+  "platforms": {
+    "windows-amd64-portable": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.2/ResultV.exe",
+      "sha256": "4e564e498f7a70613e9ea56506cf0298103fab5dd780906546b56ee0907a55e0",
+      "size": 62184448
+    },
+    "windows-amd64-installer": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.2/ResultV-amd64-installer.exe",
+      "sha256": "57dcf5ac384d72ad3ad5e0914c551e68fe5bcfd48e740127b274e4ad376f9177",
+      "size": 29142905
+    },
+    "darwin-universal": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.2/ResultV.dmg",
+      "sha256": "155811784307395024be276f4310e08ddad893d1e9727f65e7f6475c5f9f633e",
+      "size": 65618733
+    },
+    "linux-amd64-appimage": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.2/ResultV-3.5.2-x86_64.AppImage",
+      "sha256": "674a301b65bacdc648b50ab65f78deb8953480e19735417b6afeb54678ed1d5c",
+      "size": 96012792
+    },
+    "linux-amd64-deb": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.2/resultv_3.5.2_amd64.deb",
+      "sha256": "651cfa57fef6b3148c8c5424246948e6aa20ffc1f86329d9459812b07815a636",
+      "size": 28129658
+    }
+  }
 }
