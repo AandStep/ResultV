@@ -1482,219 +1482,6 @@ func dnsOverrideServers(custom []string) []string {
 	return out
 }
 
-// connectLocked is the internal reconnect path used by SetMode/ReconnectWithRoutingRules.
-// Caller must hold m.mu.
-func (m *Manager) connectLocked(ctx context.Context, proxy ProxyConfig, mode ProxyMode,
-	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
-	killSwitch bool,
-	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
-	dnsLeakProtection, enableIPv6 bool) ConnectResultDTO {
-	if m.connected {
-		m.disconnectLocked()
-	}
-
-	if proxy.SubscriptionURL != "" {
-		m.log.Info(fmt.Sprintf("[PROXY] Подключение (%s)...", proxy.Type))
-	} else {
-		m.log.Info(fmt.Sprintf("[PROXY] Подключение к %s:%d (%s)...", proxy.IP, proxy.Port, proxy.Type))
-	}
-
-	proxyTypeLower := strings.ToLower(strings.TrimSpace(proxy.Type))
-	isEndpointProtocol := proxyTypeLower == "wireguard" || proxyTypeLower == "amneziawg"
-
-	if isEndpointProtocol && mode == ProxyModeProxy {
-		return ConnectResultDTO{
-			Success:   false,
-			Message:   "Протоколы WireGuard и AmneziaWG не поддерживают Proxy-режим. Пожалуйста, включите Tunnel режим.",
-			Reason:    "proxy mode not supported for udp endpoints",
-			ErrorCode: "proxy_not_supported",
-		}
-	}
-
-	if mode == ProxyModeTunnel && !isAdminCheck() {
-		return ConnectResultDTO{
-			Success:      false,
-			Message:      "Для tunnel режима нужны права администратора",
-			TunnelFailed: true,
-			Reason:       "administrator privileges required",
-			ErrorCode:    ConnectErrorTunPrivileges,
-		}
-	}
-
-	actualLocalPort := localPort
-	if actualLocalPort == 0 {
-		actualLocalPort = getFreeLocalPort(14081)
-	}
-	listenHost := "127.0.0.1"
-	if listenLAN {
-		listenHost = "0.0.0.0"
-	}
-
-	effectiveAppWhitelist := m.effectiveAppWhitelist(appWhitelist)
-
-	m.warnProbeDomainOverlap(mode, proxyTypeLower, whitelist)
-
-	engineCfg := EngineConfig{
-		Proxy:             proxy,
-		Mode:              mode,
-		ListenAddr:        fmt.Sprintf("%s:%d", listenHost, actualLocalPort),
-		RoutingMode:       routingMode,
-		Whitelist:         whitelist,
-		AppWhitelist:      effectiveAppWhitelist,
-		AppForceVPN:       append([]string(nil), appForceVPN...),
-		KillSwitch:        killSwitch,
-		LocalPort:         actualLocalPort,
-		DNSServers:        dnsServers,
-		TunIPv4:           tunIPv4,
-		TunIPv6:           tunIPv6,
-		EnableIPv6:        enableIPv6,
-		TunStack:          m.tunStack,
-		DNSLeakProtection: dnsLeakProtection,
-		DataDir:           resultProxyDataDir(),
-	}
-	engineCfg.RoutingLists = m.routingListSpecsLocked()
-	engineCfg.RoutingOrder = m.routingOrderLocked()
-	m.applyAdaptiveSmartLocked(&engineCfg)
-	// Smart mode needs the censored block-list in the engine config so
-	// buildRoute can tunnel those domains/ranges while everything else goes
-	// direct. Only populated for Smart — Global/Whitelist ignore it.
-	if routingMode == ModeSmart && m.router != nil {
-		engineCfg.BlockedDomains = m.router.GetBlockedDomains()
-		engineCfg.BlockedCIDRs = m.router.GetBlockedCIDRs()
-		// Pre-compile the block-list into a binary rule-set so the engine does
-		// not have to parse and index ~78k domain_suffix entries out of the
-		// config on every connect. Not fatal: buildRoute falls back to inline.
-		if path, err := CompileSmartRuleSet(engineCfg.DataDir, engineCfg.BlockedDomains); err != nil {
-			m.log.Warning(fmt.Sprintf("[SMART] Rule-set не скомпилирован, используется инлайн-список: %v", err))
-		} else {
-			engineCfg.SmartRuleSetPath = path
-		}
-	}
-	if code, err := validateEngineConfig(engineCfg); err != nil {
-		return ConnectResultDTO{
-			Success:   false,
-			Message:   err.Error(),
-			Reason:    err.Error(),
-			ErrorCode: code,
-		}
-	}
-
-	m.setPendingLocked(proxy, mode)
-
-	// Pin the resolved server IP (see Connect for rationale) so sing-box and the
-	// kill switch never depend on a live resolver mid-session. Skip when already
-	// pinned (carried over from the prior connect via m.proxy) — a censored
-	// server's OS resolve only burns its timeout to fail.
-	if proxy.ResolvedIP == "" {
-		if resolved := resolvePinnedServerIP(proxy.IP); resolved != "" {
-			proxy.ResolvedIP = resolved
-			engineCfg.Proxy.ResolvedIP = resolved
-		}
-	}
-	// Full backend set for the hosts-pin (see ProxyConfig.ResolvedIPs) — lets a
-	// CDN/multi-IP server fail over across backends mid-session instead of dying
-	// with one. Empty for literals / censored resolver → falls back to the pin.
-	if len(proxy.ResolvedIPs) == 0 {
-		if all := resolveAllServerIPs(proxy.IP); len(all) > 0 {
-			proxy.ResolvedIPs = all
-			engineCfg.Proxy.ResolvedIPs = all
-		}
-	}
-
-	if startErr, tunnelFailed, reason, errorCode := m.startEngine(ctx, engineCfg); startErr != nil {
-		m.clearPendingLocked()
-		m.emitStatusLocked()
-		m.log.Error(fmt.Sprintf("[PROXY] Ошибка запуска движка: %v", startErr))
-		return ConnectResultDTO{
-			Success:      false,
-			Message:      fmt.Sprintf("Ошибка запуска: %v", startErr),
-			TunnelFailed: tunnelFailed,
-			Reason:       reason,
-			ErrorCode:    errorCode,
-		}
-	}
-
-	m.emitStatusLocked()
-
-	probeCtxLocked := ctx
-	if probeCtxLocked == nil {
-		probeCtxLocked = context.Background()
-	}
-	proxyExtraLocked := parseExtra(proxy)
-	if code, reason := runPostStartProbe(probeCtxLocked, proxyTypeLower, proxy.IP, proxy.Port, actualLocalPort, mode, proxyExtraLocked); code != "" {
-		_ = m.engine.Stop()
-		m.clearPendingLocked()
-		m.emitStatusLocked()
-		return ConnectResultDTO{
-			Success:   false,
-			Message:   reason,
-			Reason:    reason,
-			ErrorCode: code,
-		}
-	}
-
-	var gpoConflict bool
-	if mode == ProxyModeProxy && m.sysProxy != nil {
-		proxyAddr := fmt.Sprintf("127.0.0.1:%d", actualLocalPort)
-		if err := m.sysProxy.Set(proxyAddr, whitelist); err != nil {
-			m.log.Warning(fmt.Sprintf("[PROXY] Ошибка установки системного прокси: %v", err))
-		} else {
-			m.log.Success("[СИСТЕМА] Системный прокси применён успешно")
-		}
-	} else if mode == ProxyModeTunnel && proxyTypeLower == "amneziawg" && m.sysProxy != nil {
-		if err := m.sysProxy.Disable(); err != nil {
-			m.log.Warning(fmt.Sprintf("[СИСТЕМА] Ошибка сброса системного прокси для туннеля AMNEZIAWG: %v", err))
-		}
-	}
-
-	// See main Connect() for the full rationale. Tunnel + non-WG/AWG also
-	// needs adapter DNS unified to neutralize Smart Multi-Homed Resolution.
-	m.applySystemDNSOverride(isEndpointProtocol, dnsServers)
-	m.applyTunnelAdapterDNS(mode, tunIPv4)
-
-	m.captureLiveServerIP(&proxy)
-	m.clearPendingLocked()
-	m.connected = true
-	m.mode = mode
-	m.proxy = &proxy
-	m.killSwitch = killSwitch
-	m.routingMode = routingMode
-	m.whitelist = append([]string(nil), whitelist...)
-	m.appWhitelist = append([]string(nil), appWhitelist...)
-	m.appForceVPN = append([]string(nil), appForceVPN...)
-	m.connectedAt = time.Now()
-	m.prevUp = 0
-	m.prevDown = 0
-	m.lastTick = time.Time{}
-	m.localPort = actualLocalPort
-	m.listenLAN = listenLAN
-	m.dnsServers = dnsServers
-	m.tunIPv4 = tunIPv4
-	m.tunIPv6 = tunIPv6
-	m.enableIPv6 = enableIPv6
-	m.dnsLeakProtection = dnsLeakProtection
-	m.startProcessTrackerLocked()
-	m.startHealthWatchdogLocked(proxy, mode)
-	// disconnectLocked above dropped the priority bump; without this the
-	// reconnected session runs at Normal priority (see connectOnce).
-	if err := sys.RaiseProcessPriority(); err != nil {
-		m.log.Warning(fmt.Sprintf("[СИСТЕМА] Не удалось повысить приоритет процесса: %v", err))
-	}
-	m.emitStatusLocked()
-
-	if proxy.SubscriptionURL != "" {
-		m.log.Success(fmt.Sprintf("[PROXY] Подключено (%s)", proxy.Type))
-	} else {
-		m.log.Success(fmt.Sprintf("[PROXY] Подключено к %s:%d (%s)", proxy.IP, proxy.Port, proxy.Type))
-	}
-
-	return ConnectResultDTO{
-		Success:     true,
-		Message:     "Подключено",
-		GPOConflict: gpoConflict,
-	}
-}
-
 func sleepOrCancel(ctx context.Context, d time.Duration) bool {
 	select {
 	case <-time.After(d):
@@ -2361,56 +2148,29 @@ func (m *Manager) disconnectLocked() error {
 }
 
 func (m *Manager) SetMode(mode ProxyMode) error {
-	// Serialize against Connect/Disconnect/ReconnectWithRoutingRules (see opMu).
-	m.opMu.Lock()
-	defer m.opMu.Unlock()
-
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if m.mode == mode {
+	live := m.connected || m.reloadSession != nil
+	if !live {
+		changed := m.mode != mode
+		m.mode = mode
+		m.mu.Unlock()
+		if changed {
+			m.log.Info(fmt.Sprintf("[PROXY] Режим изменен: %s", mode))
+		}
 		return nil
 	}
-
-	wasConnected := m.connected
-	proxy := m.proxy
-	killSwitch := m.killSwitch
-	routingMode := m.routingMode
-	whitelist := append([]string(nil), m.whitelist...)
-	appWhitelist := append([]string(nil), m.appWhitelist...)
-	appForceVPN := append([]string(nil), m.appForceVPN...)
-
-	if wasConnected {
-		m.disconnectLocked()
+	if m.connected && m.mode == mode && m.reloadSession == nil {
+		m.mu.Unlock()
+		return nil
 	}
+	m.mu.Unlock()
 
-	m.mode = mode
 	m.log.Info(fmt.Sprintf("[PROXY] Режим изменен: %s", mode))
-
-	if wasConnected && proxy != nil {
-		res := m.connectLocked(
-			m.ctx,
-			*proxy,
-			mode,
-			routingMode,
-			whitelist,
-			appWhitelist,
-			appForceVPN,
-			killSwitch,
-			m.localPort,
-			m.listenLAN,
-			m.dnsServers,
-			m.tunIPv4,
-			m.tunIPv6,
-			m.dnsLeakProtection,
-			m.enableIPv6,
-		)
-		if !res.Success {
-			return fmt.Errorf("reconnect after mode switch failed: %s", res.Message)
-		}
+	res := m.reload(m.ctx, func(s *reloadSession) { s.mode = mode })
+	if res.Success || res.ErrorCode == ConnectErrorSuperseded {
+		return nil
 	}
-
-	return nil
+	return fmt.Errorf("reconnect after mode switch failed: %s", res.Message)
 }
 
 func (m *Manager) SetTunStack(stack string) {
@@ -2494,7 +2254,30 @@ func (m *Manager) routingListSpecsLocked() []RoutingListSpec {
 }
 
 func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string) ConnectResultDTO {
+	return m.reload(ctx, func(s *reloadSession) {
+		s.routingMode = routingMode
+		s.whitelist = append([]string(nil), whitelist...)
+		s.appWhitelist = append([]string(nil), appWhitelist...)
+		s.appForceVPN = append([]string(nil), appForceVPN...)
+	})
+}
+
+// reload rebuilds the live session with change applied. The newest reload
+// wins: it cancels one still establishing, and changes accumulate in
+// reloadSession, so an overtaken reload's change is carried by the next one.
+func (m *Manager) reload(ctx context.Context, change func(*reloadSession)) ConnectResultDTO {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	gen := m.reloadGen.Add(1)
+	m.mu.Lock()
+	if m.connected && m.proxy != nil {
+		m.reloadSession = m.sessionSnapshotLocked()
+	}
+	if m.reloadSession != nil {
+		change(m.reloadSession)
+	}
+	m.mu.Unlock()
 	if m.reloadActive.Load() {
 		m.CancelConnect()
 	}
@@ -2506,31 +2289,22 @@ func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode Rou
 	}
 
 	m.mu.Lock()
-	if m.connected && m.proxy != nil {
-		m.reloadSession = &reloadSession{
-			proxy:      *m.proxy,
-			mode:       m.mode,
-			killSwitch: m.killSwitch,
-			localPort:  m.localPort,
-			listenLAN:  m.listenLAN,
-			dnsServers: append([]string(nil), m.dnsServers...),
-			tunIPv4:    m.tunIPv4,
-			tunIPv6:    m.tunIPv6,
-			dnsLeak:    m.dnsLeakProtection,
-			enableIPv6: m.enableIPv6,
-		}
+	var sess reloadSession
+	if m.reloadSession != nil {
+		sess = *m.reloadSession
 	}
-	sess := m.reloadSession
+	has := m.reloadSession != nil
 	m.mu.Unlock()
-	if sess == nil {
+	if !has {
 		return ConnectResultDTO{Success: true, Message: "not connected"}
 	}
 
 	m.reloadActive.Store(true)
 	stale := func() bool { return m.reloadGen.Load() != gen }
 	res := m.connectOnce(context.WithValue(ctx, reloadStaleKey{}, stale), sess.proxy, sess.mode,
-		routingMode, whitelist, appWhitelist, appForceVPN, sess.killSwitch, sess.localPort,
-		sess.listenLAN, sess.dnsServers, sess.tunIPv4, sess.tunIPv6, sess.dnsLeak, sess.enableIPv6)
+		sess.routingMode, sess.whitelist, sess.appWhitelist, sess.appForceVPN, sess.killSwitch,
+		sess.localPort, sess.listenLAN, sess.dnsServers, sess.tunIPv4, sess.tunIPv6,
+		sess.dnsLeak, sess.enableIPv6)
 	m.reloadActive.Store(false)
 
 	if stale() {
@@ -2542,17 +2316,40 @@ func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode Rou
 	return res
 }
 
+func (m *Manager) sessionSnapshotLocked() *reloadSession {
+	return &reloadSession{
+		proxy:        *m.proxy,
+		mode:         m.mode,
+		routingMode:  m.routingMode,
+		whitelist:    append([]string(nil), m.whitelist...),
+		appWhitelist: append([]string(nil), m.appWhitelist...),
+		appForceVPN:  append([]string(nil), m.appForceVPN...),
+		killSwitch:   m.killSwitch,
+		localPort:    m.localPort,
+		listenLAN:    m.listenLAN,
+		dnsServers:   append([]string(nil), m.dnsServers...),
+		tunIPv4:      m.tunIPv4,
+		tunIPv6:      m.tunIPv6,
+		dnsLeak:      m.dnsLeakProtection,
+		enableIPv6:   m.enableIPv6,
+	}
+}
+
 type reloadSession struct {
-	proxy      ProxyConfig
-	mode       ProxyMode
-	killSwitch bool
-	localPort  int
-	listenLAN  bool
-	dnsServers []string
-	tunIPv4    string
-	tunIPv6    string
-	dnsLeak    bool
-	enableIPv6 bool
+	proxy        ProxyConfig
+	mode         ProxyMode
+	routingMode  RoutingMode
+	whitelist    []string
+	appWhitelist []string
+	appForceVPN  []string
+	killSwitch   bool
+	localPort    int
+	listenLAN    bool
+	dnsServers   []string
+	tunIPv4      string
+	tunIPv6      string
+	dnsLeak      bool
+	enableIPv6   bool
 }
 
 type reloadStaleKey struct{}

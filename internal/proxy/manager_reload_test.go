@@ -175,3 +175,59 @@ func TestDisconnect_DuringHangingConnectIsFast(t *testing.T) {
 		t.Fatalf("expected cancelled, got %+v", r)
 	}
 }
+
+// Смена режима при живой сессии отменяется так же быстро, как перезагрузка
+// правил: раньше она шла под m.mu с неотменяемой пробой.
+func TestDisconnect_DuringHangingSetModeIsFast(t *testing.T) {
+	h := newReloadHarness(t)
+	h.hang.Store(true)
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- h.m.SetMode(ProxyModeTunnel) }()
+	time.Sleep(100 * time.Millisecond)
+
+	start := time.Now()
+	if err := h.m.Disconnect(); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("disconnect waited for the mode switch probe: %v", elapsed)
+	}
+	select {
+	case <-errCh:
+	case <-time.After(time.Second):
+		t.Fatal("SetMode did not return after disconnect")
+	}
+	if connected, _ := h.m.SessionState(); connected {
+		t.Fatal("session must stay down after disconnect")
+	}
+}
+
+// Перезагрузка правил, перебившая смену режима, не теряет новый режим.
+func TestSetMode_SurvivesSupersedingReload(t *testing.T) {
+	h := newReloadHarness(t)
+	h.hang.Store(true)
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- h.m.SetMode(ProxyModeTunnel) }()
+	time.Sleep(100 * time.Millisecond)
+	h.hang.Store(false)
+	r := waitResult(t, h.reload(ModeSmart), 2*time.Second)
+	if !r.Success {
+		t.Fatalf("reload failed: %+v", r)
+	}
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("superseded SetMode must not report an error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("SetMode did not return")
+	}
+	h.m.mu.Lock()
+	mode, routing := h.m.mode, h.m.routingMode
+	h.m.mu.Unlock()
+	if mode != ProxyModeTunnel || routing != ModeSmart {
+		t.Fatalf("both changes must land: mode=%s routing=%s", mode, routing)
+	}
+}
