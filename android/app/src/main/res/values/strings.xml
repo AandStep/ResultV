@@ -18,7 +18,6 @@
 
     <!-- Generic actions reused across screens -->
     <string name="action_add">Add</string>
-    <string name="action_clear">Clear</string>
     <string name="action_cancel">Cancel</string>
     <string name="action_delete">Delete</string>
     <string name="action_save">Save</string>

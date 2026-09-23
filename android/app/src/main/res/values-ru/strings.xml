@@ -16,7 +16,6 @@
     <string name="servers_search">Поиск серверов...</string>
 
     <string name="action_add">Добавить</string>
-    <string name="action_clear">Очистить</string>
     <string name="action_cancel">Отмена</string>
     <string name="action_delete">Удалить</string>
     <string name="action_save">Сохранить</string>

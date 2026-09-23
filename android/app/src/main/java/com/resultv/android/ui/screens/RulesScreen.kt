@@ -396,23 +396,11 @@ private fun AppList(mode: RoutingMode, tab: RuleAction) {
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(RvSpace.nest2)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2)) {
-            RvSearchField(
-                value = query,
-                onValueChange = { query = it },
-                placeholder = stringResource(R.string.rules_app_search),
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = stringResource(R.string.action_clear),
-                style = SectionTitle.copy(fontSize = 12.sp, lineHeight = 15.6.sp),
-                color = RvColor.Main,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable(role = Role.Button) { AppRoutingRepository.clearList(tab) }
-                    .padding(RvSpace.xs),
-            )
-        }
+        RvSearchField(
+            value = query,
+            onValueChange = { query = it },
+            placeholder = stringResource(R.string.rules_app_search),
+        )
 
         val selectedCount = when (tab) {
             RuleAction.OutOfVpn -> appRules.outOfVpn.size
