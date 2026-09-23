@@ -23,7 +23,6 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import com.resultv.android.vpn.parseRoutingMergeResult
 import mobile.Mobile
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -65,6 +64,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
 import com.resultv.android.theme.RvCategory
 import com.resultv.android.theme.RvColor
+import androidx.compose.foundation.border
 import com.resultv.android.theme.RvSpace
 import com.resultv.android.vpn.DeepLinkImporter
 import com.resultv.android.vpn.ROUTING_ACTIONS
@@ -132,9 +132,10 @@ fun RoutingProfilesSheetContent(
     }
 
     val active = state.active
-    // «Все профили» — это остальные: активный уже показан своим разделом выше,
-    // и повторять его строкой ниже значило бы показать один профиль дважды.
-    val rest = state.profiles.filter { it.id != state.activeId }
+    // «Все профили» — полный список, включая активный: активный раздел выше
+    // показывает, что выбрано, а здесь каждый профиль можно править и
+    // удалять, даже если он единственный.
+    val all = state.profiles
 
     fun rebuild(profile: RoutingProfile) {
         busyId = profile.id
@@ -165,9 +166,9 @@ fun RoutingProfilesSheetContent(
             }
         }
 
-        if (rest.isNotEmpty()) {
+        if (all.isNotEmpty()) {
             Section(stringResource(R.string.routing_profiles_all), Icons.AutoMirrored.Outlined.List) {
-                rest.forEach { profile ->
+                all.forEach { profile ->
                     ProfileCard(
                         profile = profile,
                         isActive = false,

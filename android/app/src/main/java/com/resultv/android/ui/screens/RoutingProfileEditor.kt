@@ -4,6 +4,10 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -85,9 +89,14 @@ private fun actionIcon(action: String): ImageVector = when (action) {
     else -> Icons.Outlined.HighlightOff
 }
 
-private val RowLabel = TextStyle(fontFamily = SegoeUi, fontSize = 12.sp, lineHeight = 15.6.sp, fontWeight = FontWeight.Bold)
+// Все подписи редактора в макете — 12 Semibold белым 50 %; белым 80 %
+// только введённые значения (адреса Geo, правила).
+private val RowLabel = TextStyle(fontFamily = SegoeUi, fontSize = 12.sp, lineHeight = 14.4.sp, fontWeight = FontWeight.SemiBold)
 private val RowValue = TextStyle(fontFamily = SegoeUi, fontSize = 12.sp, lineHeight = 15.6.sp, fontWeight = FontWeight.SemiBold)
-private val FieldText = TextStyle(fontFamily = SegoeUi, fontSize = 12.sp, lineHeight = 16.8.sp, fontWeight = FontWeight.SemiBold)
+private val TagText = TextStyle(fontFamily = SegoeUi, fontSize = 12.sp, lineHeight = 14.4.sp, fontWeight = FontWeight.Bold)
+private val CountText = TextStyle(fontFamily = SegoeUi, fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold)
+/** Адреса и правила — моноширинным, как Roboto Mono в макете. */
+private val MonoText = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 15.6.sp)
 
 /**
  * Содержимое редактора профиля — мобильный макет (Figma 6884:5039): группы
@@ -133,17 +142,18 @@ fun RoutingProfileEditorContent(
     val empty = fields.values.all { routingTokensOf(it).isEmpty() }
 
     SheetGroup(stringResource(R.string.routing_editor_basic), Icons.Outlined.Info) {
+        // ValueRow макета (Figma 6884:5057): поле 14 по бокам и 16 сверху/снизу.
         Row(
-            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
         ) {
-            Text(stringResource(R.string.routing_editor_name), style = RowLabel, color = RvColor.White)
+            Text(stringResource(R.string.routing_editor_name), style = RowLabel, color = RvColor.whiteA50)
             BasicTextField(
                 value = name,
                 onValueChange = { name = it },
                 singleLine = true,
-                textStyle = RowValue.copy(color = RvColor.White, textAlign = TextAlign.End),
+                textStyle = RowValue.copy(color = RvColor.whiteA50, textAlign = TextAlign.End),
                 cursorBrush = SolidColor(RvColor.whiteA50),
                 modifier = Modifier.weight(1f),
                 decorationBox = { inner ->
@@ -187,11 +197,11 @@ fun RoutingProfileEditorContent(
             modifier = Modifier.fillMaxWidth().padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(RvSpace.nest2),
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(stringResource(R.string.routing_editor_order), style = RowLabel, color = RvColor.White)
+            Column(verticalArrangement = Arrangement.spacedBy(RvSpace.xs)) {
+                Text(stringResource(R.string.routing_editor_order), style = RowLabel, color = RvColor.whiteA50)
                 Text(stringResource(R.string.routing_editor_strategy_hint), style = SheetNoteStyle, color = RvColor.whiteA50)
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 order.forEachIndexed { index, action ->
                     if (index > 0) {
                         Icon(
@@ -206,7 +216,7 @@ fun RoutingProfileEditorContent(
                     // конец, порядок собирается теми же тремя движениями.
                     Text(
                         action.replaceFirstChar { it.uppercase() },
-                        style = RowLabel,
+                        style = TagText,
                         color = actionColor(action),
                         modifier = Modifier
                             .clip(CircleShape)
@@ -215,7 +225,7 @@ fun RoutingProfileEditorContent(
                                 order.remove(action)
                                 order.add(action)
                             }
-                            .padding(horizontal = RvSpace.nest2, vertical = 6.dp),
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
                     )
                 }
             }
@@ -238,12 +248,12 @@ fun RoutingProfileEditorContent(
         Row(horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3)) {
             RvButton(
                 onClick = { resetKey++ },
-                fill = RvColor.Black,
-                outline = RvColor.whiteA10,
+                fill = RvButtonColors.greyFill,
+                outline = RvButtonColors.greyOutline,
                 enabled = !busy,
                 modifier = Modifier.weight(1f),
             ) {
-                Text(stringResource(R.string.routing_editor_reset), style = RvButtonLabel, fontWeight = FontWeight.Bold, color = RvColor.White)
+                Text(stringResource(R.string.routing_editor_reset), style = RvButtonLabel, fontWeight = FontWeight.Bold, color = RvColor.whiteA80)
             }
             RvButton(
                 onClick = {
@@ -298,14 +308,15 @@ private fun RuleRow(
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
+            // NavRow макета (Figma 6884:5066): слева 14, справа 10, 16 по вертикали.
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(onClick = onToggle)
-                .padding(14.dp),
+                .padding(start = 14.dp, end = 10.dp, top = 16.dp, bottom = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3),
         ) {
-            Text(label, style = RowLabel, color = RvColor.whiteA80, modifier = Modifier.weight(1f))
+            Text(label, style = RowLabel, color = RvColor.whiteA50, modifier = Modifier.weight(1f))
             // Сколько правил внутри — видно, не раскрывая строку.
             val count = routingTokensOf(value).size
             if (count > 0) {
@@ -313,9 +324,9 @@ private fun RuleRow(
                     modifier = Modifier
                         .clip(CircleShape)
                         .background(color.copy(alpha = 0.1f))
-                        .padding(horizontal = 7.dp, vertical = 2.dp),
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
                 ) {
-                    Text("$count", style = SheetNoteStyle, color = color)
+                    Text("$count", style = CountText, color = color)
                 }
             }
             Icon(
@@ -326,11 +337,11 @@ private fun RuleRow(
             )
         }
         AnimatedVisibility(visible = open) {
-            val shape = RoundedCornerShape(16.dp)
+            val shape = RoundedCornerShape(12.dp)
             BasicTextField(
                 value = value,
                 onValueChange = onChange,
-                textStyle = FieldText.copy(color = RvColor.White),
+                textStyle = MonoText.copy(color = RvColor.whiteA80),
                 cursorBrush = SolidColor(RvColor.whiteA50),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -347,7 +358,7 @@ private fun RuleRow(
                             .background(RvColor.DarkGrey)
                             .padding(12.dp),
                     ) {
-                        if (value.isEmpty()) Text(hint, style = FieldText, color = RvColor.whiteA20)
+                        if (value.isEmpty()) Text(hint, style = MonoText, color = RvColor.whiteA20)
                         inner()
                     }
                 },
@@ -356,19 +367,40 @@ private fun RuleRow(
     }
 }
 
-/** Строка Geo: подпись 12 Bold и поле адреса под ней. */
+/**
+ * Строка Geo — FieldRow макета (Figma 6884:5135): подпись 12 Semibold белым
+ * 50 %, под ней через 8 поле 40 (Dark Grey, скругление 12) с адресом
+ * моноширинным белым 80 %.
+ */
 @Composable
 private fun GeoRow(label: String, value: String, onChange: (String) -> Unit) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(RvSpace.nest2),
+        verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
     ) {
-        Text(label, style = RowLabel, color = RvColor.whiteA80)
-        SheetField(
+        Text(label, style = RowLabel, color = RvColor.whiteA50)
+        val shape = RoundedCornerShape(12.dp)
+        BasicTextField(
             value = value,
             onValueChange = onChange,
-            placeholder = "https://example.com",
-            keyboardType = KeyboardType.Uri,
+            singleLine = true,
+            textStyle = MonoText.copy(color = RvColor.whiteA80),
+            cursorBrush = SolidColor(RvColor.whiteA50),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+            modifier = Modifier.fillMaxWidth().height(40.dp),
+            decorationBox = { inner ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(shape)
+                        .background(RvColor.DarkGrey)
+                        .padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    if (value.isEmpty()) Text("https://example.com", style = MonoText, color = RvColor.whiteA20)
+                    inner()
+                }
+            },
         )
     }
 }
