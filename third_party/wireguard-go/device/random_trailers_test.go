@@ -238,3 +238,33 @@ func rxBytes(t *testing.T, wgDevice *device.Device) int {
 	}
 	return 0
 }
+
+// TestRandomTrailersEnabledMidHandshake covers trailers switched on after the
+// first initiation already left without one: the answer to it carries a
+// trailer the client drops, so the switch has to start a fresh handshake
+// instead of leaving the peer to wait out the retry timeout.
+func TestRandomTrailersEnabledMidHandshake(t *testing.T) {
+	serverPrivate, serverPublic := generateTestKeyPair(t)
+	clientPrivate, clientPublic := generateTestKeyPair(t)
+	network := newMemNetwork()
+
+	server, _ := startMemDevice(t, network, "server", 1000, true,
+		"private_key="+serverPrivate+"\npublic_key="+clientPublic+"\nallowed_ip=10.0.0.2/32")
+	defer server.Close()
+	client, clientTUN := startMemDevice(t, network, "client", 2000, false,
+		"private_key="+clientPrivate+"\npublic_key="+serverPublic+"\nallowed_ip=10.0.0.1/32\nendpoint=127.0.0.1:1000")
+	defer client.Close()
+
+	clientTUN.inbound <- buildTestPacket()
+	time.Sleep(300 * time.Millisecond)
+	if waitForHandshake(client, 50*time.Millisecond) {
+		t.Skip("the server's answer happened to carry an empty trailer")
+	}
+
+	if err := client.IpcSet("random_trailers=true"); err != nil {
+		t.Fatal(err)
+	}
+	if !waitForHandshake(client, 1500*time.Millisecond) {
+		t.Fatal("handshake did not restart when trailers were switched on")
+	}
+}

@@ -542,7 +542,9 @@ func (device *Device) handleDeviceLine(ipcDev *ipcSetDevice, key, value string) 
 			return ipcErrorf(ipc.IpcErrorInvalid, "failed to parse random trailers: %w", err)
 		}
 		device.log.Verbosef("UAPI: Updating random trailers")
-		device.randomTrailers.Store(val)
+		if device.randomTrailers.Swap(val) != val {
+			device.restartPendingHandshakes()
+		}
 
 	case "disable_cookies":
 		val, err := strconv.ParseBool(value)
@@ -867,4 +869,28 @@ func (d *ipcSetDevice) mergeWithDevice(device *Device) error {
 	device.headerProtection.key = d.headerProtectionKey
 
 	return nil
+}
+
+// restartPendingHandshakes sends a fresh initiation for every running peer
+// that has no session yet. Changing the trailer setting voids a handshake in
+// flight: its answer is framed for the other setting and gets dropped, and
+// the peer would otherwise sit out the whole retry timeout.
+func (device *Device) restartPendingHandshakes() {
+	device.peers.RLock()
+	defer device.peers.RUnlock()
+	for _, peer := range device.peers.keyMap {
+		if !peer.isRunning.Load() {
+			continue
+		}
+		peer.keypairs.RLock()
+		established := peer.keypairs.current != nil
+		peer.keypairs.RUnlock()
+		if established {
+			continue
+		}
+		peer.handshake.mutex.Lock()
+		peer.handshake.lastSentHandshake = time.Now().Add(-(device.rekeyMinTimeout() + time.Second))
+		peer.handshake.mutex.Unlock()
+		go peer.SendHandshakeInitiation(false)
+	}
 }
