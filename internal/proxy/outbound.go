@@ -291,6 +291,10 @@ func buildProxyOutbound(proxy ProxyConfig) SBOutbound {
 	return buildProxyOutboundRaw(proxy)
 }
 
+// hysteria2HandshakeTimeout replaces sing-quic's 15 s default: a flow the
+// network drops never answers, and every connection of the session waits on it.
+const hysteria2HandshakeTimeout = "3s"
+
 func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 	extra := parseExtra(proxy)
 
@@ -337,6 +341,7 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 		if out.TLS != nil && len(out.TLS.ALPN) == 0 {
 			out.TLS.ALPN = []string{"h3", "hysteria"}
 		}
+		out.TLS.HandshakeTimeout = hysteria2HandshakeTimeout
 		if obfsType := getStringField(extra, "obfs_type", getStringField(extra, "obfsType", "")); obfsType != "" {
 			out.Obfs = &SBHysteria2Obfs{
 				Type:     obfsType,
@@ -653,7 +658,7 @@ func applyTLSAndTransport(out *SBOutbound, extra map[string]interface{}, default
 			UTLS:       &SBUTLS{Enabled: true, Fingerprint: fp},
 		}
 		if pbk != "" {
-			tlsObj.Reality = &SBReality{Enabled: true, PublicKey: pbk, ShortID: sid}
+			tlsObj.Reality = &SBReality{Enabled: true, PublicKey: pbk, ShortID: sid, SupportX25519MLKEM768: true}
 		}
 		out.TLS = tlsObj
 		if alpnStr := getStringField(extra, "alpn", ""); alpnStr != "" {

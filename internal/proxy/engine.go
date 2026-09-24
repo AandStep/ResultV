@@ -354,6 +354,8 @@ type SBOutboundTLS struct {
 	CipherSuites []string   `json:"cipher_suites,omitempty"`
 	UTLS         *SBUTLS    `json:"utls,omitempty"`
 	Reality      *SBReality `json:"reality,omitempty"`
+	// HandshakeTimeout is set for hysteria2 only, see hysteria2HandshakeTimeout.
+	HandshakeTimeout string `json:"handshake_timeout,omitempty"`
 }
 
 type SBEndpoint struct {
@@ -437,6 +439,10 @@ type SBReality struct {
 	PublicKey string `json:"public_key"`
 	ShortID   string `json:"short_id,omitempty"`
 	SpiderX   string `json:"spider_x,omitempty"`
+
+	// Xray clients never strip the X25519MLKEM768 key share, and REALITY
+	// servers since Xray-core v26.9.8 reject a ClientHello without it.
+	SupportX25519MLKEM768 bool `json:"support_x25519mlkem768,omitempty"`
 }
 
 type SBOutboundTransport struct {
