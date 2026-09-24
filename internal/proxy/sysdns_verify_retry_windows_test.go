@@ -19,6 +19,7 @@ package proxy
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 )
 
@@ -26,73 +27,111 @@ import (
 // с первой попытки, и код уходил в PowerShell — 3.5 с против 26 мс нативно.
 // Пара коротких повторов снимает откат, не ослабляя гарантию
 // «применено и подтверждено».
-func TestSetAdapterDNS_RetriesVerifyBeforeFallingBackToPowerShell(t *testing.T) {
-	oldSet, oldVerify, oldPS := setAdapterDNSNativeFn, verifyAdapterDNSFn, setAdapterDNSPowerShellFn
-	defer func() {
-		setAdapterDNSNativeFn, verifyAdapterDNSFn, setAdapterDNSPowerShellFn = oldSet, oldVerify, oldPS
-	}()
-
+func TestSetAdapterDNS_RetriesVerifyBeforeFallingBack(t *testing.T) {
+	stubAdapterDNSSetters(t)
 	setAdapterDNSNativeFn = func(int, []string) error { return nil }
 	verifyCalls := 0
 	verifyAdapterDNSFn = func(int, []string) bool {
 		verifyCalls++
 		return verifyCalls >= 2 // первая попытка не видит значение, вторая видит
 	}
-	setAdapterDNSPowerShellFn = func(int, []string) error {
-		t.Error("откат на PowerShell не нужен: нативная проверка подтвердилась на повторе")
-		return nil
-	}
 
-	usedPS, err := setAdapterDNS(12, []string{"172.19.0.2"})
-	if err != nil {
-		t.Fatalf("неожиданная ошибка: %v", err)
-	}
-	if usedPS {
-		t.Fatal("ожидали нативный путь без отката")
+	path, err := setAdapterDNS(12, []string{"172.19.0.2"})
+	if err != nil || path != dnsPathNative {
+		t.Fatalf("ожидали нативный путь без отката: path=%v err=%v", path, err)
 	}
 	if verifyCalls != 2 {
 		t.Fatalf("ожидали 2 попытки проверки, было %d", verifyCalls)
 	}
 }
 
-// Если значение так и не подтвердилось — откат обязан сработать: это
-// leak-protection, подтверждённое состояние важнее скорости.
+// Если значение так и не подтвердилось ни нативно, ни через netsh — остаётся
+// PowerShell: это leak-protection, подтверждённое состояние важнее скорости.
 func TestSetAdapterDNS_FallsBackToPowerShellWhenVerifyNeverConfirms(t *testing.T) {
-	oldSet, oldVerify, oldPS := setAdapterDNSNativeFn, verifyAdapterDNSFn, setAdapterDNSPowerShellFn
-	defer func() {
-		setAdapterDNSNativeFn, verifyAdapterDNSFn, setAdapterDNSPowerShellFn = oldSet, oldVerify, oldPS
-	}()
-
+	calls := stubAdapterDNSSetters(t)
 	setAdapterDNSNativeFn = func(int, []string) error { return nil }
 	verifyCalls := 0
 	verifyAdapterDNSFn = func(int, []string) bool { verifyCalls++; return false }
-	psCalled := false
-	setAdapterDNSPowerShellFn = func(int, []string) error { psCalled = true; return nil }
 
-	usedPS, err := setAdapterDNS(12, []string{"172.19.0.2"})
-	if err != nil || !usedPS || !psCalled {
-		t.Fatalf("ожидали откат на PowerShell: usedPS=%v psCalled=%v err=%v", usedPS, psCalled, err)
+	path, err := setAdapterDNS(12, []string{"172.19.0.2"})
+	if err != nil || path != dnsPathPowerShell || !calls.netsh || !calls.ps {
+		t.Fatalf("ожидали netsh, затем PowerShell: path=%v calls=%+v err=%v", path, *calls, err)
 	}
-	if verifyCalls != adapterDNSVerifyAttempts {
-		t.Fatalf("ожидали %d попыток проверки, было %d", adapterDNSVerifyAttempts, verifyCalls)
+	if verifyCalls != 2*adapterDNSVerifyAttempts {
+		t.Fatalf("ожидали %d попыток проверки, было %d", 2*adapterDNSVerifyAttempts, verifyCalls)
 	}
 }
 
-// Ошибка самого нативного применения — повторять проверку незачем.
-func TestSetAdapterDNS_SkipsVerifyRetriesWhenNativeApplyFails(t *testing.T) {
-	oldSet, oldVerify, oldPS := setAdapterDNSNativeFn, verifyAdapterDNSFn, setAdapterDNSPowerShellFn
-	defer func() {
-		setAdapterDNSNativeFn, verifyAdapterDNSFn, setAdapterDNSPowerShellFn = oldSet, oldVerify, oldPS
-	}()
+// Нативный вызов недоступен (Windows 10 до 2004) — как у официального
+// клиента AmneziaWG, следующим идёт netsh, PowerShell не нужен.
+func TestSetAdapterDNS_NetshWhenNativeFails(t *testing.T) {
+	calls := stubAdapterDNSSetters(t)
+	setAdapterDNSNativeFn = func(int, []string) error { return errors.New("proc not found") }
+	verifyAdapterDNSFn = func(int, []string) bool { return calls.netsh }
 
+	path, err := setAdapterDNS(12, []string{"172.19.0.2"})
+	if err != nil || path != dnsPathNetsh || calls.ps {
+		t.Fatalf("ожидали netsh без PowerShell: path=%v calls=%+v err=%v", path, *calls, err)
+	}
+}
+
+func TestSetAdapterDNS_PowerShellWhenNetshFails(t *testing.T) {
+	calls := stubAdapterDNSSetters(t)
 	setAdapterDNSNativeFn = func(int, []string) error { return errors.New("status 87") }
+	setAdapterDNSNetshFn = func(int, []string) error { calls.netsh = true; return errors.New("exit status 1") }
 	verifyAdapterDNSFn = func(int, []string) bool {
-		t.Error("проверять нечего: нативное применение не удалось")
+		t.Error("проверять нечего: ни один способ применения не удался")
 		return false
 	}
-	setAdapterDNSPowerShellFn = func(int, []string) error { return nil }
 
-	if usedPS, err := setAdapterDNS(12, []string{"172.19.0.2"}); !usedPS || err != nil {
-		t.Fatalf("ожидали откат на PowerShell без ошибки: usedPS=%v err=%v", usedPS, err)
+	path, err := setAdapterDNS(12, []string{"172.19.0.2"})
+	if err != nil || path != dnsPathPowerShell || !calls.netsh || !calls.ps {
+		t.Fatalf("ожидали откат на PowerShell: path=%v calls=%+v err=%v", path, *calls, err)
 	}
+}
+
+func TestResetAdapterDNS_NetshWhenNativeFails(t *testing.T) {
+	calls := stubAdapterDNSSetters(t)
+	resetAdapterDNSNativeDispatchFn = func(int) error { return errors.New("proc not found") }
+
+	path, err := resetAdapterDNS(12)
+	if err != nil || path != dnsPathNetsh || calls.ps {
+		t.Fatalf("ожидали netsh без PowerShell: path=%v calls=%+v err=%v", path, *calls, err)
+	}
+}
+
+func TestNetshSetDNSCommands(t *testing.T) {
+	got, err := netshSetDNSCommands(7, []string{"1.1.1.1", "2606:4700::1111", "8.8.8.8"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"interface", "ipv4", "set", "dnsservers", "name=7", "source=static", "address=1.1.1.1", "validate=no"},
+		{"interface", "ipv4", "add", "dnsservers", "name=7", "address=8.8.8.8", "index=2", "validate=no"},
+		{"interface", "ipv6", "set", "dnsservers", "name=7", "source=static", "address=2606:4700::1111", "validate=no"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q\nwant %q", got, want)
+	}
+	if _, err := netshSetDNSCommands(7, []string{"1.1.1.1 & calc"}); err == nil {
+		t.Fatal("ожидали отказ на небезопасном токене")
+	}
+}
+
+type adapterDNSCalls struct{ netsh, ps bool }
+
+func stubAdapterDNSSetters(t *testing.T) *adapterDNSCalls {
+	t.Helper()
+	oldSet, oldVerify, oldNetsh, oldPS := setAdapterDNSNativeFn, verifyAdapterDNSFn, setAdapterDNSNetshFn, setAdapterDNSPowerShellFn
+	oldReset, oldResetNetsh, oldResetPS := resetAdapterDNSNativeDispatchFn, resetAdapterDNSNetshFn, resetAdapterDNSPowerShellFn
+	t.Cleanup(func() {
+		setAdapterDNSNativeFn, verifyAdapterDNSFn, setAdapterDNSNetshFn, setAdapterDNSPowerShellFn = oldSet, oldVerify, oldNetsh, oldPS
+		resetAdapterDNSNativeDispatchFn, resetAdapterDNSNetshFn, resetAdapterDNSPowerShellFn = oldReset, oldResetNetsh, oldResetPS
+	})
+	calls := &adapterDNSCalls{}
+	setAdapterDNSNetshFn = func(int, []string) error { calls.netsh = true; return nil }
+	setAdapterDNSPowerShellFn = func(int, []string) error { calls.ps = true; return nil }
+	resetAdapterDNSNetshFn = func(int) error { calls.netsh = true; return nil }
+	resetAdapterDNSPowerShellFn = func(int) error { calls.ps = true; return nil }
+	return calls
 }
