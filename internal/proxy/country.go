@@ -120,6 +120,16 @@ func (c *CountryClient) LookupCountryByIP(ctx context.Context, host string) (str
 		return entry.Country, nil
 	}
 	c.mu.Unlock()
+	return c.RefreshCountryByIP(ctx, host)
+}
+
+// RefreshCountryByIP is LookupCountryByIP without the cache read: a subnet
+// resold to another country would otherwise keep its old flag for a day.
+func (c *CountryClient) RefreshCountryByIP(ctx context.Context, host string) (string, error) {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return "", errors.New("empty host")
+	}
 
 	// Resolve to an IP literal if needed. MaxMind's reader strictly requires
 	// IPs (it errors on hostnames), and we don't want the country API to

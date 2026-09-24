@@ -18,7 +18,7 @@
 import wailsAPI from "./wailsAPI";
 
 
-export const detectCountry = async (ip) => {
+export const detectCountry = async (ip, { fresh = false } = {}) => {
     try {
         let cleanIp = ip.split(":")[0];
         if (
@@ -30,7 +30,9 @@ export const detectCountry = async (ip) => {
             return "local";
         }
 
-        const countryCode = await wailsAPI.detectCountry(cleanIp);
+        const countryCode = fresh
+            ? await wailsAPI.redetectCountry(cleanIp)
+            : await wailsAPI.detectCountry(cleanIp);
         if (countryCode && countryCode !== "Unknown" && countryCode !== "🌐" && countryCode !== "🏠") {
             return countryCode; 
         }
@@ -39,3 +41,39 @@ export const detectCountry = async (ip) => {
     }
     return "unknown";
 };
+
+const REDETECT_PARALLEL = 6;
+
+/*
+ * Страна узла сохраняется при добавлении и дальше только наследуется, так что
+ * подсеть, перепроданная в другую страну, носила бы старый флаг вечно.
+ * Возвращает host → страна только для удачных ответов: при сбое у узла
+ * остаётся прежний флаг, а не «unknown».
+ */
+export const redetectCountries = async (proxies, { fresh = false } = {}) => {
+    const hosts = [
+        ...new Set(
+            proxies
+                .filter((p) => p.ip && !["AUTO", "SECTION"].includes(String(p.type || "").toUpperCase()))
+                .map((p) => p.ip),
+        ),
+    ];
+    const found = new Map();
+    let next = 0;
+    const worker = async () => {
+        while (next < hosts.length) {
+            const host = hosts[next++];
+            const code = await detectCountry(host, { fresh });
+            if (code !== "unknown" && code !== "local") found.set(host, code);
+        }
+    };
+    await Promise.all(Array.from({ length: Math.min(REDETECT_PARALLEL, hosts.length) }, worker));
+    return found;
+};
+
+export const applyCountries = (proxies, found) =>
+    found.size === 0
+        ? proxies
+        : proxies.map((p) =>
+              found.has(p.ip) && found.get(p.ip) !== p.country ? { ...p, country: found.get(p.ip) } : p,
+          );

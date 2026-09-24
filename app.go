@@ -1653,22 +1653,29 @@ func (a *App) SyncProxies(proxies []config.ProxyEntry) error {
 // hundreds of subscription servers triggers at most one network call per
 // unique IP per day.
 func (a *App) DetectCountry(ip string) (string, error) {
-	if a.smartProvider == nil || a.smartProvider.Country == nil {
+	return a.detectCountry(ip, (*proxy.CountryClient).LookupCountryByIP)
+}
+
+// RedetectCountry asks the API again, skipping the 24h cache. Backs the
+// refresh buttons, where the user expects a changed flag to show at once.
+func (a *App) RedetectCountry(ip string) (string, error) {
+	return a.detectCountry(ip, (*proxy.CountryClient).RefreshCountryByIP)
+}
+
+func (a *App) detectCountry(ip string, lookup func(*proxy.CountryClient, context.Context, string) (string, error)) (string, error) {
+	cc := (*proxy.CountryClient)(nil)
+	if a.smartProvider != nil {
+		cc = a.smartProvider.Country
+	}
+	if cc == nil {
 		// Fallback path: smart provider isn't initialised yet (e.g. before
 		// engine boot). Build a one-off client; result still goes through
 		// the project API, never third-party.
-		cc := proxy.NewCountryClient(a.getUserDataPath())
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		country, err := cc.LookupCountryByIP(ctx, ip)
-		if err != nil {
-			return "Unknown", err
-		}
-		return country, nil
+		cc = proxy.NewCountryClient(a.getUserDataPath())
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	country, err := a.smartProvider.Country.LookupCountryByIP(ctx, ip)
+	country, err := lookup(cc, ctx, ip)
 	if err != nil {
 		return "Unknown", err
 	}

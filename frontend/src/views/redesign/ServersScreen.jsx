@@ -50,6 +50,7 @@ import {
   useScrollMemory,
 } from "../../hooks/usePageMemory";
 import wailsAPI from "../../utils/wailsAPI";
+import { applyCountries, redetectCountries } from "../../utils/network";
 import ServerEditor, { SERVER_EDITOR_TEXT } from "./ServerEditor";
 import ServersPage from "./ServersPage";
 import SortMenu from "./SortMenu";
@@ -338,6 +339,15 @@ export default function ServersScreen() {
     });
   }, []);
 
+  /* Кнопка обновления — явная просьба, поэтому мимо суточного кэша. */
+  const redetectFlags = useCallback(
+    async (list) => {
+      const found = await redetectCountries(list, { fresh: true });
+      setProxies((prev) => applyCountries(prev, found));
+    },
+    [setProxies],
+  );
+
   const refreshSubscription = useCallback(
     async (sub) => {
       markRefreshing(sub.id, true);
@@ -348,6 +358,7 @@ export default function ServersScreen() {
             ...prev.filter((p) => p.subscriptionUrl !== sub.url),
             ...mergeSubscriptionRefreshCountries(prev, updated, sub.url),
           ]);
+          await redetectFlags(updated);
         }
         await reloadConfig();
       } catch (err) {
@@ -356,7 +367,7 @@ export default function ServersScreen() {
         markRefreshing(sub.id, false);
       }
     },
-    [setProxies, reloadConfig, markRefreshing],
+    [setProxies, reloadConfig, markRefreshing, redetectFlags],
   );
 
   const removeSubscription = useCallback(
@@ -463,7 +474,10 @@ export default function ServersScreen() {
         onToggle: () => setOpenGroups((prev) => ({ ...prev, my: !prev.my })),
         /* Обновлять у своих серверов нечего: обновление здесь означает
            переизмерить задержку до них. См. docs/design/GAPS.md. */
-        onSync: () => refreshPings(manual.map((p) => p.id)),
+        onSync: () => {
+          refreshPings(manual.map((p) => p.id));
+          redetectFlags(manual);
+        },
         /* Значок тот же, работа та же — значит, и крутится он по тому же
            поводу: пока идёт запрошенный отсюда замер. */
         syncBusy: manual.some(isManualPingPending),
@@ -488,6 +502,7 @@ export default function ServersScreen() {
     removeSubscription,
     removeManual,
     refreshPings,
+    redetectFlags,
     isManualPingPending,
   ]);
 

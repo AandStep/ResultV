@@ -316,13 +316,18 @@ export default function HomeScreen() {
       t,
     );
 
+  /* activeProxy — снимок на момент подключения; флаг берём из списка, чтобы
+     перепроверенная страна появилась и здесь. */
+  const proxyCountry =
+    proxy && (proxies.find((p) => String(p.id) === String(proxy.id)) ?? proxy).country;
+
   const server = proxy && {
     auto: isAuto(proxy),
     flag: isAuto(proxy) ? undefined : (
-      <FlagIcon code={proxy.country} className="rv-flag__img" />
+      <FlagIcon code={proxyCountry} className="rv-flag__img" />
     ),
     badges: protocolBadges(proxy, t),
-    title: formatProxyDisplayName(proxy.name, proxy.country) || proxy.name,
+    title: formatProxyDisplayName(proxy.name, proxyCountry) || proxy.name,
     ping: rowPing(proxy),
     pingBusy: isPingPending(proxy),
   };
