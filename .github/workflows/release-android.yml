@@ -94,7 +94,9 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon \
+          # На GitHub раздаётся только full; play уходит в стор отдельным AAB
+          # и требует libbox-play.aar, который здесь не собирается.
+          ./gradlew assembleFullRelease --no-daemon \
             -PversionName=${{ steps.version.outputs.name }} \
             -PversionCode=${{ steps.version.outputs.code }}
 
@@ -102,7 +104,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-assets-android
-          path: android/app/build/outputs/apk/release/*.apk
+          path: android/app/build/outputs/apk/full/release/*.apk
           retention-days: 1
           if-no-files-found: error
 
