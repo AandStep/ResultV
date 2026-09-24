@@ -1574,7 +1574,7 @@ func TestBuildDNS_SmartModeWithoutRuleSetKeepsTunnelDNS(t *testing.T) {
 	cfg := smartDNSConfig()
 	cfg.SmartRuleSetPath = ""
 	dns := buildDNS(cfg)
-	if dns.Final != "" {
+	if dns.Final != firstDetourServerTag(dns.Servers, "proxy") {
 		t.Fatalf("without a compiled rule-set the DNS split must stay off, got Final=%q", dns.Final)
 	}
 	for _, r := range dns.Rules {
@@ -1590,8 +1590,8 @@ func TestBuildDNS_GlobalModeUnchanged(t *testing.T) {
 	cfg := smartDNSConfig()
 	cfg.RoutingMode = ModeGlobal
 	dns := buildDNS(cfg)
-	if dns.Final != "" {
-		t.Fatalf("global mode DNS must be untouched, got Final=%q", dns.Final)
+	if dns.Final != firstDetourServerTag(dns.Servers, "proxy") {
+		t.Fatalf("global mode DNS must default to the tunnel resolver, got Final=%q", dns.Final)
 	}
 	for _, r := range dns.Rules {
 		if len(r.RuleSet) > 0 {
@@ -1818,5 +1818,26 @@ func TestBuildRoute_SmartMode_BackstopAfterAppWhitelist(t *testing.T) {
 	}
 	if appIdx >= len(rules)-1 {
 		t.Fatalf("app-whitelist rule at %d must precede the backstop at %d", appIdx, len(rules)-1)
+	}
+}
+
+// Without dns.final the core defaults to the first registered transport — the
+// bare DoH leg — and the TCP leg behind the wrapper is never reached. An AWG
+// config's resolver (100.64.0.1) speaks no DoH, so Global failed every lookup.
+func TestBuildDNS_GlobalModeDefaultsToFallbackWrapper(t *testing.T) {
+	for _, servers := range [][]string{nil, {"100.64.0.1"}} {
+		cfg := smartDNSConfig()
+		cfg.RoutingMode = ModeGlobal
+		cfg.DNSServers = servers
+		dns := buildDNS(cfg)
+		var final *SBDNSServer
+		for i := range dns.Servers {
+			if dns.Servers[i].Tag == dns.Final {
+				final = &dns.Servers[i]
+			}
+		}
+		if final == nil || final.Type != "fallback" {
+			t.Fatalf("dns=%v: Final=%q must name the fallback wrapper", servers, dns.Final)
+		}
 	}
 }

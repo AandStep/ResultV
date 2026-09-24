@@ -1562,10 +1562,8 @@ func adaptiveSmartActive(cfg EngineConfig) bool {
 }
 
 // firstDetourServerTag returns the tag of the first DNS server routed through
-// the given detour. That server is already the de-facto default today: with no
-// dns.final, sing-box uses the first registered transport and reaches the rest
-// only through rules. Pointing Smart mode's tunnel rules at it therefore
-// preserves current behaviour for blocked domains exactly.
+// the given detour: the tunnel resolver that Smart mode's rules point at and
+// that every other tunnel mode uses as dns.final.
 func firstDetourServerTag(servers []SBDNSServer, detour string) string {
 	// A fallback wrapper is what rules must point at: its legs carry the
 	// detour, and naming a leg directly would give up the other one. Wrappers
@@ -1847,6 +1845,13 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			if dns.Final == "" {
 				dns.Final = "local"
 			}
+		}
+
+		// Left empty, the core would default to the first registered server,
+		// which is a bare DoH leg, and a resolver without DoH would never reach
+		// its TCP leg.
+		if dns.Final == "" {
+			dns.Final = firstDetourServerTag(dns.Servers, detour)
 		}
 
 		return dns
