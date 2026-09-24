@@ -211,8 +211,7 @@ func startPingProbeEngine(ctx context.Context, proxy ProxyConfig, port int, bind
 		return nil, nil, "engine_start_failed"
 	}
 	stop = func() {
-		closeInstanceBounded(instance, boxCtx, pingProbeEngineCeiling, nil)
-		cancel()
+		closeInstanceBounded(instance, boxCtx, cancel, pingProbeEngineCeiling, nil)
 	}
 	if err := instance.Start(); err != nil {
 		stop()
