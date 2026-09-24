@@ -139,9 +139,22 @@ export const useAppConfig = (addLog) => {
                 await fn();
             } catch (e) {
                 console.error(e);
+                const raw = String(e?.message || e || "");
+                const known = {
+                    elevation_cancelled: "tunnel.elevationCancelled",
+                    elevation_denied: "tunnel.elevationDenied",
+                    elevation_timeout: "tunnel.elevationTimeout",
+                }[raw];
+                setAppDialog({
+                    ...resetDialog(),
+                    isOpen: true,
+                    title: t("tunnel.elevationFailedTitle"),
+                    message: known ? t(known) : raw,
+                    variant: "warning",
+                });
             }
         }
-    }, [resetDialog]);
+    }, [resetDialog, t]);
 
     const showConfirmDialog = useCallback((options = {}) => {
         dialogConfirmRef.current = null;

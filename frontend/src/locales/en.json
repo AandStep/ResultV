@@ -720,7 +720,11 @@
     "adminTitle": "Administrator rights required",
     "adminMessage": "Tunnel mode needs administrator privileges for the virtual network adapter. Click the button below and approve the UAC prompt — the app will restart elevated.",
     "restartAsAdmin": "Restart as administrator",
-    "endpointOnly": "WireGuard and AmneziaWG do not work in Proxy mode — Tunnel only."
+    "endpointOnly": "WireGuard and AmneziaWG do not work in Proxy mode — Tunnel only.",
+    "elevationFailedTitle": "Could not get privileges",
+    "elevationCancelled": "The password prompt was closed. The app keeps running without administrator rights.",
+    "elevationDenied": "The system did not accept the password. Try again.",
+    "elevationTimeout": "No password was entered, so the request was cancelled."
   },
   "toast": {
     "deleteWithoutConfirm": "The next servers will be deleted right away, without asking.",

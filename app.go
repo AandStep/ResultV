@@ -101,6 +101,7 @@ type App struct {
 	quitRequested bool
 
 	trayHidden    atomic.Uint32
+	noTray        atomic.Bool
 	taskbarUnhook func()
 	smartProvider *proxy.HTTPBlockedListProvider
 
@@ -604,7 +605,10 @@ func (a *App) startup(ctx context.Context) {
 			}
 		},
 	})
-	a.tray.Start()
+	if !a.tray.Start() {
+		a.noTray.Store(true)
+		a.log.Warning("[СИСТЕМА] Сессионная шина D-Bus недоступна — значка в трее не будет, закрытие окна завершит приложение")
+	}
 	a.refreshTrayProxyList()
 
 	if system.DetectGPOConflict() {
@@ -627,7 +631,7 @@ func (a *App) startup(ctx context.Context) {
 	// launch here used to double both the UAC prompt risk and the race surface
 	// with the frontend auto-connect.
 
-	if a.startInTray {
+	if a.startInTray && !a.noTray.Load() {
 		a.trayHidden.Store(1)
 		wailsRuntime.WindowHide(a.ctx)
 	}
@@ -705,7 +709,7 @@ func (a *App) BeforeClose(ctx context.Context) bool {
 	a.stateMu.Lock()
 	quitRequested := a.quitRequested
 	a.stateMu.Unlock()
-	if quitRequested {
+	if quitRequested || a.noTray.Load() {
 		return false
 	}
 	a.trayHidden.Store(1)
