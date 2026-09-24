@@ -30,6 +30,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -389,6 +390,7 @@ func (a *App) HandleDeepLink(url string) {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx, a.cancel = context.WithCancel(ctx)
+	go a.quitOnTermination()
 
 	a.log.SetEmitter(func(eventName string, data any) {
 		wailsRuntime.EventsEmit(a.ctx, eventName, data)
@@ -2875,6 +2877,20 @@ func (a *App) getAppRootDir() string {
 		return "."
 	}
 	return filepath.Dir(exe)
+}
+
+// Wails answers SIGTERM/SIGINT with a window close, which BeforeClose turns
+// into hide-to-tray: the process ignored `kill` and logout.
+func (a *App) quitOnTermination() {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(ch)
+	select {
+	case <-ch:
+		a.markQuitRequested()
+		wailsRuntime.Quit(a.ctx)
+	case <-a.ctx.Done():
+	}
 }
 
 func (a *App) markQuitRequested() {
