@@ -259,7 +259,7 @@ func (r *SmartRelay) serve(client net.Conn) {
 	addr, _ := netip.ParseAddr(host)
 
 	rec, known := lookupSmart(r.store, host, addr)
-	switch choiceFrom(rec, known, r.health.healthy()) {
+	switch choiceFrom(rec, known) {
 	case chooseProxy:
 		r.pipeVia(client, reader, target, true)
 	case chooseDirect:
@@ -304,24 +304,29 @@ func (r *SmartRelay) race(client net.Conn, buffered *bufio.Reader, target, host 
 		func(ctx context.Context) (net.Conn, error) { return r.dialDirect(ctx, target) },
 		func(ctx context.Context) (net.Conn, error) { return r.dialTunnel(ctx, target) },
 	)
+	if report, ok := raceLinkEvidence(res); report {
+		r.health.record(host, ok)
+	}
 	if res.Err != nil {
-		r.health.record(host, false)
 		return
 	}
 	defer res.Conn.Close()
 
-	// Выигрыш прямого пути — доказательство, что линия жива; выигрыш туннеля —
-	// ещё один сайт, который сам не ответил.
-	r.health.record(host, !res.ViaProxy)
-	r.learn(host, res.ViaProxy)
-	if !res.ViaProxy {
-		// Прямой путь победил по байтам. Байты это сайт или стена — вопрос
-		// другой, и отвечает на него только проба.
-		r.recheckAsync(host)
+	if raceTeaches(res) {
+		r.learn(host, res.ViaProxy)
+		if !res.ViaProxy {
+			// Прямой путь победил по байтам. Байты это сайт или стена — вопрос
+			// другой, и отвечает на него только проба. У переданного молчащего
+			// узла байтов нет, подозревать в нём нечего.
+			r.recheckAsync(host)
+		}
 	}
 
-	if _, err := client.Write(res.Head); err != nil {
-		return
+	// У переданного молчащего узла первых байт сервера нет — писать нечего.
+	if len(res.Head) > 0 {
+		if _, err := client.Write(res.Head); err != nil {
+			return
+		}
 	}
 	splice(client, buffered, res.Conn)
 }

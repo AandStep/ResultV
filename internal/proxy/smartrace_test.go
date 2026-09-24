@@ -63,6 +63,23 @@ func blackHoleServer(t *testing.T) raceDialer {
 	}
 }
 
+// muteServer accepts the write and then stays open and silent — unlike
+// blackHoleServer it does not hang up when the race's context is cancelled,
+// which is what a real mute peer does and what a handed-over connection has
+// to survive.
+func muteServer(t *testing.T) raceDialer {
+	t.Helper()
+	return func(ctx context.Context) (net.Conn, error) {
+		client, server := newPipeConnPair()
+		go func() {
+			buf := make([]byte, 4096)
+			server.Read(buf)
+		}()
+		t.Cleanup(func() { server.Close(); client.Close() })
+		return client, nil
+	}
+}
+
 func refusingDialer() raceDialer {
 	return func(ctx context.Context) (net.Conn, error) {
 		return nil, errors.New("connection refused")
@@ -163,4 +180,92 @@ func (c *notifyCloseConn) Close() error {
 	default:
 	}
 	return c.Conn.Close()
+}
+
+// Решение 2026-09-22, развилка 1. По потолку гонки соединение до узла уже
+// установлено и в него уже записаны байты клиента — сервер просто ещё не
+// заговорил. Раньше его закрывали и отдавали клиенту отказ; про direct при
+// этом уже точно известно, что он мёртв, то есть выбрасывался единственный
+// оставшийся живой кандидат.
+func TestSilentNodeConnectionIsHandedOverInsteadOfDropped(t *testing.T) {
+	res := runSmartRace(context.Background(), []byte("hello"), refusingDialer(), blackHoleServer(t))
+	if res.Err != nil {
+		t.Fatalf("гонка отдала отказ вместо живого соединения узла: %v", res.Err)
+	}
+	if res.Conn == nil {
+		t.Fatal("соединения нет")
+	}
+	defer res.Conn.Close()
+	if !res.ViaProxy {
+		t.Fatal("отдан не тот путь: direct отказал, живым оставался только узел")
+	}
+	if !res.Unproven {
+		t.Fatal("соединение отдано как доказанное, хотя сервер по нему не сказал ни байта")
+	}
+}
+
+// Дедлайн чтения, которым попытка ловит молчание, обязан быть снят перед
+// передачей клиенту: иначе первое же его чтение мгновенно упадёт по таймауту.
+func TestHandedOverConnectionHasNoLeftoverDeadline(t *testing.T) {
+	res := runSmartRace(context.Background(), []byte("hello"), refusingDialer(), muteServer(t))
+	if res.Err != nil || res.Conn == nil {
+		t.Fatalf("ожидалось живое соединение: err=%v", res.Err)
+	}
+	defer res.Conn.Close()
+	_ = res.Conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+	started := time.Now()
+	buf := make([]byte, 16)
+	_, _ = res.Conn.Read(buf)
+	if elapsed := time.Since(started); elapsed < 200*time.Millisecond {
+		t.Fatalf("чтение упало мгновенно (%v) — на соединении остался старый дедлайн", elapsed)
+	}
+}
+
+// Доказанный ответ всегда лучше молчания: молчащий кандидат не имеет права
+// выиграть у пути, по которому сервер заговорил.
+func TestAnsweredPathBeatsASilentOne(t *testing.T) {
+	res := runSmartRace(context.Background(), []byte("hello"), blackHoleServer(t), liveServer(t, "ok"))
+	if res.Err != nil {
+		t.Fatal(res.Err)
+	}
+	defer res.Conn.Close()
+	if res.Unproven {
+		t.Fatal("победа отдана молчащему пути при живом ответе на другом")
+	}
+	if !res.ViaProxy {
+		t.Fatal("ответил узел, а победа записана direct")
+	}
+}
+
+// Развилка 2. Потолок с молчащей ногой — улика двусмысленная: direct мог
+// отказать из-за цензуры конкретного адреса, а узел промолчать из-за
+// медленного сервера. Копить такое в счётчик поломки канала значит взводить
+// предохранитель на том, ради чего он не писался.
+func TestDeadlineWithAnUnfinishedPathIsNotEvidenceAgainstTheLink(t *testing.T) {
+	report, _ := raceLinkEvidence(raceResult{Err: errors.New("EOF"), Unfinished: 1})
+	if report {
+		t.Fatal("молчание засчитано как доказательство, что сломан канал")
+	}
+}
+
+// Отданное без ответа соединение ничего не доказывает, а вердикт живёт семь
+// дней — записывать по нему нельзя.
+func TestHandedOverConnectionTeachesNothing(t *testing.T) {
+	if raceTeaches(raceResult{Unproven: true}) {
+		t.Fatal("по недоказанному соединению записывается вердикт")
+	}
+	if !raceTeaches(raceResult{}) {
+		t.Fatal("обычная победа перестала учить")
+	}
+}
+
+// Передавать клиенту молчащий DIRECT нельзя: молчание прямого пути — это и
+// есть подпись чёрной дыры, и вкладка, висящая своим таймаутом минуту, хуже
+// честного отказа за секунду. Отдаём только узел.
+func TestMuteDirectIsNotHandedOver(t *testing.T) {
+	res := runSmartRace(context.Background(), []byte("hello"), muteServer(t), refusingDialer())
+	if res.Err == nil {
+		res.Conn.Close()
+		t.Fatal("клиенту отдали молчащий прямой путь вместо отказа")
+	}
 }

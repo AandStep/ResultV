@@ -78,7 +78,7 @@ func BuildPingProbeConfig(proxy ProxyConfig, listenPort int, nodeIPs []string) (
 	if resolverTag != "" && len(nodeIPs) > 0 {
 		resolverTag = pingProbeHostsTag
 	}
-	outbounds := buildOutbounds(proxy, resolverTag)
+	outbounds := buildOutbounds(proxy, resolverTag, "")
 	found := false
 	for i := range outbounds {
 		if outbounds[i].Tag == "proxy" {

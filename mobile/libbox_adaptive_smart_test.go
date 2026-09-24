@@ -460,3 +460,57 @@ func TestAdaptiveSmart_CoreAcceptsTheBuiltConfig(t *testing.T) {
 		})
 	}
 }
+
+// FakeIP отдаёт маршрутизатору ИМЯ вместо адреса, и выученные «прямые» имена
+// rule-set ведёт в "direct" по имени. Без резолвера на аутбаунде ядро резолвит
+// такое имя обходом DNS-правил, где его ловит catch-all-правило fakeip, а
+// fakeip на внутренний запрос не отвечает: на ПК это десять секунд тишины и
+// отказ для каждого направления вне блок-листа (замер 2026-09-22).
+func TestAdaptiveSmart_DirectResolvesOutsideTheDNSRules(t *testing.T) {
+	directResolver := func(opts BuildOptions) (string, map[string]bool) {
+		t.Helper()
+		b, _ := json.Marshal(opts)
+		raw, err := BuildSingBoxConfigFromEntryV2(entryFixture, t.TempDir(), string(b))
+		if err != nil {
+			t.Fatalf("сборка конфига: %v", err)
+		}
+		var cfg struct {
+			DNS struct {
+				Servers []struct {
+					Tag string `json:"tag"`
+				} `json:"servers"`
+			} `json:"dns"`
+			Outbounds []struct {
+				Tag            string `json:"tag"`
+				DomainResolver string `json:"domain_resolver"`
+			} `json:"outbounds"`
+		}
+		if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+			t.Fatalf("unmarshal config: %v", err)
+		}
+		servers := map[string]bool{}
+		for _, s := range cfg.DNS.Servers {
+			servers[s.Tag] = true
+		}
+		for _, out := range cfg.Outbounds {
+			if out.Tag == "direct" {
+				return out.DomainResolver, servers
+			}
+		}
+		t.Fatal("аутбаунда direct нет")
+		return "", nil
+	}
+
+	got, servers := directResolver(smartOpts())
+	if got == "" {
+		t.Fatal("у direct нет domain_resolver: резолв по имени попадёт в fakeip-ловушку")
+	}
+	if got == "fakeip" || !servers[got] {
+		t.Fatalf("direct резолвит через %q, серверы DNS: %v", got, servers)
+	}
+
+	// Без FakeIP назначение приходит адресом — резолвить нечего, форма прежняя.
+	if got, _ := directResolver(BuildOptions{SmartMode: true}); got != "" {
+		t.Fatalf("без адаптивного Smart у direct появился domain_resolver %q", got)
+	}
+}

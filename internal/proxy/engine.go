@@ -644,7 +644,7 @@ func BuildProxyModeConfig(cfg EngineConfig) SingBoxConfig {
 			Listen:     host,
 			ListenPort: port,
 		}},
-		Outbounds:    buildOutbounds(cfg.Proxy, nodeResolver),
+		Outbounds:    buildOutbounds(cfg.Proxy, nodeResolver, ""),
 		Route:        buildRoute(cfg),
 		// Proxy-режим не строит fakeip (buildDNS проверяет AdaptiveSmart только
 		// в ветке ProxyModeTunnel) — store_fakeip здесь всегда лишний.
@@ -722,7 +722,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) SingBoxConfig {
 	// повторяет правило, которое buildDNS эмитит для того же домена, — поэтому
 	// его можно назвать до блока DNS.
 	nodeResolver := serverDomainResolverTag(cfg.Proxy, ProxyModeTunnel, nil)
-	outbounds := buildOutbounds(cfg.Proxy, nodeResolver)
+	outbounds := buildOutbounds(cfg.Proxy, nodeResolver, directDomainResolverTag(cfg))
 
 	// Default sing-box log level. `error` keeps logcat quiet on ship;
 	// callers (mobile wrapper) can override via cfg.LogLevel for debug
@@ -804,26 +804,50 @@ func serverDomainResolverTag(proxy ProxyConfig, mode ProxyMode, dns *SBDNS) stri
 	return ""
 }
 
-// buildOutbounds собирает список аутбаундов. domainResolver ложится только на
-// аутбаунд самого узла: "direct" набирает всё, что ему отдаёт роутер, и
-// единственного правильного резолвера у него нет — он осознанно остаётся на
-// обходе правил.
-func buildOutbounds(proxy ProxyConfig, domainResolver string) []SBOutbound {
+// buildOutbounds собирает список аутбаундов. domainResolver — тег из
+// serverDomainResolverTag, он ложится на аутбаунд самого узла; directResolver —
+// ответ directDomainResolverTag для "direct", пустой, пока FakeIP выключен.
+// Зачем он вообще нужен — см. directDomainResolverTag.
+func buildOutbounds(proxy ProxyConfig, domainResolver, directResolver string) []SBOutbound {
+	directOut := SBOutbound{Type: "direct", Tag: "direct", DomainResolver: directResolver}
 	pt := strings.ToUpper(strings.TrimSpace(proxy.Type))
 	if pt == "WIREGUARD" || pt == "AMNEZIAWG" {
 		return []SBOutbound{
-			{Type: "direct", Tag: "direct"},
+			directOut,
 			{Type: "block", Tag: "block"},
 		}
 	}
 	proxyOut := buildProxyOutbound(proxy)
 	proxyOut.DomainResolver = domainResolver
 	outbounds := []SBOutbound{
-		{Type: "direct", Tag: "direct"},
+		directOut,
 		{Type: "block", Tag: "block"},
 		proxyOut,
 	}
 	return outbounds
+}
+
+// directDomainResolverTag называет сервер, которым "direct" резолвит имя, когда
+// его просят дозвониться по имени.
+//
+// Нужен только под FakeIP, и там это не предпочтение, а разница между живым
+// прямым путём и никаким. FakeIP подменяет адрес назначения ИМЕНЕМ ещё до
+// правил, поэтому каждый прямой дозвон становится дозвоном по имени; без
+// резолвера на аутбаунде ядро резолвит его обходом DNS-правил, где его первым
+// ловит catch-all-правило fakeip, а fakeip-транспорт на внутренний запрос
+// ответить не может. Замер на ПК (2026-09-22): десять секунд тишины, затем
+// "lookup example.com: context deadline exceeded" для каждого направления вне
+// блок-листа. На Android это выученные «прямые» имена: rule-set ведёт их в
+// "direct" по имени.
+//
+// "local", а не туннельный резолвер: это прямой путь. Тот же тег уже резолвит
+// адрес самого узла (serverDomainResolverTag), и buildDNS эмитит его в каждой
+// ветке туннельного режима.
+func directDomainResolverTag(cfg EngineConfig) string {
+	if cfg.Mode != ProxyModeTunnel || !cfg.AdaptiveSmart {
+		return ""
+	}
+	return "local"
 }
 
 // smartRuleSetActive reports whether buildRoute registers the compiled

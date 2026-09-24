@@ -17,7 +17,10 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"net"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -42,6 +45,12 @@ const (
 	// before handing the connection on. One TLS record header is enough to
 	// know the server spoke; reading more would only delay the handover.
 	smartFirstReadBudget = 8 * 1024
+	// smartSilenceMargin is how long before the ceiling an attempt stops
+	// waiting for the server to speak. It exists so silence arrives as an
+	// outcome the loop can still act on, instead of as the ceiling itself:
+	// a connected but mute path is the only candidate left once the other one
+	// has refused, and closing it there costs the user the whole request.
+	smartSilenceMargin = 250 * time.Millisecond
 )
 
 // raceDialer opens one candidate connection.
@@ -54,14 +63,54 @@ type raceResult struct {
 	Conn     net.Conn
 	Head     []byte
 	ViaProxy bool
-	Err      error
+	// Unproven marks a connection handed over without the server ever having
+	// spoken on it. It is the last live candidate, not a measurement: nothing
+	// may be learned from it and it says nothing about the link.
+	Unproven bool
+	// Unfinished counts paths still dialing or still reading when the ceiling
+	// hit. Their outcome is unknown, which is why such a result is no evidence
+	// either way.
+	Unfinished int
+	Err        error
+}
+
+// raceLinkEvidence turns one finished race into what it says about the direct
+// LINK, which is not the same question as what it says about the destination.
+// Only a race both legs lost is evidence the link is broken; a race the node
+// won is one censored destination, and filing it as a link failure is what let
+// the breaker trip on the engine's own rescues.
+func raceLinkEvidence(res raceResult) (report, ok bool) {
+	switch {
+	case res.Unfinished > 0 || res.Unproven:
+		// Ambiguous by construction: direct may have refused because that one
+		// address is censored while the node merely had not answered yet.
+		// Counting it would trip the breaker on the very traffic it exists to
+		// keep measuring.
+		return false, false
+	case res.Err != nil:
+		return true, false
+	case res.ViaProxy:
+		return false, false
+	default:
+		return true, true
+	}
+}
+
+// raceTeaches reports whether this outcome may be written to the verdict
+// store. A verdict lives for days; only a server that actually answered earns
+// one.
+func raceTeaches(res raceResult) bool {
+	return res.Err == nil && !res.Unproven
 }
 
 type raceAttempt struct {
 	conn     net.Conn
 	head     []byte
 	viaProxy bool
-	err      error
+	// silent: connected, the client's bytes went out, the server said nothing
+	// before the cut-off. The connection is alive and comes back unclosed.
+	silent bool
+	err    error
 }
 
 // runSmartRace sends the client's first bytes down both paths and keeps
@@ -76,20 +125,48 @@ func runSmartRace(ctx context.Context, first []byte, direct, proxy raceDialer) r
 	defer cancel()
 
 	results := make(chan raceAttempt, 2)
+	timer := time.NewTimer(smartRaceHeadStart)
+	defer timer.Stop()
+
+	pending := 1
 	var once sync.Once
+	// The counter is kept here rather than at the call sites because the
+	// launch happens at most once while two different events ask for it. Both
+	// used to increment, so on a refusal followed by the head start the loop
+	// waited for a second attempt that was never running — and every doomed
+	// race paid the full ceiling instead of ending when its last path failed.
 	launchProxy := func() {
-		once.Do(func() { go attempt(ctx, proxy, first, true, results) })
+		once.Do(func() {
+			pending++
+			timer.Stop()
+			go attempt(ctx, proxy, first, true, results)
+		})
 	}
 
 	directCtx, directCancel := context.WithTimeout(ctx, smartDirectDialTimeout)
 	defer directCancel()
 	go attempt(directCtx, direct, first, false, results)
 
-	timer := time.NewTimer(smartRaceHeadStart)
-	defer timer.Stop()
+	var (
+		lastErr error
+		mute    *raceAttempt
+	)
+	// keepMute holds a connected-but-silent NODE connection as the candidate of
+	// last resort. Direct's silence is not kept: it is the signature of the
+	// black hole itself, and a tab hanging on the client's own minute-long
+	// timeout is worse for the user than an honest refusal now.
+	keepMute := func(res raceAttempt) {
+		if !res.viaProxy || mute != nil {
+			res.conn.Close()
+			return
+		}
+		kept := res
+		mute = &kept
+	}
+	handOver := func() raceResult {
+		return raceResult{Conn: mute.conn, ViaProxy: mute.viaProxy, Unproven: true}
+	}
 
-	pending := 1
-	var lastErr error
 	for {
 		select {
 		case <-timer.C:
@@ -97,32 +174,53 @@ func runSmartRace(ctx context.Context, first []byte, direct, proxy raceDialer) r
 			// request is still in flight; on a censored one it means it never
 			// will. The two are indistinguishable from here, so stop guessing
 			// and try the other path as well.
-			pending++
 			launchProxy()
 		case res := <-results:
-			if res.err == nil {
-				// Whoever is still running has lost and must not be left
-				// holding a socket: cancel unblocks their read and the attempt
-				// goroutine closes what it opened.
-				go drainLosers(results, pending-1)
-				return raceResult{Conn: res.conn, Head: res.head, ViaProxy: res.viaProxy}
-			}
-			lastErr = res.err
 			pending--
+			switch {
+			case res.err == nil && !res.silent:
+				// Whoever is still running has lost and must not be left
+				// holding a socket.
+				go drainLosers(results, pending)
+				if mute != nil {
+					mute.conn.Close()
+				}
+				return raceResult{Conn: res.conn, Head: res.head, ViaProxy: res.viaProxy}
+			case res.silent:
+				keepMute(res)
+			default:
+				lastErr = res.err
+			}
 			if !res.viaProxy {
-				// A refusal is evidence now, not in 700 ms.
-				pending++
+				// Direct refusing or going mute is evidence now, not in 700 ms.
 				launchProxy()
 			}
 			if pending == 0 {
+				if mute != nil {
+					return handOver()
+				}
+				if lastErr == nil {
+					lastErr = ctx.Err()
+				}
 				return raceResult{Err: lastErr}
 			}
 		case <-ctx.Done():
 			go drainLosers(results, pending)
+			if mute != nil {
+				// Direct is known dead and the node is at least alive. Handing
+				// its connection over costs nothing if the server never speaks
+				// — the client then waits on its own terms instead of being
+				// told no while the only live path was thrown away.
+				return handOver()
+			}
 			if lastErr == nil {
 				lastErr = ctx.Err()
 			}
-			return raceResult{Err: E.Cause(lastErr, "smart: neither path answered")}
+			return raceResult{
+				Unfinished: pending,
+				Err: E.Cause(lastErr, "no answer in ", smartRaceDeadline.String(), ", ",
+					strconv.Itoa(pending), " path(s) unfinished"),
+			}
 		}
 	}
 }
@@ -142,9 +240,15 @@ func attempt(ctx context.Context, dial raceDialer, first []byte, viaProxy bool, 
 			return
 		}
 	}
+	// Without a deadline here a mute server keeps this goroutine and its
+	// socket for as long as it likes: cancelling the context does not unblock
+	// a read on an established connection.
+	if deadline, hasDeadline := ctx.Deadline(); hasDeadline {
+		_ = conn.SetReadDeadline(deadline.Add(-smartSilenceMargin))
+	}
 	head := make([]byte, smartFirstReadBudget)
 	n, err := conn.Read(head)
-	if err != nil || n == 0 {
+	if n == 0 && !isDeadlineError(err) {
 		conn.Close()
 		if err == nil {
 			err = E.New("server closed without answering")
@@ -152,12 +256,34 @@ func attempt(ctx context.Context, dial raceDialer, first []byte, viaProxy bool, 
 		out <- raceAttempt{viaProxy: viaProxy, err: err}
 		return
 	}
+	// Whatever happens next, the connection may end up in the client's hands,
+	// and a deadline left on it would fail their very first read.
+	_ = conn.SetReadDeadline(time.Time{})
+	result := raceAttempt{conn: conn, viaProxy: viaProxy}
+	if n > 0 {
+		result.head = head[:n]
+	} else {
+		result.silent = true
+	}
 	select {
-	case out <- raceAttempt{conn: conn, head: head[:n], viaProxy: viaProxy}:
+	case out <- result:
 	case <-ctx.Done():
 		// Someone else already won while we were reading.
 		conn.Close()
 	}
+}
+
+// isDeadlineError separates "the server stayed silent" from "the connection
+// broke", which are the two ways a first read comes back empty.
+func isDeadlineError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 // drainLosers closes whatever the still-running attempts hand back.
