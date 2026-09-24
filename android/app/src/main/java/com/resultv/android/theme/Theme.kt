@@ -88,7 +88,7 @@ private val ResultVColors = darkColorScheme(
     inverseSurface = RvColor.White,
     inverseOnSurface = RvColor.Black,
 
-    outline = RvColor.whiteA10,
+    outline = RvColor.whiteA07,
     outlineVariant = RvColor.whiteA05,
 
     scrim = RvColor.overlay,

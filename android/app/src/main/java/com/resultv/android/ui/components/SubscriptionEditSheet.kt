@@ -124,6 +124,7 @@ fun SubscriptionEditSheet(
         dragHandle = { BottomSheetDefaults.DragHandle() },
     ) {
         DarkSheetSystemBars()
+        ClearFocusOnImeHide()
         Column(
             modifier = Modifier
                 .fillMaxWidth()

@@ -10,6 +10,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import kotlin.math.max
 
 /**
@@ -29,7 +31,7 @@ fun Sparkline(
     values: List<Float>,
     color: Color,
     modifier: Modifier = Modifier,
-    strokeWidthPx: Float = 2f,
+    strokeWidth: Dp = 2.dp,
     baseline: Float = 1024f,
 ) {
     Canvas(modifier = modifier.fillMaxSize()) {
@@ -39,6 +41,7 @@ fun Sparkline(
 
         val peak = max(values.max(), baseline).coerceAtLeast(1f)
         val stepX = w / (values.size - 1).toFloat()
+        val strokeWidthPx = strokeWidth.toPx()
         val pad = strokeWidthPx
         val drawH = h - pad * 2
 

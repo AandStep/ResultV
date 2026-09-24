@@ -1,7 +1,6 @@
 package com.resultv.android.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.resultv.android.R
 import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.rvBorder
 import com.resultv.android.theme.SegoeUi
 
 /**
@@ -59,7 +59,7 @@ fun RvSearchField(
                     .fillMaxSize()
                     .clip(shape)
                     .background(RvColor.Grey)
-                    .border(1.dp, RvColor.whiteA10, shape)
+                    .rvBorder(shape)
                     .padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {

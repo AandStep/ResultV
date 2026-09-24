@@ -7,7 +7,6 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.Drawable
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
@@ -74,6 +73,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
 import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.rvBorder
 import com.resultv.android.theme.RvSpace
 import com.resultv.android.ui.components.TagField
 import com.resultv.android.vpn.AppInventory
@@ -196,7 +196,7 @@ private fun ProfilesCard(onClick: () -> Unit) {
             .fillMaxWidth()
             .clip(shape)
             .background(RvColor.Grey)
-            .border(1.dp, RvColor.whiteA10, shape)
+            .rvBorder(shape)
             .clickable(role = Role.Button, onClick = onClick)
             .padding(15.dp),
         horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
@@ -553,7 +553,7 @@ private fun RulesCheckbox(checked: Boolean) {
             .size(20.dp)
             .clip(shape)
             .background(if (checked) RvColor.Main else Color.Transparent)
-            .border(1.5.dp, if (checked) RvColor.Main else RvColor.whiteA50, shape),
+            .rvBorder(if (checked) RvColor.Main else RvColor.whiteA50, shape, width = 1.5.dp),
         contentAlignment = Alignment.Center,
     ) {
         if (checked) {

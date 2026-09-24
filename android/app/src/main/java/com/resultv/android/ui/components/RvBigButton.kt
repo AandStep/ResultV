@@ -1,7 +1,6 @@
 package com.resultv.android.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.height
@@ -20,6 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.Text
 import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.rvBorder
 import com.resultv.android.theme.RvSpace
 
 /**
@@ -44,7 +44,7 @@ fun RvBigButton(
             .height(106.dp)
             .clip(shape)
             .background(if (on) RvColor.mainA10 else RvColor.Grey)
-            .border(1.dp, if (on) RvColor.mainA10 else RvColor.whiteA10, shape)
+            .then(if (on) Modifier.rvBorder(RvColor.mainA10, shape) else Modifier.rvBorder(shape))
             .then(
                 if (selected == null) Modifier.clickable(role = Role.Button, onClick = onClick)
                 else Modifier.selectable(selected = on, role = Role.RadioButton, onClick = onClick)

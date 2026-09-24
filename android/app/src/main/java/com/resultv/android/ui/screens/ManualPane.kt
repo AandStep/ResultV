@@ -47,6 +47,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import com.resultv.android.R
 import com.resultv.android.theme.RvColor
 import com.resultv.android.theme.RvSpace
+import com.resultv.android.ui.components.ClearFocusOnImeHide
 import com.resultv.android.ui.components.DarkSheetSystemBars
 import com.resultv.android.vpn.Profile
 import com.resultv.android.vpn.ProfileRepository
@@ -529,6 +530,7 @@ internal fun ProfileFullEditSheet(
     if (spec == null) {
         ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = RvColor.Grey) {
             DarkSheetSystemBars()
+            ClearFocusOnImeHide()
             Text(
                 text = stringResource(R.string.proxies_edit_unsupported),
                 style = MaterialTheme.typography.bodyMedium,
@@ -582,6 +584,7 @@ internal fun ProfileFullEditSheet(
         containerColor = RvColor.Grey,
     ) {
         DarkSheetSystemBars()
+        ClearFocusOnImeHide()
         Column(
             modifier = Modifier
                 .fillMaxWidth()

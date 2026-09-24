@@ -68,6 +68,7 @@ import com.resultv.android.ui.screens.HomeScreen
 import com.resultv.android.ui.screens.CertWizardScreen
 import com.resultv.android.ui.screens.LogsScreen
 import com.resultv.android.ui.screens.ProxiesScreen
+import com.resultv.android.ui.components.ClearFocusOnImeHide
 import com.resultv.android.ui.components.HomeHeader
 import com.resultv.android.ui.components.PageHeader
 import com.resultv.android.ui.components.RoutingDeepLinkSheet
@@ -312,6 +313,7 @@ private fun AppShell(
     dataDir: String,
     onPower: () -> Unit,
 ) {
+    ClearFocusOnImeHide()
     var tab by rememberSaveable { mutableStateOf(Tab.Home) }
     // Full-screen Logs route layered above the tab Scaffold (covers the bottom
     // nav). There's no NavController in this app, so a simple overlay flag is
@@ -413,8 +415,9 @@ private fun AppShell(
 }
 
 /**
- * Нижняя панель макета: пять кнопок одними значками, выбранная — на
- * зелёной подложке 10 %. Подпись уходит в contentDescription, а не на экран.
+ * Нижняя панель макета (Figma 6859:5157): пять кнопок 44 dp одними значками
+ * 20 dp, поля панели 24 по бокам и 12 сверху-снизу, выбранная — на зелёной
+ * подложке 10 %. Подпись уходит в contentDescription, а не на экран.
  */
 @Composable
 private fun BottomBar(selected: Tab, onSelect: (Tab) -> Unit) {
@@ -431,7 +434,7 @@ private fun BottomBar(selected: Tab, onSelect: (Tab) -> Unit) {
                 )
             }
             .windowInsetsPadding(WindowInsets.navigationBars)
-            .padding(12.dp),
+            .padding(horizontal = 24.dp, vertical = 12.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -442,7 +445,7 @@ private fun BottomBar(selected: Tab, onSelect: (Tab) -> Unit) {
                 val title = stringResource(entry.titleRes)
                 Box(
                     modifier = Modifier
-                        .size(48.dp)
+                        .size(44.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(if (isSelected) RvColor.mainA10 else androidx.compose.ui.graphics.Color.Transparent)
                         .selectable(
@@ -457,7 +460,7 @@ private fun BottomBar(selected: Tab, onSelect: (Tab) -> Unit) {
                         painter = painterResource(entry.icon),
                         contentDescription = null,
                         tint = if (isSelected) RvColor.Main else RvColor.whiteA50,
-                        modifier = Modifier.size(24.dp),
+                        modifier = Modifier.size(20.dp),
                     )
                 }
             }

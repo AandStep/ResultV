@@ -1,7 +1,6 @@
 package com.resultv.android.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -60,8 +59,10 @@ import androidx.compose.ui.unit.sp
 import com.resultv.android.R
 import com.resultv.android.theme.CategoryTint
 import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.rvBorder
 import com.resultv.android.theme.RvSpace
 import com.resultv.android.theme.SegoeUi
+import com.resultv.android.ui.components.ClearFocusOnImeHide
 import com.resultv.android.ui.components.DarkSheetSystemBars
 import com.resultv.android.ui.components.RvButton
 import com.resultv.android.ui.components.RvButtonColors
@@ -102,6 +103,7 @@ internal fun SettingsSheet(
         dragHandle = { BottomSheetDefaults.DragHandle(width = 32.dp, height = 4.dp, color = RvColor.whiteA20) },
     ) {
         DarkSheetSystemBars()
+        ClearFocusOnImeHide()
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -175,7 +177,7 @@ internal fun SheetGroup(
                 .fillMaxWidth()
                 .clip(shape)
                 .background(RvColor.Grey)
-                .border(1.dp, RvColor.whiteA06, shape),
+                .rvBorder(shape),
             content = content,
         )
     }
@@ -267,7 +269,7 @@ internal fun RvSwitch(checked: Boolean) {
             .height(26.dp)
             .clip(CircleShape)
             .background(RvColor.Grey)
-            .border(1.dp, RvColor.whiteA10, CircleShape)
+            .rvBorder(CircleShape)
             .padding(4.dp),
         contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart,
     ) {
@@ -298,7 +300,7 @@ internal fun <T> SheetChips(options: List<Pair<T, String>>, selected: T, onSelec
                 RvButton(
                     onClick = { onSelect(key) },
                     fill = if (on) RvButtonColors.greenSelected else Color.Transparent,
-                    outline = if (on) RvButtonColors.greenOutline else RvColor.whiteA10,
+                    outline = if (on) RvButtonColors.greenOutline else RvButtonColors.greyOutline,
                 ) {
                     Text(
                         label,
@@ -346,7 +348,7 @@ internal fun SheetField(
                     .fillMaxSize()
                     .clip(shape)
                     .background(RvColor.DarkGrey)
-                    .border(1.dp, if (isError) RvColor.errorsA50 else Color.Transparent, shape)
+                    .rvBorder(if (isError) RvColor.errorsA50 else Color.Transparent, shape)
                     .padding(horizontal = 14.dp),
                 contentAlignment = Alignment.CenterStart,
             ) {
@@ -358,8 +360,9 @@ internal fun SheetField(
 }
 
 /**
- * Выпадающий выбор капсулой («2ч ▾», «Русский ▾»): Black, текст 12 Bold
- * белым, стрелка вниз.
+ * Выпадающий выбор («2ч ▾», «Русский ▾») — Figma 6882:5272: плашка Grey
+ * высотой 36, скругление 12, общая белая обводка, поля 12/8, текст 12 Bold
+ * белым, стрелка вниз 20 dp белым 50 %.
  */
 @Composable
 internal fun <T> SheetDropdown(
@@ -369,16 +372,18 @@ internal fun <T> SheetDropdown(
 ) {
     var open by remember { mutableStateOf(false) }
     val current = options.firstOrNull { it.first == value }?.second ?: value.toString()
+    val shape = RoundedCornerShape(12.dp)
     Box {
         Row(
             modifier = Modifier
                 .height(36.dp)
-                .clip(CircleShape)
-                .background(RvColor.Black)
+                .clip(shape)
+                .background(RvColor.Grey)
+                .rvBorder(shape)
                 .clickable(role = Role.DropdownList) { open = true }
-                .padding(start = 12.dp, end = 6.dp),
+                .padding(start = 12.dp, end = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(current, style = RvButtonLabel, fontWeight = FontWeight.Bold, color = RvColor.White)
             Icon(
@@ -386,7 +391,7 @@ internal fun <T> SheetDropdown(
                 contentDescription = null,
                 tint = RvColor.whiteA50,
                 // Глиф экспорта смотрит вверх, закрытый список — вниз.
-                modifier = Modifier.size(24.dp).rotate(180f),
+                modifier = Modifier.size(20.dp).rotate(180f),
             )
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {

@@ -19,6 +19,9 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.rvBorderBrush
+import com.resultv.android.theme.RvBorderBrush
+import androidx.compose.ui.graphics.Brush
 import com.resultv.android.theme.RvSpace
 import com.resultv.android.theme.SegoeUi
 
@@ -34,7 +37,7 @@ val RvButtonLabel = TextStyle(fontFamily = SegoeUi, fontSize = 12.sp, lineHeight
 fun RvButton(
     onClick: () -> Unit,
     fill: Color,
-    outline: Color,
+    outline: Brush,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     content: @Composable RowScope.() -> Unit,
@@ -57,8 +60,8 @@ fun RvButton(
 /** Цвета кнопок макета: зелёная — основное действие, серая — второстепенное. */
 object RvButtonColors {
     val greenFill = RvColor.mainA10
-    val greenOutline = RvColor.mainA10
+    val greenOutline: Brush = rvBorderBrush(RvColor.mainA10)
     val greenSelected = RvColor.mainA50
     val greyFill = RvColor.Grey
-    val greyOutline = RvColor.whiteA10
+    val greyOutline: Brush = RvBorderBrush
 }

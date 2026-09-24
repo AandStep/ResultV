@@ -6,7 +6,6 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -70,6 +69,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.resultv.android.R
 import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.rvBorder
 import com.resultv.android.theme.RvSpace
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
@@ -298,8 +298,7 @@ private fun LinkField(
                     .fillMaxSize()
                     .clip(shape)
                     .background(RvColor.DarkGrey)
-                    .border(
-                        1.dp,
+                    .rvBorder(
                         when {
                             isError -> RvColor.errorsA50
                             focused -> RvColor.mainA20

@@ -93,6 +93,7 @@ fun ProfileEditSheet(
         containerColor = RvColor.Grey,
     ) {
         DarkSheetSystemBars()
+        ClearFocusOnImeHide()
         Column(
             modifier = Modifier
                 .fillMaxWidth()

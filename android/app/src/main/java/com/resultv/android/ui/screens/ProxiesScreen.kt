@@ -2,7 +2,6 @@ package com.resultv.android.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.border
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.painterResource
@@ -72,6 +71,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
 import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.rvBorder
+import com.resultv.android.theme.RvBorderBrush
 import com.resultv.android.theme.RvSpace
 import com.resultv.android.theme.SegoeUi
 import com.resultv.android.ui.components.HomeLook
@@ -542,7 +543,7 @@ private fun GroupHeaderBlock(
             // Обводка есть всегда: у свёрнутой группы она целиком на шапке,
             // у раскрытой шапка несёт её верх, а строки — бока и низ.
             .then(
-                if (collapsed) Modifier.border(1.dp, RvColor.whiteA10, shape)
+                if (collapsed) Modifier.rvBorder(shape)
                 else Modifier.groupOutline(GroupEdge.Top)
             )
             .clickable(
@@ -864,7 +865,9 @@ private fun Modifier.groupOutline(edge: GroupEdge): Modifier = drawWithContent {
             }
         }
     }
-    drawPath(path, RvColor.whiteA10, style = Stroke(width = stroke))
+    // Градиент горизонтальный, а шапка и строки во всю ширину — куски
+    // обводки у соседей сходятся без шва.
+    drawPath(path, RvBorderBrush, style = Stroke(width = stroke))
 }
 
 internal fun reorderForDisplay(

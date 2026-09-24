@@ -3,7 +3,6 @@ package com.resultv.android.ui.screens
 import android.app.Activity
 import android.content.Context
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import com.resultv.android.theme.SegoeUi
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.clickable
@@ -208,7 +207,7 @@ private fun SettingsEntry(
             .fillMaxWidth()
             .clip(shape)
             .background(RvColor.Grey)
-            .border(1.dp, RvColor.whiteA10, shape)
+            .rvBorder(shape)
             .clickable(onClick = onClick)
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically,

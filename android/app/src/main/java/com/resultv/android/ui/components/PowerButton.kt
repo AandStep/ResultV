@@ -4,7 +4,6 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
@@ -29,6 +28,7 @@ import com.resultv.android.R
 import com.resultv.android.theme.RvColor
 import com.resultv.android.theme.RvMotion
 import com.resultv.android.theme.rvBorder
+import com.resultv.android.theme.rvBorderStrong
 
 /**
  * Кнопка питания — перенос `PowerButton` (Figma 6481:7) из кита ПК.
@@ -126,9 +126,9 @@ fun PowerButton(
                 .then(
                     when (look) {
                         // У нейтральной кнопки обводка общая, градиентная.
-                        HomeLook.Idle -> Modifier.rvBorder(CircleShape, pressed = pressed)
+                        HomeLook.Idle -> Modifier.rvBorderStrong(CircleShape, pressed = pressed)
                         // Жёлтая обводка в макете сплошная и непрозрачная.
-                        HomeLook.Processing -> Modifier.border(1.dp, RvColor.Warning, CircleShape)
+                        HomeLook.Processing -> Modifier.rvBorder(RvColor.Warning, CircleShape)
                         // У зелёной и красной обводки нет вовсе.
                         else -> Modifier
                     }

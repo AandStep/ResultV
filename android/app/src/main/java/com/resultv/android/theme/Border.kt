@@ -5,7 +5,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
@@ -22,21 +24,44 @@ import androidx.compose.ui.unit.dp
  */
 private val BorderWidth = 1.dp
 
-private val BaseBrush = Brush.horizontalGradient(
-    listOf(RvColor.whiteA10, RvColor.whiteA05),
-)
+/**
+ * Тот же градиент для любого цвета обводки, в том числе цветной (зелёной,
+ * красной): у левого края цвет как есть, у правого — вдвое прозрачнее, как
+ * белая 10 % -> 5 %.
+ */
+fun rvBorderBrush(color: Color): Brush =
+    Brush.horizontalGradient(listOf(color, color.copy(alpha = color.alpha / 2)))
+
+/**
+ * Кисть обводки в покое — для мест, где рамку рисует не `rvBorder`.
+ * На телефоне белая обводка тише макета ПК: 7 % -> 3,5 % вместо 10 -> 5.
+ */
+val RvBorderBrush = rvBorderBrush(RvColor.whiteA07)
 
 /**
  * В макете второй слой (20 % -> 15 %) включает НАВЕДЕНИЕ. На телефоне
  * наведения нет, поэтому он отдан нажатию: повод другой, рисунок тот же.
- * См. G-3 спеки.
+ * См. G-3 спеки. Приглушён в той же пропорции, что и покой.
  */
 private val PressedBrush = Brush.horizontalGradient(
-    listOf(RvColor.whiteA20, RvColor.whiteA15),
+    listOf(Color.White.copy(alpha = 0.14f), Color.White.copy(alpha = 0.105f)),
 )
 
 fun Modifier.rvBorder(shape: Shape, pressed: Boolean = false): Modifier =
-    border(BorderWidth, if (pressed) PressedBrush else BaseBrush, shape)
+    border(BorderWidth, if (pressed) PressedBrush else RvBorderBrush, shape)
+
+/** Полная обводка макета (10 % -> 5 %, нажатие 20 -> 15) — только у главной кнопки. */
+private val StrongBrush = rvBorderBrush(RvColor.whiteA10)
+private val StrongPressedBrush = Brush.horizontalGradient(
+    listOf(RvColor.whiteA20, RvColor.whiteA15),
+)
+
+fun Modifier.rvBorderStrong(shape: Shape, pressed: Boolean = false): Modifier =
+    border(BorderWidth, if (pressed) StrongPressedBrush else StrongBrush, shape)
+
+/** Цветная обводка (состояние: выбрано, фокус, ошибка) тем же градиентом. */
+fun Modifier.rvBorder(color: Color, shape: Shape, width: Dp = BorderWidth): Modifier =
+    border(width, rvBorderBrush(color), shape)
 
 /**
  * Нажатие: содержимое садится внутрь на 1 dp, габарит при этом не меняется —

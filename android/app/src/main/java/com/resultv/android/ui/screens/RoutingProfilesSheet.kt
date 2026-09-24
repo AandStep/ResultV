@@ -64,7 +64,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
 import com.resultv.android.theme.RvCategory
 import com.resultv.android.theme.RvColor
-import androidx.compose.foundation.border
+import com.resultv.android.theme.rvBorder
 import com.resultv.android.theme.RvSpace
 import com.resultv.android.vpn.DeepLinkImporter
 import com.resultv.android.vpn.ROUTING_ACTIONS
@@ -285,7 +285,7 @@ private fun ProfileCard(
             .fillMaxWidth()
             .clip(CardShape)
             .background(if (isActive) RvColor.mainA10 else RvColor.Grey)
-            .border(1.dp, if (isActive) RvColor.Main.copy(alpha = 0.3f) else RvColor.whiteA06, CardShape)
+            .then(if (isActive) Modifier.rvBorder(RvColor.Main.copy(alpha = 0.3f), CardShape) else Modifier.rvBorder(CardShape))
             .clickable(enabled = !busy, onClick = onSelect)
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically,

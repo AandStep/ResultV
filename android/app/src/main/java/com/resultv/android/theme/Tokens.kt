@@ -37,6 +37,7 @@ object RvColor {
     // с непрозрачностью слоя; значения сняты с компонентов кита.
     val whiteA05 = White.copy(alpha = 0.05f)
     val whiteA06 = White.copy(alpha = 0.06f)   // обводка карточек групп в шторках
+    val whiteA07 = White.copy(alpha = 0.07f)   // белая обводка элементов (кроме главной кнопки)
     val whiteA10 = White.copy(alpha = 0.10f)
     val whiteA15 = White.copy(alpha = 0.15f)
     val whiteA20 = White.copy(alpha = 0.20f)

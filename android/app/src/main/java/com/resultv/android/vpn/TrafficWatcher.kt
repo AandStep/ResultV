@@ -33,6 +33,7 @@ private const val STATUS_INTERVAL_NS = 1_000_000_000L
  */
 object TrafficWatcher {
     @Volatile private var client: CommandClient? = null
+    @Volatile private var handler: StatusHandler? = null
 
     @Synchronized
     fun start() {
@@ -49,6 +50,7 @@ object TrafficWatcher {
         try {
             c.connect()
             client = c
+            this.handler = handler
             TrafficStats.reset()
             Log.i(TAG, "connected to libbox status stream")
         } catch (t: Throwable) {
@@ -68,10 +70,15 @@ object TrafficWatcher {
     fun stop() {
         val c = client ?: return
         client = null
+        // Колбэк, уже летящий из ядра, не должен вернуть цифры после сброса.
+        handler?.detached = true
+        handler = null
         // Persist session totals before dropping the connection so they
         // survive service restarts and show correct cumulative usage in Settings.
         val snap = TrafficStats.snapshot.value
         DataUsageRepository.addSession(snap.downloadBytes, snap.uploadBytes)
+        // После остановки плитки скорости показывают нули, а не хвост сессии.
+        TrafficStats.reset()
         try {
             c.disconnect()
         } catch (t: Throwable) {
@@ -93,6 +100,7 @@ private class StatusHandler : CommandClientHandler {
     // sing-box emits both already-computed rates and totals — use rates.
     @Volatile private var lastUplinkTotal = 0L
     @Volatile private var lastDownlinkTotal = 0L
+    @Volatile var detached = false
 
     override fun connected() {
         Log.d(TAG, "status stream connected")
@@ -103,7 +111,7 @@ private class StatusHandler : CommandClientHandler {
     }
 
     override fun writeStatus(message: StatusMessage?) {
-        if (message == null) return
+        if (message == null || detached) return
         if (!message.trafficAvailable) {
             // clash_api isn't fully wired yet — nothing to publish. Keep
             // last snapshot so the UI doesn't flicker to zero.
