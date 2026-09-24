@@ -50,6 +50,10 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # По умолчанию ставит ещё устаревший пакет `tools`, которого нет
+          # в cmdline-tools 16.0 — sdkmanager падает.
+          packages: platform-tools
 
       - name: Install gomobile (sagernet fork)
         run: |
