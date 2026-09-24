@@ -71,7 +71,12 @@ if command -v linuxdeploy >/dev/null 2>&1; then
   sed 's|^Exec=.*|Exec=resultv %u|' build/linux/resultv.desktop \
     > "$APPDIR/usr/share/applications/resultv.desktop"
   cp public/logo.png "$APPDIR/usr/share/icons/hicolor/512x512/apps/resultv.png"
-  ARCH=x86_64 linuxdeploy --appdir "$APPDIR" --output appimage --desktop-file "$APPDIR/usr/share/applications/resultv.desktop"
+  # Nothing is bundled: the binary needs only the GTK/WebKit stack and libc, and a
+  # bundled libwebkit2gtk spawns its helpers from the build distro's hardcoded
+  # /usr/lib/x86_64-linux-gnu path, which does not exist on Arch/Fedora.
+  # Requires webkit2gtk-4.1 on the host.
+  ARCH=x86_64 linuxdeploy --appdir "$APPDIR" --output appimage --desktop-file "$APPDIR/usr/share/applications/resultv.desktop" \
+    --exclude-library '*'
   mv ResultV*.AppImage "$OUT_DIR/" 2>/dev/null || true
 else
   echo "WARN: linuxdeploy not installed — skipping AppImage. https://github.com/linuxdeploy/linuxdeploy/releases"
