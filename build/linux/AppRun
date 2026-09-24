@@ -1,0 +1,95 @@
+#!/bin/sh
+# AppImage entry point. The AppImage bundles no libraries (see build-linux.sh),
+# so WebKitGTK 4.1 must come from the host; offer to install it when missing.
+
+HERE="$(dirname "$(readlink -f "$0")")"
+BIN="$HERE/usr/bin/resultv"
+LIB="libwebkit2gtk-4.1.so.0"
+
+has_webkit() {
+	for ldc in ldconfig /sbin/ldconfig /usr/sbin/ldconfig; do
+		if command -v "$ldc" >/dev/null 2>&1; then
+			"$ldc" -p 2>/dev/null | grep -q "$LIB" && return 0
+			break
+		fi
+	done
+	for d in /usr/lib /usr/lib64 /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu; do
+		[ -e "$d/$LIB" ] && return 0
+	done
+	return 1
+}
+
+install_cmd() {
+	if command -v pacman >/dev/null 2>&1; then
+		echo "pacman -S --needed --noconfirm webkit2gtk-4.1"
+	elif command -v dnf >/dev/null 2>&1; then
+		echo "dnf install -y webkit2gtk4.1"
+	elif command -v zypper >/dev/null 2>&1; then
+		echo "zypper --non-interactive install libwebkit2gtk-4_1-0"
+	elif command -v apt-get >/dev/null 2>&1; then
+		echo "apt-get install -y libwebkit2gtk-4.1-0"
+	fi
+}
+
+case "${LC_ALL:-${LC_MESSAGES:-$LANG}}" in
+ru*)
+	T_ASK="Для работы ResultV нужна библиотека WebKitGTK 4.1, в системе её нет. Установить сейчас? Система попросит пароль."
+	T_MANUAL="Для работы ResultV нужна библиотека WebKitGTK 4.1. Установите её командой:"
+	T_FAIL="Не удалось установить WebKitGTK 4.1. Установите вручную:"
+	;;
+*)
+	T_ASK="ResultV needs the WebKitGTK 4.1 library, which is not installed. Install it now? You will be asked for your password."
+	T_MANUAL="ResultV needs the WebKitGTK 4.1 library. Install it with:"
+	T_FAIL="Could not install WebKitGTK 4.1. Install it manually:"
+	;;
+esac
+
+ask() {
+	if command -v zenity >/dev/null 2>&1; then
+		zenity --question --title=ResultV --width=420 --text="$1" 2>/dev/null
+	elif command -v kdialog >/dev/null 2>&1; then
+		kdialog --title ResultV --yesno "$1" 2>/dev/null
+	elif [ -t 0 ]; then
+		printf '%s [y/N] ' "$1"
+		read -r answer
+		case "$answer" in [yYдД]*) return 0 ;; esac
+		return 1
+	else
+		return 2
+	fi
+}
+
+say() {
+	if command -v zenity >/dev/null 2>&1; then
+		zenity --error --title=ResultV --width=420 --text="$1" 2>/dev/null
+	elif command -v kdialog >/dev/null 2>&1; then
+		kdialog --title ResultV --error "$1" 2>/dev/null
+	elif command -v notify-send >/dev/null 2>&1; then
+		notify-send ResultV "$1"
+	fi
+	echo "$1" >&2
+}
+
+if ! has_webkit; then
+	CMD="$(install_cmd)"
+	if [ -z "$CMD" ]; then
+		say "$T_MANUAL webkit2gtk-4.1"
+		exit 1
+	fi
+	ask "$T_ASK"
+	case $? in
+	0) ;;
+	*)
+		say "$T_MANUAL
+sudo $CMD"
+		exit 1
+		;;
+	esac
+	if ! pkexec sh -c "$CMD" || ! has_webkit; then
+		say "$T_FAIL
+sudo $CMD"
+		exit 1
+	fi
+fi
+
+exec "$BIN" "$@"
