@@ -203,6 +203,10 @@
     <string name="manual_field_allowed_ips">Разрешённые IP</string>
     <string name="manual_field_psk">Pre-shared key</string>
     <string name="manual_field_mtu">MTU</string>
+    <string name="awg3_header_protection_key">Ключ защиты заголовков</string>
+    <string name="awg3_content_padding">Добивка содержимого</string>
+    <string name="awg31_random_trailers">Случайные хвосты</string>
+    <string name="awg31_disable_cookies">Отключить cookie-ответы</string>
 
     <!-- Sort menu -->
     <string name="ping_refresh_cd">Обновить пинг</string>

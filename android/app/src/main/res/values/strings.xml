@@ -232,6 +232,17 @@
     <string name="awg_j1" translatable="false">J1</string>
     <string name="awg_j2" translatable="false">J2</string>
     <string name="awg_j3" translatable="false">J3</string>
+    <string name="awg3_section" translatable="false">AWG 3.0</string>
+    <string name="awg31_section" translatable="false">AWG 3.1</string>
+    <string name="awg3_header_protection_key">Header protection key</string>
+    <string name="awg3_content_padding">Content padding</string>
+    <string name="awg3_rekey_after" translatable="false">Rekey after</string>
+    <string name="awg3_rekey_timeout" translatable="false">Rekey timeout</string>
+    <string name="awg3_reject_after" translatable="false">Reject after</string>
+    <string name="awg3_keepalive_timeout" translatable="false">Keepalive timeout</string>
+    <string name="awg3_max_handshakes" translatable="false">Max handshakes</string>
+    <string name="awg31_random_trailers">Random trailers</string>
+    <string name="awg31_disable_cookies">Disable cookie replies</string>
 
     <!-- Sort menu (Home dropdown + Proxies list) -->
     <string name="ping_refresh_cd">Refresh ping</string>

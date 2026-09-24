@@ -24,6 +24,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -34,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -60,6 +62,14 @@ private fun FieldRow(
     value: String,
     onValue: (String) -> Unit,
 ) {
+    field.sectionRes?.let {
+        Text(
+            stringResource(it),
+            style = MaterialTheme.typography.labelMedium,
+            color = RvColor.whiteA50,
+            modifier = Modifier.padding(top = RvSpace.nest2),
+        )
+    }
     val label = stringResource(field.labelRes)
     val placeholder = when {
         field.placeholderRes != null -> stringResource(field.placeholderRes)
@@ -85,6 +95,18 @@ private fun FieldRow(
                     else -> KeyboardOptions.Default
                 },
             )
+        }
+        FieldKind.Toggle -> {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                Switch(
+                    checked = awgSwitchOn(value),
+                    onCheckedChange = { onValue(if (it) "on" else "off") },
+                )
+            }
         }
         FieldKind.Choice -> {
             ChoiceField(
@@ -130,7 +152,11 @@ private fun ChoiceField(
 
 // ───────────────────────────── Spec model ─────────────────────────────
 
-private enum class FieldKind { Text, Number, Password, Choice }
+private enum class FieldKind { Text, Number, Password, Choice, Toggle }
+
+/** Как Go читает выключатели AWG 3.1 (awgBoolFromAny): on/true/1/yes — включено. */
+private fun awgSwitchOn(value: String): Boolean =
+    value.trim().lowercase() in setOf("on", "true", "1", "yes")
 
 private data class Field(
     val key: String,
@@ -141,6 +167,8 @@ private data class Field(
     @StringRes val placeholderRes: Int? = null,
     val placeholderLiteral: String? = null,
     val options: List<String> = emptyList(),
+    /** Заголовок группы, который рисуется над этим полем. */
+    @StringRes val sectionRes: Int? = null,
 )
 
 private data class ProtocolSpec(
@@ -399,6 +427,19 @@ private val Protocols: List<ProtocolSpec> = listOf(
             Field("j1", R.string.awg_j1),
             Field("j2", R.string.awg_j2),
             Field("j3", R.string.awg_j3),
+            Field("header_protection_key", R.string.awg3_header_protection_key, sectionRes = R.string.awg3_section),
+            Field("content_padding_addition", R.string.awg3_content_padding),
+            Field("rekey_after_time", R.string.awg3_rekey_after),
+            Field("rekey_timeout", R.string.awg3_rekey_timeout),
+            Field("reject_after_time", R.string.awg3_reject_after),
+            Field("keepalive_timeout", R.string.awg3_keepalive_timeout),
+            Field("max_handshake_attempts", R.string.awg3_max_handshakes),
+            // Выключатель пишется, только когда узел его заявил или человек его
+            // тронул: пустое значение — «не заявлено», и в журнал про 3.1 тогда
+            // ничего не пишется.
+            Field("random_trailers", R.string.awg31_random_trailers, kind = FieldKind.Toggle,
+                sectionRes = R.string.awg31_section),
+            Field("disable_cookies", R.string.awg31_disable_cookies, kind = FieldKind.Toggle),
         ),
         build = { v ->
             val pairs = mutableListOf(
@@ -410,7 +451,13 @@ private val Protocols: List<ProtocolSpec> = listOf(
             )
             listOf("jc", "jmin", "jmax", "s1", "s2", "s3", "s4",
                 "h1", "h2", "h3", "h4",
-                "i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3").forEach { k ->
+                "i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3",
+                // Без них сохранение правки молча выбрасывало параметры
+                // 3.0/3.1, пришедшие из .conf или ссылки.
+                "header_protection_key", "content_padding_addition",
+                "rekey_after_time", "rekey_timeout", "reject_after_time",
+                "keepalive_timeout", "max_handshake_attempts",
+                "random_trailers", "disable_cookies").forEach { k ->
                 v[k]?.takeIf { it.isNotBlank() }?.let { pairs.add(k to it) }
             }
             "awg://${enc(v["private_key"]!!)}@${v["host"]}:${v["port"]}" +
@@ -632,9 +679,22 @@ private fun decodeGeneric(spec: ProtocolSpec, uri: String, values: MutableMap<St
             "name", "host", "port", "uuid", "password", "private_key", "username" -> Unit
             // vless/trojan put the WS/H2 Host header in the "host" query param.
             "host_header" -> query["host"]?.let { values["host_header"] = it }
-            else -> query[f.key]?.let { values[f.key] = it }
+            else -> (query[f.key] ?: awgQueryValue(spec, query, f.key))?.let { values[f.key] = it }
         }
     }
+}
+
+/**
+ * Ключи AWG 3.0/3.1 провайдеры пишут по-разному (HeaderProtectionKey,
+ * header_protection_key, RandomTrailers) — Go сопоставляет их без учёта
+ * регистра и разделителей (normalizeAWGKey), и форма обязана так же, иначе
+ * правка покажет пустое поле и сохранение его потеряет.
+ */
+private fun awgQueryValue(spec: ProtocolSpec, query: Map<String, String>, key: String): String? {
+    if (spec.id != "awg") return null
+    fun norm(k: String) = k.lowercase().filter { it != '_' && it != '-' }
+    val want = norm(key)
+    return query.entries.firstOrNull { norm(it.key) == want }?.value
 }
 
 private fun decodeVmess(uri: String, values: MutableMap<String, String>) {
