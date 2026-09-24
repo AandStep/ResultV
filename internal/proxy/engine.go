@@ -725,6 +725,37 @@ func setProbeInboundPort(port int) { probeInboundPortValue.Store(int64(port)) }
 
 func probeInboundPort() int { return int(probeInboundPortValue.Load()) }
 
+// updateInboundTag names the loopback inbound the in-app updater downloads
+// through. Everything arriving on it goes to the node regardless of mode,
+// whereas the app's own traffic is otherwise kept direct.
+const updateInboundTag = "update-in"
+
+// updateInboundPortValue is the port of the "update-in" inbound of the engine
+// that is actually running; zero when none is.
+var updateInboundPortValue atomic.Int64
+
+// UpdateInboundPort returns the loopback port of the running engine's
+// "update-in" inbound, or 0 when no engine is running.
+func UpdateInboundPort() int { return int(updateInboundPortValue.Load()) }
+
+func updateInbound() SBInbound {
+	return SBInbound{
+		Type:       "mixed",
+		Tag:        updateInboundTag,
+		Listen:     "127.0.0.1",
+		ListenPort: getFreeLocalPort(0),
+	}
+}
+
+func inboundPort(sb SingBoxConfig, tag string) int {
+	for _, in := range sb.Inbounds {
+		if in.Tag == tag {
+			return in.ListenPort
+		}
+	}
+	return 0
+}
+
 // quicRejectRule builds the UDP/443 reject that forces a QUIC client back onto
 // TCP. Callers pass the same selector as the route-to-proxy rule it shadows, so
 // the reject covers exactly the traffic we tunnel and nothing else.
@@ -950,7 +981,7 @@ func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 			Tag:        "mixed-in",
 			Listen:     host,
 			ListenPort: port,
-		}},
+		}, updateInbound()},
 		Outbounds:    buildOutbounds(cfg.Proxy, nodeResolver, ""),
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
@@ -1235,7 +1266,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 		Log:          &SBLog{Level: singBoxLogLevel(), Disabled: false},
 		DNS:          buildDNS(cfg),
 		Endpoints:    endpoints,
-		Inbounds:     []SBInbound{tun, probeIn},
+		Inbounds:     []SBInbound{tun, probeIn, updateInbound()},
 		Outbounds:    outbounds,
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
@@ -2003,6 +2034,14 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	rules = append(rules, SBRouteRule{
 		Protocol: []string{"dns"},
 		Action:   "hijack-dns",
+	})
+
+	// Ahead of the user's lists and the self-direct rule: the updater must reach
+	// GitHub through the node even when Smart would send github.com direct.
+	rules = append(rules, SBRouteRule{
+		Action:   "route",
+		Inbound:  []string{updateInboundTag},
+		Outbound: "proxy",
 	})
 
 	// User routing lists win over the built-in Smart/whitelist/ad-block rules:

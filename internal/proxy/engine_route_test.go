@@ -1125,8 +1125,8 @@ func TestBuildTunnelModeConfig_LoopbackProbeInbound(t *testing.T) {
 		Proxy:     ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
 		LocalPort: 14081,
 	})
-	if len(cfg.Inbounds) != 2 {
-		t.Fatalf("expected tun + probe inbounds, got %+v", cfg.Inbounds)
+	if len(cfg.Inbounds) != 3 {
+		t.Fatalf("expected tun + probe + update inbounds, got %+v", cfg.Inbounds)
 	}
 	if cfg.Inbounds[0].Type != "tun" {
 		t.Fatalf("tun inbound must stay first, got %+v", cfg.Inbounds[0])
@@ -1151,11 +1151,54 @@ func TestBuildTunnelModeConfig_LoopbackProbeInboundDefaultPort(t *testing.T) {
 		Mode:  ProxyModeTunnel,
 		Proxy: ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
 	})
-	if len(cfg.Inbounds) != 2 {
-		t.Fatalf("expected tun + probe inbounds, got %+v", cfg.Inbounds)
+	if len(cfg.Inbounds) != 3 {
+		t.Fatalf("expected tun + probe + update inbounds, got %+v", cfg.Inbounds)
 	}
 	if cfg.Inbounds[1].ListenPort == 0 {
 		t.Fatalf("probe inbound must get a free port, got %+v", cfg.Inbounds[1])
+	}
+}
+
+// The updater downloads through "update-in" so a throttled GitHub is reached
+// via the node. Its route rule has to beat everything that could send the
+// app's own traffic direct: Smart's final, user lists and the self-direct rule.
+func TestUpdateInbound_RoutedToProxyInBothModes(t *testing.T) {
+	for _, mode := range []ProxyMode{ProxyModeProxy, ProxyModeTunnel} {
+		ec := EngineConfig{
+			Mode:        mode,
+			RoutingMode: ModeSmart,
+			Proxy:       ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		}
+		cfg := mustBuildProxyModeConfig(t, ec)
+		if mode == ProxyModeTunnel {
+			cfg = mustBuildTunnelModeConfig(t, ec)
+		}
+		assertCoreAcceptsConfig(t, cfg)
+		var in *SBInbound
+		for i := range cfg.Inbounds {
+			if cfg.Inbounds[i].Tag == updateInboundTag {
+				in = &cfg.Inbounds[i]
+			}
+		}
+		if in == nil || in.Listen != "127.0.0.1" || in.ListenPort == 0 {
+			t.Fatalf("mode %v: loopback update inbound missing, got %+v", mode, cfg.Inbounds)
+		}
+		ruleIdx := -1
+		for i, r := range cfg.Route.Rules {
+			if len(r.Inbound) == 1 && r.Inbound[0] == updateInboundTag {
+				if r.Outbound != "proxy" || len(r.Domain)+len(r.ProcessPathRegex)+len(r.IPCidr) != 0 {
+					t.Fatalf("mode %v: update rule must send everything to proxy, got %+v", mode, r)
+				}
+				ruleIdx = i
+				break
+			}
+			if r.Outbound == "direct" && len(r.IPCidr) == 0 && len(r.Domain) == 0 {
+				t.Fatalf("mode %v: direct rule %+v precedes the update rule", mode, r)
+			}
+		}
+		if ruleIdx < 0 {
+			t.Fatalf("mode %v: no route rule for %q", mode, updateInboundTag)
+		}
 	}
 }
 

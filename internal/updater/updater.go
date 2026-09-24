@@ -18,6 +18,7 @@ package updater
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -39,6 +40,18 @@ type Updater struct {
 	AllowedHosts []string // hostnames allowed to serve update artifacts
 	ManifestURL  string   // URL of update.json
 	DownloadDir  string   // directory for temporary download files
+	// ProxyAddr, when set, is a host:port HTTP proxy every request goes
+	// through — the live session's "update-in" inbound.
+	ProxyAddr string
+}
+
+func (u *Updater) transport() http.RoundTripper {
+	if u.ProxyAddr == "" {
+		return nil
+	}
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.Proxy = http.ProxyURL(&url.URL{Scheme: "http", Host: u.ProxyAddr})
+	return t
 }
 
 // New returns an Updater with production defaults.
@@ -67,7 +80,7 @@ func New() *Updater {
 
 // Check fetches and returns the latest manifest.
 func (u *Updater) Check(ctx context.Context) (*Manifest, error) {
-	return FetchManifest(ctx, u.ManifestURL)
+	return fetchManifest(ctx, u.transport(), u.ManifestURL)
 }
 
 // Download downloads the artifact described by asset, reporting progress via fn.
@@ -90,7 +103,7 @@ func (u *Updater) Download(ctx context.Context, asset *PlatformAsset, fn Progres
 	}
 	destPath := filepath.Join(u.DownloadDir, "ResultV-update-"+suffix+ext)
 
-	if err := downloadFile(ctx, asset.URL, destPath, asset.Size, fn); err != nil {
+	if err := downloadFile(ctx, u.transport(), asset.URL, destPath, asset.Size, fn); err != nil {
 		os.Remove(destPath)
 		return "", err
 	}

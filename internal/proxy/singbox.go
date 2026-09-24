@@ -710,6 +710,7 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 	// back. Costs nothing in an ordinary session — coreLog is nil there.
 	startWGStatsSampler(boxCtx, boxCtx, coreLog)
 
+	updateInboundPortValue.Store(int64(inboundPort(sbConfig, updateInboundTag)))
 	e.configPath = configPath
 	e.instance = instance
 	e.cancel = cancel
@@ -904,6 +905,7 @@ func awaitPendingClose(
 // on-disk config. Caller must hold e.mu. Does not flip e.running — that is the
 // caller's job, since Stop and reload have different semantics.
 func (e *SingBoxEngine) shutdownInstanceLocked() {
+	updateInboundPortValue.Store(0)
 	if e.cancel != nil {
 		e.cancel()
 		e.cancel = nil

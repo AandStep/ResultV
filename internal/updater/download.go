@@ -30,8 +30,8 @@ const maxDownloadBytes = 200 * 1024 * 1024 // 200 MB hard ceiling
 // downloadFile fetches rawURL to destPath, calling fn with download progress.
 // Writes to a sibling temp file and renames atomically on success.
 // Partial downloads are cleaned up automatically on failure.
-func downloadFile(ctx context.Context, rawURL, destPath string, expectedSize int64, fn ProgressFn) error {
-	client := &http.Client{}
+func downloadFile(ctx context.Context, transport http.RoundTripper, rawURL, destPath string, expectedSize int64, fn ProgressFn) error {
+	client := &http.Client{Transport: transport}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)

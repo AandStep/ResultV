@@ -227,10 +227,21 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+// newUpdater routes update traffic through the live session when there is
+// one: GitHub is throttled for many users, and the app's own traffic is
+// otherwise kept out of the tunnel.
+func (a *App) newUpdater() *updater.Updater {
+	u := updater.New()
+	if a != nil && a.proxy != nil {
+		u.ProxyAddr = a.proxy.UpdateProxyAddr()
+	}
+	return u
+}
+
 // GetUpdateManifest fetches update.json via the Go backend.
 // This avoids WebView fetch/CORS/network-policy issues on some Windows setups.
 func (a *App) GetUpdateManifest() (*updater.Manifest, error) {
-	u := updater.New()
+	u := a.newUpdater()
 	base := context.Background()
 	if a != nil && a.ctx != nil {
 		base = a.ctx
@@ -4164,7 +4175,7 @@ func (a *App) StartUpdate() {
 			})
 		}
 
-		u := updater.New()
+		u := a.newUpdater()
 
 		manifest, err := u.Check(ctx)
 		if err != nil {

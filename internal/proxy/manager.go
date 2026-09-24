@@ -2482,6 +2482,22 @@ func (m *Manager) ProbeThroughputNow(ctx context.Context) ThroughputResult {
 	return ProbeThroughput(ctx, fmt.Sprintf("127.0.0.1:%d", port))
 }
 
+// UpdateProxyAddr returns the loopback address the in-app updater should use
+// as its HTTP proxy, or "" when there is no live session to go through.
+func (m *Manager) UpdateProxyAddr() string {
+	m.mu.Lock()
+	connected := m.connected
+	m.mu.Unlock()
+	if !connected {
+		return ""
+	}
+	port := UpdateInboundPort()
+	if port == 0 {
+		return ""
+	}
+	return fmt.Sprintf("127.0.0.1:%d", port)
+}
+
 func (m *Manager) GetMode() ProxyMode {
 	m.mu.Lock()
 	defer m.mu.Unlock()
