@@ -746,6 +746,9 @@ func (a *App) SaveConfig(cfg config.AppConfig) error {
 	if cfg.Subscriptions == nil || (len(cfg.Subscriptions) == 0 && len(existing.Subscriptions) > 0) {
 		cfg.Subscriptions = existing.Subscriptions
 	}
+	// The frontend holds the settings it loaded at startup; AckChangelog has
+	// moved this field on since, and a stale copy would bring the notes back.
+	cfg.Settings.LastChangelogVersion = existing.Settings.LastChangelogVersion
 	if err := a.config.SaveConfig(cfg); err != nil {
 		a.log.Error(fmt.Sprintf("Ошибка сохранения конфигурации: %v", err))
 		return err
