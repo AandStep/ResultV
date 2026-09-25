@@ -18,7 +18,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import wailsAPI from "../utils/wailsAPI";
-import { detectCountry } from "../utils/network";
+import { applyCountries, detectCountry, redetectCountries } from "../utils/network";
 import { mergeSubscriptionRefreshCountries } from "../utils/proxyParser";
 
 const RULES_PUSH_DEBOUNCE_MS = 400;
@@ -139,9 +139,22 @@ export const useAppConfig = (addLog) => {
                 await fn();
             } catch (e) {
                 console.error(e);
+                const raw = String(e?.message || e || "");
+                const known = {
+                    elevation_cancelled: "tunnel.elevationCancelled",
+                    elevation_denied: "tunnel.elevationDenied",
+                    elevation_timeout: "tunnel.elevationTimeout",
+                }[raw];
+                setAppDialog({
+                    ...resetDialog(),
+                    isOpen: true,
+                    title: t("tunnel.elevationFailedTitle"),
+                    message: known ? t(known) : raw,
+                    variant: "warning",
+                });
             }
         }
-    }, [resetDialog]);
+    }, [resetDialog, t]);
 
     const showConfirmDialog = useCallback((options = {}) => {
         dialogConfirmRef.current = null;
@@ -423,6 +436,10 @@ export const useAppConfig = (addLog) => {
                             const merged = mergeSubscriptionRefreshCountries(prev, updated, sub.url);
                             return [...filtered, ...merged];
                         });
+                        /* Фоновое обновление идёт через суточный кэш: раз в
+                           день страна всё равно переспросится. */
+                        const found = await redetectCountries(updated);
+                        setProxies((prev) => applyCountries(prev, found));
                         addLog(`Подписка "${sub.name}" обновлена: ${updated.length} серверов`, "success");
                     }
                 } catch (err) {

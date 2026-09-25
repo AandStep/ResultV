@@ -33,6 +33,9 @@ import (
 var assets embed.FS
 
 func main() {
+	system.WaitForElevationParent(os.Args)
+	releaseOwnership := system.KeepInvokerOwnership()
+	defer releaseOwnership()
 	startCrashLog()
 	startPprofIfEnabled()
 	if runtime.GOOS == "windows" {

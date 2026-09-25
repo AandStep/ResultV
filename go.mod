@@ -74,7 +74,7 @@ require (
 	github.com/gobwas/httphead v0.1.0 // indirect
 	github.com/gobwas/pool v0.2.1 // indirect
 	github.com/gobwas/ws v1.4.0 // indirect
-	github.com/godbus/dbus/v5 v5.2.2 // indirect
+	github.com/godbus/dbus/v5 v5.2.2
 	github.com/gofrs/uuid/v5 v5.5.1 // indirect
 	github.com/golang-migrate/migrate/v4 v4.19.1 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect

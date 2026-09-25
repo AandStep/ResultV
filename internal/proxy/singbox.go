@@ -30,6 +30,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/sagernet/gvisor/pkg/tcpip/stack"
+	"github.com/sagernet/gvisor/pkg/tcpip/transport/tcp"
 	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
 	sblog "github.com/sagernet/sing-box/log"
@@ -686,10 +688,9 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 		// Keep the handle even though this instance never became ours: a start
 		// that failed late still opened the cache file, and the next attempt has
 		// to wait for that to be released.
-		e.pendingClose = closeInstanceBounded(instance, boxCtx, 5*time.Second, e.log)
+		e.pendingClose = closeInstanceBounded(instance, boxCtx, cancel, 5*time.Second, e.log)
 		e.pendingSince = time.Now()
 		closeCoreLogAfter(coreLog, e.pendingClose)
-		cancel()
 		return fmt.Errorf("starting sing-box: %w", err)
 	}
 
@@ -710,6 +711,7 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 	// back. Costs nothing in an ordinary session — coreLog is nil there.
 	startWGStatsSampler(boxCtx, boxCtx, coreLog)
 
+	updateInboundPortValue.Store(int64(inboundPort(sbConfig, updateInboundTag)))
 	e.configPath = configPath
 	e.instance = instance
 	e.cancel = cancel
@@ -766,8 +768,56 @@ func closeTrackedConnections(boxCtx context.Context, log *logger.Logger) {
 	manager.CloseAll()
 }
 
+// abortWGStackWhileClosing keeps aborting every endpoint on the WireGuard
+// gVisor stack until stop is called, including dials that arrive after
+// Stack.Close has taken its snapshot.
+func abortWGStackWhileClosing(boxCtx context.Context) (stop func()) {
+	s := wgGVisorStack(boxCtx)
+	if s == nil {
+		return func() {}
+	}
+	return abortStackEndpointsUntil(s, 200*time.Millisecond)
+}
+
+func abortStackEndpointsUntil(s *stack.Stack, interval time.Duration) (stop func()) {
+	done := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			abortStackEndpoints(s)
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		<-finished
+	}
+}
+
+func abortStackEndpoints(s *stack.Stack) {
+	for _, endpoint := range s.RegisteredEndpoints() {
+		if state, ok := endpoint.(interface{ State() uint32 }); ok {
+			switch tcp.EndpointState(state.State()) {
+			case tcp.StateClose, tcp.StateError:
+				continue
+			}
+		}
+		endpoint.Abort()
+	}
+}
+
 // closeInstanceBounded closes a sing-box instance with a hard ceiling, returning
 // once Close finishes or the ceiling elapses.
+//
+// cancel runs after Close returns or the ceiling passes, never before: an
+// earlier cancel kills the WireGuard bind while the device is still up.
 //
 // Close runs in a goroutine. Synchronous Close (which we briefly used to avoid a
 // goroutine leak under TUN/DNS handles) deadlocked the disconnect path for
@@ -782,12 +832,18 @@ func closeTrackedConnections(boxCtx context.Context, log *logger.Logger) {
 // here describes the user's own session, and a probe sweep tearing down one
 // throwaway engine per node would otherwise bury that session's log in its own
 // bookkeeping.
-func closeInstanceBounded(inst *box.Box, boxCtx context.Context, ceiling time.Duration, log *logger.Logger) <-chan struct{} {
+func closeInstanceBounded(inst *box.Box, boxCtx context.Context, cancel context.CancelFunc, ceiling time.Duration, log *logger.Logger) <-chan struct{} {
+	if cancel == nil {
+		cancel = func() {}
+	}
 	closeDone := make(chan struct{})
 	started := time.Now()
 	go func() {
+		stopAborting := abortWGStackWhileClosing(boxCtx)
 		closeTrackedConnections(boxCtx, log)
 		_ = inst.Close()
+		stopAborting()
+		cancel()
 		close(closeDone)
 	}()
 	select {
@@ -796,6 +852,7 @@ func closeInstanceBounded(inst *box.Box, boxCtx context.Context, ceiling time.Du
 			log.Warning(fmt.Sprintf("[SING-BOX] Close занял %s", elapsed.Round(100*time.Millisecond)))
 		}
 	case <-time.After(ceiling):
+		cancel()
 		if log != nil {
 			log.Warning("[SING-BOX] Close() timeout — продолжаем без ожидания (goroutine завершится позже)")
 			dumpGoroutinesOnCloseHang(log)
@@ -900,22 +957,23 @@ func awaitPendingClose(
 	}
 }
 
-// shutdownInstanceLocked cancels the running sing-box instance and removes the
+// shutdownInstanceLocked closes the running sing-box instance and removes the
 // on-disk config. Caller must hold e.mu. Does not flip e.running — that is the
 // caller's job, since Stop and reload have different semantics.
 func (e *SingBoxEngine) shutdownInstanceLocked() {
-	if e.cancel != nil {
-		e.cancel()
-		e.cancel = nil
-	}
+	updateInboundPortValue.Store(0)
+	cancel := e.cancel
+	e.cancel = nil
 	if e.instance != nil {
 		inst := e.instance
 		e.instance = nil
-		e.pendingClose = closeInstanceBounded(inst, e.boxCtx, 5*time.Second, e.log)
+		e.pendingClose = closeInstanceBounded(inst, e.boxCtx, cancel, 5*time.Second, e.log)
 		e.pendingSince = time.Now()
 		e.boxCtx = nil
 		closeCoreLogAfter(e.coreLog, e.pendingClose)
 		e.coreLog = nil
+	} else if cancel != nil {
+		cancel()
 	}
 	if e.configPath != "" {
 		os.Remove(e.configPath)

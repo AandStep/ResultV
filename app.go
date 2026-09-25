@@ -30,6 +30,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -101,6 +102,7 @@ type App struct {
 	quitRequested bool
 
 	trayHidden    atomic.Uint32
+	noTray        atomic.Bool
 	taskbarUnhook func()
 	smartProvider *proxy.HTTPBlockedListProvider
 
@@ -225,10 +227,21 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+// newUpdater routes update traffic through the live session when there is
+// one: GitHub is throttled for many users, and the app's own traffic is
+// otherwise kept out of the tunnel.
+func (a *App) newUpdater() *updater.Updater {
+	u := updater.New()
+	if a != nil && a.proxy != nil {
+		u.ProxyAddr = a.proxy.UpdateProxyAddr()
+	}
+	return u
+}
+
 // GetUpdateManifest fetches update.json via the Go backend.
 // This avoids WebView fetch/CORS/network-policy issues on some Windows setups.
 func (a *App) GetUpdateManifest() (*updater.Manifest, error) {
-	u := updater.New()
+	u := a.newUpdater()
 	base := context.Background()
 	if a != nil && a.ctx != nil {
 		base = a.ctx
@@ -388,6 +401,7 @@ func (a *App) HandleDeepLink(url string) {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx, a.cancel = context.WithCancel(ctx)
+	go a.quitOnTermination()
 
 	a.log.SetEmitter(func(eventName string, data any) {
 		wailsRuntime.EventsEmit(a.ctx, eventName, data)
@@ -604,7 +618,10 @@ func (a *App) startup(ctx context.Context) {
 			}
 		},
 	})
-	a.tray.Start()
+	if !a.tray.Start() {
+		a.noTray.Store(true)
+		a.log.Warning("[СИСТЕМА] Сессионная шина D-Bus недоступна — значка в трее не будет, закрытие окна завершит приложение")
+	}
 	a.refreshTrayProxyList()
 
 	if system.DetectGPOConflict() {
@@ -627,7 +644,7 @@ func (a *App) startup(ctx context.Context) {
 	// launch here used to double both the UAC prompt risk and the race surface
 	// with the frontend auto-connect.
 
-	if a.startInTray {
+	if a.startInTray && !a.noTray.Load() {
 		a.trayHidden.Store(1)
 		wailsRuntime.WindowHide(a.ctx)
 	}
@@ -705,7 +722,7 @@ func (a *App) BeforeClose(ctx context.Context) bool {
 	a.stateMu.Lock()
 	quitRequested := a.quitRequested
 	a.stateMu.Unlock()
-	if quitRequested {
+	if quitRequested || a.noTray.Load() {
 		return false
 	}
 	a.trayHidden.Store(1)
@@ -729,6 +746,9 @@ func (a *App) SaveConfig(cfg config.AppConfig) error {
 	if cfg.Subscriptions == nil || (len(cfg.Subscriptions) == 0 && len(existing.Subscriptions) > 0) {
 		cfg.Subscriptions = existing.Subscriptions
 	}
+	// The frontend holds the settings it loaded at startup; AckChangelog has
+	// moved this field on since, and a stale copy would bring the notes back.
+	cfg.Settings.LastChangelogVersion = existing.Settings.LastChangelogVersion
 	if err := a.config.SaveConfig(cfg); err != nil {
 		a.log.Error(fmt.Sprintf("Ошибка сохранения конфигурации: %v", err))
 		return err
@@ -815,6 +835,7 @@ func (a *App) startUDPRelayProbe(proxyDTO proxy.ProxyConfig, mode proxy.ProxyMod
 	}
 	id := a.resolveProxyID(proxyDTO)
 	label := a.resolveProxyDisplayName(proxyDTO)
+	session := a.proxy.CurrentSession()
 
 	go func() {
 		select {
@@ -825,8 +846,8 @@ func (a *App) startUDPRelayProbe(proxyDTO proxy.ProxyConfig, mode proxy.ProxyMod
 		ctx, cancel := context.WithTimeout(a.ctx, udpRelayProbeBudget)
 		defer cancel()
 
-		res := a.proxy.ProbeUDPRelayNow(ctx)
-		if res.Reason == "not connected" || strings.HasPrefix(res.Reason, "probe cancelled") {
+		res := a.proxy.ProbeUDPRelayNow(ctx, session)
+		if res.Reason == proxy.ProbeSessionChanged || strings.HasPrefix(res.Reason, "probe cancelled") {
 			return
 		}
 		// AutoNodeKeyOf, not the config id: NodeStat is keyed by AutoNodeKey
@@ -883,6 +904,7 @@ func (a *App) startThroughputProbe(proxyDTO proxy.ProxyConfig) {
 	}
 	key := proxy.AutoNodeKeyOf(proxyDTO)
 	label := a.resolveProxyDisplayName(proxyDTO)
+	session := a.proxy.CurrentSession()
 
 	go func() {
 		select {
@@ -893,11 +915,11 @@ func (a *App) startThroughputProbe(proxyDTO proxy.ProxyConfig) {
 		ctx, cancel := context.WithTimeout(a.ctx, throughputProbeBudget)
 		defer cancel()
 
-		res := a.proxy.ProbeThroughputNow(ctx)
+		res := a.proxy.ProbeThroughputNow(ctx, session)
 		if !res.OK {
 			// Not a warning: the user has no action to take, and a node we
 			// failed to measure is treated as unmeasured, not as slow.
-			if a.log != nil && res.Reason != "not connected" {
+			if a.log != nil && res.Reason != proxy.ProbeSessionChanged {
 				a.log.Info(fmt.Sprintf("[СКОРОСТЬ] %s: замер не удался (%s) — на подбор не влияет", label, res.Reason))
 			}
 			return
@@ -1647,22 +1669,29 @@ func (a *App) SyncProxies(proxies []config.ProxyEntry) error {
 // hundreds of subscription servers triggers at most one network call per
 // unique IP per day.
 func (a *App) DetectCountry(ip string) (string, error) {
-	if a.smartProvider == nil || a.smartProvider.Country == nil {
+	return a.detectCountry(ip, (*proxy.CountryClient).LookupCountryByIP)
+}
+
+// RedetectCountry asks the API again, skipping the 24h cache. Backs the
+// refresh buttons, where the user expects a changed flag to show at once.
+func (a *App) RedetectCountry(ip string) (string, error) {
+	return a.detectCountry(ip, (*proxy.CountryClient).RefreshCountryByIP)
+}
+
+func (a *App) detectCountry(ip string, lookup func(*proxy.CountryClient, context.Context, string) (string, error)) (string, error) {
+	cc := (*proxy.CountryClient)(nil)
+	if a.smartProvider != nil {
+		cc = a.smartProvider.Country
+	}
+	if cc == nil {
 		// Fallback path: smart provider isn't initialised yet (e.g. before
 		// engine boot). Build a one-off client; result still goes through
 		// the project API, never third-party.
-		cc := proxy.NewCountryClient(a.getUserDataPath())
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		country, err := cc.LookupCountryByIP(ctx, ip)
-		if err != nil {
-			return "Unknown", err
-		}
-		return country, nil
+		cc = proxy.NewCountryClient(a.getUserDataPath())
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	country, err := a.smartProvider.Country.LookupCountryByIP(ctx, ip)
+	country, err := lookup(cc, ctx, ip)
 	if err != nil {
 		return "Unknown", err
 	}
@@ -2871,6 +2900,20 @@ func (a *App) getAppRootDir() string {
 		return "."
 	}
 	return filepath.Dir(exe)
+}
+
+// Wails answers SIGTERM/SIGINT with a window close, which BeforeClose turns
+// into hide-to-tray: the process ignored `kill` and logout.
+func (a *App) quitOnTermination() {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(ch)
+	select {
+	case <-ch:
+		a.markQuitRequested()
+		wailsRuntime.Quit(a.ctx)
+	case <-a.ctx.Done():
+	}
 }
 
 func (a *App) markQuitRequested() {
@@ -4137,7 +4180,7 @@ func (a *App) StartUpdate() {
 			})
 		}
 
-		u := updater.New()
+		u := a.newUpdater()
 
 		manifest, err := u.Check(ctx)
 		if err != nil {

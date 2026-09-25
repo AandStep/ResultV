@@ -839,6 +839,7 @@ func (device *Device) BindUpdate() error {
 	}
 
 	device.log.Verbosef("UDP bind has been updated")
+	device.restartHandshakesInFlight()
 	return nil
 }
 

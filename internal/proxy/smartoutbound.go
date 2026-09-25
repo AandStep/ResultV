@@ -18,6 +18,7 @@ package proxy
 import (
 	"context"
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -45,7 +46,8 @@ const smartOutboundTag = "smart"
 // member list: everything else it needs comes from the service context, which
 // is how it reaches state that cannot survive a trip through JSON.
 type smartOutboundOptions struct {
-	Outbounds []string `json:"outbounds,omitempty"`
+	Outbounds     []string `json:"outbounds,omitempty"`
+	ProxyResolver string   `json:"proxy_resolver,omitempty"`
 }
 
 var (
@@ -69,6 +71,11 @@ type smartOutbound struct {
 	health   *directHealth
 	probes   *probeGate
 	udpAlive nodeUDPCheck
+
+	proxyResolverTag string
+	// resolveProxy is set when the proxy member is an endpoint: it resolves the
+	// names that member is handed, through the tunnel.
+	resolveProxy func(ctx context.Context, fqdn string) ([]netip.Addr, error)
 
 	// probe is probeHost, indirected so tests can answer without a network.
 	probe func(ctx context.Context, host string, gate *probeGate) verdict.Decision
@@ -110,6 +117,8 @@ func newSmartOutbound(ctx context.Context, router adapter.Router, logger log.Con
 		probes:     newProbeGate(nil),
 		udpAlive:   service.FromContext[nodeUDPCheck](ctx),
 		probe:      probeHost,
+
+		proxyResolverTag: options.ProxyResolver,
 	}, nil
 }
 
@@ -141,6 +150,52 @@ func (s *smartOutbound) Start() error {
 	}
 	if s.direct == nil || s.proxy == nil {
 		return E.New("smart: needs both a direct and a proxy member, got ", s.tags)
+	}
+	if s.proxyResolverTag != "" {
+		transport, loaded := service.FromContext[adapter.DNSTransportManager](s.ctx).Transport(s.proxyResolverTag)
+		if !loaded {
+			return E.New("smart: DNS server not found: ", s.proxyResolverTag)
+		}
+		dns := service.FromContext[adapter.DNSRouter](s.ctx)
+		s.resolveProxy = func(ctx context.Context, fqdn string) ([]netip.Addr, error) {
+			return dns.Lookup(ctx, fqdn, adapter.DNSQueryOptions{Transport: transport})
+		}
+	}
+	return nil
+}
+
+// proxyAddresses resolves a name for the proxy member, or returns nil when that
+// member takes names as they are.
+func (s *smartOutbound) proxyAddresses(ctx context.Context, destination M.Socksaddr) ([]netip.Addr, error) {
+	if s.resolveProxy == nil || !destination.IsDomain() {
+		return nil, nil
+	}
+	return s.resolveProxy(ctx, destination.Fqdn)
+}
+
+func (s *smartOutbound) dialProxy(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	addrs, err := s.proxyAddresses(ctx, destination)
+	if err != nil {
+		return nil, err
+	}
+	if addrs != nil {
+		return N.DialSerial(ctx, s.proxy, network, destination, addrs)
+	}
+	return s.proxy.DialContext(ctx, network, destination)
+}
+
+// resolveForProxy fills in the addresses of a connection handed to the proxy
+// member whole; the core dials them instead of the name.
+func (s *smartOutbound) resolveForProxy(ctx context.Context, metadata *adapter.InboundContext) error {
+	if len(metadata.DestinationAddresses) > 0 {
+		return nil
+	}
+	addrs, err := s.proxyAddresses(ctx, metadata.Destination)
+	if err != nil {
+		return err
+	}
+	if addrs != nil {
+		metadata.DestinationAddresses = addrs
 	}
 	return nil
 }
@@ -178,7 +233,10 @@ func (s *smartOutbound) DialContext(ctx context.Context, network string, destina
 	if metadata := adapter.ContextFrom(ctx); metadata != nil {
 		choice = s.decide(metadata)
 	}
-	return s.member(choice).DialContext(ctx, network, destination)
+	if choice == chooseProxy {
+		return s.dialProxy(ctx, network, destination)
+	}
+	return s.direct.DialContext(ctx, network, destination)
 }
 
 func (s *smartOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
@@ -186,7 +244,17 @@ func (s *smartOutbound) ListenPacket(ctx context.Context, destination M.Socksadd
 	if metadata := adapter.ContextFrom(ctx); metadata != nil {
 		choice = s.decide(metadata)
 	}
-	return s.member(choice).ListenPacket(ctx, destination)
+	if choice != chooseProxy {
+		return s.direct.ListenPacket(ctx, destination)
+	}
+	addrs, err := s.proxyAddresses(ctx, destination)
+	if err != nil {
+		return nil, err
+	}
+	if len(addrs) > 0 {
+		destination = M.SocksaddrFrom(addrs[0], destination.Port)
+	}
+	return s.proxy.ListenPacket(ctx, destination)
 }
 
 // attributeProxy books this connection to the node, both in the counters the
@@ -208,6 +276,11 @@ func (s *smartOutbound) NewConnection(ctx context.Context, conn net.Conn, metada
 		return
 	}
 	if choice == chooseProxy {
+		if err := s.resolveForProxy(ctx, &metadata); err != nil {
+			N.CloseOnHandshakeFailure(conn, onClose, err)
+			s.logger.ErrorContext(ctx, E.Cause(err, raceTarget(&metadata)))
+			return
+		}
 		conn = s.attributeProxy(conn, metadata)
 	}
 	chosen := s.member(choice)
@@ -244,7 +317,7 @@ func (s *smartOutbound) raceConnection(ctx context.Context, conn net.Conn, metad
 			return s.direct.DialContext(dialCtx, N.NetworkTCP, metadata.Destination)
 		},
 		func(dialCtx context.Context) (net.Conn, error) {
-			return s.proxy.DialContext(dialCtx, N.NetworkTCP, metadata.Destination)
+			return s.dialProxy(dialCtx, N.NetworkTCP, metadata.Destination)
 		})
 	if report, ok := raceLinkEvidence(res); report {
 		s.health.record(smartHost(&metadata), ok)
@@ -391,6 +464,11 @@ func (s *smartOutbound) NewPacketConnection(ctx context.Context, conn N.PacketCo
 		s.logger.DebugContext(ctx, err)
 		return
 	case udpViaProxy:
+		if err := s.resolveForProxy(ctx, &metadata); err != nil {
+			N.CloseOnHandshakeFailure(conn, onClose, err)
+			s.logger.ErrorContext(ctx, E.Cause(err, raceTarget(&metadata)))
+			return
+		}
 		if s.traffic != nil {
 			s.traffic.logProxyConnection(metadata)
 			// Booked here for the same reason the TCP path books in

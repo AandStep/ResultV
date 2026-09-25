@@ -91,6 +91,8 @@ export function PreviewRoutingDeepLink(arg1:string):Promise<config.RoutingProfil
 
 export function QueueDeepLink(arg1:string):Promise<void>;
 
+export function RedetectCountry(arg1:string):Promise<string>;
+
 export function RefreshRoutingList(arg1:string):Promise<config.RoutingList>;
 
 export function RefreshSubscription(arg1:string):Promise<Array<config.ProxyEntry>>;

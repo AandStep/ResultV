@@ -1,42 +1,51 @@
 {
-  "version": "3.5.2",
+  "version": "",
   "releaseTitle": {
-    "ru": "Hotfix для AWG 3.1",
-    "en": "Hotfix for AWG 3.1"
+    "ru": "Общие улучшения и фиксы",
+    "en": "General improvements and fixes"
   },
   "releaseNotes": [
     {
+      "type": "feature",
+      "ru": "Группы серверов можно перетаскивать: порядок сохраняется и на главной",
+      "en": "Server groups can now be reordered by dragging, and the order carries over to the home screen"
+    },
+    {
       "type": "fix",
-      "ru": "Доработана поддержка AWG 3.1. Временно ядро перенесено на собственный форк.",
-      "en": "Improved support for AWG 3.1. The kernel has been temporarily moved to a custom fork."
+      "ru": "Улучшена совместимость приложения со старыми версиями Windows",
+      "en": "Improved application compatibility with older versions of Windows"
+    },
+    {
+      "type": "fix",
+      "ru": "Исправлены некоторые баги Linux",
+      "en": "Fixed some Linux bugs"
+    },
+    {
+      "type": "improve",
+      "ru": "Обновили базы IP адресов для более точного определения флага сервера. Также добавили обновление флагов при обновлении подписок и отдельных ключей",
+      "en": "Updated IP address databases for more accurate server flag detection. Also added flag updates when renewing subscriptions and individual keys"
+    },
+    {
+      "type": "improve",
+      "ru": "Улучшена стабильность работы AWG протоколов, в том числе в глобальном режиме. А также теперь для AWG доступен адаптивный умный режим.",
+      "en": "Improved stability of AWG protocols, including in global mode. Also, the adaptive smart mode is now available for AWG."
+    },
+    {
+      "type": "fix",
+      "ru": "Адаптивный умный режим точнее распознаёт сайты, недоступные из вашего региона",
+      "en": "Adaptive smart mode now detects region-blocked sites more accurately"
+    },
+    {
+      "type": "fix",
+      "ru": "Сайты из исключений в глобальном режиме открываются стабильнее",
+      "en": "Excluded sites open more reliably in global mode"
+    },
+    {
+      "type": "fix",
+      "ru": "Обновление приложения скачивается и при включённом VPN",
+      "en": "App updates now download while the VPN is connected"
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",
-  "platforms": {
-    "windows-amd64-portable": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.2/ResultV.exe",
-      "sha256": "4e564e498f7a70613e9ea56506cf0298103fab5dd780906546b56ee0907a55e0",
-      "size": 62184448
-    },
-    "windows-amd64-installer": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.2/ResultV-amd64-installer.exe",
-      "sha256": "57dcf5ac384d72ad3ad5e0914c551e68fe5bcfd48e740127b274e4ad376f9177",
-      "size": 29142905
-    },
-    "darwin-universal": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.2/ResultV.dmg",
-      "sha256": "155811784307395024be276f4310e08ddad893d1e9727f65e7f6475c5f9f633e",
-      "size": 65618733
-    },
-    "linux-amd64-appimage": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.2/ResultV-3.5.2-x86_64.AppImage",
-      "sha256": "674a301b65bacdc648b50ab65f78deb8953480e19735417b6afeb54678ed1d5c",
-      "size": 96012792
-    },
-    "linux-amd64-deb": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.2/resultv_3.5.2_amd64.deb",
-      "sha256": "651cfa57fef6b3148c8c5424246948e6aa20ffc1f86329d9459812b07815a636",
-      "size": 28129658
-    }
-  }
+  "platforms": {}
 }

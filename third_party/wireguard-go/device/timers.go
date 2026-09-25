@@ -109,7 +109,24 @@ func expiredRetransmitHandshake(peer *Peer, d time.Duration) {
 		/* We clear the endpoint address src address, in case this is the cause of trouble. */
 		peer.markEndpointSrcForClearing()
 
+		peer.device.rebindEphemeral()
+
 		peer.SendHandshakeInitiation(true)
+	}
+}
+
+// rebindEphemeral moves a bind with no fixed listen port to a fresh one. A
+// network that drops one UDP flow drops every retry sent through it, and the
+// only way out is a different source port.
+func (device *Device) rebindEphemeral() {
+	device.net.RLock()
+	ephemeral := device.net.port == 0
+	device.net.RUnlock()
+	if !ephemeral || !device.isUp() {
+		return
+	}
+	if err := device.BindUpdate(); err != nil {
+		device.log.Errorf("Failed to move to a new source port: %v", err)
 	}
 }
 

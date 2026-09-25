@@ -2442,15 +2442,15 @@ func (m *Manager) GetStatus() StatusDTO {
 // in proxy mode the same inbound carries the user's own traffic and Smart
 // routing would send the STUN packets out directly, turning every node into a
 // false pass.
-func (m *Manager) ProbeUDPRelayNow(ctx context.Context) UDPRelayResult {
+func (m *Manager) ProbeUDPRelayNow(ctx context.Context, session SessionRef) UDPRelayResult {
 	m.mu.Lock()
-	connected := m.connected
+	current := m.isSessionLocked(session)
 	mode := m.mode
 	port := m.localPort
 	m.mu.Unlock()
 
-	if !connected {
-		return UDPRelayResult{Reason: "not connected"}
+	if !current {
+		return UDPRelayResult{Reason: ProbeSessionChanged}
 	}
 	if mode != ProxyModeTunnel {
 		return UDPRelayResult{Reason: "udp relay probe runs in tunnel mode only"}
@@ -2458,7 +2458,11 @@ func (m *Manager) ProbeUDPRelayNow(ctx context.Context) UDPRelayResult {
 	if port == 0 {
 		return UDPRelayResult{Reason: "local inbound port unknown"}
 	}
-	return ProbeUDPRelay(ctx, fmt.Sprintf("127.0.0.1:%d", port))
+	res := ProbeUDPRelay(ctx, fmt.Sprintf("127.0.0.1:%d", port))
+	if !m.isSession(session) {
+		return UDPRelayResult{Reason: ProbeSessionChanged}
+	}
+	return res
 }
 
 // ProbeThroughputNow measures how fast the live session moves data, through
@@ -2467,19 +2471,68 @@ func (m *Manager) ProbeUDPRelayNow(ctx context.Context) UDPRelayResult {
 // Unlike the UDP probe this runs in both modes: the inbound carries the
 // measurement either way, and in proxy mode there is no Final=direct rule to
 // divert it — the request is addressed to the local listener explicitly.
-func (m *Manager) ProbeThroughputNow(ctx context.Context) ThroughputResult {
+func (m *Manager) ProbeThroughputNow(ctx context.Context, session SessionRef) ThroughputResult {
 	m.mu.Lock()
-	connected := m.connected
+	current := m.isSessionLocked(session)
 	port := m.localPort
 	m.mu.Unlock()
 
-	if !connected {
-		return ThroughputResult{Reason: "not connected"}
+	if !current {
+		return ThroughputResult{Reason: ProbeSessionChanged}
 	}
 	if port == 0 {
 		return ThroughputResult{Reason: "local inbound port unknown"}
 	}
-	return ProbeThroughput(ctx, fmt.Sprintf("127.0.0.1:%d", port))
+	res := ProbeThroughput(ctx, fmt.Sprintf("127.0.0.1:%d", port))
+	if !m.isSession(session) {
+		return ThroughputResult{Reason: ProbeSessionChanged}
+	}
+	return res
+}
+
+// ProbeSessionChanged is the reason a post-connect probe reports when the
+// session it was scheduled for is no longer the live one.
+const ProbeSessionChanged = "session changed"
+
+// SessionRef identifies one established session. Every connect, switch and
+// reload installs a fresh m.proxy pointer, so the pointer itself is the
+// identity.
+type SessionRef struct{ proxy *ProxyConfig }
+
+// CurrentSession returns the live session, or a zero ref when disconnected.
+func (m *Manager) CurrentSession() SessionRef {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.connected {
+		return SessionRef{}
+	}
+	return SessionRef{proxy: m.proxy}
+}
+
+func (m *Manager) isSession(ref SessionRef) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.isSessionLocked(ref)
+}
+
+func (m *Manager) isSessionLocked(ref SessionRef) bool {
+	return ref.proxy != nil && m.connected && m.proxy == ref.proxy
+}
+
+// UpdateProxyAddr returns the loopback address the in-app updater should use
+// as its HTTP proxy, or "" when there is no live session to go through.
+func (m *Manager) UpdateProxyAddr() string {
+	m.mu.Lock()
+	connected := m.connected
+	m.mu.Unlock()
+	if !connected {
+		return ""
+	}
+	port := UpdateInboundPort()
+	if port == 0 {
+		return ""
+	}
+	return fmt.Sprintf("127.0.0.1:%d", port)
 }
 
 func (m *Manager) GetMode() ProxyMode {

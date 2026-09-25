@@ -50,12 +50,15 @@ import {
   useScrollMemory,
 } from "../../hooks/usePageMemory";
 import wailsAPI from "../../utils/wailsAPI";
+import { applyCountries, redetectCountries } from "../../utils/network";
+import { orderGroups } from "../../utils/groupOrder";
 import ServerEditor, { SERVER_EDITOR_TEXT } from "./ServerEditor";
 import ServersPage from "./ServersPage";
 import SortMenu from "./SortMenu";
 import SubscriptionDialog, { SUBSCRIPTION_INTERVALS } from "./SubscriptionDialog";
 import SubscriptionLogo, { subscriptionSupportURL } from "./SubscriptionLogo";
 import AppSidebar from "./AppSidebar";
+import ReorderGuide from "./ReorderGuide";
 import { formatTraffic, protocolLabel } from "./format";
 
 const isAuto = (proxy) => proxy?.type?.toUpperCase() === "AUTO";
@@ -106,6 +109,7 @@ export default function ServersScreen() {
     setSubscriptions,
     syncRoutingLists,
     settings,
+    updateSetting,
     toggleFavorite,
     showConfirmDialog,
     handleSaveProxy,
@@ -144,6 +148,20 @@ export default function ServersScreen() {
 
   /* Прокрутка возвращается туда, где её оставили. */
   const contentRef = useScrollMemory(PAGE_SERVERS);
+
+  /* Гайд о перестановке групп — один раз, при первом заходе на страницу.
+     Пауза даёт странице сначала появиться. */
+  const guideDue = settings?.reorderGuideSeen !== true;
+  const [guideOpen, setGuideOpen] = useState(false);
+  useEffect(() => {
+    if (!guideDue) return undefined;
+    const timer = setTimeout(() => setGuideOpen(true), 450);
+    return () => clearTimeout(timer);
+  }, [guideDue]);
+  const closeGuide = () => {
+    setGuideOpen(false);
+    updateSetting("reorderGuideSeen", true);
+  };
 
   const [editingSub, setEditingSub] = useState(null);
   /* Сервер, открытый в окне правки. Только свой: узел подписки править
@@ -338,6 +356,15 @@ export default function ServersScreen() {
     });
   }, []);
 
+  /* Кнопка обновления — явная просьба, поэтому мимо суточного кэша. */
+  const redetectFlags = useCallback(
+    async (list) => {
+      const found = await redetectCountries(list, { fresh: true });
+      setProxies((prev) => applyCountries(prev, found));
+    },
+    [setProxies],
+  );
+
   const refreshSubscription = useCallback(
     async (sub) => {
       markRefreshing(sub.id, true);
@@ -348,6 +375,7 @@ export default function ServersScreen() {
             ...prev.filter((p) => p.subscriptionUrl !== sub.url),
             ...mergeSubscriptionRefreshCountries(prev, updated, sub.url),
           ]);
+          await redetectFlags(updated);
         }
         await reloadConfig();
       } catch (err) {
@@ -356,7 +384,7 @@ export default function ServersScreen() {
         markRefreshing(sub.id, false);
       }
     },
-    [setProxies, reloadConfig, markRefreshing],
+    [setProxies, reloadConfig, markRefreshing, redetectFlags],
   );
 
   const removeSubscription = useCallback(
@@ -463,7 +491,10 @@ export default function ServersScreen() {
         onToggle: () => setOpenGroups((prev) => ({ ...prev, my: !prev.my })),
         /* Обновлять у своих серверов нечего: обновление здесь означает
            переизмерить задержку до них. См. docs/design/GAPS.md. */
-        onSync: () => refreshPings(manual.map((p) => p.id)),
+        onSync: () => {
+          refreshPings(manual.map((p) => p.id));
+          redetectFlags(manual);
+        },
         /* Значок тот же, работа та же — значит, и крутится он по тому же
            поводу: пока идёт запрошенный отсюда замер. */
         syncBusy: manual.some(isManualPingPending),
@@ -473,8 +504,9 @@ export default function ServersScreen() {
       });
     }
 
-    return out;
+    return orderGroups(out, settings?.groupOrder);
   }, [
+    settings?.groupOrder,
     subscriptions,
     listed,
     search,
@@ -488,6 +520,7 @@ export default function ServersScreen() {
     removeSubscription,
     removeManual,
     refreshPings,
+    redetectFlags,
     isManualPingPending,
   ]);
 
@@ -586,6 +619,8 @@ export default function ServersScreen() {
           setSortAnchor((current) => (current ? null : button));
         }}
         groups={groups}
+        reorderable={search.trim() === ""}
+        onReorder={(keys) => updateSetting("groupOrder", keys)}
         empty={groups.length === 0}
         text={text}
         sidebar={<AppSidebar />}
@@ -601,6 +636,22 @@ export default function ServersScreen() {
           setSortAnchor(null);
         }}
         onClose={() => setSortAnchor(null)}
+      />
+
+      <ReorderGuide
+        open={guideOpen}
+        text={{
+          title: t("reorderGuide.title"),
+          subtitle: t("reorderGuide.subtitle"),
+          text: t("reorderGuide.text"),
+          hold: t("reorderGuide.hold"),
+          drag: t("reorderGuide.drag"),
+          ok: t("reorderGuide.ok"),
+          subA: t("reorderGuide.subA"),
+          subB: t("reorderGuide.subB"),
+          my: t("reorderGuide.my"),
+        }}
+        onClose={closeGuide}
       />
 
       {editingServer && (

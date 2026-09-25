@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/sagernet/gvisor/pkg/tcpip"
+	"github.com/sagernet/gvisor/pkg/tcpip/stack"
 	wgprotocol "github.com/sagernet/sing-box/protocol/wireguard"
 )
 
@@ -239,6 +240,33 @@ func wgStackStatsLine(boxCtx context.Context) (string, error) {
 
 // wgStackFrom walks the endpoint down to the gVisor stack inside its device.
 func wgStackFrom(wgEndpoint *wgprotocol.Endpoint) (statsProvider, error) {
+	value, err := wgStackValue(wgEndpoint)
+	if err != nil {
+		return nil, err
+	}
+	provider, ok := value.(statsProvider)
+	if !ok {
+		return nil, &awg31Error{"стек не отдаёт статистику"}
+	}
+	return provider, nil
+}
+
+// wgGVisorStack returns the live session's gVisor stack, or nil when the
+// session has no WireGuard endpoint or the endpoint runs without one.
+func wgGVisorStack(boxCtx context.Context) *stack.Stack {
+	endpoint, err := wgEndpointFrom(boxCtx)
+	if err != nil {
+		return nil
+	}
+	value, err := wgStackValue(endpoint)
+	if err != nil {
+		return nil
+	}
+	s, _ := value.(*stack.Stack)
+	return s
+}
+
+func wgStackValue(wgEndpoint *wgprotocol.Endpoint) (any, error) {
 	transportEndpoint, err := unexportedField(reflect.ValueOf(wgEndpoint), "endpoint")
 	if err != nil {
 		return nil, &awg31Error{"protocol/wireguard.Endpoint: " + err.Error()}
@@ -260,9 +288,5 @@ func wgStackFrom(wgEndpoint *wgprotocol.Endpoint) (statsProvider, error) {
 	if err != nil {
 		return nil, &awg31Error{"устройство без gVisor-стека: " + err.Error()}
 	}
-	provider, ok := stackField.Interface().(statsProvider)
-	if !ok {
-		return nil, &awg31Error{"стек не отдаёт статистику"}
-	}
-	return provider, nil
+	return stackField.Interface(), nil
 }

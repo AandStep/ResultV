@@ -89,6 +89,10 @@ type memNetwork struct {
 	mu      sync.Mutex
 	ports   map[uint16]chan memDatagram
 	largest int
+	// dropTo loses every datagram addressed to these ports.
+	dropTo map[uint16]bool
+	// dropFrom loses every datagram sent from these ports.
+	dropFrom map[uint16]bool
 }
 
 type memDatagram struct {
@@ -114,9 +118,15 @@ type memBind struct {
 	port    uint16
 	inbox   chan memDatagram
 	closed  chan struct{}
+	// ephemeral takes a fresh port on every Open and reports none, the way a
+	// client bind that dials the server does.
+	ephemeral bool
 }
 
 func (b *memBind) Open(uint16) ([]conn.ReceiveFunc, uint16, error) {
+	if b.ephemeral {
+		b.port++
+	}
 	b.inbox = make(chan memDatagram, 256)
 	b.closed = make(chan struct{})
 	b.network.mu.Lock()
@@ -132,6 +142,9 @@ func (b *memBind) Open(uint16) ([]conn.ReceiveFunc, uint16, error) {
 		case <-closed:
 			return 0, net.ErrClosed
 		}
+	}
+	if b.ephemeral {
+		return []conn.ReceiveFunc{receive}, 0, nil
 	}
 	return []conn.ReceiveFunc{receive}, b.port, nil
 }
@@ -159,10 +172,12 @@ func (b *memBind) ParseEndpoint(s string) (conn.Endpoint, error) {
 }
 
 func (b *memBind) Send(bufs [][]byte, ep conn.Endpoint, offset int) error {
+	dst := netip.MustParseAddrPort(ep.DstToString()).Port()
 	b.network.mu.Lock()
-	inbox := b.network.ports[netip.MustParseAddrPort(ep.DstToString()).Port()]
+	inbox := b.network.ports[dst]
+	dropped := b.network.dropTo[dst] || b.network.dropFrom[b.port]
 	b.network.mu.Unlock()
-	if inbox == nil {
+	if inbox == nil || dropped {
 		return nil
 	}
 	for _, buf := range bufs {

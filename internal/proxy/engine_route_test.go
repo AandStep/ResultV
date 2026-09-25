@@ -1125,8 +1125,8 @@ func TestBuildTunnelModeConfig_LoopbackProbeInbound(t *testing.T) {
 		Proxy:     ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
 		LocalPort: 14081,
 	})
-	if len(cfg.Inbounds) != 2 {
-		t.Fatalf("expected tun + probe inbounds, got %+v", cfg.Inbounds)
+	if len(cfg.Inbounds) != 3 {
+		t.Fatalf("expected tun + probe + update inbounds, got %+v", cfg.Inbounds)
 	}
 	if cfg.Inbounds[0].Type != "tun" {
 		t.Fatalf("tun inbound must stay first, got %+v", cfg.Inbounds[0])
@@ -1151,11 +1151,54 @@ func TestBuildTunnelModeConfig_LoopbackProbeInboundDefaultPort(t *testing.T) {
 		Mode:  ProxyModeTunnel,
 		Proxy: ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
 	})
-	if len(cfg.Inbounds) != 2 {
-		t.Fatalf("expected tun + probe inbounds, got %+v", cfg.Inbounds)
+	if len(cfg.Inbounds) != 3 {
+		t.Fatalf("expected tun + probe + update inbounds, got %+v", cfg.Inbounds)
 	}
 	if cfg.Inbounds[1].ListenPort == 0 {
 		t.Fatalf("probe inbound must get a free port, got %+v", cfg.Inbounds[1])
+	}
+}
+
+// The updater downloads through "update-in" so a throttled GitHub is reached
+// via the node. Its route rule has to beat everything that could send the
+// app's own traffic direct: Smart's final, user lists and the self-direct rule.
+func TestUpdateInbound_RoutedToProxyInBothModes(t *testing.T) {
+	for _, mode := range []ProxyMode{ProxyModeProxy, ProxyModeTunnel} {
+		ec := EngineConfig{
+			Mode:        mode,
+			RoutingMode: ModeSmart,
+			Proxy:       ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		}
+		cfg := mustBuildProxyModeConfig(t, ec)
+		if mode == ProxyModeTunnel {
+			cfg = mustBuildTunnelModeConfig(t, ec)
+		}
+		assertCoreAcceptsConfig(t, cfg)
+		var in *SBInbound
+		for i := range cfg.Inbounds {
+			if cfg.Inbounds[i].Tag == updateInboundTag {
+				in = &cfg.Inbounds[i]
+			}
+		}
+		if in == nil || in.Listen != "127.0.0.1" || in.ListenPort == 0 {
+			t.Fatalf("mode %v: loopback update inbound missing, got %+v", mode, cfg.Inbounds)
+		}
+		ruleIdx := -1
+		for i, r := range cfg.Route.Rules {
+			if len(r.Inbound) == 1 && r.Inbound[0] == updateInboundTag {
+				if r.Outbound != "proxy" || len(r.Domain)+len(r.ProcessPathRegex)+len(r.IPCidr) != 0 {
+					t.Fatalf("mode %v: update rule must send everything to proxy, got %+v", mode, r)
+				}
+				ruleIdx = i
+				break
+			}
+			if r.Outbound == "direct" && len(r.IPCidr) == 0 && len(r.Domain) == 0 {
+				t.Fatalf("mode %v: direct rule %+v precedes the update rule", mode, r)
+			}
+		}
+		if ruleIdx < 0 {
+			t.Fatalf("mode %v: no route rule for %q", mode, updateInboundTag)
+		}
 	}
 }
 
@@ -1574,7 +1617,7 @@ func TestBuildDNS_SmartModeWithoutRuleSetKeepsTunnelDNS(t *testing.T) {
 	cfg := smartDNSConfig()
 	cfg.SmartRuleSetPath = ""
 	dns := buildDNS(cfg)
-	if dns.Final != "" {
+	if dns.Final != firstDetourServerTag(dns.Servers, "proxy") {
 		t.Fatalf("without a compiled rule-set the DNS split must stay off, got Final=%q", dns.Final)
 	}
 	for _, r := range dns.Rules {
@@ -1590,14 +1633,54 @@ func TestBuildDNS_GlobalModeUnchanged(t *testing.T) {
 	cfg := smartDNSConfig()
 	cfg.RoutingMode = ModeGlobal
 	dns := buildDNS(cfg)
-	if dns.Final != "" {
-		t.Fatalf("global mode DNS must be untouched, got Final=%q", dns.Final)
+	if dns.Final != firstDetourServerTag(dns.Servers, "proxy") {
+		t.Fatalf("global mode DNS must default to the tunnel resolver, got Final=%q", dns.Final)
 	}
 	for _, r := range dns.Rules {
 		if len(r.RuleSet) > 0 {
 			t.Fatalf("global mode must not gain a rule_set DNS rule: %+v", r)
 		}
 	}
+}
+
+// TestBuildDNS_GlobalWhitelistResolvesLocally: excluded domains resolve via
+// local, nested exceptions stay on the tunnel resolver.
+func TestBuildDNS_GlobalWhitelistResolvesLocally(t *testing.T) {
+	cfg := smartDNSConfig()
+	cfg.RoutingMode = ModeGlobal
+	cfg.Whitelist = []string{"*.ru", "avito.ru"}
+	dns := buildDNS(cfg)
+	tunnelTag := firstDetourServerTag(dns.Servers, "proxy")
+
+	ru, avito := -1, -1
+	for i, r := range dns.Rules {
+		if len(r.DomainSuffix) != 1 {
+			continue
+		}
+		switch {
+		case r.DomainSuffix[0] == "ru" && r.Server == "local":
+			ru = i
+		case r.DomainSuffix[0] == "avito.ru" && r.Server == tunnelTag:
+			avito = i
+		}
+	}
+	if ru < 0 {
+		t.Fatalf("excluded suffix must resolve via local, rules: %+v", dns.Rules)
+	}
+	if avito < 0 || avito > ru {
+		t.Fatalf("nested exception must resolve through the tunnel ahead of its parent, rules: %+v", dns.Rules)
+	}
+	if dns.Final != tunnelTag {
+		t.Fatalf("everything else must stay on the tunnel resolver, got Final=%q", dns.Final)
+	}
+
+	full := smartDNSConfig()
+	full.RoutingMode = ModeGlobal
+	full.SmartRuleSetPath = ""
+	full.BlockedDomains = nil
+	full.Whitelist = []string{"localhost", "127.0.0.1", "*.ru", "avito.ru"}
+	full.DataDir = t.TempDir()
+	assertCoreBuildsConfig(t, mustBuildTunnelModeConfig(t, full))
 }
 
 // TestBuildDNS_SmartFinalSerializes guards against the field silently dropping
@@ -1818,5 +1901,26 @@ func TestBuildRoute_SmartMode_BackstopAfterAppWhitelist(t *testing.T) {
 	}
 	if appIdx >= len(rules)-1 {
 		t.Fatalf("app-whitelist rule at %d must precede the backstop at %d", appIdx, len(rules)-1)
+	}
+}
+
+// Without dns.final the core defaults to the first registered transport — the
+// bare DoH leg — and the TCP leg behind the wrapper is never reached. An AWG
+// config's resolver (100.64.0.1) speaks no DoH, so Global failed every lookup.
+func TestBuildDNS_GlobalModeDefaultsToFallbackWrapper(t *testing.T) {
+	for _, servers := range [][]string{nil, {"100.64.0.1"}} {
+		cfg := smartDNSConfig()
+		cfg.RoutingMode = ModeGlobal
+		cfg.DNSServers = servers
+		dns := buildDNS(cfg)
+		var final *SBDNSServer
+		for i := range dns.Servers {
+			if dns.Servers[i].Tag == dns.Final {
+				final = &dns.Servers[i]
+			}
+		}
+		if final == nil || final.Type != "fallback" {
+			t.Fatalf("dns=%v: Final=%q must name the fallback wrapper", servers, dns.Final)
+		}
 	}
 }

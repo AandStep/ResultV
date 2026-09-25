@@ -15,7 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { compareVersions } from "../utils/versionCheck";
 import { GetVersion } from "../../wailsjs/go/main/App";
 
@@ -92,37 +92,44 @@ export const useCheckUpdate = () => {
     );
     const [loading, setLoading] = useState(true);
 
-    useEffect(() => {
-        const checkUpdate = async () => {
-            try {
-                setLoading(true);
-                const localVersion = await resolveLocalVersion();
-                setCurrentVersion(localVersion);
+    const checkUpdate = useCallback(async () => {
+        try {
+            setLoading(true);
+            const localVersion = await resolveLocalVersion();
+            setCurrentVersion(localVersion);
 
-                const remoteData = await fetchRemoteManifest();
+            const remoteData = await fetchRemoteManifest();
 
-                setLatestVersionData(remoteData);
+            setLatestVersionData(remoteData);
 
-                // True when the manifest has at least one platform asset filled in.
-                // The Go backend decides which specific asset to use at download time.
-                const platformsPopulated =
-                    remoteData.platforms != null &&
-                    Object.values(remoteData.platforms).some((a) => a?.url && a?.sha256);
-                setHasPlatformAsset(platformsPopulated);
+            // True when the manifest has at least one platform asset filled in.
+            // The Go backend decides which specific asset to use at download time.
+            const platformsPopulated =
+                remoteData.platforms != null &&
+                Object.values(remoteData.platforms).some((a) => a?.url && a?.sha256);
+            setHasPlatformAsset(platformsPopulated);
 
-                if (localVersion && remoteData.version) {
-                    const isNewer = compareVersions(localVersion, remoteData.version) === -1;
-                    setUpdateAvailable(isNewer);
-                }
-            } catch (error) {
-                console.error("Ошибка проверки обновлений:", error);
-            } finally {
-                setLoading(false);
+            if (localVersion && remoteData.version) {
+                const isNewer = compareVersions(localVersion, remoteData.version) === -1;
+                setUpdateAvailable(isNewer);
             }
-        };
-
-        checkUpdate();
+        } catch (error) {
+            console.error("Ошибка проверки обновлений:", error);
+        } finally {
+            setLoading(false);
+        }
     }, []);
 
-    return { updateAvailable, latestVersionData, currentVersion, loading, hasPlatformAsset };
+    useEffect(() => {
+        checkUpdate();
+    }, [checkUpdate]);
+
+    return {
+        updateAvailable,
+        latestVersionData,
+        currentVersion,
+        loading,
+        hasPlatformAsset,
+        recheck: checkUpdate,
+    };
 };

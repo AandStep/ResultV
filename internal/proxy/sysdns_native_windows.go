@@ -89,6 +89,10 @@ func interfaceGUIDForIndex(ifIdx int) (windows.GUID, error) {
 // IPv4 nameservers on the interface identified by guid. The GUID is 16 bytes, so
 // the x64 ABI passes it by reference — hence &guid, not the value.
 func setInterfaceDNSNative(guid windows.GUID, servers []string, reset bool) error {
+	// Absent before Windows 10 2004; LazyProc.Call would panic.
+	if err := procSetInterfaceDnsSettings.Find(); err != nil {
+		return err
+	}
 	settings := dnsInterfaceSettings{
 		Version: dnsInterfaceSettingsVersion1,
 		Flags:   dnsSettingNameServer,

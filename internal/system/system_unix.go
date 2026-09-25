@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -43,8 +42,8 @@ func IsAdmin() bool {
 //     which shows the standard system password dialog. We launch the binary
 //     detached (`&`) so osascript returns immediately; without that the script
 //     blocks on the GUI process and we can't quit cleanly.
-//   - Linux: prefers pkexec (PolicyKit GUI prompt). Requires DISPLAY/XAUTHORITY
-//     to be propagated so the relaunched GUI can find the X/Wayland session.
+//   - Linux: pkexec (PolicyKit GUI prompt), see elevate_linux.go. Returns only
+//     after the password was accepted, or an error when it was not.
 //
 // GetNetworkTraffic exists for parity with Windows; the netstat/proc parsing on
 // Unix is noisy and we don't surface those numbers in the UI today, so it
@@ -82,31 +81,6 @@ func restartAsAdminDarwin(exePath string, args []string) error {
 	if err := exec.Command("osascript", "-e", script).Run(); err != nil {
 		return fmt.Errorf("osascript elevation failed: %w", err)
 	}
-	return nil
-}
-
-func restartAsAdminLinux(exePath string, args []string) error {
-	if _, err := exec.LookPath("pkexec"); err != nil {
-		return fmt.Errorf("pkexec not found; install PolicyKit or relaunch via `sudo %s`",
-			filepath.Base(exePath))
-	}
-	// Propagate the GUI session env so the elevated process can attach to
-	// the user's display server.
-	pkArgs := []string{"env"}
-	for _, k := range []string{"DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR"} {
-		if v, ok := os.LookupEnv(k); ok {
-			pkArgs = append(pkArgs, k+"="+v)
-		}
-	}
-	pkArgs = append(pkArgs, exePath)
-	pkArgs = append(pkArgs, args...)
-
-	cmd := exec.Command("pkexec", pkArgs...)
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("pkexec start: %w", err)
-	}
-	// Don't Wait — pkexec stays alive for the lifetime of the elevated
-	// process, and the caller is about to quit this instance anyway.
 	return nil
 }
 

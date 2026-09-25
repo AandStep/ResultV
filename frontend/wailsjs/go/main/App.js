@@ -170,6 +170,10 @@ export function QueueDeepLink(arg1) {
   return window['go']['main']['App']['QueueDeepLink'](arg1);
 }
 
+export function RedetectCountry(arg1) {
+  return window['go']['main']['App']['RedetectCountry'](arg1);
+}
+
 export function RefreshRoutingList(arg1) {
   return window['go']['main']['App']['RefreshRoutingList'](arg1);
 }

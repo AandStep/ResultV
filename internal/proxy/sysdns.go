@@ -42,9 +42,10 @@ type dnsPhaseTimings struct {
 	snapshot time.Duration
 	set      time.Duration
 	adapters int
+	setNetsh int
 	setPS    int
 	tun      time.Duration
-	tunPS    bool
+	tunPath  dnsPath
 	touched  bool
 }
 
@@ -63,22 +64,25 @@ func (t *dnsPhaseTimings) recordSnapshot(d time.Duration) {
 	t.touched = true
 }
 
-func (t *dnsPhaseTimings) recordSet(d time.Duration, usedPowerShell bool) {
+func (t *dnsPhaseTimings) recordSet(d time.Duration, path dnsPath) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.set += d
 	t.adapters++
-	if usedPowerShell {
+	switch path {
+	case dnsPathNetsh:
+		t.setNetsh++
+	case dnsPathPowerShell:
 		t.setPS++
 	}
 	t.touched = true
 }
 
-func (t *dnsPhaseTimings) recordTun(d time.Duration, usedPowerShell bool) {
+func (t *dnsPhaseTimings) recordTun(d time.Duration, path dnsPath) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.tun = d
-	t.tunPS = usedPowerShell
+	t.tunPath = path
 	t.touched = true
 }
 
@@ -91,8 +95,8 @@ func (t *dnsPhaseTimings) reset() {
 func (t *dnsPhaseTimings) resetLocked() {
 	t.list, t.listPS = 0, false
 	t.snapshot = 0
-	t.set, t.adapters, t.setPS = 0, 0, 0
-	t.tun, t.tunPS = 0, false
+	t.set, t.adapters, t.setNetsh, t.setPS = 0, 0, 0, 0
+	t.tun, t.tunPath = 0, dnsPathNative
 	t.touched = false
 }
 
@@ -107,8 +111,8 @@ func (t *dnsPhaseTimings) take() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "list=%dms(%s)", t.list.Milliseconds(), dnsPathLabel(t.listPS))
 	fmt.Fprintf(&b, " snapshot=%dms", t.snapshot.Milliseconds())
-	fmt.Fprintf(&b, " adapters=%d set=%dms(ps=%d)", t.adapters, t.set.Milliseconds(), t.setPS)
-	fmt.Fprintf(&b, " tun=%dms(%s)", t.tun.Milliseconds(), dnsPathLabel(t.tunPS))
+	fmt.Fprintf(&b, " adapters=%d set=%dms(netsh=%d ps=%d)", t.adapters, t.set.Milliseconds(), t.setNetsh, t.setPS)
+	fmt.Fprintf(&b, " tun=%dms(%s)", t.tun.Milliseconds(), t.tunPath)
 	out := b.String()
 	t.resetLocked()
 	return out
@@ -116,6 +120,25 @@ func (t *dnsPhaseTimings) take() string {
 
 func dnsPathLabel(usedPowerShell bool) string {
 	if usedPowerShell {
+		return dnsPathPowerShell.String()
+	}
+	return dnsPathNative.String()
+}
+
+// dnsPath names the mechanism that applied an adapter DNS change.
+type dnsPath uint8
+
+const (
+	dnsPathNative dnsPath = iota
+	dnsPathNetsh
+	dnsPathPowerShell
+)
+
+func (p dnsPath) String() string {
+	switch p {
+	case dnsPathNetsh:
+		return "netsh"
+	case dnsPathPowerShell:
 		return "ps"
 	}
 	return "native"

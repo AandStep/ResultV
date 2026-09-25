@@ -30,6 +30,8 @@ import (
 	"time"
 
 	"resultproxy-wails/internal/system"
+
+	"golang.org/x/sys/windows"
 )
 
 const dnsSnapshotFile = "dns-snapshot.json"
@@ -99,8 +101,8 @@ func (w *windowsSystemDNS) Override(servers []string) error {
 			continue
 		}
 		tSet := time.Now()
-		usedPS, setErr := setAdapterDNS(a.InterfaceIndex, servers)
-		w.timings.recordSet(time.Since(tSet), usedPS)
+		path, setErr := setAdapterDNS(a.InterfaceIndex, servers)
+		w.timings.recordSet(time.Since(tSet), path)
 		if setErr != nil && firstErr == nil {
 			firstErr = fmt.Errorf("set dns on %q: %w", a.InterfaceAlias, setErr)
 		}
@@ -127,8 +129,8 @@ func (w *windowsSystemDNS) OverrideTunnelAdapter(adapterIP, dnsIP string) error 
 		return err
 	}
 	tSet := time.Now()
-	usedPS, err := setAdapterDNS(idx, []string{dnsIP})
-	w.timings.recordTun(time.Since(tSet), usedPS)
+	path, err := setAdapterDNS(idx, []string{dnsIP})
+	w.timings.recordTun(time.Since(tSet), path)
 	return err
 }
 
@@ -259,38 +261,116 @@ const (
 
 // Indirections so the retry policy is testable without touching real adapters.
 var (
-	setAdapterDNSNativeFn     = setAdapterDNSNative
-	verifyAdapterDNSFn        = verifyAdapterDNS
-	setAdapterDNSPowerShellFn = setAdapterDNSPowerShell
+	setAdapterDNSNativeFn           = setAdapterDNSNative
+	verifyAdapterDNSFn              = verifyAdapterDNS
+	setAdapterDNSNetshFn            = setAdapterDNSNetsh
+	setAdapterDNSPowerShellFn       = setAdapterDNSPowerShell
+	resetAdapterDNSNativeDispatchFn = resetAdapterDNSNative
+	resetAdapterDNSNetshFn          = resetAdapterDNSNetsh
+	resetAdapterDNSPowerShellFn     = resetAdapterDNSPowerShell
 )
 
-// setAdapterDNS applies servers to one adapter. The bool reports whether the
-// PowerShell fallback was used.
-func setAdapterDNS(ifIdx int, servers []string) (bool, error) {
-	if err := setAdapterDNSNativeFn(ifIdx, servers); err == nil {
-		for attempt := 0; attempt < adapterDNSVerifyAttempts; attempt++ {
-			if attempt > 0 {
-				time.Sleep(adapterDNSVerifyDelay)
-			}
-			if verifyAdapterDNSFn(ifIdx, servers) {
-				return false, nil
-			}
-		}
+// setAdapterDNS applies servers to one adapter: native, then netsh (the
+// official AmneziaWG client's fallback for Windows 10 before 2004), then
+// PowerShell. Each step counts only once its result reads back.
+func setAdapterDNS(ifIdx int, servers []string) (dnsPath, error) {
+	if setAdapterDNSNativeFn(ifIdx, servers) == nil && confirmAdapterDNS(ifIdx, servers) {
+		return dnsPathNative, nil
 	}
-	return true, setAdapterDNSPowerShellFn(ifIdx, servers)
+	if setAdapterDNSNetshFn(ifIdx, servers) == nil && confirmAdapterDNS(ifIdx, servers) {
+		return dnsPathNetsh, nil
+	}
+	return dnsPathPowerShell, setAdapterDNSPowerShellFn(ifIdx, servers)
 }
 
-// resetAdapterDNS reverts one adapter to DHCP. The bool reports whether the
-// PowerShell fallback was used.
-func resetAdapterDNS(ifIdx int) (bool, error) {
+func confirmAdapterDNS(ifIdx int, servers []string) bool {
+	for attempt := 0; attempt < adapterDNSVerifyAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(adapterDNSVerifyDelay)
+		}
+		if verifyAdapterDNSFn(ifIdx, servers) {
+			return true
+		}
+	}
+	return false
+}
+
+// resetAdapterDNS reverts one adapter to DHCP.
+func resetAdapterDNS(ifIdx int) (dnsPath, error) {
 	// Reset reverts to DHCP, whose servers we can't predict, so there's nothing
 	// to verify by value — trust the native status and fall back on error only.
 	// A silent reset miss is recoverable (snapshot restore at next start) and is
 	// not a leak.
-	if err := resetAdapterDNSNative(ifIdx); err == nil {
-		return false, nil
+	if err := resetAdapterDNSNativeDispatchFn(ifIdx); err == nil {
+		return dnsPathNative, nil
 	}
-	return true, resetAdapterDNSPowerShell(ifIdx)
+	if err := resetAdapterDNSNetshFn(ifIdx); err == nil {
+		return dnsPathNetsh, nil
+	}
+	return dnsPathPowerShell, resetAdapterDNSPowerShellFn(ifIdx)
+}
+
+// netshSetDNSCommands builds one netsh argv per call. Arguments go on the
+// command line rather than a stdin script: a script run exits 0 even when a
+// command inside it fails.
+func netshSetDNSCommands(ifIdx int, servers []string) ([][]string, error) {
+	var v4, v6 []string
+	for _, s := range servers {
+		s = strings.TrimSpace(s)
+		ip := net.ParseIP(s)
+		if !isSafeDNSToken(s) || ip == nil {
+			return nil, fmt.Errorf("unsafe dns server token: %q", s)
+		}
+		if ip.To4() != nil {
+			v4 = append(v4, s)
+		} else {
+			v6 = append(v6, s)
+		}
+	}
+	name := fmt.Sprintf("name=%d", ifIdx)
+	var cmds [][]string
+	for _, fam := range []struct {
+		family string
+		addrs  []string
+	}{{"ipv4", v4}, {"ipv6", v6}} {
+		for i, a := range fam.addrs {
+			if i == 0 {
+				cmds = append(cmds, []string{"interface", fam.family, "set", "dnsservers", name, "source=static", "address=" + a, "validate=no"})
+			} else {
+				cmds = append(cmds, []string{"interface", fam.family, "add", "dnsservers", name, "address=" + a, fmt.Sprintf("index=%d", i+1), "validate=no"})
+			}
+		}
+	}
+	if len(cmds) == 0 {
+		return nil, errors.New("netsh: no dns servers")
+	}
+	return cmds, nil
+}
+
+func setAdapterDNSNetsh(ifIdx int, servers []string) error {
+	cmds, err := netshSetDNSCommands(ifIdx, servers)
+	if err != nil {
+		return err
+	}
+	return runNetsh(cmds)
+}
+
+func resetAdapterDNSNetsh(ifIdx int) error {
+	return runNetsh([][]string{{"interface", "ipv4", "set", "dnsservers", fmt.Sprintf("name=%d", ifIdx), "source=dhcp"}})
+}
+
+func runNetsh(cmds [][]string) error {
+	system32, err := windows.GetSystemDirectory()
+	if err != nil {
+		return err
+	}
+	netsh := filepath.Join(system32, "netsh.exe")
+	for _, args := range cmds {
+		if err := runCommandHidden(netsh, args...); err != nil {
+			return fmt.Errorf("netsh %s: %w", strings.Join(args, " "), err)
+		}
+	}
+	return nil
 }
 
 func listAdapterDNSPowerShell() ([]adapterDNS, error) {

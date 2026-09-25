@@ -25,6 +25,7 @@ import {
   Connect,
   Disconnect,
   DetectCountry,
+  RedetectCountry,
   PingProxy,
   ResolveAutoCandidates,
   ReportAutoConnectOutcome,
@@ -246,6 +247,15 @@ export const wailsAPI = {
       return await DetectCountry(ip);
     } catch (e) {
       console.error("wailsAPI.detectCountry error:", e);
+      return "Unknown";
+    }
+  },
+
+  redetectCountry: async (ip) => {
+    try {
+      return await RedetectCountry(ip);
+    } catch (e) {
+      console.error("wailsAPI.redetectCountry error:", e);
       return "Unknown";
     }
   },

@@ -1,0 +1,302 @@
+/*
+ * Copyright (C) 2026 ResultV
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * Все части сцены крутятся одним циклом --guide-loop и стартуют вместе,
+ * поэтому проценты ключевых кадров у них общие:
+ *
+ *    0–14  курсор подходит к верхней карточке
+ *   14–32  удержание: кольцо заполняется, карточка поджимается
+ *   32–36  карточка поднимается, курсор — «схватившая» рука
+ *   36–62  перенос на два места вниз, соседи уезжают вверх
+ *   62–68  карточка опускается, курсор снова стрелка
+ *   88–100 сцена гаснет и начинается заново
+ *
+ * Шаг между карточками — 54 (44 высота + 10 зазор).
+ */
+
+.rv-reorder-guide {
+  --guide-loop: 5.6s;
+  --guide-step: 54px;
+}
+
+.rv-reorder-guide__stage {
+  position: relative;
+  height: 184px;
+  border-radius: var(--rv-radius-24);
+  background: var(--rv-black);
+  overflow: hidden;
+  animation: rv-guide-stage var(--guide-loop) linear infinite;
+}
+
+.rv-reorder-guide__stack {
+  position: absolute;
+  top: 16px;
+  left: 20px;
+  width: 236px;
+  height: 152px;
+}
+
+.rv-reorder-guide__card {
+  box-sizing: border-box;
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--rv-white-a10);
+  border-radius: 14px;
+  background: var(--rv-grey);
+  color: var(--rv-white);
+  font-family: var(--rv-font-family);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.rv-reorder-guide__card--0 {
+  top: 0;
+  z-index: 2;
+  animation: rv-guide-card0 var(--guide-loop) linear infinite;
+}
+
+.rv-reorder-guide__card--1 {
+  top: var(--guide-step);
+  animation: rv-guide-card1 var(--guide-loop) linear infinite;
+}
+
+.rv-reorder-guide__card--2 {
+  top: calc(2 * var(--guide-step));
+  animation: rv-guide-card2 var(--guide-loop) linear infinite;
+}
+
+.rv-reorder-guide__logo {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  background: var(--rv-main-color);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.rv-reorder-guide__logo[data-my] {
+  background: var(--rv-white-a10);
+  color: var(--rv-white-a80);
+}
+
+.rv-reorder-guide__card-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rv-reorder-guide__chevron {
+  flex-shrink: 0;
+  color: var(--rv-white-a50);
+}
+
+/* --- Курсор --------------------------------------------------------------- */
+
+.rv-reorder-guide__cursor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 5;
+  width: 0;
+  height: 0;
+  animation: rv-guide-cursor var(--guide-loop) linear infinite;
+}
+
+.rv-reorder-guide__pointer {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  fill: var(--rv-white);
+  stroke: var(--rv-black);
+  stroke-width: 1.4;
+  paint-order: stroke;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.6));
+}
+
+/* Кончик стрелки в значке стоит в точке (6.5, 2.5) из 24. */
+.rv-reorder-guide__pointer--arrow {
+  left: -7px;
+  top: -3px;
+  animation: rv-guide-arrow var(--guide-loop) linear infinite;
+}
+
+.rv-reorder-guide__pointer--grab {
+  left: -13px;
+  top: -11px;
+  animation: rv-guide-grab var(--guide-loop) linear infinite;
+}
+
+.rv-reorder-guide__ring {
+  position: absolute;
+  left: -20px;
+  top: -20px;
+  width: 40px;
+  height: 40px;
+  transform: rotate(-90deg);
+  fill: none;
+  stroke: var(--rv-main-color);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 101;
+  stroke-dashoffset: 101;
+  animation: rv-guide-ring var(--guide-loop) linear infinite;
+}
+
+/* --- Подсказки ------------------------------------------------------------ */
+
+.rv-reorder-guide__hint {
+  position: absolute;
+  left: 280px;
+  right: 12px;
+  font-family: var(--rv-font-family);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  color: var(--rv-white-a50);
+  opacity: 0;
+}
+
+.rv-reorder-guide__hint--hold {
+  top: 30px;
+  animation: rv-guide-hint-hold var(--guide-loop) linear infinite;
+}
+
+.rv-reorder-guide__hint--drag {
+  top: 128px;
+  animation: rv-guide-hint-drag var(--guide-loop) linear infinite;
+}
+
+.rv-reorder-guide__text {
+  margin: 0;
+  font-family: var(--rv-font-family);
+  font-size: var(--rv-regular-size);
+  font-weight: var(--rv-regular-weight);
+  line-height: var(--rv-regular-leading);
+  color: var(--rv-white-a50);
+}
+
+/* --- Ключевые кадры ------------------------------------------------------- */
+
+@keyframes rv-guide-stage {
+  0% { opacity: 0; }
+  4% { opacity: 1; }
+  88% { opacity: 1; }
+  98%, 100% { opacity: 0; }
+}
+
+@keyframes rv-guide-cursor {
+  0% { transform: translate(330px, 170px); animation-timing-function: cubic-bezier(0.3, 0, 0.2, 1); }
+  14% { transform: translate(196px, 38px); }
+  36% { transform: translate(196px, 38px); animation-timing-function: cubic-bezier(0.45, 0, 0.25, 1); }
+  62% { transform: translate(196px, 146px); }
+  68% { transform: translate(196px, 146px); animation-timing-function: cubic-bezier(0.3, 0, 0.2, 1); }
+  84%, 100% { transform: translate(300px, 160px); }
+}
+
+@keyframes rv-guide-arrow {
+  0%, 31% { opacity: 1; transform: scale(1); }
+  32% { opacity: 0; transform: scale(0.7); }
+  65% { opacity: 0; transform: scale(0.7); }
+  67%, 100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes rv-guide-grab {
+  0%, 31% { opacity: 0; transform: scale(0.7); }
+  33% { opacity: 1; transform: scale(1.1); }
+  35% { transform: scale(0.95); }
+  36% { transform: scale(1); }
+  64% { opacity: 1; transform: scale(1); }
+  66%, 100% { opacity: 0; transform: scale(0.7); }
+}
+
+@keyframes rv-guide-ring {
+  0%, 14% { stroke-dashoffset: 101; opacity: 1; }
+  32% { stroke-dashoffset: 0; opacity: 1; }
+  37%, 100% { stroke-dashoffset: 0; opacity: 0; }
+}
+
+@keyframes rv-guide-card0 {
+  0%, 14% {
+    transform: translateY(0) scale(1);
+    box-shadow: 0 0 0 0 rgba(0, 126, 58, 0);
+    border-color: var(--rv-white-a10);
+  }
+  32% {
+    transform: translateY(0) scale(0.96);
+    box-shadow: 0 0 18px 0 rgba(0, 126, 58, 0.35);
+    border-color: var(--rv-main-color);
+    animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  36% {
+    transform: translateY(0) scale(1.05);
+    box-shadow: 0 14px 28px 0 rgba(0, 0, 0, 0.6);
+    border-color: var(--rv-main-color);
+    animation-timing-function: cubic-bezier(0.45, 0, 0.25, 1);
+  }
+  62% {
+    transform: translateY(calc(2 * var(--guide-step))) scale(1.05);
+    box-shadow: 0 14px 28px 0 rgba(0, 0, 0, 0.6);
+    border-color: var(--rv-main-color);
+    animation-timing-function: cubic-bezier(0.3, 0, 0.2, 1);
+  }
+  68%, 100% {
+    transform: translateY(calc(2 * var(--guide-step))) scale(1);
+    box-shadow: 0 0 0 0 rgba(0, 0, 0, 0);
+    border-color: var(--rv-white-a10);
+  }
+}
+
+@keyframes rv-guide-card1 {
+  0%, 41% { transform: translateY(0); animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1); }
+  48%, 100% { transform: translateY(calc(-1 * var(--guide-step))); }
+}
+
+@keyframes rv-guide-card2 {
+  0%, 52% { transform: translateY(0); animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1); }
+  59%, 100% { transform: translateY(calc(-1 * var(--guide-step))); }
+}
+
+@keyframes rv-guide-hint-hold {
+  0%, 12% { opacity: 0; transform: translateY(4px); }
+  16%, 31% { opacity: 1; transform: translateY(0); }
+  35%, 100% { opacity: 0; transform: translateY(-4px); }
+}
+
+@keyframes rv-guide-hint-drag {
+  0%, 34% { opacity: 0; transform: translateY(4px); }
+  38%, 64% { opacity: 1; transform: translateY(0); }
+  68%, 100% { opacity: 0; transform: translateY(-4px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rv-reorder-guide__stage,
+  .rv-reorder-guide__stage * {
+    animation-duration: 16s;
+  }
+}

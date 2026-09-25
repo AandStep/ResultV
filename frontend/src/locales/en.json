@@ -271,7 +271,7 @@
     "subscription_user_agent": {
       "title": "User agent",
       "desc": "Empty — the default ResultV header.",
-      "placeholder": "ResultV/3.5.2/Windows/11_10.0.26200"
+      "placeholder": "ResultV/3.5.3/Windows/11_10.0.26200"
     },
     "dns": {
       "title": "DNS Servers",
@@ -720,7 +720,11 @@
     "adminTitle": "Administrator rights required",
     "adminMessage": "Tunnel mode needs administrator privileges for the virtual network adapter. Click the button below and approve the UAC prompt — the app will restart elevated.",
     "restartAsAdmin": "Restart as administrator",
-    "endpointOnly": "WireGuard and AmneziaWG do not work in Proxy mode — Tunnel only."
+    "endpointOnly": "WireGuard and AmneziaWG do not work in Proxy mode — Tunnel only.",
+    "elevationFailedTitle": "Could not get privileges",
+    "elevationCancelled": "The password prompt was closed. The app keeps running without administrator rights.",
+    "elevationDenied": "The system did not accept the password. Try again.",
+    "elevationTimeout": "No password was entered, so the request was cancelled."
   },
   "toast": {
     "deleteWithoutConfirm": "The next servers will be deleted right away, without asking.",
@@ -761,5 +765,16 @@
     "gb": "GB",
     "kbps": "KB/s",
     "mbps": "MB/s"
+  },
+  "reorderGuide": {
+    "title": "Group order",
+    "subtitle": "New feature",
+    "text": "Press and hold a subscription card or “My servers” for a second — it lifts up and can be dragged higher or lower. The home screen lists groups in the same order.",
+    "hold": "Hold",
+    "drag": "Drag",
+    "ok": "Got it",
+    "subA": "Subscription",
+    "subB": "Second subscription",
+    "my": "My servers"
   }
 }

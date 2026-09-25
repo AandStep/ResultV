@@ -27,6 +27,7 @@
 
 import { HomeServerList, Icon, ServerItem } from "../../components/kit";
 import PageHeader from "./PageHeader";
+import useGroupReorder from "./useGroupReorder";
 import "./ServersPage.css";
 
 /* Подписи в написании макета. В приложении они идут через i18n. */
@@ -65,6 +66,10 @@ export default function ServersPage({
   pingBusy = false,
   onSortServers,
   groups = [],
+  /* Карточки групп можно переставлять удержанием шапки. Во время поиска
+     часть групп скрыта, и переставлять там нечего. */
+  reorderable = false,
+  onReorder,
   empty = false,
   sidebar,
   /* Узел, который прокручивается. Страница отдаёт его наружу, чтобы экран мог
@@ -74,6 +79,12 @@ export default function ServersPage({
   className = "",
   ...rest
 }) {
+  const reorder = useGroupReorder({
+    keys: groups.map((g) => String(g.key)),
+    enabled: reorderable && groups.length > 1,
+    onReorder,
+  });
+
   return (
     <div className={`rv-servers-page ${className}`} {...rest}>
       {sidebar}
@@ -107,7 +118,11 @@ export default function ServersPage({
           }
         />
 
-        <div className="rv-servers-page__body">
+        <div
+          className="rv-servers-page__body"
+          data-reordering={reorder.active || undefined}
+          data-settling={reorder.settling || undefined}
+        >
           {/* Метка, а не div: щелчок по всему полю ставит курсор в строку. */}
           <label className="rv-servers-page__search rv-border">
             <input
@@ -121,57 +136,62 @@ export default function ServersPage({
           </label>
 
           {groups.map((group) => (
-            <HomeServerList
+            <div
               key={group.key}
-              open={group.open}
-              emptyText={text.emptyGroup}
-              header={
-                <ServerItem
-                  variant={group.variant}
-                  logo={group.logo}
-                  title={group.title}
-                  count={group.count}
-                  subtitle={group.subtitle}
-                  onClick={group.onToggle}
-                  onEdit={group.onEdit}
-                  onSync={group.onSync}
-                  syncBusy={group.syncBusy}
-                  onDelete={group.onDelete}
-                  editTitle={text.editSubscription}
-                  syncTitle={
-                    group.variant === "subitem" ? text.refreshSubscription : text.pingGroup
-                  }
-                  deleteTitle={
-                    group.variant === "subitem" ? text.deleteSubscription : text.deleteGroup
-                  }
-                />
-              }
+              className="rv-servers-page__group"
+              {...reorder.itemProps(String(group.key))}
             >
-              {group.servers.map((item) => (
-                <ServerItem
-                  key={item.key}
-                  variant={item.variant ?? "row"}
-                  flag={item.flag}
-                  flagStatus={item.accent}
-                  badges={item.badges}
-                  badgeColor={item.accent}
-                  title={item.title}
-                  ping={item.ping}
-                  pingBusy={item.pingBusy}
-                  favorite={item.favorite}
-                  favoriteTitle={text.favorite}
-                  active={item.active}
-                  onFavorite={item.onFavorite}
-                  /* Правка и удаление приходят только у своих серверов:
-                     у остальных строк этих обработчиков нет, и кнопок тоже. */
-                  onEdit={item.onEdit}
-                  onDelete={item.onDelete}
-                  editTitle={text.editServer}
-                  deleteTitle={text.deleteServer}
-                  onClick={item.onSelect}
-                />
-              ))}
-            </HomeServerList>
+              <HomeServerList
+                open={group.open}
+                emptyText={text.emptyGroup}
+                header={
+                  <ServerItem
+                    variant={group.variant}
+                    logo={group.logo}
+                    title={group.title}
+                    count={group.count}
+                    subtitle={group.subtitle}
+                    onClick={group.onToggle}
+                    onEdit={group.onEdit}
+                    onSync={group.onSync}
+                    syncBusy={group.syncBusy}
+                    onDelete={group.onDelete}
+                    editTitle={text.editSubscription}
+                    syncTitle={
+                      group.variant === "subitem" ? text.refreshSubscription : text.pingGroup
+                    }
+                    deleteTitle={
+                      group.variant === "subitem" ? text.deleteSubscription : text.deleteGroup
+                    }
+                  />
+                }
+              >
+                {group.servers.map((item) => (
+                  <ServerItem
+                    key={item.key}
+                    variant={item.variant ?? "row"}
+                    flag={item.flag}
+                    flagStatus={item.accent}
+                    badges={item.badges}
+                    badgeColor={item.accent}
+                    title={item.title}
+                    ping={item.ping}
+                    pingBusy={item.pingBusy}
+                    favorite={item.favorite}
+                    favoriteTitle={text.favorite}
+                    active={item.active}
+                    onFavorite={item.onFavorite}
+                    /* Правка и удаление приходят только у своих серверов:
+                       у остальных строк этих обработчиков нет, и кнопок тоже. */
+                    onEdit={item.onEdit}
+                    onDelete={item.onDelete}
+                    editTitle={text.editServer}
+                    deleteTitle={text.deleteServer}
+                    onClick={item.onSelect}
+                  />
+                ))}
+              </HomeServerList>
+            </div>
           ))}
 
           {empty && <p className="rv-servers-page__empty">{text.empty}</p>}

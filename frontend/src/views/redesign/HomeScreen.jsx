@@ -40,6 +40,7 @@ import {
 } from "../../utils/pingSort";
 import { PAGE_HOME, usePageState, useScrollMemory } from "../../hooks/usePageMemory";
 import wailsAPI from "../../utils/wailsAPI";
+import { orderGroups } from "../../utils/groupOrder";
 import MainPage from "./MainPage";
 import SortMenu from "./SortMenu";
 import AppSidebar from "./AppSidebar";
@@ -316,13 +317,18 @@ export default function HomeScreen() {
       t,
     );
 
+  /* activeProxy — снимок на момент подключения; флаг берём из списка, чтобы
+     перепроверенная страна появилась и здесь. */
+  const proxyCountry =
+    proxy && (proxies.find((p) => String(p.id) === String(proxy.id)) ?? proxy).country;
+
   const server = proxy && {
     auto: isAuto(proxy),
     flag: isAuto(proxy) ? undefined : (
-      <FlagIcon code={proxy.country} className="rv-flag__img" />
+      <FlagIcon code={proxyCountry} className="rv-flag__img" />
     ),
     badges: protocolBadges(proxy, t),
-    title: formatProxyDisplayName(proxy.name, proxy.country) || proxy.name,
+    title: formatProxyDisplayName(proxy.name, proxyCountry) || proxy.name,
     ping: rowPing(proxy),
     pingBusy: isPingPending(proxy),
   };
@@ -404,8 +410,9 @@ export default function HomeScreen() {
   };
 
   /*
-   * Список разбит на группы по подпискам, «Мои сервера» идут последними
-   * (фрейм 6504:3878). Группируем по `subscriptionUrl`, а не по имени
+   * Список разбит на группы по подпискам, «Мои сервера» по умолчанию идут
+   * последними (фрейм 6504:3878); порядок групп меняют перетаскиванием на
+   * странице серверов. Группируем по `subscriptionUrl`, а не по имени
    * провайдера: имя подписки переименовывают, и группы разъехались бы.
    *
    * Подпись у группы появляется, только когда групп больше одной: с
@@ -439,7 +446,7 @@ export default function HomeScreen() {
     }
 
     const single = out.length < 2;
-    return out.map((g) => ({
+    return orderGroups(out, settings?.groupOrder).map((g) => ({
       key: g.key,
       label: single ? null : g.label,
       servers: order(g.proxies).map(toRow),
@@ -448,6 +455,7 @@ export default function HomeScreen() {
   }, [
     listed,
     subscriptions,
+    settings?.groupOrder,
     sortBy,
     pings,
     autoStatusById,

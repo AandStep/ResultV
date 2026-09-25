@@ -201,7 +201,7 @@ func TestDownloadFile_OK(t *testing.T) {
 	dest := filepath.Join(dir, "ResultV-update-abcd1234.exe")
 
 	var progressCalled bool
-	err := downloadFile(context.Background(), srv.URL, dest, int64(len(content)),
+	err := downloadFile(context.Background(), nil, srv.URL, dest, int64(len(content)),
 		func(d, total int64, speed float64) { progressCalled = true })
 	if err != nil {
 		t.Fatalf("downloadFile: %v", err)
@@ -231,7 +231,7 @@ func TestDownloadFile_ContentLengthExceedsLimit(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
-	err := downloadFile(context.Background(), srv.URL, filepath.Join(dir, "test.exe"), maxDownloadBytes+1, nil)
+	err := downloadFile(context.Background(), nil, srv.URL, filepath.Join(dir, "test.exe"), maxDownloadBytes+1, nil)
 	if err == nil {
 		t.Error("expected error for over-limit Content-Length, got nil")
 	}
@@ -244,7 +244,7 @@ func TestDownloadFile_ServerError(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
-	err := downloadFile(context.Background(), srv.URL, filepath.Join(dir, "test.exe"), 0, nil)
+	err := downloadFile(context.Background(), nil, srv.URL, filepath.Join(dir, "test.exe"), 0, nil)
 	if err == nil {
 		t.Error("expected error for 500, got nil")
 	}
@@ -264,7 +264,7 @@ func TestDownloadFile_ContextCancel(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- downloadFile(ctx, srv.URL, filepath.Join(dir, "test.exe"), 0, nil)
+		done <- downloadFile(ctx, nil, srv.URL, filepath.Join(dir, "test.exe"), 0, nil)
 	}()
 
 	<-started

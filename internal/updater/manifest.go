@@ -42,7 +42,11 @@ type Manifest struct {
 
 // FetchManifest downloads and parses update.json from manifestURL.
 func FetchManifest(ctx context.Context, manifestURL string) (*Manifest, error) {
-	client := &http.Client{Timeout: 15 * time.Second}
+	return fetchManifest(ctx, nil, manifestURL)
+}
+
+func fetchManifest(ctx context.Context, transport http.RoundTripper, manifestURL string) (*Manifest, error) {
+	client := &http.Client{Timeout: 15 * time.Second, Transport: transport}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build manifest request: %w", err)

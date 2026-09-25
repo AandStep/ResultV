@@ -32,6 +32,7 @@ import { EventsOn, EventsOff } from "../wailsjs/runtime/runtime";
 import logo from "./assets/logo.png";
 import { useTranslation } from "react-i18next";
 import { useCheckUpdate } from "./hooks/useCheckUpdate";
+import { useConnectionContext } from "./context/ConnectionContext";
 import { useChangelog } from "./hooks/useChangelog";
 import UpdateNotificationModal from "./components/ui/UpdateNotificationModal";
 import UpdaterModal from "./components/ui/UpdaterModal";
@@ -52,8 +53,9 @@ const AppContent = () => {
         handleAppDialogConfirm,
         showAlertDialog,
     } = useConfigContext();
-    const { updateAvailable, latestVersionData, currentVersion, hasPlatformAsset } =
+    const { updateAvailable, latestVersionData, currentVersion, hasPlatformAsset, recheck } =
         useCheckUpdate();
+    const { isConnected } = useConnectionContext();
     const { changelog, dismiss: dismissChangelog } = useChangelog(isConfigLoaded);
     const latestVersion = latestVersionData?.version || "";
     const [dismissedUpdateVersion, setDismissedUpdateVersion] = React.useState(
@@ -69,6 +71,26 @@ const AppContent = () => {
         window.sessionStorage.removeItem("updateDismissed");
         setDismissedUpdateVersion(latestVersion);
     };
+
+    // GitHub is throttled for many users: a download that was closed or
+    // cancelled before connecting gets one more offer once the tunnel is up,
+    // since the backend then fetches through the node. A manifest that never
+    // arrived is fetched again for the same reason.
+    const wasConnectedRef = React.useRef(isConnected);
+    const reofferedRef = React.useRef(false);
+    React.useEffect(() => {
+        const justConnected = isConnected && !wasConnectedRef.current;
+        wasConnectedRef.current = isConnected;
+        if (!justConnected) return;
+        if (!latestVersion) {
+            recheck();
+            return;
+        }
+        if (reofferedRef.current || dismissedUpdateVersion !== latestVersion) return;
+        reofferedRef.current = true;
+        window.sessionStorage.removeItem("updateDismissedVersion");
+        setDismissedUpdateVersion("");
+    }, [isConnected, latestVersion, dismissedUpdateVersion, recheck]);
 
     // Startup recovery runs in Go and reliably removes OS-level leftovers from a
     // prior unclean exit (force-kill / crash) — including a stranded sing-tun

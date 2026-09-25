@@ -15,6 +15,11 @@
 
 package system
 
+import (
+	"strconv"
+	"strings"
+)
+
 // TrafficStats reports cumulative interface counters in bytes. The numbers come
 // from the OS — implementations live in system_windows.go / system_unix.go.
 type TrafficStats struct {
@@ -31,4 +36,18 @@ func ArgsStartInTray(args []string) bool {
 		}
 	}
 	return false
+}
+
+// ElevatedFromFlag carries the pid of the instance that relaunched us elevated.
+const ElevatedFromFlag = "--elevated-from="
+
+func elevatedFromPID(args []string) int {
+	for _, a := range args {
+		if v, ok := strings.CutPrefix(a, ElevatedFromFlag); ok {
+			if pid, err := strconv.Atoi(v); err == nil {
+				return pid
+			}
+		}
+	}
+	return 0
 }
