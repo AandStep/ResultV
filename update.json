@@ -1,5 +1,5 @@
 {
-  "version": "",
+  "version": "3.5.3",
   "releaseTitle": {
     "ru": "Общие улучшения и фиксы",
     "en": "General improvements and fixes"
@@ -47,5 +47,31 @@
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",
-  "platforms": {}
+  "platforms": {
+    "windows-amd64-portable": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.3/ResultV.exe",
+      "sha256": "6bc0c2c5b8e5c2996cfc0e9d5cb495b9cd5d05b4bb2811521d687f576bda442f",
+      "size": 62253056
+    },
+    "windows-amd64-installer": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.3/ResultV-amd64-installer.exe",
+      "sha256": "b75f643250434da33db5a60d97ca8d2a7567ffb8b58e2acd462a25cc8eb9f19e",
+      "size": 29162740
+    },
+    "darwin-universal": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.3/ResultV.dmg",
+      "sha256": "81b04b1c97042a73af34f6a40148e9a11715a337a4f0d7afbc35070c04835149",
+      "size": 65664165
+    },
+    "linux-amd64-appimage": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.3/ResultV-3.5.3-x86_64.AppImage",
+      "sha256": "2912d76d73d8390c50cee72e89334ce1180fb7f0ddc3bb9231ba9cfb548d8aed",
+      "size": 26409464
+    },
+    "linux-amd64-deb": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.3/resultv_3.5.3_amd64.deb",
+      "sha256": "77b24021987c9fe9bf0a840e27e8de86d78ce90ea67afef7c07d0f32c4865527",
+      "size": 28160746
+    }
+  }
 }
