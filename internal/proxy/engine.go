@@ -2105,6 +2105,15 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 				Outbound: "proxy",
 			})
 		}
+		// Whatever else arrives on the probe inbound is a question about the
+		// node: the block prober's "through the node" half asks for arbitrary
+		// hosts. It comes from our own process, so without this the self-direct
+		// rule below answers it and the prober compares direct with direct.
+		rules = append(rules, SBRouteRule{
+			Action:   "route",
+			Inbound:  []string{probeInboundTag},
+			Outbound: "proxy",
+		})
 		// Self-direct: keep our own process's non-probe traffic (updater,
 		// telemetry, internal HTTP) out of the tunnel. Without this, sing-box's
 		// auto_route pulls every socket of the host process into the TUN, and
