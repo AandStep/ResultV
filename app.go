@@ -832,6 +832,7 @@ func (a *App) startUDPRelayProbe(proxyDTO proxy.ProxyConfig, mode proxy.ProxyMod
 	}
 	id := a.resolveProxyID(proxyDTO)
 	label := a.resolveProxyDisplayName(proxyDTO)
+	session := a.proxy.CurrentSession()
 
 	go func() {
 		select {
@@ -842,8 +843,8 @@ func (a *App) startUDPRelayProbe(proxyDTO proxy.ProxyConfig, mode proxy.ProxyMod
 		ctx, cancel := context.WithTimeout(a.ctx, udpRelayProbeBudget)
 		defer cancel()
 
-		res := a.proxy.ProbeUDPRelayNow(ctx)
-		if res.Reason == "not connected" || strings.HasPrefix(res.Reason, "probe cancelled") {
+		res := a.proxy.ProbeUDPRelayNow(ctx, session)
+		if res.Reason == proxy.ProbeSessionChanged || strings.HasPrefix(res.Reason, "probe cancelled") {
 			return
 		}
 		// AutoNodeKeyOf, not the config id: NodeStat is keyed by AutoNodeKey
@@ -900,6 +901,7 @@ func (a *App) startThroughputProbe(proxyDTO proxy.ProxyConfig) {
 	}
 	key := proxy.AutoNodeKeyOf(proxyDTO)
 	label := a.resolveProxyDisplayName(proxyDTO)
+	session := a.proxy.CurrentSession()
 
 	go func() {
 		select {
@@ -910,11 +912,11 @@ func (a *App) startThroughputProbe(proxyDTO proxy.ProxyConfig) {
 		ctx, cancel := context.WithTimeout(a.ctx, throughputProbeBudget)
 		defer cancel()
 
-		res := a.proxy.ProbeThroughputNow(ctx)
+		res := a.proxy.ProbeThroughputNow(ctx, session)
 		if !res.OK {
 			// Not a warning: the user has no action to take, and a node we
 			// failed to measure is treated as unmeasured, not as slow.
-			if a.log != nil && res.Reason != "not connected" {
+			if a.log != nil && res.Reason != proxy.ProbeSessionChanged {
 				a.log.Info(fmt.Sprintf("[СКОРОСТЬ] %s: замер не удался (%s) — на подбор не влияет", label, res.Reason))
 			}
 			return
