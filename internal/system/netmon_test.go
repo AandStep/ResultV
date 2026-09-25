@@ -44,3 +44,35 @@ func TestCheckHostsAreLiteralIPs(t *testing.T) {
 		}
 	}
 }
+
+// Teredo drops and re-adds its link-local address on its own schedule, and
+// our TUN comes and goes with every session. Neither moves the physical
+// address probes leave through, so neither may read as a network change.
+func TestAddrSignatureIgnoresVirtualAndLinkLocal(t *testing.T) {
+	mustCIDR := func(s string) net.Addr {
+		ip, n, err := net.ParseCIDR(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n.IP = ip
+		return n
+	}
+	base := map[string][]net.Addr{
+		"Ethernet": {mustCIDR("192.168.0.11/24"), mustCIDR("fe80::5fdd:2162:71f1:268e/64")},
+	}
+	noisy := map[string][]net.Addr{
+		"Ethernet": {mustCIDR("192.168.0.11/24"), mustCIDR("fe80::5fdd:2162:71f1:268e/64")},
+		"Teredo Tunneling Pseudo-Interface": {mustCIDR("fe80::30de:d3af:a542:51a6/64")},
+		"rvtun0":                            {mustCIDR("172.19.0.1/30")},
+	}
+	if a, b := addrSignature(base), addrSignature(noisy); a != b {
+		t.Fatalf("виртуальные адаптеры меняют сигнатуру:\n%s\n%s", a, b)
+	}
+
+	roamed := map[string][]net.Addr{
+		"Ethernet": {mustCIDR("192.168.1.20/24")},
+	}
+	if addrSignature(base) == addrSignature(roamed) {
+		t.Fatal("смена физического адреса не видна")
+	}
+}

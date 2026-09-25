@@ -204,7 +204,7 @@ func localAddrSignature() string {
 	if err != nil {
 		return ""
 	}
-	parts := make([]string, 0, len(ifaces))
+	byName := make(map[string][]net.Addr, len(ifaces))
 	for _, ifi := range ifaces {
 		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
 			continue
@@ -213,8 +213,29 @@ func localAddrSignature() string {
 		if err != nil {
 			continue
 		}
+		byName[ifi.Name] = addrs
+	}
+	if sig := addrSignature(byName); sig != "" {
+		return sig
+	}
+	return "none"
+}
+
+// addrSignature skips tunnel adapters and link-local addresses: Teredo drops
+// and re-adds its fe80:: address on its own, and our TUN comes and goes with
+// every session, while every listener of this signal cares only about the
+// physical link.
+func addrSignature(byName map[string][]net.Addr) string {
+	parts := make([]string, 0, len(byName))
+	for name, addrs := range byName {
+		if VirtualInterfaceName(name) {
+			continue
+		}
 		for _, a := range addrs {
-			parts = append(parts, ifi.Name+"="+a.String())
+			if ipn, ok := a.(*net.IPNet); ok && (ipn.IP.IsLinkLocalUnicast() || ipn.IP.IsLinkLocalMulticast()) {
+				continue
+			}
+			parts = append(parts, name+"="+a.String())
 		}
 	}
 	sort.Strings(parts)
@@ -244,8 +265,8 @@ func VirtualInterfaceName(name string) bool {
 // Wi-Fi, so anything the client learns is filed under this.
 //
 // Tunnel adapters are excluded, and that exclusion is the whole point rather
-// than tidiness. localAddrSignature counts every up adapter, so connecting the
-// VPN would itself change the fingerprint — and since the verdicts are only
+// than tidiness. Counting every up adapter, connecting the VPN would itself
+// change the fingerprint — and since the verdicts are only
 // ever consulted while connected, every session would open on an empty set and
 // the store would never remember anything across a reconnect.
 //
