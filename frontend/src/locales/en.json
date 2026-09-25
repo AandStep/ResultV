@@ -765,5 +765,16 @@
     "gb": "GB",
     "kbps": "KB/s",
     "mbps": "MB/s"
+  },
+  "reorderGuide": {
+    "title": "Group order",
+    "subtitle": "New feature",
+    "text": "Press and hold a subscription card or “My servers” for a second — it lifts up and can be dragged higher or lower. The home screen lists groups in the same order.",
+    "hold": "Hold",
+    "drag": "Drag",
+    "ok": "Got it",
+    "subA": "Subscription",
+    "subB": "Second subscription",
+    "my": "My servers"
   }
 }

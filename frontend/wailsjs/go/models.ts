@@ -64,6 +64,8 @@ export namespace config {
 	    routingListUpdateHours?: number;
 	    autoNodeRecheck?: boolean;
 	    lastChangelogVersion?: string;
+	    groupOrder?: string[];
+	    reorderGuideSeen?: boolean;
 	    pingType?: string;
 	    pingTestUrl?: string;
 	    pingTimeoutSec?: number;
@@ -95,6 +97,8 @@ export namespace config {
 	        this.routingListUpdateHours = source["routingListUpdateHours"];
 	        this.autoNodeRecheck = source["autoNodeRecheck"];
 	        this.lastChangelogVersion = source["lastChangelogVersion"];
+	        this.groupOrder = source["groupOrder"];
+	        this.reorderGuideSeen = source["reorderGuideSeen"];
 	        this.pingType = source["pingType"];
 	        this.pingTestUrl = source["pingTestUrl"];
 	        this.pingTimeoutSec = source["pingTimeoutSec"];

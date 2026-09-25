@@ -306,6 +306,14 @@ type AppSettings struct {
 	// Manager.WasCreatedFresh).
 	LastChangelogVersion string `json:"lastChangelogVersion,omitempty"`
 
+	// GroupOrder is the user's order of server groups on the servers page and
+	// the home screen: subscription IDs plus "my" for manually added servers.
+	// Groups missing from it keep their natural place.
+	GroupOrder []string `json:"groupOrder,omitempty"`
+
+	// ReorderGuideSeen records that the drag-to-reorder guide was shown once.
+	ReorderGuideSeen bool `json:"reorderGuideSeen,omitempty"`
+
 	// PingType selects what the manual ping button measures. Empty (the value
 	// every config written before this field existed carries) means "auto" —
 	// today's behaviour, where the probe is picked by node protocol. A plain
