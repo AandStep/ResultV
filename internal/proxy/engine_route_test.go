@@ -1643,6 +1643,46 @@ func TestBuildDNS_GlobalModeUnchanged(t *testing.T) {
 	}
 }
 
+// TestBuildDNS_GlobalWhitelistResolvesLocally: excluded domains resolve via
+// local, nested exceptions stay on the tunnel resolver.
+func TestBuildDNS_GlobalWhitelistResolvesLocally(t *testing.T) {
+	cfg := smartDNSConfig()
+	cfg.RoutingMode = ModeGlobal
+	cfg.Whitelist = []string{"*.ru", "avito.ru"}
+	dns := buildDNS(cfg)
+	tunnelTag := firstDetourServerTag(dns.Servers, "proxy")
+
+	ru, avito := -1, -1
+	for i, r := range dns.Rules {
+		if len(r.DomainSuffix) != 1 {
+			continue
+		}
+		switch {
+		case r.DomainSuffix[0] == "ru" && r.Server == "local":
+			ru = i
+		case r.DomainSuffix[0] == "avito.ru" && r.Server == tunnelTag:
+			avito = i
+		}
+	}
+	if ru < 0 {
+		t.Fatalf("excluded suffix must resolve via local, rules: %+v", dns.Rules)
+	}
+	if avito < 0 || avito > ru {
+		t.Fatalf("nested exception must resolve through the tunnel ahead of its parent, rules: %+v", dns.Rules)
+	}
+	if dns.Final != tunnelTag {
+		t.Fatalf("everything else must stay on the tunnel resolver, got Final=%q", dns.Final)
+	}
+
+	full := smartDNSConfig()
+	full.RoutingMode = ModeGlobal
+	full.SmartRuleSetPath = ""
+	full.BlockedDomains = nil
+	full.Whitelist = []string{"localhost", "127.0.0.1", "*.ru", "avito.ru"}
+	full.DataDir = t.TempDir()
+	assertCoreBuildsConfig(t, mustBuildTunnelModeConfig(t, full))
+}
+
 // TestBuildDNS_SmartFinalSerializes guards against the field silently dropping
 // out of the marshalled config, by the same reasoning as the strict_route test.
 func TestBuildDNS_SmartFinalSerializes(t *testing.T) {

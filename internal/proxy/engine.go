@@ -1795,6 +1795,22 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			})
 		}
 
+		// Excluded domains leave direct, so they resolve via the system resolver.
+		if cfg.RoutingMode != ModeSmart {
+			if tunnelTag := firstDetourServerTag(dns.Servers, detour); tunnelTag != "" {
+				for _, w := range whitelistSuffixes(cfg.Whitelist) {
+					server := tunnelTag
+					if w.direct {
+						server = "local"
+					}
+					dns.Rules = append(dns.Rules, SBDNSRule{
+						DomainSuffix: []string{w.suffix},
+						Server:       server,
+					})
+				}
+			}
+		}
+
 		// Smart mode: make DNS mirror the traffic split. buildRoute sets
 		// Final="direct" here, so everything outside the block-list leaves from
 		// the user's real address — yet every lookup still exited through the
@@ -2241,57 +2257,16 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		})
 	}
 
-	if len(cfg.Whitelist) > 0 {
-		seen := make(map[string]struct{}, len(cfg.Whitelist))
-		var normalized []string
-		for _, w := range cfg.Whitelist {
-			n := normalizeRule(w)
-			if n == "" {
-				continue
-			}
-			if _, ok := seen[n]; ok {
-				continue
-			}
-			seen[n] = struct{}{}
-			normalized = append(normalized, n)
+	for _, w := range whitelistSuffixes(cfg.Whitelist) {
+		outbound := "proxy"
+		if w.direct {
+			outbound = "direct"
 		}
-
-		if len(normalized) > 0 {
-			ordered := append([]string(nil), normalized...)
-			sort.SliceStable(ordered, func(i, j int) bool {
-				di := strings.Count(ordered[i], ".")
-				dj := strings.Count(ordered[j], ".")
-				if di != dj {
-					return di > dj
-				}
-				if len(ordered[i]) != len(ordered[j]) {
-					return len(ordered[i]) > len(ordered[j])
-				}
-				return ordered[i] < ordered[j]
-			})
-
-			isWhitelisted := func(host string, all []string) bool {
-				matchCount := 0
-				for _, rule := range all {
-					if host == rule || strings.HasSuffix(host, "."+rule) {
-						matchCount++
-					}
-				}
-				return matchCount > 0 && matchCount%2 == 1
-			}
-
-			for _, suffix := range ordered {
-				outbound := "proxy"
-				if isWhitelisted(suffix, normalized) {
-					outbound = "direct"
-				}
-				rules = append(rules, SBRouteRule{
-					Action:       "route",
-					DomainSuffix: []string{suffix},
-					Outbound:     outbound,
-				})
-			}
-		}
+		rules = append(rules, SBRouteRule{
+			Action:       "route",
+			DomainSuffix: []string{w.suffix},
+			Outbound:     outbound,
+		})
 	}
 
 	// Smart-mode QUIC backstop. Everything above classifies UDP/443 by the
@@ -2343,6 +2318,58 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 
 	route.Rules = rules
 	return route
+}
+
+type whitelistSuffix struct {
+	suffix string
+	direct bool
+}
+
+// whitelistSuffixes orders the exclusion list deepest-first and marks each
+// suffix direct on an odd number of matches, so a nested entry ("avito.ru"
+// under ".ru") flips its parent back to the tunnel.
+func whitelistSuffixes(whitelist []string) []whitelistSuffix {
+	seen := make(map[string]struct{}, len(whitelist))
+	var normalized []string
+	for _, w := range whitelist {
+		n := normalizeRule(w)
+		if n == "" {
+			continue
+		}
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		normalized = append(normalized, n)
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+
+	ordered := append([]string(nil), normalized...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		di := strings.Count(ordered[i], ".")
+		dj := strings.Count(ordered[j], ".")
+		if di != dj {
+			return di > dj
+		}
+		if len(ordered[i]) != len(ordered[j]) {
+			return len(ordered[i]) > len(ordered[j])
+		}
+		return ordered[i] < ordered[j]
+	})
+
+	out := make([]whitelistSuffix, 0, len(ordered))
+	for _, suffix := range ordered {
+		matchCount := 0
+		for _, rule := range normalized {
+			if suffix == rule || strings.HasSuffix(suffix, "."+rule) {
+				matchCount++
+			}
+		}
+		out = append(out, whitelistSuffix{suffix: suffix, direct: matchCount%2 == 1})
+	}
+	return out
 }
 
 // OverlappingProbeDomains returns user-whitelist entries that match (exactly
