@@ -240,37 +240,6 @@ func TestCoreAcceptsAdaptiveConfig(t *testing.T) {
 	assertCoreAcceptsConfig(t, mustBuildTunnelModeConfig(t, adaptiveTunnelConfig()))
 }
 
-// A WireGuard node has no "proxy" outbound to compare against — buildOutbounds
-// emits direct+block for it, which is why adaptiveSmartActive skips it — so
-// nothing ever asks the store what it learned. FakeIP there is all cost and no
-// benefit: every name goes through the fake pool, game launchers see 198.18.x.x
-// and names with no A record turn into dead connections, while the verdict the
-// pool exists to feed is never consulted.
-func TestWireGuardNodeGetsNoFakeIPEvenWithTheSwitchOn(t *testing.T) {
-	for _, proto := range []string{"wireguard", "amneziawg"} {
-		t.Run(proto, func(t *testing.T) {
-			cfg := adaptiveTunnelConfig()
-			cfg.Proxy = ProxyConfig{Type: proto, IP: "203.0.113.7", Port: 51820}
-			built := mustBuildTunnelModeConfig(t, cfg)
-
-			for _, srv := range built.DNS.Servers {
-				if srv.Tag == fakeIPTag || srv.Type == "fakeip" {
-					t.Fatal("fakeip was emitted for a node with no proxy outbound to compare against")
-				}
-			}
-			for _, rule := range built.DNS.Rules {
-				if rule.Server == fakeIPTag {
-					t.Fatal("a fakeip DNS rule was emitted for a WireGuard node")
-				}
-			}
-			if built.Experimental != nil && built.Experimental.CacheFile != nil &&
-				built.Experimental.CacheFile.StoreFakeIP {
-				t.Fatal("store_fakeip was turned on for a config with no fakeip server")
-			}
-		})
-	}
-}
-
 // FakeIP hands the router a NAME where there used to be an address, so the
 // direct outbound has to resolve it at dial time. That lookup walks the DNS
 // rules, where the fakeip catch-all is waiting for it — and a fakeip transport

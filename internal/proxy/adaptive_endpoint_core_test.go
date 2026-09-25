@@ -17,9 +17,13 @@ package proxy
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"net"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -31,11 +35,43 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
+
+	mDNS "github.com/miekg/dns"
 )
 
 const endpointListDomain = "vpnlist.example"
 
 var endpointListAddr = netip.MustParseAddr("192.0.2.10")
+
+func randomWGKey(t *testing.T) string {
+	t.Helper()
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatal(err)
+	}
+	return base64.StdEncoding.EncodeToString(key)
+}
+
+func adaptiveWireGuardConfig(t *testing.T) EngineConfig {
+	t.Helper()
+	extra, err := json.Marshal(map[string]interface{}{
+		"private_key": randomWGKey(t),
+		"public_key":  randomWGKey(t),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	list := filepath.Join(dir, "vpn-list.json")
+	if err := os.WriteFile(list, []byte(`{"version":3,"rules":[{"domain_suffix":["`+endpointListDomain+`"]}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := adaptiveTunnelConfig()
+	cfg.DataDir = dir
+	cfg.Proxy = ProxyConfig{Type: "WIREGUARD", IP: "203.0.113.7", Port: 51820, Extra: extra}
+	cfg.RoutingLists = []RoutingListSpec{{Tag: "user-vpn", Path: list, Action: "proxy"}}
+	return cfg
+}
 
 // startEndpointCore runs the built config in-process without the TUN inbound,
 // with the tunnel resolver replaced by a static record so that "resolved
@@ -92,6 +128,53 @@ func startEndpointCore(t *testing.T, cfg SingBoxConfig) context.Context {
 	return boxCtx
 }
 
+func fakeAddressFor(t *testing.T, boxCtx context.Context, name string) netip.Addr {
+	t.Helper()
+	msg := new(mDNS.Msg)
+	msg.SetQuestion(mDNS.Fqdn(name), mDNS.TypeA)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	resp, err := service.FromContext[adapter.DNSRouter](boxCtx).Exchange(ctx, msg, adapter.DNSQueryOptions{})
+	if err != nil {
+		t.Fatalf("exchange %s: %v", name, err)
+	}
+	for _, answer := range resp.Answer {
+		if a, isA := answer.(*mDNS.A); isA {
+			addr, _ := netip.AddrFromSlice(a.A.To4())
+			if !isFakeIPAddr(a.A) {
+				t.Fatalf("%s answered with a real address %s, the test needs a fake one", name, addr)
+			}
+			return addr
+		}
+	}
+	t.Fatalf("%s: no A record", name)
+	return netip.Addr{}
+}
+
+// A name the user sent to the VPN reaches the router as a fake address. For UDP
+// the WireGuard endpoint takes it on the pre-match path, where packets go
+// straight into the tunnel and there is no dial to resolve the name at; with
+// nothing resolving it first the core refuses the flow outright.
+func TestEndpointTakesAFakeUDPDestinationFromTheUsersVPNList(t *testing.T) {
+	boxCtx := startEndpointCore(t, mustBuildTunnelModeConfig(t, adaptiveWireGuardConfig(t)))
+	fake := fakeAddressFor(t, boxCtx, endpointListDomain)
+
+	res := service.FromContext[adapter.Router](boxCtx).PreMatch(adapter.InboundContext{
+		Inbound:     "tun-in",
+		InboundType: "tun",
+		Network:     N.NetworkUDP,
+		Source:      M.SocksaddrFrom(netip.MustParseAddr("172.19.0.1"), 50000),
+		Destination: M.SocksaddrFrom(fake, 27015),
+	}, []byte("not a sniffable protocol"))
+
+	if res.Action != adapter.PreMatchFlow {
+		t.Fatalf("pre-match action = %v, want a flow into the endpoint", res.Action)
+	}
+	if want := netip.AddrPortFrom(endpointListAddr, 27015); res.Destination != want {
+		t.Fatalf("flow destination = %v, want %v resolved through the tunnel", res.Destination, want)
+	}
+}
+
 type routedMetadata chan adapter.InboundContext
 
 func (r routedMetadata) RoutedConnection(_ context.Context, conn net.Conn, metadata adapter.InboundContext, _ adapter.Rule, _ adapter.Outbound) net.Conn {
@@ -106,6 +189,43 @@ func (r routedMetadata) RoutedPacketConnection(_ context.Context, conn N.PacketC
 
 func (routedMetadata) RoutedFlow(context.Context, adapter.InboundContext, adapter.Rule, adapter.Outbound) tun.FlowTracker {
 	return nil
+}
+
+// TCP never reaches the pre-match path (the sniff rule sends it to the
+// connection path first), so the name survives to the endpoint's own dial, and
+// the endpoint resolves it on dns.final — the system resolver in Smart. For a
+// name the user sent to the VPN that is the resolver it was sent away from.
+func TestEndpointGetsTunnelAddressesForAFakeTCPDestination(t *testing.T) {
+	boxCtx := startEndpointCore(t, mustBuildTunnelModeConfig(t, adaptiveWireGuardConfig(t)))
+	fake := fakeAddressFor(t, boxCtx, endpointListDomain)
+
+	router := service.FromContext[adapter.Router](boxCtx)
+	routed := make(routedMetadata, 1)
+	router.AppendTracker(routed)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client, server := net.Pipe()
+	defer client.Close()
+	go router.RouteConnectionEx(ctx, server, adapter.InboundContext{
+		Inbound:     "tun-in",
+		InboundType: "tun",
+		Network:     N.NetworkTCP,
+		Source:      M.SocksaddrFrom(netip.MustParseAddr("172.19.0.1"), 50001),
+		Destination: M.SocksaddrFrom(fake, 443),
+	}, func(error) {})
+
+	select {
+	case md := <-routed:
+		if md.RouteOutbound != "proxy" {
+			t.Fatalf("routed to %q, want the endpoint", md.RouteOutbound)
+		}
+		if len(md.DestinationAddresses) != 1 || md.DestinationAddresses[0] != endpointListAddr {
+			t.Fatalf("endpoint handed addresses %v, want [%v] from the tunnel resolver", md.DestinationAddresses, endpointListAddr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("connection was never routed")
+	}
 }
 
 // routeFromOwnProcess routes a connection that the process searcher attributes
@@ -169,5 +289,42 @@ func TestProbeInboundAsksTheNodeForAnyHost(t *testing.T) {
 	}
 	if md.RouteOutbound != "proxy" {
 		t.Fatalf("probe inbound routed to %q by %q, want the node", md.RouteOutbound, md.RouteRule)
+	}
+}
+
+// Through a WireGuard node the probe's name has to be resolved by the tunnel
+// resolver too, or the node would be asked for the address the local resolver
+// handed out.
+func TestProbeInboundThroughAnEndpointUsesTheTunnelResolver(t *testing.T) {
+	boxCtx := startEndpointCore(t, mustBuildTunnelModeConfig(t, adaptiveWireGuardConfig(t)))
+
+	md := routeFromOwnProcess(t, boxCtx, probeInboundTag, M.ParseSocksaddrHostPort(endpointListDomain, 443))
+	if md.RouteOutbound != "proxy" {
+		t.Fatalf("probe inbound routed to %q by %q, want the endpoint", md.RouteOutbound, md.RouteRule)
+	}
+	if len(md.DestinationAddresses) != 1 || md.DestinationAddresses[0] != endpointListAddr {
+		t.Fatalf("endpoint handed addresses %v, want [%v] from the tunnel resolver", md.DestinationAddresses, endpointListAddr)
+	}
+}
+
+// A name no rule has an opinion about goes to the smart group. On the
+// pre-match path the core replaces a group by whatever Now() names, and a
+// WireGuard endpoint takes every flow it is offered there — so if Now() ever
+// named the endpoint, all of this traffic would go into the tunnel without the
+// group deciding anything.
+func TestUnlistedNameOnAnEndpointNodeIsLeftToTheSmartGroup(t *testing.T) {
+	boxCtx := startEndpointCore(t, mustBuildTunnelModeConfig(t, adaptiveWireGuardConfig(t)))
+	fake := fakeAddressFor(t, boxCtx, "unlisted.example")
+
+	res := service.FromContext[adapter.Router](boxCtx).PreMatch(adapter.InboundContext{
+		Inbound:     "tun-in",
+		InboundType: "tun",
+		Network:     N.NetworkUDP,
+		Source:      M.SocksaddrFrom(netip.MustParseAddr("172.19.0.1"), 50002),
+		Destination: M.SocksaddrFrom(fake, 27015),
+	}, []byte("not a sniffable protocol"))
+
+	if res.Action != adapter.PreMatchContinue {
+		t.Fatalf("pre-match action = %v via %v, want the connection path to the smart group", res.Action, res.Outbound)
 	}
 }

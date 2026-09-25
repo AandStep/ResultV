@@ -64,25 +64,15 @@ func TestSwitchOffKeepsDirectFinal(t *testing.T) {
 	}
 }
 
-// A node that carries no "proxy" outbound at all — WireGuard and AmneziaWG are
-// endpoints, and buildOutbounds emits only direct+block for them — must not get
-// a group pointing at a tag that does not exist: the core refuses to start.
-//
-// Asserted on the predicate directly: this is the single condition the whole
-// feature hangs off, and what a WireGuard config must NOT contain as a result
-// is checked against a real built config in
-// TestWireGuardNodeGetsNoFakeIPEvenWithTheSwitchOn.
-func TestSmartOutboundIsSkippedWhenThereIsNoProxyOutbound(t *testing.T) {
+// WireGuard and AmneziaWG sit under the "proxy" tag as an endpoint and take
+// part like any other node.
+func TestSmartOutboundCoversEndpointNodes(t *testing.T) {
 	cfg := adaptiveTunnelConfig()
-	for _, pt := range []string{"wireguard", "WireGuard", "amneziawg", "AMNEZIAWG"} {
+	for _, pt := range []string{"wireguard", "WireGuard", "amneziawg", "AMNEZIAWG", "vless"} {
 		cfg.Proxy.Type = pt
-		if adaptiveSmartActive(cfg) {
-			t.Errorf("%s has no proxy outbound to group, but the smart group was still active", pt)
+		if !adaptiveSmartActive(cfg) {
+			t.Errorf("%s lost the smart group", pt)
 		}
-	}
-	cfg.Proxy.Type = "vless"
-	if !adaptiveSmartActive(cfg) {
-		t.Fatal("a normal node lost its smart group")
 	}
 }
 

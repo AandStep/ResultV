@@ -478,6 +478,9 @@ type SBOutbound struct {
 	// it — for us that is the "smart" type, whose two members are the plain
 	// direct and proxy outbounds it chooses between.
 	Outbounds []string `json:"outbounds,omitempty"`
+	// ProxyResolver is the "smart" group's DNS server for names it sends to
+	// an endpoint member, which cannot take a name (see proxyIsEndpoint).
+	ProxyResolver string `json:"proxy_resolver,omitempty"`
 }
 
 type SBHysteria2Obfs struct {
@@ -704,6 +707,8 @@ type SBRouteRule struct {
 	// port-unreachable, "drop" black-holes silently. Only "default" produces the
 	// fast client-side fallback quicRejectRule relies on.
 	Method string `json:"method,omitempty"`
+	// Server is the DNS server of Action="resolve".
+	Server string `json:"server,omitempty"`
 }
 
 // probeInboundTag names the loopback-only inbound the app's own health probes
@@ -1194,11 +1199,15 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	nodeResolver := serverDomainResolverTag(cfg.Proxy, ProxyModeTunnel, nil)
 	outbounds := buildOutbounds(cfg.Proxy, nodeResolver, directDomainResolverTag(cfg))
 	if adaptiveSmartActive(cfg) {
-		outbounds = append(outbounds, SBOutbound{
+		smart := SBOutbound{
 			Type:      smartOutboundTag,
 			Tag:       smartOutboundTag,
 			Outbounds: []string{"direct", "proxy"},
-		})
+		}
+		if proxyIsEndpoint(cfg.Proxy) {
+			smart.ProxyResolver = firstDetourServerTag(buildDNS(cfg).Servers, "proxy")
+		}
+		outbounds = append(outbounds, smart)
 	}
 
 	endpoints, err := buildEndpoints(cfg.Proxy, nodeResolver)
@@ -1567,29 +1576,18 @@ func realIPv4s(addrs []net.IPAddr) []string {
 // Proxy mode is excluded: it has no TUN, so nothing would route the fake range
 // anywhere.
 //
-// WireGuard and AmneziaWG are excluded — but NOT for the reason this comment
-// used to give. It claimed a group naming "proxy" would point at a tag the core
-// cannot resolve, because buildOutbounds emits only direct+block for endpoint
-// protocols. That is wrong and was wrong on 1.13 too: OutboundManager.Outbound
-// falls back to endpoint.Get (adapter/outbound/manager.go), so smartOutbound.Start
-// would find the WireGuard endpoint under that tag like any other member.
-//
-// What is true is that nobody has ever run the fake pool and the verdict engine
-// against an endpoint: the smart outbound would be racing a FlowOutbound, whose
-// packets can bypass the connection path entirely, and none of that has been
-// measured. The exclusion stays until it is — as an untested path, not an
-// impossible one.
-//
-// Separately: FakeIP used to be emitted for these nodes anyway, which bought
-// every cost of the fake pool (launchers seeing 198.18.x.x, names with no A
-// record turning into dead connections) and none of the benefit, since with no
-// second member there is nobody to ask what was learned.
+// WireGuard and AmneziaWG take part through proxyIsEndpoint: the endpoint sits
+// under the "proxy" tag like any outbound, but it wants addresses, not names.
 func adaptiveSmartActive(cfg EngineConfig) bool {
-	if !cfg.AdaptiveSmart || cfg.Mode != ProxyModeTunnel || cfg.RoutingMode != ModeSmart {
-		return false
-	}
-	pt := strings.ToUpper(strings.TrimSpace(cfg.Proxy.Type))
-	return pt != "WIREGUARD" && pt != "AMNEZIAWG"
+	return cfg.AdaptiveSmart && cfg.Mode == ProxyModeTunnel && cfg.RoutingMode == ModeSmart
+}
+
+// proxyIsEndpoint reports whether "proxy" is a WireGuard/AmneziaWG endpoint. An
+// endpoint cannot hand a name to the far side the way VLESS does: it resolves
+// the name itself, and on the pre-match path it refuses a fake destination that
+// nothing has resolved (route/route.go preMatchFlow).
+func proxyIsEndpoint(p ProxyConfig) bool {
+	return isWireGuardType(p.Type)
 }
 
 // firstDetourServerTag returns the tag of the first DNS server routed through
@@ -2325,8 +2323,35 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		rules = append(rules, quicRejectRule(SBRouteRule{}))
 	}
 
+	if adaptiveSmartActive(cfg) && proxyIsEndpoint(cfg.Proxy) {
+		rules = resolveBeforeEndpoint(rules, firstDetourServerTag(buildDNS(cfg).Servers, "proxy"))
+	}
+
 	route.Rules = rules
 	return route
+}
+
+// resolveBeforeEndpoint puts a resolve through the tunnel resolver in front of
+// every rule that sends traffic to the endpoint. Under FakeIP such traffic
+// arrives as a name: on the pre-match path the core refuses a fake destination
+// nothing has resolved, and on the connection path the endpoint would resolve
+// it on dns.final, which in Smart is the system resolver.
+func resolveBeforeEndpoint(rules []SBRouteRule, server string) []SBRouteRule {
+	if server == "" {
+		return rules
+	}
+	out := make([]SBRouteRule, 0, len(rules)*2)
+	for _, r := range rules {
+		if r.Action == "route" && r.Outbound == "proxy" {
+			resolve := r
+			resolve.Action = "resolve"
+			resolve.Outbound = ""
+			resolve.Server = server
+			out = append(out, resolve)
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 type whitelistSuffix struct {
