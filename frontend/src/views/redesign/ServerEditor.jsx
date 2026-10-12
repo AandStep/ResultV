@@ -70,6 +70,10 @@ export const SERVER_EDITOR_TEXT = {
 
   sni: "SNI",
   alpn: "ALPN",
+  realityKey: "Публичный ключ (pbk)",
+  shortId: "Short ID",
+  fingerprint: "Отпечаток (fp)",
+  fpAuto: "авто",
   up: "Отдача, Мбит/с",
   down: "Приём, Мбит/с",
   obfsType: "Тип обфускации",
@@ -124,6 +128,8 @@ const AWG3_TIMINGS = [
 const AMNEZIA_JSON_KEYS = [...AMNEZIA_INT_KEYS, ...AMNEZIA_STR_KEYS];
 
 const options = (list) => list.map((value) => ({ value, label: value }));
+
+const FINGERPRINTS = ["chrome", "firefox", "safari", "edge", "ios", "android", "randomized"];
 
 /* Ряд сетки. `cols` — сколько полей в нём помещается; по умолчанию два. */
 function Grid({ cols = 2, children }) {
@@ -364,6 +370,38 @@ export default function ServerEditor({
               <>
                 <Field label={text.httpHost} value={form.tf.httpHost} onChange={setTf("httpHost")} />
                 <Field label={text.httpPath} value={form.tf.httpPath} onChange={setTf("httpPath")} />
+              </>
+            )}
+          </Grid>
+        )}
+
+        {hasTransport && form.security !== "none" && (
+          <Grid>
+            <Field label={text.sni} value={form.tls.sni} onChange={setIn("tls", "sni")} />
+            <Row label={text.fingerprint}>
+              <Select
+                value={form.tls.fp}
+                options={[
+                  { value: "", label: text.fpAuto },
+                  ...options(
+                    form.tls.fp && !FINGERPRINTS.includes(form.tls.fp)
+                      ? [...FINGERPRINTS, form.tls.fp]
+                      : FINGERPRINTS,
+                  ),
+                ]}
+                onChange={flagIn("tls", "fp")}
+              />
+            </Row>
+            {form.security === "reality" && (
+              <>
+                <Field
+                  className="rv-server-editor__wide"
+                  label={text.realityKey}
+                  autoComplete="off"
+                  value={form.tls.pbk}
+                  onChange={setIn("tls", "pbk")}
+                />
+                <Field label={text.shortId} autoComplete="off" value={form.tls.sid} onChange={setIn("tls", "sid")} />
               </>
             )}
           </Grid>

@@ -162,10 +162,19 @@ export function readServerForm(proxy) {
     password: str(proxy?.password),
 
     uuid: str(ex.uuid),
-    security: normalizeSecurityForSelect(ex.security),
+    security: normalizeSecurityForSelect(
+      ex.security || (ex.pbk || ex.publicKey || ex.public_key ? "reality" : ""),
+    ),
     network: normalizeNetworkForSelect(ex.network),
     ssMethod: str(ex.method) || "aes-256-gcm",
     tf: readVpnTransportFieldsFromExtra(proxy?.extra),
+
+    tls: {
+      sni: str(ex.sni),
+      pbk: str(ex.pbk || ex.publicKey || ex.public_key),
+      sid: str(ex.sid),
+      fp: str(ex.fp || ex["client-fingerprint"] || ex.clientFingerprint || ex.client_fingerprint),
+    },
 
     hy2: {
       password: str(ex.password || proxy?.password),
@@ -335,5 +344,29 @@ export function buildServerData(proxy, form) {
     uuid: form.uuid.trim(),
     ssMethod: form.ssMethod,
   });
-  return { ...base, extra: applyVpnTransportFieldsToExtra(clean, form.network, form.tf) };
+  const ex = applyVpnTransportFieldsToExtra(clean, form.network, form.tf);
+  if (type === "SS") return { ...base, extra: ex };
+
+  const sec = String(form.security || "none").toLowerCase();
+  const put = (key, value) => {
+    const v = String(value ?? "").trim();
+    if (v) ex[key] = v;
+    else delete ex[key];
+  };
+  if (sec !== "none") {
+    put("sni", form.tls.sni);
+    for (const k of ["client-fingerprint", "clientFingerprint", "client_fingerprint"]) delete ex[k];
+    put("fp", form.tls.fp);
+  }
+  /* Ядро по одному pbk включает Reality само, так что при другом шифровании
+     ключ не должен оставаться ни под каким из имён. */
+  for (const k of ["publicKey", "public_key"]) delete ex[k];
+  if (sec === "reality") {
+    put("pbk", form.tls.pbk);
+    put("sid", form.tls.sid);
+  } else {
+    delete ex.pbk;
+    delete ex.sid;
+  }
+  return { ...base, extra: ex };
 }
