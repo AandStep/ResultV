@@ -6,44 +6,17 @@
   },
   "releaseNotes": [
     {
-      "type": "feature",
-      "ru": "Группы серверов можно перетаскивать: порядок сохраняется и на главной",
-      "en": "Server groups can now be reordered by dragging, and the order carries over to the home screen"
-    },
-    {
       "type": "fix",
-      "ru": "Улучшена совместимость приложения со старыми версиями Windows",
-      "en": "Improved application compatibility with older versions of Windows"
-    },
-    {
+      "ru": "Исправлена проблема, когда трей мог перестать открываться",
+      "en": "Fixed an issue where the tray might stop opening"
+    },{
       "type": "fix",
-      "ru": "Исправлены некоторые баги Linux",
-      "en": "Fixed some Linux bugs"
-    },
-    {
-      "type": "improve",
-      "ru": "Обновили базы IP адресов для более точного определения флага сервера. Также добавили обновление флагов при обновлении подписок и отдельных ключей",
-      "en": "Updated IP address databases for more accurate server flag detection. Also added flag updates when renewing subscriptions and individual keys"
-    },
-    {
-      "type": "improve",
-      "ru": "Улучшена стабильность работы AWG протоколов, в том числе в глобальном режиме. А также теперь для AWG доступен адаптивный умный режим.",
-      "en": "Improved stability of AWG protocols, including in global mode. Also, the adaptive smart mode is now available for AWG."
-    },
-    {
+      "ru": "Исправлена проблема: защита от утечки DNS блокирует IPv6 loopback (::1)",
+      "en": "Fixed an issue where DNS leak protection blocks IPv6 loopback (::1)"
+    },{
       "type": "fix",
-      "ru": "Адаптивный умный режим точнее распознаёт сайты, недоступные из вашего региона",
-      "en": "Adaptive smart mode now detects region-blocked sites more accurately"
-    },
-    {
-      "type": "fix",
-      "ru": "Сайты из исключений в глобальном режиме открываются стабильнее",
-      "en": "Excluded sites open more reliably in global mode"
-    },
-    {
-      "type": "fix",
-      "ru": "Обновление приложения скачивается и при включённом VPN",
-      "en": "App updates now download while the VPN is connected"
+      "ru": "Улучшена работа старых версий VLESS + Reality, а также добавлены поля в окне редактирования",
+      "en": "Improved compatibility with older versions of VLESS + Reality, and added fields to the edit window"
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",
