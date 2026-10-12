@@ -1,5 +1,5 @@
 {
-  "version": "",
+  "version": "3.5.4",
   "releaseTitle": {
     "ru": "Общие улучшения и фиксы",
     "en": "General improvements and fixes"
@@ -9,16 +9,44 @@
       "type": "fix",
       "ru": "Исправлена проблема, когда трей мог перестать открываться",
       "en": "Fixed an issue where the tray might stop opening"
-    },{
+    },
+    {
       "type": "fix",
       "ru": "Исправлена проблема: защита от утечки DNS блокирует IPv6 loopback (::1)",
       "en": "Fixed an issue where DNS leak protection blocks IPv6 loopback (::1)"
-    },{
+    },
+    {
       "type": "fix",
       "ru": "Улучшена работа старых версий VLESS + Reality, а также добавлены поля в окне редактирования",
       "en": "Improved compatibility with older versions of VLESS + Reality, and added fields to the edit window"
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",
-  "platforms": {}
+  "platforms": {
+    "windows-amd64-portable": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.4/ResultV.exe",
+      "sha256": "672cf5489fc5a1a76ae7665b738dced13403181cec70e02071bd959b2a898f70",
+      "size": 62251008
+    },
+    "windows-amd64-installer": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.4/ResultV-amd64-installer.exe",
+      "sha256": "37142efd55e478276c78776114389e61612304622e382fed5cc2e20c19c4df73",
+      "size": 29162466
+    },
+    "darwin-universal": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.4/ResultV.dmg",
+      "sha256": "d9425723de9de5539bd41a95626b84c0c46c21ba4767a4309079e61a7d70acac",
+      "size": 65666762
+    },
+    "linux-amd64-appimage": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.4/ResultV-3.5.4-x86_64.AppImage",
+      "sha256": "8baa522e4872ee9349a30ffb67ca91ea879457543912a829307d345fbe8d197b",
+      "size": 26417656
+    },
+    "linux-amd64-deb": {
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.4/resultv_3.5.4_amd64.deb",
+      "sha256": "f1e539cc8d15a8f6bf3bd284a8c935f421f358eb1139164f1894af782d77cd02",
+      "size": 28163200
+    }
+  }
 }
