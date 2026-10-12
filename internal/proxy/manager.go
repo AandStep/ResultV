@@ -918,6 +918,8 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		}
 	}
 
+	proxy = m.learnRealityMLKEMForConnect(ctx, proxy)
+
 	m.mu.Lock()
 
 	actualLocalPort := localPort
@@ -2745,7 +2747,9 @@ func (m *Manager) pingViaNode(node ProxyConfig, proxyType string, opts PingOptio
 		ctx = probeCtx
 	}
 
-	ms, ok, reason := pingThroughNodeProbe(ctx, node, method, opts.URL, bindIPv4)
+	_, ms, ok, reason := probeRealityMLKEM(node, func(p ProxyConfig) (int64, bool, string) {
+		return pingThroughNodeProbe(ctx, p, method, opts.URL, bindIPv4)
+	})
 	if !ok {
 		return PingResultDTO{Reachable: false, Reason: reason, CheckType: checkType}
 	}
