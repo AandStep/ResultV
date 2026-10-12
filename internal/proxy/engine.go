@@ -990,21 +990,10 @@ func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	return sbCfg, nil
 }
 
-// hostSupportsIPv6 reports whether the host has an IPv6 stack at all — the
-// question "will the adapter accept an IPv6 address", NOT "could IPv6 leak".
-// A link-local fe80:: counts and is in fact the normal signal: with neither
-// adapter-level IPv6 nor OS-wide DisabledComponents in play, every box has one,
-// and that is enough for sing-tun's CreateUnicastIpAddressEntry to succeed.
-//
-// This is the preventive half of the no-IPv6 guard: without it, a user ticking
-// the IPv6 box on a machine where IPv6 is switched off gets
-// "set ipv6 address: ..." — which does not degrade the tunnel, it kills the
-// whole inbound.
-//
-// Conservative-fail: on enumeration error assume yes and let the reactive half
-// (TunDisableIPv6, see startEngine) catch it, rather than silently withholding
-// IPv6 from a user who asked for it because a probe was flaky.
-func hostSupportsIPv6() bool {
+// hostHasIPv6Interface reports whether any real (non-loopback, non-tunnel)
+// interface holds an IPv6 address, link-local included. Conservative-fail: on
+// enumeration error assume yes and let the TunDisableIPv6 retry catch it.
+func hostHasIPv6Interface() bool {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return true
@@ -1042,6 +1031,10 @@ func hostSupportsIPv6() bool {
 // included, which breaks apps talking to each other over IPv6 loopback.
 func tunHasIPv6Address(cfg EngineConfig) bool {
 	return !cfg.TunDisableIPv6 && hostSupportsIPv6Fn()
+}
+
+func tunStrictRoute(cfg EngineConfig) bool {
+	return cfg.DNSLeakProtection || (!tunHasIPv6Address(cfg) && hasRoutableIPv6Fn())
 }
 
 // tunCarriesIPv6 reports whether the tunnel resolves and carries IPv6 traffic
@@ -1132,8 +1125,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	// Forced on when the TUN has no IPv6 address while the host holds a globally
 	// routable one: without the filters that traffic would leave through the
 	// physical adapter. With the address present IPv6 is routed into the TUN.
-	ipv6Unrouted := len(tunAddresses) == 1 && hasRoutableIPv6Fn()
-	strictRoute := cfg.DNSLeakProtection || ipv6Unrouted
+	strictRoute := tunStrictRoute(cfg)
 
 	pt := strings.ToUpper(strings.TrimSpace(cfg.Proxy.Type))
 

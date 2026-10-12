@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -136,7 +137,7 @@ type Manager struct {
 	pendingProxy *ProxyConfig
 	// wgProbes are the WireGuard handshake probes in flight; a connect to the
 	// same node cancels them (see startWireGuardProbe).
-	wgProbes map[*wireGuardProbe]struct{}
+	wgProbes     map[*wireGuardProbe]struct{}
 	pendingMode  ProxyMode
 	killSwitch   bool
 	routingMode  RoutingMode
@@ -638,6 +639,27 @@ func isTransientTunError(err error) bool {
 		strings.Contains(lower, "inbound/tun")
 }
 
+// warnIPv6LoopbackBlocked tells the user when sing-tun's WFP filters block every
+// outbound IPv6 connect, ::1 included: strict_route on a TUN without an IPv6
+// address.
+func (m *Manager) warnIPv6LoopbackBlocked(cfg EngineConfig) {
+	if runtime.GOOS != "windows" || cfg.Mode != ProxyModeTunnel {
+		return
+	}
+	if tunHasIPv6Address(cfg) || !tunStrictRoute(cfg) {
+		return
+	}
+	why := "адаптер TUN не принял IPv6-адрес"
+	if !hostSupportsIPv6Fn() {
+		why = "IPv6 выключен в системе"
+	}
+	fix := "выключите защиту от утечки DNS"
+	if !cfg.DNSLeakProtection {
+		fix = "включите IPv6 в системе"
+	}
+	m.log.Warning(fmt.Sprintf("[PROXY] %s — весь IPv6 вне туннеля заблокирован, включая локальный ::1. Если программа не может связаться со своим локальным сервисом, %s", why, fix))
+}
+
 // startEngine starts the engine for a connect attempt and returns the DTO fields
 // a caller needs on failure. In tunnel mode it transparently retries once when
 // the first attempt fails with a transient TUN-setup error: before retrying it
@@ -660,10 +682,11 @@ func (m *Manager) startEngine(ctx context.Context, cfg EngineConfig) (err error,
 			switch {
 			case attempt == 1:
 			case ipv6Dropped:
-				m.log.Success("[PROXY] TUN поднялся без IPv6 — защита от утечек включена принудительно, IPv6 заблокирован, а не пущен мимо туннеля")
+				m.log.Success("[PROXY] TUN поднялся без IPv6")
 			default:
 				m.log.Success("[PROXY] TUN поднялся со второй попытки")
 			}
+			m.warnIPv6LoopbackBlocked(cfg)
 			return nil, false, "", ""
 		}
 		if cfg.Mode != ProxyModeTunnel {
@@ -2020,7 +2043,6 @@ func probeFailureReason(err error) string {
 func isLocalDNSProbeFailure(reason string) bool {
 	return strings.HasPrefix(reason, "local_dns:")
 }
-
 
 func (m *Manager) Disconnect() error {
 	disconnectStart := time.Now()

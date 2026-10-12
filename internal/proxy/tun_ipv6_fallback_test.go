@@ -348,3 +348,44 @@ func TestBuildTunnelModeConfig_CustomTunIPv6IgnoresTheToggle(t *testing.T) {
 		}
 	}
 }
+
+func loopbackWarned(m *Manager) bool {
+	for _, e := range m.log.GetAll() {
+		if strings.Contains(e.Msg, "::1") {
+			return true
+		}
+	}
+	return false
+}
+
+// strict_route on a TUN without an IPv6 address blocks ::1 (issue #15); the
+// user must be told, and only then.
+func TestWarnIPv6LoopbackBlocked(t *testing.T) {
+	stubRoutableIPv6(t, false)
+	cases := []struct {
+		name        string
+		hostIPv6    bool
+		disableIPv6 bool
+		leakProt    bool
+		want        bool
+	}{
+		{"address on tun", true, false, true, false},
+		{"system ipv6 off", false, false, true, true},
+		{"adapter refused", true, true, true, true},
+		{"no strict_route", false, false, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stubHostSupportsIPv6(t, tc.hostIPv6)
+			m := NewManager(logger.New())
+			m.warnIPv6LoopbackBlocked(EngineConfig{
+				Mode:              ProxyModeTunnel,
+				DNSLeakProtection: tc.leakProt,
+				TunDisableIPv6:    tc.disableIPv6,
+			})
+			if got := loopbackWarned(m); got != tc.want {
+				t.Fatalf("warned = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
