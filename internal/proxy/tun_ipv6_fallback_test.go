@@ -169,8 +169,8 @@ func stubRoutableIPv6(t *testing.T, v bool) {
 	t.Cleanup(func() { hasRoutableIPv6Fn = prev })
 }
 
-// Dropping IPv6 from the TUN while the host has a globally routable IPv6 would
-// not blackhole that traffic — it would route it out the physical adapter. Our
+// Without an IPv6 address on the TUN (the adapter refused it) a host with a
+// globally routable IPv6 would route that traffic out the physical adapter. Our
 // ipv4_only resolver keeps domain traffic off IPv6, but any app with its own DoH
 // resolver (every modern browser) gets AAAA independently, so the leak is real.
 func TestBuildTunnelModeConfig_ForcesStrictRouteWhenIPv6WouldLeak(t *testing.T) {
@@ -179,9 +179,25 @@ func TestBuildTunnelModeConfig_ForcesStrictRouteWhenIPv6WouldLeak(t *testing.T) 
 		Proxy:             ProxyConfig{Type: "vless", IP: "203.0.113.7", Port: 443, Password: "p"},
 		Mode:              ProxyModeTunnel,
 		DNSLeakProtection: false,
+		TunDisableIPv6:    true,
 	})
 	if !tunInboundOf(t, sb).StrictRoute {
 		t.Fatal("a host with routable IPv6 and no IPv6 on the TUN must get strict_route")
+	}
+}
+
+// With the address on the TUN, routable IPv6 is routed into the tunnel, so there
+// is nothing to force — and forcing it would bring back the blanket IPv6 block.
+func TestBuildTunnelModeConfig_NoForcedStrictRouteWhenTunHasIPv6(t *testing.T) {
+	stubHostSupportsIPv6(t, true)
+	stubRoutableIPv6(t, true)
+	sb := mustBuildTunnelModeConfig(t, EngineConfig{
+		Proxy:             ProxyConfig{Type: "vless", IP: "203.0.113.7", Port: 443, Password: "p"},
+		Mode:              ProxyModeTunnel,
+		DNSLeakProtection: false,
+	})
+	if tunInboundOf(t, sb).StrictRoute {
+		t.Fatal("IPv6 routed into the TUN cannot leak — strict_route must stay off")
 	}
 }
 
@@ -257,9 +273,7 @@ func ipv6ToggleConfig(enable bool) EngineConfig {
 	}
 }
 
-// The toggle must move BOTH halves. Attaching the address while buildDNS still
-// pins ipv4_only would make the setting a lie: no domain would ever resolve to
-// AAAA, so the TUN's IPv6 would carry nothing but literal-IPv6 traffic.
+// The toggle switches the resolver off ipv4_only; the address is there either way.
 func TestBuildTunnelModeConfig_EnableIPv6AttachesAddressAndSwitchesDNS(t *testing.T) {
 	stubHostSupportsIPv6(t, true)
 	stubRoutableIPv6(t, true)
@@ -278,8 +292,8 @@ func TestBuildTunnelModeConfig_DisabledIPv6KeepsIPv4OnlyDNS(t *testing.T) {
 	stubHostSupportsIPv6(t, true)
 	stubRoutableIPv6(t, false)
 	sb := mustBuildTunnelModeConfig(t, ipv6ToggleConfig(false))
-	if in := tunInboundOf(t, sb); len(in.Address) != 1 {
-		t.Fatalf("disabled IPv6 must stay IPv4-only, got %q", in.Address)
+	if in := tunInboundOf(t, sb); len(in.Address) != 2 {
+		t.Fatalf("the TUN keeps its IPv6 address with the toggle off, got %q", in.Address)
 	}
 	if sb.DNS == nil || sb.DNS.Strategy != "ipv4_only" {
 		t.Fatalf("disabled IPv6 must keep ipv4_only, got %+v", sb.DNS)
@@ -321,19 +335,16 @@ func TestBuildTunnelModeConfig_TunDisableIPv6BeatsTheToggle(t *testing.T) {
 	}
 }
 
-// A custom address still overrides the default ULA, but only while the toggle is
-// on — the toggle is the switch, TunIPv6 only says which address.
-func TestBuildTunnelModeConfig_CustomTunIPv6NeedsTheToggle(t *testing.T) {
+// A custom address overrides the default ULA whether or not the toggle is on.
+func TestBuildTunnelModeConfig_CustomTunIPv6IgnoresTheToggle(t *testing.T) {
 	stubHostSupportsIPv6(t, true)
 	stubRoutableIPv6(t, false)
-	cfg := ipv6ToggleConfig(false)
-	cfg.TunIPv6 = "fd00:dead:beef::1/64"
-	if in := tunInboundOf(t, mustBuildTunnelModeConfig(t, cfg)); len(in.Address) != 1 {
-		t.Fatalf("a custom address without the toggle must not be attached, got %q", in.Address)
-	}
-	cfg.EnableIPv6 = true
-	in := tunInboundOf(t, mustBuildTunnelModeConfig(t, cfg))
-	if len(in.Address) != 2 || in.Address[1] != "fd00:dead:beef::1/64" {
-		t.Fatalf("with the toggle on the custom address must win, got %q", in.Address)
+	for _, enable := range []bool{false, true} {
+		cfg := ipv6ToggleConfig(enable)
+		cfg.TunIPv6 = "fd00:dead:beef::1/64"
+		in := tunInboundOf(t, mustBuildTunnelModeConfig(t, cfg))
+		if len(in.Address) != 2 || in.Address[1] != "fd00:dead:beef::1/64" {
+			t.Fatalf("EnableIPv6=%v: the custom address must win, got %q", enable, in.Address)
+		}
 	}
 }

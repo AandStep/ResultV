@@ -106,28 +106,23 @@ type EngineConfig struct {
 	LocalPort    int
 	DNSServers   []string
 	TunIPv4      string
-	// EnableIPv6 is the user-facing "Сеть → IPv6" toggle, default off. It moves
-	// BOTH halves at once: the IPv6 address on the TUN and buildDNS's strategy.
-	// Attaching the address while DNS stayed ipv4_only would make the setting a
-	// lie — no domain would resolve to AAAA, so the TUN's IPv6 would carry
-	// nothing but literal-IPv6 traffic.
+	// EnableIPv6 is the user-facing "Сеть → IPv6" toggle, default off. It lets
+	// the resolver answer AAAA; the TUN's IPv6 address does not depend on it
+	// (see tunHasIPv6Address).
 	EnableIPv6 bool
-	// TunIPv6 optionally overrides the default ULA. It says WHICH address, never
-	// WHETHER — that is EnableIPv6's job.
+	// TunIPv6 optionally overrides the default ULA.
 	TunIPv6  string
 	TunStack string
-	// TunDisableIPv6 strips every IPv6 address from the TUN inbound and forces
-	// strict_route on. It is a RETRY-ONLY switch, never user-facing: startEngine
-	// flips it after sing-tun reports "set ipv6 address: <err>", i.e. the freshly
-	// created Wintun adapter refused an IPv6 address that was explicitly opted
-	// into via TunIPv6.
+	// TunDisableIPv6 strips every IPv6 address from the TUN inbound. It is a
+	// RETRY-ONLY switch, never user-facing: startEngine flips it after sing-tun
+	// reports "set ipv6 address: <err>", i.e. the freshly created Wintun adapter
+	// refused the IPv6 address.
 	//
 	// Without it that failure is a permanent wedge: the message matches
 	// isTransientTunError, so the retry fires, tears down a device that was never
 	// the problem, and re-Starts the IDENTICAL config — which fails identically.
 	//
-	// It overrides the explicit TunIPv6 opt-in: a tunnel that will not start is
-	// worse than a tunnel without IPv6.
+	// A tunnel that will not start is worse than a tunnel without IPv6.
 	TunDisableIPv6 bool
 	DataDir        string
 
@@ -1041,10 +1036,18 @@ func hostSupportsIPv6() bool {
 	return false
 }
 
-// tunCarriesIPv6 is the single predicate behind both halves of the toggle, so
-// the TUN address and the DNS strategy can never disagree.
+// tunHasIPv6Address reports whether the TUN gets its IPv6 address. It is not
+// tied to EnableIPv6: with strict_route on and no IPv6 address on the TUN,
+// sing-tun installs a WFP filter blocking every outbound IPv6 connect, ::1
+// included, which breaks apps talking to each other over IPv6 loopback.
+func tunHasIPv6Address(cfg EngineConfig) bool {
+	return !cfg.TunDisableIPv6 && hostSupportsIPv6Fn()
+}
+
+// tunCarriesIPv6 reports whether the tunnel resolves and carries IPv6 traffic
+// for real: the user's toggle on top of the address being present.
 func tunCarriesIPv6(cfg EngineConfig) bool {
-	return cfg.EnableIPv6 && !cfg.TunDisableIPv6 && hostSupportsIPv6Fn()
+	return cfg.EnableIPv6 && tunHasIPv6Address(cfg)
 }
 
 // hasRoutableIPv6 reports whether the host holds an IPv6 address that can
@@ -1111,24 +1114,12 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	if cfg.TunIPv4 != "" {
 		tunIPv4 = cfg.TunIPv4
 	}
-	// IPv6 on the TUN is off unless the user turns it on (EnableIPv6). It used to
-	// be attached automatically whenever the host had any IPv6 at all, while
-	// buildDNS pinned strategy=ipv4_only — so no domain ever resolved to AAAA and
-	// the address carried nothing but literal-IPv6 traffic. That bought close to
-	// nothing and owned a whole class of hard failures: when Windows refuses the
-	// address, sing-tun fails the ENTIRE inbound with "set ipv6 address: ..." and
-	// the tunnel does not come up.
-	//
-	// tunCarriesIPv6 folds in both guards: hostSupportsIPv6 (the user ticked the
-	// box on a machine with no IPv6 stack — behave as if unticked) and
-	// TunDisableIPv6 (the adapter already refused the address on the previous
-	// attempt, so honouring the opt-in would rebuild the config that just failed).
 	tunIPv6 := "fdfe:dcba:9876::1/126"
 	if cfg.TunIPv6 != "" {
 		tunIPv6 = cfg.TunIPv6
 	}
 	tunAddresses := []string{tunIPv4}
-	if tunCarriesIPv6(cfg) {
+	if tunHasIPv6Address(cfg) {
 		tunAddresses = append(tunAddresses, tunIPv6)
 	}
 	tunStack := effectiveTunStack(cfg.TunStack)
@@ -1138,16 +1129,9 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	// adapter, where Russian ISPs transparently hijack UDP/53 (Rostelecom,
 	// MSK-IX). User-controlled via the "DNS leak protection" toggle.
 	//
-	// Forced on when the TUN carries no IPv6 while the host holds a globally
-	// routable one. Without the WFP filters that traffic is not blackholed, it is
-	// routed out the physical adapter. buildDNS's ipv4_only keeps domain traffic
-	// off IPv6, but any app running its own DoH resolver — every modern browser —
-	// gets AAAA independently, so the leak is real rather than theoretical.
-	//
-	// Deliberately keyed on hasRoutableIPv6 and not on "IPv6 is absent from the
-	// TUN": a host with only fe80::/fd00:: has no IPv6 that can reach the
-	// internet, and forcing the filters there would silently re-enable a feature
-	// the user turned off, for no gain.
+	// Forced on when the TUN has no IPv6 address while the host holds a globally
+	// routable one: without the filters that traffic would leave through the
+	// physical adapter. With the address present IPv6 is routed into the TUN.
 	ipv6Unrouted := len(tunAddresses) == 1 && hasRoutableIPv6Fn()
 	strictRoute := cfg.DNSLeakProtection || ipv6Unrouted
 

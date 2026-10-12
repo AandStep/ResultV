@@ -1045,41 +1045,27 @@ func TestBuildTunnelModeConfig_StrictRouteSerializesToJSON(t *testing.T) {
 	}
 }
 
-// TestBuildTunnelModeConfig_TunIsIPv4OnlyByDefault pins the CURRENT intent, which
-// is the reverse of what this test asserted before 2026-08-25.
-//
-// It used to require an IPv6 address on the TUN by default, reasoning that
-// without one strict_route's WFP filters would blackhole IPv6 and leave the user
-// without IPv6 while connected. That reasoning was sound in isolation but ignored
-// buildDNS, which pins strategy=ipv4_only: no domain ever resolves to AAAA, so
-// the TUN's IPv6 only ever carried literal-IPv6 traffic. The address bought
-// almost nothing — and owned a whole class of hard failures, because when Windows
-// refuses it sing-tun fails the ENTIRE inbound with "set ipv6 address: ..." and
-// the tunnel does not come up at all.
-//
-// IPv6 is therefore opt-in via EngineConfig.TunIPv6 (see
-// TestBuildTunnelModeConfig_CustomTunIPv6Respected). The leak this opens on hosts
-// that do have routable IPv6 is closed by forcing strict_route there, not by
-// putting the address back — see
-// TestBuildTunnelModeConfig_ForcesStrictRouteWhenIPv6WouldLeak.
-func TestBuildTunnelModeConfig_TunIsIPv4OnlyByDefault(t *testing.T) {
-	// Stubbed true so this asserts the default even on an IPv6-capable host,
-	// rather than passing for the wrong reason on an IPv4-only CI box.
-	stubRoutableIPv6(t, true)
+// Issue #15: with strict_route on and no IPv6 address on the TUN, sing-tun
+// installs a WFP filter that blocks every outbound IPv6 connect, ::1 included.
+// The address must be there by default, independent of the IPv6 toggle, while
+// the resolver stays ipv4_only.
+func TestBuildTunnelModeConfig_TunHasIPv6AddressByDefault(t *testing.T) {
+	stubHostSupportsIPv6(t, true)
+	stubRoutableIPv6(t, false)
 	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
-		Mode:  ProxyModeTunnel,
-		Proxy: ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		Mode:              ProxyModeTunnel,
+		Proxy:             ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		DNSLeakProtection: true,
 	})
-	if len(cfg.Inbounds) == 0 {
-		t.Fatal("missing tun inbound")
+	in := tunInboundOf(t, cfg)
+	if len(in.Address) != 2 || in.Address[1] != "fdfe:dcba:9876::1/126" {
+		t.Fatalf("tun must carry the ULA by default, got %+v", in.Address)
 	}
-	for _, a := range cfg.Inbounds[0].Address {
-		if strings.Contains(a, ":") {
-			t.Fatalf("tun must be IPv4-only by default, got %+v", cfg.Inbounds[0].Address)
-		}
+	if !in.StrictRoute {
+		t.Fatal("DNS leak protection must keep strict_route on")
 	}
-	if len(cfg.Inbounds[0].Address) != 1 {
-		t.Fatalf("expected exactly the IPv4 address, got %+v", cfg.Inbounds[0].Address)
+	if cfg.DNS == nil || cfg.DNS.Strategy != "ipv4_only" {
+		t.Fatalf("the address alone must not switch DNS off ipv4_only, got %+v", cfg.DNS)
 	}
 	assertCoreAcceptsConfig(t, cfg)
 }
@@ -1087,16 +1073,12 @@ func TestBuildTunnelModeConfig_TunIsIPv4OnlyByDefault(t *testing.T) {
 // TestBuildTunnelModeConfig_CustomTunIPv6Respected verifies that
 // EngineConfig.TunIPv6 overrides the default ULA prefix.
 func TestBuildTunnelModeConfig_CustomTunIPv6Respected(t *testing.T) {
-	// EnableIPv6 is required since 2026-08-25: TunIPv6 says WHICH address, never
-	// WHETHER. Whether is the user-facing toggle — see
-	// TestBuildTunnelModeConfig_CustomTunIPv6NeedsTheToggle.
 	stubHostSupportsIPv6(t, true)
 	stubRoutableIPv6(t, false)
 	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
-		Mode:       ProxyModeTunnel,
-		Proxy:      ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
-		EnableIPv6: true,
-		TunIPv6:    "fd00:dead:beef::1/64",
+		Mode:    ProxyModeTunnel,
+		Proxy:   ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
+		TunIPv6: "fd00:dead:beef::1/64",
 	})
 	if len(cfg.Inbounds) == 0 {
 		t.Fatal("missing tun inbound")
