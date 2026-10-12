@@ -18,6 +18,7 @@ package system
 import (
 	"fmt"
 	"log"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -114,16 +115,19 @@ func NewTray(icon []byte, cb TrayCallbacks) *Tray {
 	}
 }
 
-// Start launches the native systray loop on its own goroutine. The loop
-// owns one OS thread (systray pins to it in init()), so we cannot call
-// Start twice for the same process.
+// Start launches the native systray loop on its own goroutine, pinned to one
+// OS thread: the tray window belongs to the thread that created it, and only
+// that thread's GetMessage sees its clicks.
 // Returns false when no tray host can be reached: energye/systray would
 // otherwise panic on a nil D-Bus connection (Linux, elevated instance).
 func (t *Tray) Start() bool {
 	if !trayHostReachable() {
 		return false
 	}
-	go systray.Run(t.onReady, t.onExit)
+	go func() {
+		runtime.LockOSThread()
+		systray.Run(t.onReady, t.onExit)
+	}()
 	return true
 }
 
