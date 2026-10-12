@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -383,8 +384,9 @@ func TestWarnIPv6LoopbackBlocked(t *testing.T) {
 				DNSLeakProtection: tc.leakProt,
 				TunDisableIPv6:    tc.disableIPv6,
 			})
-			if got := loopbackWarned(m); got != tc.want {
-				t.Fatalf("warned = %v, want %v", got, tc.want)
+			want := tc.want && runtime.GOOS == "windows"
+			if got := loopbackWarned(m); got != want {
+				t.Fatalf("warned = %v, want %v", got, want)
 			}
 		})
 	}
