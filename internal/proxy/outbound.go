@@ -403,7 +403,7 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 			AuthenticatedLength: getBoolField(extra, "authenticated_length") || getBoolField(extra, "authenticatedLength"),
 			Multiplex:           multiplexFromExtra(extra),
 		}
-		applyTLSAndTransport(&out, extra, proxy.IP)
+		applyTLSAndTransport(&out, extra, proxy.IP, proxy.RealityMLKEM)
 		return out
 
 	case "VLESS", "vless":
@@ -420,7 +420,7 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 			PacketEncoding: resolvePacketEncoding(extra),
 			Multiplex:      multiplexFromExtra(extra),
 		}
-		applyTLSAndTransport(&out, extra, proxy.IP)
+		applyTLSAndTransport(&out, extra, proxy.IP, proxy.RealityMLKEM)
 		return out
 
 	case "TROJAN", "trojan":
@@ -442,7 +442,7 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 			proxy.IP,
 		)
 
-		applyTLSAndTransport(&out, extra, trojanSNI)
+		applyTLSAndTransport(&out, extra, trojanSNI, proxy.RealityMLKEM)
 
 		if out.TLS == nil && !extraSecurityExplicitlyNone(extra) {
 			out.TLS = &SBOutboundTLS{
@@ -631,7 +631,7 @@ func parsePortRangeSpec(s string) (int, int, bool) {
 	return lo, hi, true
 }
 
-func applyTLSAndTransport(out *SBOutbound, extra map[string]interface{}, defaultSNI string) {
+func applyTLSAndTransport(out *SBOutbound, extra map[string]interface{}, defaultSNI string, realityMLKEM bool) {
 	security := getStringField(extra, "security", "none")
 	pbk := getStringField(extra, "pbk", getStringField(extra, "publicKey", getStringField(extra, "public_key", "")))
 
@@ -659,7 +659,7 @@ func applyTLSAndTransport(out *SBOutbound, extra map[string]interface{}, default
 			UTLS:       &SBUTLS{Enabled: true, Fingerprint: fp},
 		}
 		if pbk != "" {
-			tlsObj.Reality = &SBReality{Enabled: true, PublicKey: pbk, ShortID: sid, SupportX25519MLKEM768: true}
+			tlsObj.Reality = &SBReality{Enabled: true, PublicKey: pbk, ShortID: sid, SupportX25519MLKEM768: realityMLKEM}
 		}
 		out.TLS = tlsObj
 		if alpnStr := getStringField(extra, "alpn", ""); alpnStr != "" {

@@ -273,7 +273,7 @@
     "subscription_user_agent": {
       "title": "User agent",
       "desc": "Пусто — стандартный заголовок ResultV.",
-      "placeholder": "ResultV/3.5.3/Windows/11_10.0.26200"
+      "placeholder": "ResultV/3.5.4/Windows/11_10.0.26200"
     },
     "dns": {
       "title": "DNS-серверы",
@@ -586,6 +586,10 @@
     "xhttpMode": "Режим XHTTP",
     "sni": "SNI",
     "alpn": "ALPN",
+    "realityKey": "Публичный ключ (pbk)",
+    "shortId": "Short ID",
+    "fingerprint": "Отпечаток (fp)",
+    "fpAuto": "авто",
     "up": "Отдача, Мбит/с",
     "down": "Приём, Мбит/с",
     "obfsType": "Тип обфускации",
