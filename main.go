@@ -46,6 +46,7 @@ func main() {
 		app.SetStartInTray(true)
 	}
 	app.SetTrayIcon(appIcon)
+	app.SetResumeAfterElevation(system.ArgsResumeAfterElevation(os.Args))
 
 	if link := system.ExtractDeepLinkArg(os.Args); link != "" {
 		app.QueueDeepLink(link)

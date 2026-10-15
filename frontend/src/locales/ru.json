@@ -273,7 +273,7 @@
     "subscription_user_agent": {
       "title": "User agent",
       "desc": "Пусто — стандартный заголовок ResultV.",
-      "placeholder": "ResultV/3.5.4/Windows/11_10.0.26200"
+      "placeholder": "ResultV/3.5.5/Windows/11_10.0.26200"
     },
     "dns": {
       "title": "DNS-серверы",
@@ -554,6 +554,8 @@
     "editSubscription": "Настройки подписки",
     "support": "Поддержка",
     "renameLabel": "Изменить имя",
+    "official": "Официальная ResultV",
+    "officialNameLocked": "Имя официальной подписки задаёт ResultV",
     "showOnHome": "Показывать на главной",
     "intervalLabel": "Свой интервал обновлений",
     "interval": {

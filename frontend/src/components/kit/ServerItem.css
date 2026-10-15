@@ -173,6 +173,14 @@
   gap: var(--rv-space-8);
 }
 
+/* Значок официальной подписки стоит вплотную к названию, по его верху
+   (Figma 6918:5274). */
+.rv-server-item__title-verified {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--rv-space-4);
+}
+
 .rv-server-item__tags {
   display: flex;
   align-items: flex-start;

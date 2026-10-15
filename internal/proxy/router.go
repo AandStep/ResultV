@@ -520,6 +520,9 @@ func blockedCIDRFloor() []string {
 // claude.site is the same product one hop earlier — published artifacts are
 // linked as claude.site/artifacts/<id>, which 308-redirects into claude.ai.
 //
+// play.google.com: the TLS handshake is blackholed by SNI, and no source
+// lists the host.
+//
 // Kept to specific hosts for the same reason blockedCIDRFloor could aggregate
 // only Discord's own /18: buildRoute emits these as domain_suffix, so a bare
 // google.com would pull search and every other Google property into the tunnel
@@ -532,6 +535,7 @@ func blockedDomainFloor() []string {
 		"myaccount.google.com",
 		"apis.google.com",
 		"ogs.google.com",
+		"play.google.com",
 		"js.hcaptcha.com",
 		"newassets.hcaptcha.com",
 		"api.hcaptcha.com",

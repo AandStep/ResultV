@@ -56,7 +56,7 @@ import ServerEditor, { SERVER_EDITOR_TEXT } from "./ServerEditor";
 import ServersPage from "./ServersPage";
 import SortMenu from "./SortMenu";
 import SubscriptionDialog, { SUBSCRIPTION_INTERVALS } from "./SubscriptionDialog";
-import SubscriptionLogo, { subscriptionSupportURL } from "./SubscriptionLogo";
+import SubscriptionLogo, { isOfficialSubscription, subscriptionSupportURL } from "./SubscriptionLogo";
 import AppSidebar from "./AppSidebar";
 import ReorderGuide from "./ReorderGuide";
 import { formatTraffic, protocolLabel } from "./format";
@@ -458,6 +458,8 @@ export default function ServersScreen() {
         variant: "subitem",
         logo: <SubscriptionLogo subscription={sub} />,
         title: sub.name,
+        verified: isOfficialSubscription(sub),
+        verifiedTitle: t("serversPage.official"),
         count: own.length,
         subtitle: date
           ? t("serversPage.subMeta", { date, ...meta })
@@ -676,6 +678,7 @@ export default function ServersScreen() {
           }
           title={editingSub.name}
           supportUrl={subscriptionSupportURL(editingSub)}
+          official={isOfficialSubscription(editingSub)}
           onSupport={(url) => BrowserOpenURL(url)}
           name={editingSub.name}
           showOnHome={editingSub.showOnHome !== false}
@@ -691,6 +694,8 @@ export default function ServersScreen() {
           }))}
           text={{
             support: t("serversPage.support"),
+            official: t("serversPage.official"),
+            nameLocked: t("serversPage.officialNameLocked"),
             name: t("serversPage.renameLabel"),
             showOnHome: t("serversPage.showOnHome"),
             interval: t("serversPage.intervalLabel"),

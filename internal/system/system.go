@@ -16,6 +16,7 @@
 package system
 
 import (
+	"encoding/base64"
 	"strconv"
 	"strings"
 )
@@ -40,6 +41,43 @@ func ArgsStartInTray(args []string) bool {
 
 // ElevatedFromFlag carries the pid of the instance that relaunched us elevated.
 const ElevatedFromFlag = "--elevated-from="
+
+// ConnectAfterElevationFlag carries the server the user was connecting to when
+// the instance had to restart elevated. The id is base64url so no quoting layer
+// (PowerShell, AppleScript, pkexec) ever sees anything but [A-Za-z0-9_-].
+const ConnectAfterElevationFlag = "--connect="
+
+// ModeAfterElevationFlag carries the mode the user was switching to when the
+// instance had to restart elevated.
+const ModeAfterElevationFlag = "--mode="
+
+// ElevationRelaunchArgs builds the arguments that make the elevated instance
+// resume what the user started: connect to proxyID, optionally in mode.
+func ElevationRelaunchArgs(proxyID, mode string) []string {
+	var args []string
+	if proxyID != "" {
+		args = append(args, ConnectAfterElevationFlag+base64.RawURLEncoding.EncodeToString([]byte(proxyID)))
+	}
+	if mode == "proxy" || mode == "tunnel" {
+		args = append(args, ModeAfterElevationFlag+mode)
+	}
+	return args
+}
+
+// ArgsResumeAfterElevation parses what ElevationRelaunchArgs produced.
+func ArgsResumeAfterElevation(args []string) (proxyID, mode string) {
+	for _, a := range args {
+		if v, ok := strings.CutPrefix(a, ConnectAfterElevationFlag); ok {
+			if b, err := base64.RawURLEncoding.DecodeString(v); err == nil {
+				proxyID = string(b)
+			}
+		}
+		if v, ok := strings.CutPrefix(a, ModeAfterElevationFlag); ok && (v == "proxy" || v == "tunnel") {
+			mode = v
+		}
+	}
+	return proxyID, mode
+}
 
 func elevatedFromPID(args []string) int {
 	for _, a := range args {

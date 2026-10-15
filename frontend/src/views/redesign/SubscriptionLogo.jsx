@@ -21,13 +21,27 @@
  * а здесь только сам знак 32x32.
  *
  * Своей картинки у произвольной подписки нет, поэтому берётся то, что можно
- * достать: присланная провайдером иконка, затем favicon его сайта, а у
- * подписок ResultV — знак impVPN, лежащий в приложении.
+ * достать: присланная провайдером иконка, затем favicon его сайта. У
+ * подписок impVPN и официальной подписки ResultV знак лежит в приложении.
  */
 
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "../../components/kit";
 import impLogo from "../../assets/implogo.png";
+import resultvLogo from "../../assets/logo.png";
+
+const OFFICIAL_DOMAIN = "result-proxy.ru";
+
+/* Официальная подписка ResultV: https-адрес на домене result-proxy.ru. */
+export function isOfficialSubscription(subscription) {
+  try {
+    const { protocol, hostname } = new URL(subscription?.url || "");
+    const host = hostname.toLowerCase();
+    return protocol === "https:" && (host === OFFICIAL_DOMAIN || host.endsWith(`.${OFFICIAL_DOMAIN}`));
+  } catch {
+    return false;
+  }
+}
 
 /* Подписка ResultV (`resultv://rvsub/...`) и всё, что зовётся impVPN. */
 function usesImpLogo(subscription) {
@@ -50,6 +64,7 @@ export function subscriptionSupportURL(subscription) {
 
 export default function SubscriptionLogo({ subscription, className = "rv-server-item__logo" }) {
   const [index, setIndex] = useState(0);
+  const official = isOfficialSubscription(subscription);
   const impLogoWanted = usesImpLogo(subscription);
   const iconUrl = subscription?.iconUrl;
   const url = subscription?.url;
@@ -69,6 +84,7 @@ export default function SubscriptionLogo({ subscription, className = "rv-server-
 
   useEffect(() => setIndex(0), [candidates, impLogoWanted]);
 
+  if (official) return <img src={resultvLogo} alt="" className={className} />;
   if (impLogoWanted) return <img src={impLogo} alt="" className={className} />;
 
   const src = candidates[index];

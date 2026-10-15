@@ -7,16 +7,17 @@
   "releaseNotes": [
     {
       "type": "fix",
-      "ru": "Исправлена проблема, когда трей мог перестать открываться",
-      "en": "Fixed an issue where the tray might stop opening"
-    },{
-      "type": "fix",
-      "ru": "Исправлена проблема: защита от утечки DNS блокирует IPv6 loopback (::1)",
-      "en": "Fixed an issue where DNS leak protection blocks IPv6 loopback (::1)"
-    },{
-      "type": "fix",
-      "ru": "Улучшена работа старых версий VLESS + Reality, а также добавлены поля в окне редактирования",
-      "en": "Improved compatibility with older versions of VLESS + Reality, and added fields to the edit window"
+      "ru": "Пинг серверов выбирал неправильный адаптер для проверки соединения",
+      "en": "Fixed an issue where the ping servers were selecting the wrong adapter for connection checks"
+    },
+    {
+      "type": "feature",
+      "ru": "Теперь при перезапуске приложения с правами администратора после выбора сервера, сервер подключается автоматически",
+      "en": "Now, when the application is restarted with administrator rights after selecting a server, the server connects automatically"
+    }, {
+      "type": "improve",
+      "ru": "Улучшена работа умного и адаптивного режима",
+      "en": "Improved the performance of the smart and adaptive mode"
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",

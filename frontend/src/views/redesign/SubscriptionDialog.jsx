@@ -27,6 +27,7 @@
 import { useState } from "react";
 import { Button, Dialog, Icon, Input, Tumbler } from "../../components/kit";
 import ScrollRow from "./ScrollRow";
+import verifiedIcon from "../../assets/ic_round-verified.svg";
 import "./SubscriptionDialog.css";
 
 /*
@@ -44,6 +45,8 @@ export const SUBSCRIPTION_INTERVALS = [
 
 export const SUBSCRIPTION_DIALOG_TEXT = {
   support: "Поддержка",
+  official: "Официальная ResultV",
+  nameLocked: "Имя официальной подписки задаёт ResultV",
   name: "Изменить имя",
   showOnHome: "Показывать на главной",
   interval: "Свой интервал обновлений",
@@ -56,6 +59,8 @@ export default function SubscriptionDialog({
   /* Тег «Поддержка» — ссылка провайдера. Нет ссылки — нет и тега. */
   supportUrl,
   onSupport,
+  /* Официальной подписке имя присылает ResultV, вручную оно не меняется. */
+  official = false,
   name = "",
   showOnHome = true,
   interval = 360,
@@ -74,29 +79,40 @@ export default function SubscriptionDialog({
       icon={logo}
       title={title}
       subtitle={
-        supportUrl ? (
-          <a
-            className="rv-sub-dialog__tag"
-            href={supportUrl}
-            onClick={(event) => {
-              /* Ссылку открывает приложение во внешнем браузере: окно Wails —
-                 не вкладка, уходить из него страницей нельзя. */
-              event.preventDefault();
-              onSupport?.(supportUrl);
-            }}
-          >
-            {text.support}
-            <Icon name="link" color="currentColor" />
-          </a>
+        official || supportUrl ? (
+          <span className="rv-sub-dialog__tags">
+            {official && (
+              <span className="rv-sub-dialog__tag" data-kind="official">
+                {text.official}
+                <img src={verifiedIcon} width="16" height="16" alt="" />
+              </span>
+            )}
+            {supportUrl && (
+              <a
+                className="rv-sub-dialog__tag"
+                href={supportUrl}
+                onClick={(event) => {
+                  /* Ссылку открывает приложение во внешнем браузере: окно Wails —
+                     не вкладка, уходить из него страницей нельзя. */
+                  event.preventDefault();
+                  onSupport?.(supportUrl);
+                }}
+              >
+                {text.support}
+                <Icon name="link" color="currentColor" />
+              </a>
+            )}
+          </span>
         ) : undefined
       }
       onClose={onClose}
     >
       <div className="rv-sub-dialog__fields">
         <label className="rv-sub-dialog__field">
-          <span className="rv-sub-dialog__label">{text.name}</span>
+          <span className="rv-sub-dialog__label">{official ? text.nameLocked : text.name}</span>
           <Input
             value={draftName}
+            disabled={official}
             onChange={(event) => setDraftName(event.target.value)}
           />
         </label>
@@ -130,7 +146,7 @@ export default function SubscriptionDialog({
           className="rv-sub-dialog__save"
           onClick={() =>
             onSave?.({
-              name: draftName.trim(),
+              name: official ? name : draftName.trim(),
               showOnHome: draftShow,
               intervalMinutes: draftInterval,
             })

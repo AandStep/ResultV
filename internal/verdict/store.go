@@ -152,12 +152,17 @@ func (s *Store) lookupKeysLocked(keys []string) (Record, bool) {
 	var found bool
 	// keys arrives most-specific-first, so a strict > keeps the first (most
 	// specific) candidate when two sources tie.
-	for _, key := range keys {
+	for i, key := range keys {
 		rec, ok := space[s.hash(key)]
 		if !ok {
 			continue
 		}
 		if !rec.ExpiresAt.IsZero() && !rec.ExpiresAt.After(now) {
+			continue
+		}
+		// Censors block single hosts by SNI, so a direct measurement says
+		// nothing about a sibling.
+		if i > 0 && rec.Source == SourceLearned && rec.Decision == Direct {
 			continue
 		}
 		if !found || rec.Source > best.Source {

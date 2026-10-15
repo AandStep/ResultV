@@ -194,8 +194,8 @@ export function ResolveAutoCandidates(arg1) {
   return window['go']['main']['App']['ResolveAutoCandidates'](arg1);
 }
 
-export function RestartAsAdmin() {
-  return window['go']['main']['App']['RestartAsAdmin']();
+export function RestartAsAdmin(arg1, arg2) {
+  return window['go']['main']['App']['RestartAsAdmin'](arg1, arg2);
 }
 
 export function SaveConfig(arg1) {
@@ -218,6 +218,10 @@ export function SetMode(arg1) {
   return window['go']['main']['App']['SetMode'](arg1);
 }
 
+export function SetResumeAfterElevation(arg1, arg2) {
+  return window['go']['main']['App']['SetResumeAfterElevation'](arg1, arg2);
+}
+
 export function SetStartInTray(arg1) {
   return window['go']['main']['App']['SetStartInTray'](arg1);
 }
@@ -236,6 +240,10 @@ export function StartUpdate() {
 
 export function SyncProxies(arg1) {
   return window['go']['main']['App']['SyncProxies'](arg1);
+}
+
+export function TakePendingConnect() {
+  return window['go']['main']['App']['TakePendingConnect']();
 }
 
 export function TakePendingDeepLink() {

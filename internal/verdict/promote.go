@@ -27,8 +27,8 @@ import (
 // the cost of a wrong promotion is a whole domain routed the wrong way.
 const PromoteThreshold = 3
 
-// notePromotionLocked records one learned child and lifts the answer onto the
-// parent once enough distinct children agree. Caller must hold s.mu.
+// notePromotionLocked records one learned child and lifts a proxy answer onto
+// the parent once enough distinct children agree. Caller must hold s.mu.
 func (s *Store) notePromotionLocked(key string, d Decision) {
 	parent := promotionParent(key)
 	if parent == "" {
@@ -60,6 +60,10 @@ func (s *Store) notePromotionLocked(key string, d Decision) {
 	// winner: a domain where some hosts work and some do not is exactly the
 	// case a blanket suffix rule gets wrong.
 	if len(kids) != agree {
+		return
+	}
+	// A lifted direct would keep every unmeasured sibling off the race.
+	if d != Proxy {
 		return
 	}
 	now := s.now()

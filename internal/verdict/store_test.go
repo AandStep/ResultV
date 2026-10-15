@@ -142,3 +142,39 @@ func TestUnknownDecisionIsNotStored(t *testing.T) {
 		t.Error("Unknown is the absence of a verdict, not a verdict")
 	}
 }
+
+func TestLearnedDirectParentDoesNotCoverChild(t *testing.T) {
+	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	s := testStore(&now)
+	s.SetNamespace("home")
+	s.Learn("example.com", Direct)
+
+	if rec, ok := s.Lookup("blocked.example.com"); ok {
+		t.Fatalf("a learned direct parent answered for its child: %v", rec.Decision)
+	}
+	if rec, ok := s.Lookup("example.com"); !ok || rec.Decision != Direct {
+		t.Fatalf("the parent lost its own verdict: %v, ok=%v", rec.Decision, ok)
+	}
+}
+
+func TestLearnedProxyParentStillCoversChild(t *testing.T) {
+	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	s := testStore(&now)
+	s.SetNamespace("home")
+	s.Learn("example.com", Proxy)
+
+	if rec, ok := s.Lookup("a.example.com"); !ok || rec.Decision != Proxy {
+		t.Fatalf("got %v, ok=%v, want proxy inherited", rec.Decision, ok)
+	}
+}
+
+func TestSeededDirectParentStillCoversChild(t *testing.T) {
+	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	s := testStore(&now)
+	s.SetNamespace("home")
+	s.Seed("example.com", Direct, SourceUser)
+
+	if rec, ok := s.Lookup("a.example.com"); !ok || rec.Decision != Direct {
+		t.Fatalf("got %v, ok=%v, want the user's direct inherited", rec.Decision, ok)
+	}
+}

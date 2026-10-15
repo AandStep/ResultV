@@ -16,6 +16,7 @@
 package system
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -39,4 +40,33 @@ func TestIsAutostartEnabled(t *testing.T) {
 	
 	result := IsAutostartEnabled()
 	t.Logf("IsAutostartEnabled: %v", result)
+}
+
+func TestElevationRelaunchArgsRoundTrip(t *testing.T) {
+	id := "sub 1/ё'\"&;"
+	args := append([]string{`C:\Program Files\ResultV\resultv.exe`}, ElevationRelaunchArgs(id, "tunnel")...)
+	for _, a := range args[1:] {
+		for _, r := range a {
+			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_=", r)) {
+				t.Fatalf("argument %q has %q, which a quoting layer would have to escape", a, r)
+			}
+		}
+	}
+	gotID, gotMode := ArgsResumeAfterElevation(args)
+	if gotID != id || gotMode != "tunnel" {
+		t.Fatalf("got (%q, %q), want (%q, tunnel)", gotID, gotMode, id)
+	}
+}
+
+func TestElevationRelaunchArgsEmpty(t *testing.T) {
+	if args := ElevationRelaunchArgs("", ""); len(args) != 0 {
+		t.Fatalf("plain restart must carry no args, got %v", args)
+	}
+	if args := ElevationRelaunchArgs("", "bogus"); len(args) != 0 {
+		t.Fatalf("unknown mode must be dropped, got %v", args)
+	}
+	id, mode := ArgsResumeAfterElevation([]string{"resultv", "--tray", "--mode=bogus", "--connect=%%%"})
+	if id != "" || mode != "" {
+		t.Fatalf("got (%q, %q), want nothing", id, mode)
+	}
 }
