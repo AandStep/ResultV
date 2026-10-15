@@ -106,7 +106,7 @@ After that the AppImage launches with a plain `./ResultV*.AppImage`.
 - **Smart mode** — only blocked resources go through the VPN, everything else goes direct. Lists are built from open sources (Re:filter, itdog and others), including Telegram and Discord voice subnets
 - **Global mode** — all traffic goes through the VPN, with site and app exclusions
 - Your own lists of **sites** and **apps** to send through the VPN or direct (apps by `.exe` name or file path)
-- **Routing profiles** — your own Direct / Proxy / Block rules for domains and IPs with `geosite:` / `geoip:` support, rule order, and import by link; a profile can also come from your subscription provider
+- **Routing profiles** (Global mode only) — your own Direct / Proxy / Block rules for domains and IPs with `geosite:` / `geoip:` support, rule order, and import by link; a profile can also come from your subscription provider
 - **Adaptive smart mode** (experimental) — the client detects blocking by itself instead of relying on a list
 
 **Subscriptions and servers**
@@ -147,7 +147,7 @@ After that the AppImage launches with a plain `./ResultV*.AppImage`.
 - If internet remains blocked after a crash or forced app termination, run in **PowerShell (Administrator)**:
   `Get-NetFirewallRule -DisplayName 'ResultV_KillSwitch*' -ErrorAction SilentlyContinue | Remove-NetFirewallRule`
 - Some subscription providers enforce **HWID device limits**; the app sends a stable `x-hwid` when fetching subscriptions and shows the reason if the provider returned an empty response due to the limit. Sending HWID can be turned off in settings.
-- **In case of issues**, please contact TG @resultpoint_manager and attach the saved event log.
+- **In case of issues**, write to the [community chat on Telegram](https://t.me/+nIOT_k5HJmo4YzUy) — tech support works there. Attach the saved event log.
 
 ---
 
@@ -197,7 +197,7 @@ In **Global mode** everything goes through the VPN and the lists become exclusio
 
 ### Routing profiles
 
-At the bottom of the Smart rules page are routing profiles: your own rule sets instead of the built-in lists. A profile can be created, imported by a link from the clipboard, or received from your subscription provider — it applies right away.
+At the bottom of the Smart rules page are routing profiles, your own rule sets: what goes direct, what goes through the VPN, and what gets blocked. A profile can be created, imported by a link from the clipboard, or received from your subscription provider — it applies right away. Profiles are available only in **Global mode**.
 
 <p align="center">
   <img src="docs/images/readme/routing-profiles-en.png" width="720" alt="Routing profiles">
