@@ -268,7 +268,7 @@ export const useDaemonControl = (
                 message: t("tunnel.adminMessage"),
                 variant: "warning",
                 confirmText: t("tunnel.restartAsAdmin"),
-                onConfirmAction: () => wailsAPI.restartAsAdmin(),
+                onConfirmAction: () => wailsAPI.restartAsAdmin(proxy?.id),
             });
             return false;
         },
@@ -483,7 +483,7 @@ export const useDaemonControl = (
                             message: t("tunnel.adminMessage"),
                             variant: "warning",
                             confirmText: t("tunnel.restartAsAdmin"),
-                            onConfirmAction: () => wailsAPI.restartAsAdmin(),
+                            onConfirmAction: () => wailsAPI.restartAsAdmin(targetProxy.id),
                         });
                         bumpGen();
                         isSwitchingRef.current = false;
@@ -826,7 +826,7 @@ export const useDaemonControl = (
                             message: t("tunnel.adminMessage"),
                             variant: "warning",
                             confirmText: t("tunnel.restartAsAdmin"),
-                            onConfirmAction: () => wailsAPI.restartAsAdmin(),
+                            onConfirmAction: () => wailsAPI.restartAsAdmin(proxy.id),
                         });
                         bumpGen();
                         isSwitchingRef.current = false;

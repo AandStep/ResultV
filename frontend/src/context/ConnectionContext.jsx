@@ -21,6 +21,7 @@ import { useLogContext } from "./LogContext";
 import { useDaemonPing } from "../hooks/useDaemonPing";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useDaemonControl } from "../hooks/useDaemonControl";
+import wailsAPI from "../utils/wailsAPI";
 
 const ConnectionContext = createContext();
 
@@ -144,6 +145,31 @@ export const ConnectionProvider = ({ children }) => {
             }
         })();
     }, [isProxyDead, activeProxy, selectAndConnect]);
+
+    // Перезапуск с правами администратора просили ради подключения — новый
+    // экземпляр доводит его сам. Go отдаёт сервер один раз и только после
+    // уборки хвостов прошлой сессии, поэтому после await читаем свежее
+    // состояние через ref.
+    const resumeTakenRef = useRef(false);
+    const resumeStateRef = useRef({});
+    resumeStateRef.current = { proxies, isConnected, selectAndConnect };
+    useEffect(() => {
+        if (!isConfigLoaded || resumeTakenRef.current) return;
+        resumeTakenRef.current = true;
+        (async () => {
+            const id = await wailsAPI.takePendingConnect();
+            if (!id) return;
+            const { proxies: list, isConnected: connected, selectAndConnect: connect } =
+                resumeStateRef.current;
+            if (connected || isSwitchingRef.current) return;
+            const proxy = list.find((p) => String(p.id) === String(id));
+            if (!proxy) {
+                addLog("После перезапуска с правами сервер для подключения не найден.", "warning");
+                return;
+            }
+            await connect(proxy);
+        })();
+    }, [isConfigLoaded, addLog]);
 
     const value = {
         isConnected,

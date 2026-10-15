@@ -149,6 +149,8 @@ export default function ServersPage({
                     variant={group.variant}
                     logo={group.logo}
                     title={group.title}
+                    verified={group.verified}
+                    verifiedTitle={group.verifiedTitle}
                     count={group.count}
                     subtitle={group.subtitle}
                     onClick={group.onToggle}

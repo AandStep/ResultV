@@ -66,6 +66,18 @@
   color: var(--rv-icon-hover);
 }
 
+.rv-sub-dialog__tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--rv-space-8);
+}
+
+.rv-sub-dialog__tag[data-kind="official"],
+.rv-sub-dialog__tag[data-kind="official"]:hover {
+  color: var(--rv-white-a50);
+  cursor: default;
+}
+
 .rv-sub-dialog__fields {
   display: flex;
   flex-direction: column;

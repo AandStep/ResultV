@@ -264,7 +264,35 @@ export const useAppConfig = (addLog) => {
 
         if (key === "mode") {
             if (modeApplyingRef.current) return;
+            // Режим без прав не применяется только у живого соединения — его
+            // и поднимаем после перезапуска.
+            const askRestart = (message) => {
+                addLog(message || t("tunnel.adminMessage"), "error");
+                showAlertDialog({
+                    title: t("tunnel.adminTitle"),
+                    message: t("tunnel.adminMessage"),
+                    variant: "warning",
+                    confirmText: t("tunnel.restartAsAdmin"),
+                    onConfirmAction: () =>
+                        wailsAPI.restartAsAdmin(settings.lastSelectedProxyId, value),
+                });
+            };
             modeApplyingRef.current = true;
+            if (value === "tunnel") {
+                let blocked = false;
+                try {
+                    if (!(await wailsAPI.isAdmin())) {
+                        blocked = !!(await wailsAPI.getStatus())?.isConnected;
+                    }
+                } catch {
+                    // Не смогли спросить — решит ядро, как раньше.
+                }
+                if (blocked) {
+                    modeApplyingRef.current = false;
+                    askRestart();
+                    return;
+                }
+            }
             setIsApplyingMode(true);
             setSettings((prev) => ({ ...prev, [key]: value }));
             try {
@@ -275,18 +303,7 @@ export const useAppConfig = (addLog) => {
                             ...prev,
                             [key]: previousValue,
                         }));
-                        addLog(
-                            result?.message ||
-                                t("tunnel.adminMessage"),
-                            "error",
-                        );
-                        showAlertDialog({
-                            title: t("tunnel.adminTitle"),
-                            message: t("tunnel.adminMessage"),
-                            variant: "warning",
-                            confirmText: t("tunnel.restartAsAdmin"),
-                            onConfirmAction: () => wailsAPI.restartAsAdmin(),
-                        });
+                        askRestart(result?.message);
                         return;
                     }
                     throw new Error(

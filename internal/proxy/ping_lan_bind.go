@@ -128,7 +128,7 @@ func preferLANBindIPv4() (net.IP, error) {
 	if err != nil {
 		return nil, err
 	}
-	var private, public []net.IP
+	var cands []lanBindCandidate
 	for _, ifi := range ifaces {
 		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
 			continue
@@ -158,20 +158,46 @@ func preferLANBindIPv4() (net.IP, error) {
 			if isEngineTunIPv4(ip4) {
 				continue
 			}
-			if isRFC1918(ip4) {
-				private = append(private, append(net.IP(nil), ip4...))
-			} else {
-				public = append(public, append(net.IP(nil), ip4...))
-			}
+			cands = append(cands, lanBindCandidate{ip: append(net.IP(nil), ip4...), ifIndex: ifi.Index})
 		}
 	}
-	if len(private) > 0 {
-		return private[0], nil
-	}
-	if len(public) > 0 {
-		return public[0], nil
+	if ip := chooseLANBindIPv4(cands, ipv4GatewayMetrics()); ip != nil {
+		return ip, nil
 	}
 	return nil, errors.New("no suitable LAN IPv4 for bind")
+}
+
+type lanBindCandidate struct {
+	ip      net.IP
+	ifIndex int
+}
+
+// chooseLANBindIPv4 takes the adapter with an IPv4 default gateway and the
+// lowest metric. A host-only adapter (WSL, Hyper-V) has a private address but
+// no way out, and binding to it fails every probe with "network unreachable".
+// gateways is nil when the platform cannot tell; then a private address wins.
+func chooseLANBindIPv4(cands []lanBindCandidate, gateways map[int]uint32) net.IP {
+	var best net.IP
+	var bestMetric uint32
+	for _, c := range cands {
+		metric, ok := gateways[c.ifIndex]
+		if ok && (best == nil || metric < bestMetric) {
+			best, bestMetric = c.ip, metric
+		}
+	}
+	if best != nil {
+		return best
+	}
+	var public net.IP
+	for _, c := range cands {
+		if isRFC1918(c.ip) {
+			return c.ip
+		}
+		if public == nil {
+			public = c.ip
+		}
+	}
+	return public
 }
 
 

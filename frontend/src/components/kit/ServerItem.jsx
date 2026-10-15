@@ -19,6 +19,7 @@
 import Icon from "./Icon";
 import Badge from "./Badge";
 import Flag from "./Flag";
+import verifiedIcon from "../../assets/ic_round-verified.svg";
 import "./ServerItem.css";
 
 export const SERVER_ITEM_VARIANTS = ["header", "row", "subitem", "myitem", "autoserver"];
@@ -100,6 +101,9 @@ export default function ServerItem({
   syncTitle,
   deleteTitle,
   favoriteTitle,
+  /* Отметка официальной подписки рядом с названием. */
+  verified = false,
+  verifiedTitle,
   onFavorite,
   onEdit,
   onSync,
@@ -168,7 +172,20 @@ export default function ServerItem({
         {isGroup ? (
           <div className="rv-server-item__details">
             <div className="rv-server-item__title-row">
-              <p className="rv-server-item__title">{title}</p>
+              {verified ? (
+                <div className="rv-server-item__title-verified">
+                  <p className="rv-server-item__title">{title}</p>
+                  <img
+                    src={verifiedIcon}
+                    width="16"
+                    height="16"
+                    alt={verifiedTitle}
+                    title={verifiedTitle}
+                  />
+                </div>
+              ) : (
+                <p className="rv-server-item__title">{title}</p>
+              )}
               {count != null && <Count value={count} />}
             </div>
             {subtitle && <p className="rv-server-item__subtitle">{subtitle}</p>}

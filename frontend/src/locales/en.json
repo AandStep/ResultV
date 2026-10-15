@@ -271,7 +271,7 @@
     "subscription_user_agent": {
       "title": "User agent",
       "desc": "Empty — the default ResultV header.",
-      "placeholder": "ResultV/3.5.4/Windows/11_10.0.26200"
+      "placeholder": "ResultV/3.5.5/Windows/11_10.0.26200"
     },
     "dns": {
       "title": "DNS Servers",
@@ -550,6 +550,8 @@
     "editSubscription": "Subscription settings",
     "support": "Support",
     "renameLabel": "Rename",
+    "official": "Official ResultV",
+    "officialNameLocked": "The official subscription is named by ResultV",
     "showOnHome": "Show on the home screen",
     "intervalLabel": "Custom refresh interval",
     "interval": {

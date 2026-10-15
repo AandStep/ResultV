@@ -329,12 +329,25 @@ export const wailsAPI = {
     }
   },
 
-  restartAsAdmin: async () => {
+  // proxyId — сервер, к которому новый экземпляр подключится сам; mode —
+  // режим, который он применит перед этим. Пустые — просто перезапуск.
+  restartAsAdmin: async (proxyId = "", mode = "") => {
     try {
-      await RestartAsAdmin();
+      await RestartAsAdmin(String(proxyId ?? ""), String(mode ?? ""));
     } catch (e) {
       console.error("wailsAPI.restartAsAdmin error:", e);
       throw e;
+    }
+  },
+
+  takePendingConnect: async () => {
+    try {
+      const take = window?.go?.main?.App?.TakePendingConnect;
+      if (!take) return "";
+      return (await take()) || "";
+    } catch (e) {
+      console.error("wailsAPI.takePendingConnect error:", e);
+      return "";
     }
   },
 

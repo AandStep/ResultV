@@ -133,6 +133,12 @@ type App struct {
 
 	startInTray bool
 
+	// What the previous instance was doing when it restarted elevated: the
+	// server to connect to and the mode to switch to. Consumed once.
+	resumeMu      sync.Mutex
+	resumeProxyID string
+	resumeMode    string
+
 	deepLinkMu      sync.Mutex
 	pendingDeepLink string
 
@@ -172,6 +178,53 @@ func (a *App) SetTrayIcon(icon []byte) {
 
 func (a *App) SetStartInTray(v bool) {
 	a.startInTray = v
+}
+
+// SetResumeAfterElevation is called from main() with what the previous
+// instance passed on its elevated relaunch.
+func (a *App) SetResumeAfterElevation(proxyID, mode string) {
+	a.resumeMu.Lock()
+	a.resumeProxyID = proxyID
+	a.resumeMode = mode
+	a.resumeMu.Unlock()
+}
+
+// applyResumeMode saves the mode the previous instance failed to switch to for
+// lack of rights, before the frontend reads the config.
+func (a *App) applyResumeMode() {
+	a.resumeMu.Lock()
+	mode := a.resumeMode
+	a.resumeMode = ""
+	a.resumeMu.Unlock()
+	if mode == "" || a.config == nil {
+		return
+	}
+	cfg := a.config.GetConfig()
+	if cfg.Settings.Mode == mode {
+		return
+	}
+	cfg.Settings.Mode = mode
+	if err := a.config.SaveConfig(cfg); err != nil {
+		a.log.Warning(fmt.Sprintf("[CONFIG] Не удалось сохранить режим после перезапуска с правами: %v", err))
+		return
+	}
+	a.log.Info(fmt.Sprintf("[CONFIG] Режим %s применён после перезапуска с правами администратора", mode))
+}
+
+// TakePendingConnect hands the frontend the server to connect to after an
+// elevated relaunch, once. It waits for startup leftover recovery first: the
+// connect must not race the cleanup of a previous session's TUN and DNS.
+func (a *App) TakePendingConnect() string {
+	a.resumeMu.Lock()
+	id := a.resumeProxyID
+	a.resumeProxyID = ""
+	a.resumeMu.Unlock()
+	if id == "" {
+		return ""
+	}
+	a.waitForLeftoverCleanup(15 * time.Second)
+	a.log.Info("[СИСТЕМА] Перезапуск с правами администратора: подключаемся к выбранному серверу")
+	return id
 }
 
 func (a *App) GetVersion() string {
@@ -449,6 +502,7 @@ func (a *App) startup(ctx context.Context) {
 	// Must run right after config.Init, while WasCreatedFresh still reflects
 	// what Init found on disk.
 	a.seedChangelogVersionOnFreshInstall()
+	a.applyResumeMode()
 
 	a.proxy = proxy.NewManager(a.log)
 	a.proxy.Init(a.ctx)
@@ -1154,6 +1208,17 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 	if a.proxy == nil {
 		return proxy.ConnectResultDTO{Success: false, Message: "proxy manager not initialized"}, nil
 	}
+	// Without rights the tunnel attempt is doomed: refuse before tearing down
+	// the live session, instead of failing and reconnecting it in proxy mode.
+	if mode == string(proxy.ProxyModeTunnel) && !system.IsAdmin() && a.proxy.GetStatus().CurrentProxy != nil {
+		return proxy.ConnectResultDTO{
+			Success:      false,
+			Message:      "Для tunnel режима нужны права администратора",
+			TunnelFailed: true,
+			Reason:       "administrator privileges required",
+			ErrorCode:    proxy.ConnectErrorTunPrivileges,
+		}, nil
+	}
 
 	// Notify popup + main frontend of the final state once the function
 	// returns. ApplyMode has multiple terminal branches (success, cancelled,
@@ -1572,13 +1637,15 @@ func (a *App) IsAdmin() bool {
 	return system.IsAdmin()
 }
 
-func (a *App) RestartAsAdmin() error {
+// RestartAsAdmin relaunches elevated. A non-empty connectProxyID makes the new
+// instance connect to that server on its own; mode, when set, is applied first.
+func (a *App) RestartAsAdmin(connectProxyID string, mode string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("getting executable path: %w", err)
 	}
 
-	err = system.RestartAsAdmin(exe)
+	err = system.RestartAsAdmin(exe, system.ElevationRelaunchArgs(connectProxyID, mode)...)
 	if err == nil {
 		a.markQuitRequested()
 		wailsRuntime.Quit(a.ctx)
@@ -2265,6 +2332,19 @@ func isInsecureSubURL(subURL string) bool {
 	return !strings.HasPrefix(low, "https://")
 }
 
+const officialSubscriptionDomain = "result-proxy.ru"
+
+// isOfficialSubscriptionURL reports whether the subscription is ResultV's own:
+// an https address on result-proxy.ru or one of its subdomains.
+func isOfficialSubscriptionURL(subURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(subURL))
+	if err != nil || !strings.EqualFold(u.Scheme, "https") {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == officialSubscriptionDomain || strings.HasSuffix(host, "."+officialSubscriptionDomain)
+}
+
 // fetchSubscriptionFromURL fetches and parses a subscription. allowInsecure
 // must be true to accept http:// URLs; when set, we also suppress the
 // x-hwid header because sending a stable device identifier in plaintext is
@@ -2560,8 +2640,9 @@ func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
 	// A hand-picked name wins over the profile title: the user renamed this
 	// subscription precisely because the provider's own title was not what
 	// they wanted to see in the list.
+	official := isOfficialSubscriptionURL(sub.URL)
 	displayName := sub.Name
-	if res.ProfileTitle != "" && !sub.NameOverridden {
+	if res.ProfileTitle != "" && (official || !sub.NameOverridden) {
 		displayName = res.ProfileTitle
 	}
 	for i := range entries {
@@ -2576,7 +2657,7 @@ func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
 			cfg.Subscriptions[i].TrafficDownload = res.Download
 			cfg.Subscriptions[i].TrafficTotal = res.Total
 			cfg.Subscriptions[i].ExpireUnix = res.ExpireUnix
-			if res.ProfileTitle != "" && !cfg.Subscriptions[i].NameOverridden {
+			if res.ProfileTitle != "" && (official || !cfg.Subscriptions[i].NameOverridden) {
 				cfg.Subscriptions[i].Name = res.ProfileTitle
 			}
 			if res.IconURL != "" {
@@ -2763,7 +2844,7 @@ func (a *App) UpdateSubscription(subID, name string, showOnHome bool, updateInte
 
 	sub := &cfg.Subscriptions[idx]
 	trimmed := strings.TrimSpace(name)
-	if trimmed != "" && trimmed != sub.Name {
+	if trimmed != "" && trimmed != sub.Name && !isOfficialSubscriptionURL(sub.URL) {
 		sub.Name = trimmed
 		sub.NameOverridden = true
 		for i := range cfg.Proxies {

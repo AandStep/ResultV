@@ -103,7 +103,7 @@ export function ResetLeftoverReport():Promise<string>;
 
 export function ResolveAutoCandidates(arg1:string):Promise<Array<config.ProxyEntry>>;
 
-export function RestartAsAdmin():Promise<void>;
+export function RestartAsAdmin(arg1:string,arg2:string):Promise<void>;
 
 export function SaveConfig(arg1:config.AppConfig):Promise<void>;
 
@@ -115,6 +115,8 @@ export function SetAutostart(arg1:boolean):Promise<void>;
 
 export function SetMode(arg1:string):Promise<void>;
 
+export function SetResumeAfterElevation(arg1:string,arg2:string):Promise<void>;
+
 export function SetStartInTray(arg1:boolean):Promise<void>;
 
 export function SetTrayIcon(arg1:Array<number>):Promise<void>;
@@ -124,6 +126,8 @@ export function ShouldShowChangelog():Promise<boolean>;
 export function StartUpdate():Promise<void>;
 
 export function SyncProxies(arg1:Array<config.ProxyEntry>):Promise<void>;
+
+export function TakePendingConnect():Promise<string>;
 
 export function TakePendingDeepLink():Promise<Record<string, string>>;
 

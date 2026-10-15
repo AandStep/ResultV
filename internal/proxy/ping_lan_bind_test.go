@@ -68,3 +68,26 @@ func TestPingProxyUDPLANBind_ReturnsLanBindUnavailableWhenNoInterface(t *testing
 		t.Fatalf("unexpected result: latency=%d reachable=%v reason=%q", latency, reachable, reason)
 	}
 }
+
+func TestChooseLANBindIPv4_PrefersAdapterWithGateway(t *testing.T) {
+	cands := []lanBindCandidate{
+		{ip: net.ParseIP("26.122.154.131").To4(), ifIndex: 13},
+		{ip: net.ParseIP("172.26.0.1").To4(), ifIndex: 47},
+		{ip: net.ParseIP("192.168.0.12").To4(), ifIndex: 3},
+	}
+	got := chooseLANBindIPv4(cands, map[int]uint32{13: 9256, 3: 25})
+	if !got.Equal(net.ParseIP("192.168.0.12")) {
+		t.Fatalf("got %v, want 192.168.0.12", got)
+	}
+}
+
+func TestChooseLANBindIPv4_WithoutGatewayInfoPrefersPrivate(t *testing.T) {
+	cands := []lanBindCandidate{
+		{ip: net.ParseIP("26.122.154.131").To4(), ifIndex: 13},
+		{ip: net.ParseIP("192.168.0.12").To4(), ifIndex: 3},
+	}
+	got := chooseLANBindIPv4(cands, nil)
+	if !got.Equal(net.ParseIP("192.168.0.12")) {
+		t.Fatalf("got %v, want 192.168.0.12", got)
+	}
+}

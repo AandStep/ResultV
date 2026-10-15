@@ -499,3 +499,48 @@ func TestPickIconFromSubscriptionHTMLAppleTouchAssetsPath(t *testing.T) {
 		t.Fatalf("expected empty result when the only candidate is http:// (SSRF-blocked), got %q", got)
 	}
 }
+
+func TestIsOfficialSubscriptionURL(t *testing.T) {
+	cases := map[string]bool{
+		"https://result-proxy.ru/s/abc":           true,
+		"https://sub.result-proxy.ru:8443/s/abc":  true,
+		"HTTPS://Sub.Result-Proxy.RU/s/abc":       true,
+		"http://sub.result-proxy.ru/s/abc":        false,
+		"https://result-proxy.ru.example.com/s/a": false,
+		"https://notresult-proxy.ru/s/abc":        false,
+		"https://example.com/s/abc":               false,
+		"":                                        false,
+	}
+	for in, want := range cases {
+		if got := isOfficialSubscriptionURL(in); got != want {
+			t.Errorf("isOfficialSubscriptionURL(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+func TestUpdateSubscriptionKeepsOfficialName(t *testing.T) {
+	a := newTestApp(t, t.TempDir())
+	cfg := a.config.GetConfig()
+	cfg.Subscriptions = []config.Subscription{
+		{ID: "official", Name: "ResultV", URL: "https://sub.result-proxy.ru/s/abc"},
+		{ID: "other", Name: "Provider", URL: "https://example.com/s/abc"},
+	}
+	if err := a.config.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.UpdateSubscription("official", "Renamed", true, -1); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.UpdateSubscription("other", "Renamed", true, -1); err != nil {
+		t.Fatal(err)
+	}
+
+	subs := a.config.GetConfig().Subscriptions
+	if subs[0].Name != "ResultV" || subs[0].NameOverridden {
+		t.Fatalf("official subscription renamed: %+v", subs[0])
+	}
+	if subs[1].Name != "Renamed" || !subs[1].NameOverridden {
+		t.Fatalf("regular subscription not renamed: %+v", subs[1])
+	}
+}
