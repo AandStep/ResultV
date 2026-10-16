@@ -15,12 +15,9 @@
 
 package proxy
 
-import (
-	"testing"
-	"time"
-)
+import "testing"
 
-func TestTunnelDNSFallsThroughToNextConfiguredResolver(t *testing.T) {
+func TestTunnelDNSAsksConfiguredResolversInParallel(t *testing.T) {
 	cfg := EngineConfig{
 		Mode:        ProxyModeTunnel,
 		RoutingMode: ModeGlobal,
@@ -35,36 +32,39 @@ func TestTunnelDNSFallsThroughToNextConfiguredResolver(t *testing.T) {
 	}
 
 	if dns.Final != "custom-1" {
-		t.Fatalf("Final должен указывать на обёртку первого резолвера, получено %q", dns.Final)
+		t.Fatalf("Final должен указывать на обёртку резолверов из конфига, получено %q", dns.Final)
 	}
-	wrapper := byTag[dns.Final]
-	var addrs []string
-	for _, leg := range wrapper.Servers {
-		addrs = append(addrs, byTag[leg].Server)
+	top := byTag[dns.Final]
+	if top.Type != "fallback" || top.Strategy != "parallel" {
+		t.Fatalf("резолверы должны спрашиваться параллельно, получено %s/%s", top.Type, top.Strategy)
 	}
-	want := []string{"10.8.0.1", "10.8.0.1", "9.9.9.9", "9.9.9.9"}
-	if len(addrs) != len(want) {
-		t.Fatalf("ноги обёртки: %v, ожидались адреса %v", wrapper.Servers, want)
-	}
-	for i := range want {
-		if addrs[i] != want[i] {
-			t.Fatalf("ноги обёртки идут к %v, ожидались %v", addrs, want)
-		}
+	if top.Timeout == "" {
+		t.Error("у верхней обёртки нет timeout")
 	}
 
-	timeout, err := time.ParseDuration(wrapper.Timeout)
-	if err != nil {
-		t.Fatalf("timeout %q: %v", wrapper.Timeout, err)
+	want := []string{"10.8.0.1", "9.9.9.9"}
+	if len(top.Servers) != len(want) {
+		t.Fatalf("члены обёртки: %v, ожидалось по одному на резолвер %v", top.Servers, want)
 	}
-	if perLeg := timeout / time.Duration(len(wrapper.Servers)); perLeg < 2500*time.Millisecond {
-		t.Errorf("первой ноге досталось %v — меньше, чем у одиночного резолвера", perLeg)
+	for i, member := range top.Servers {
+		resolver := byTag[member]
+		if resolver.Type != "fallback" || resolver.Strategy != "sequential" || len(resolver.Servers) != 2 {
+			t.Fatalf("%s: ожидалась последовательная обёртка из двух ног, получено %+v", member, resolver)
+		}
+		doh, plain := byTag[resolver.Servers[0]], byTag[resolver.Servers[1]]
+		if doh.Type != "https" || plain.Type != "tcp" {
+			t.Errorf("%s: ноги %s/%s, ожидались https/tcp", member, doh.Type, plain.Type)
+		}
+		if doh.Server != want[i] || plain.Server != want[i] {
+			t.Errorf("%s: ноги идут к %s/%s, ожидался %s", member, doh.Server, plain.Server, want[i])
+		}
 	}
 
 	seen := make(map[string]bool)
 	for _, server := range dns.Servers {
-		for _, leg := range server.Servers {
-			if !seen[leg] {
-				t.Errorf("обёртка %q ссылается на %q раньше, чем он объявлен", server.Tag, leg)
+		for _, member := range server.Servers {
+			if !seen[member] {
+				t.Errorf("обёртка %q ссылается на %q раньше, чем он объявлен", server.Tag, member)
 			}
 		}
 		seen[server.Tag] = true

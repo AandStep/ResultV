@@ -1630,34 +1630,50 @@ type tunnelResolver struct {
 	port   int
 }
 
-// tunnelDNSResolvers chains resolvers in the order given: the wrapper of each
-// one falls through to the legs of every resolver after it, so a resolver that
-// refuses both DoH and TCP hands over to the next one instead of failing the
-// lookup. The core splits the wrapper's timeout evenly across the legs left,
-// hence the timeout grows with the chain.
+// tunnelDNSResolvers asks the resolvers in parallel, each one over DoH and then
+// TCP, and takes the first answer. A sequential chain paid the full timeout of
+// a dead resolver on every lookup before reaching the next one. With several
+// resolvers the parallel wrapper takes the first resolver's tag, so rules and
+// Final keep pointing at the same name.
 func tunnelDNSResolvers(resolvers []tunnelResolver, detour string) []SBDNSServer {
-	const perResolverTimeout = 5 * time.Second
-	servers := make([]SBDNSServer, 0, 3*len(resolvers))
-	var legs []string
+	const timeout = "5s"
+	servers := make([]SBDNSServer, 0, 3*len(resolvers)+1)
 	for _, r := range resolvers {
 		servers = append(servers,
 			SBDNSServer{Type: "https", Tag: r.tag + "-doh", Server: r.server, Detour: detour},
 			SBDNSServer{Type: "tcp", Tag: r.tag + "-tcp", Server: r.server, ServerPort: r.port, Detour: detour},
 		)
-		legs = append(legs, r.tag+"-doh", r.tag+"-tcp")
 	}
-	for i, r := range resolvers {
-		chain := legs[2*i:]
-		servers = append(servers, SBDNSServer{
+	if len(resolvers) == 1 {
+		r := resolvers[0]
+		return append(servers, SBDNSServer{
 			Type:          "fallback",
 			Tag:           r.tag,
-			Servers:       append([]string(nil), chain...),
+			Servers:       []string{r.tag + "-doh", r.tag + "-tcp"},
 			Strategy:      "sequential",
-			Timeout:       (perResolverTimeout * time.Duration(len(chain)/2)).String(),
+			Timeout:       timeout,
 			throughDetour: detour,
 		})
 	}
-	return servers
+	members := make([]string, 0, len(resolvers))
+	for _, r := range resolvers {
+		servers = append(servers, SBDNSServer{
+			Type:     "fallback",
+			Tag:      r.tag + "-seq",
+			Servers:  []string{r.tag + "-doh", r.tag + "-tcp"},
+			Strategy: "sequential",
+			Timeout:  timeout,
+		})
+		members = append(members, r.tag+"-seq")
+	}
+	return append(servers, SBDNSServer{
+		Type:          "fallback",
+		Tag:           resolvers[0].tag,
+		Servers:       members,
+		Strategy:      "parallel",
+		Timeout:       timeout,
+		throughDetour: detour,
+	})
 }
 
 func buildDNS(cfg EngineConfig) *SBDNS {
