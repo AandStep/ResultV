@@ -60,7 +60,7 @@ func TestTunnelDNSReachesNodeOverDoHNotBareTCP(t *testing.T) {
 			if wrapper.Timeout == "" {
 				t.Error("без timeout зависшая нога висит вечно — ровно то, что чинится")
 			}
-			if wrapper.Strategy == "parallel" {
+			for len(wrapper.Servers) > 0 && byTag[wrapper.Servers[0]].Type == "fallback" {
 				wrapper = byTag[wrapper.Servers[0]]
 			}
 			if len(wrapper.Servers) != 2 {

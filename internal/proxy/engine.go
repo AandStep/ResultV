@@ -1621,7 +1621,7 @@ func firstDetourServerTag(servers []SBDNSServer, detour string) string {
 // resolver pinned to a non-standard DNS port keeps that port on the tcp leg
 // while DoH tries the standard one and, failing that, hands over.
 func tunnelDNSResolver(tag, server string, port int, detour string) []SBDNSServer {
-	return tunnelDNSResolvers([]tunnelResolver{{tag, server, port}}, detour)
+	return tunnelDNSResolvers([]tunnelResolver{{tag, server, port}}, nil, detour)
 }
 
 type tunnelResolver struct {
@@ -1632,27 +1632,65 @@ type tunnelResolver struct {
 
 // tunnelDNSResolvers asks the resolvers in parallel, each one over DoH and then
 // TCP, and takes the first answer. A sequential chain paid the full timeout of
-// a dead resolver on every lookup before reaching the next one. With several
-// resolvers the parallel wrapper takes the first resolver's tag, so rules and
-// Final keep pointing at the same name.
-func tunnelDNSResolvers(resolvers []tunnelResolver, detour string) []SBDNSServer {
-	const timeout = "5s"
-	servers := make([]SBDNSServer, 0, 3*len(resolvers)+1)
+// a dead resolver on every lookup before reaching the next one.
+//
+// backups are asked only after the resolvers have failed or spent
+// configuredDNSTimeout: an answer from a live configured resolver, NXDOMAIN
+// included, is final, so names only it knows keep resolving.
+//
+// The group that rules and Final point at takes the first resolver's tag.
+func tunnelDNSResolvers(resolvers, backups []tunnelResolver, detour string) []SBDNSServer {
+	servers := tunnelDNSLegs(resolvers, detour)
+	if len(backups) == 0 {
+		servers = tunnelDNSGroup(servers, resolvers, resolvers[0].tag, tunnelDNSTimeout)
+		servers[len(servers)-1].throughDetour = detour
+		return servers
+	}
+	servers = append(servers, tunnelDNSLegs(backups, detour)...)
+	servers = tunnelDNSGroup(servers, resolvers, configuredDNSGroupTag(resolvers), configuredDNSTimeout)
+	servers = tunnelDNSGroup(servers, backups, backupDNSGroupTag, tunnelDNSTimeout)
+	return append(servers, SBDNSServer{
+		Type:          "fallback",
+		Tag:           resolvers[0].tag,
+		Servers:       []string{configuredDNSGroupTag(resolvers), backupDNSGroupTag},
+		Strategy:      "sequential",
+		Timeout:       "6s",
+		throughDetour: detour,
+	})
+}
+
+const (
+	tunnelDNSTimeout     = "5s"
+	configuredDNSTimeout = "1s"
+	backupDNSGroupTag    = "backup"
+)
+
+var backupDNSResolvers = []tunnelResolver{{"backup-google", "8.8.8.8", 0}, {"backup-cloudflare", "1.1.1.1", 0}}
+
+func configuredDNSGroupTag(resolvers []tunnelResolver) string {
+	return resolvers[0].tag + "-cfg"
+}
+
+func tunnelDNSLegs(resolvers []tunnelResolver, detour string) []SBDNSServer {
+	servers := make([]SBDNSServer, 0, 2*len(resolvers))
 	for _, r := range resolvers {
 		servers = append(servers,
 			SBDNSServer{Type: "https", Tag: r.tag + "-doh", Server: r.server, Detour: detour},
 			SBDNSServer{Type: "tcp", Tag: r.tag + "-tcp", Server: r.server, ServerPort: r.port, Detour: detour},
 		)
 	}
+	return servers
+}
+
+func tunnelDNSGroup(servers []SBDNSServer, resolvers []tunnelResolver, tag, timeout string) []SBDNSServer {
 	if len(resolvers) == 1 {
 		r := resolvers[0]
 		return append(servers, SBDNSServer{
-			Type:          "fallback",
-			Tag:           r.tag,
-			Servers:       []string{r.tag + "-doh", r.tag + "-tcp"},
-			Strategy:      "sequential",
-			Timeout:       timeout,
-			throughDetour: detour,
+			Type:     "fallback",
+			Tag:      tag,
+			Servers:  []string{r.tag + "-doh", r.tag + "-tcp"},
+			Strategy: "sequential",
+			Timeout:  timeout,
 		})
 	}
 	members := make([]string, 0, len(resolvers))
@@ -1667,13 +1705,47 @@ func tunnelDNSResolvers(resolvers []tunnelResolver, detour string) []SBDNSServer
 		members = append(members, r.tag+"-seq")
 	}
 	return append(servers, SBDNSServer{
-		Type:          "fallback",
-		Tag:           resolvers[0].tag,
-		Servers:       members,
-		Strategy:      "parallel",
-		Timeout:       timeout,
-		throughDetour: detour,
+		Type:     "fallback",
+		Tag:      tag,
+		Servers:  members,
+		Strategy: "parallel",
+		Timeout:  timeout,
 	})
+}
+
+// tunnelDNSPlan names the resolvers tunnel mode asks: the configured ones with
+// the public backups behind them, or the public ones alone when none is set.
+func tunnelDNSPlan(cfg EngineConfig) (resolvers, backups []tunnelResolver) {
+	for i, raw := range cfg.DNSServers {
+		server, port := splitDNSServer(raw)
+		if server == "" {
+			continue
+		}
+		resolvers = append(resolvers, tunnelResolver{fmt.Sprintf("custom-%d", i+1), server, port})
+	}
+	if len(resolvers) == 0 {
+		return []tunnelResolver{{"google", "8.8.8.8", 0}, {"cloudflare", "1.1.1.1", 0}}, nil
+	}
+	return resolvers, backupDNSFor(resolvers)
+}
+
+// backupDNSFor returns the public resolvers not already among the configured
+// ones.
+func backupDNSFor(resolvers []tunnelResolver) []tunnelResolver {
+	var backups []tunnelResolver
+	for _, b := range backupDNSResolvers {
+		configured := false
+		for _, r := range resolvers {
+			if r.server == b.server {
+				configured = true
+				break
+			}
+		}
+		if !configured {
+			backups = append(backups, b)
+		}
+	}
+	return backups
 }
 
 func buildDNS(cfg EngineConfig) *SBDNS {
@@ -1695,19 +1767,8 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		// DNS-over-TCP leg and the fallback wrapper rules point at. Read its
 		// comment before changing the shape: a bare tcp server is what stopped
 		// answering on engine 1.14.
-		var resolvers []tunnelResolver
-		if len(cfg.DNSServers) > 0 {
-			for i, raw := range cfg.DNSServers {
-				server, port := splitDNSServer(raw)
-				if server == "" {
-					continue
-				}
-				resolvers = append(resolvers, tunnelResolver{fmt.Sprintf("custom-%d", i+1), server, port})
-			}
-		} else {
-			resolvers = []tunnelResolver{{"google", "8.8.8.8", 0}, {"cloudflare", "1.1.1.1", 0}}
-		}
-		servers := tunnelDNSResolvers(resolvers, detour)
+		resolvers, backups := tunnelDNSPlan(cfg)
+		servers := tunnelDNSResolvers(resolvers, backups, detour)
 		servers = append(servers, SBDNSServer{Type: "local", Tag: "local"})
 
 		dns := newSBDNS(servers)

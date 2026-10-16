@@ -15,7 +15,10 @@
 
 package proxy
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestTunnelDNSAsksConfiguredResolversInParallel(t *testing.T) {
 	cfg := EngineConfig{
@@ -34,7 +37,7 @@ func TestTunnelDNSAsksConfiguredResolversInParallel(t *testing.T) {
 	if dns.Final != "custom-1" {
 		t.Fatalf("Final должен указывать на обёртку резолверов из конфига, получено %q", dns.Final)
 	}
-	top := byTag[dns.Final]
+	top := byTag[byTag[dns.Final].Servers[0]]
 	if top.Type != "fallback" || top.Strategy != "parallel" {
 		t.Fatalf("резолверы должны спрашиваться параллельно, получено %s/%s", top.Type, top.Strategy)
 	}
@@ -69,4 +72,91 @@ func TestTunnelDNSAsksConfiguredResolversInParallel(t *testing.T) {
 		}
 		seen[server.Tag] = true
 	}
+}
+
+func TestTunnelDNSFallsBackToPublicResolversAfterConfigOnes(t *testing.T) {
+	cfg := EngineConfig{
+		Mode:        ProxyModeTunnel,
+		RoutingMode: ModeGlobal,
+		Proxy:       ProxyConfig{Type: "amneziawg", IP: "1.2.3.4", Port: 51820},
+		DNSServers:  []string{"10.8.0.1"},
+	}
+	dns := buildDNS(cfg)
+
+	byTag := make(map[string]SBDNSServer, len(dns.Servers))
+	for _, server := range dns.Servers {
+		byTag[server.Tag] = server
+	}
+
+	top := byTag[dns.Final]
+	if dns.Final != "custom-1" || top.Strategy != "sequential" || len(top.Servers) != 2 {
+		t.Fatalf("Final %q: ожидалась последовательная пара «конфиг, запасной», получено %+v", dns.Final, top)
+	}
+
+	configured := byTag[top.Servers[0]]
+	if configured.Timeout != "1s" {
+		t.Errorf("резолверу из конфига отведено %q, ожидалась 1s", configured.Timeout)
+	}
+	if addrs := dnsLegAddrs(byTag, configured); len(addrs) != 1 || addrs[0] != "10.8.0.1" {
+		t.Errorf("первым должен спрашиваться только резолвер из конфига, получено %v", addrs)
+	}
+
+	backup := byTag[top.Servers[1]]
+	if addrs := dnsLegAddrs(byTag, backup); len(addrs) != 2 || addrs[0] != "8.8.8.8" || addrs[1] != "1.1.1.1" {
+		t.Errorf("запасные резолверы: %v, ожидались 8.8.8.8 и 1.1.1.1", addrs)
+	}
+	for _, server := range dns.Servers {
+		if server.Detour != "" && server.Detour != "proxy" {
+			t.Errorf("%s идёт мимо узла: detour=%q", server.Tag, server.Detour)
+		}
+	}
+}
+
+func TestTunnelDNSBackupSkipsResolversAlreadyConfigured(t *testing.T) {
+	cfg := EngineConfig{
+		Mode:        ProxyModeTunnel,
+		RoutingMode: ModeGlobal,
+		Proxy:       ProxyConfig{Type: "amneziawg", IP: "1.2.3.4", Port: 51820},
+		DNSServers:  []string{"8.8.8.8", "1.1.1.1"},
+	}
+	dns := buildDNS(cfg)
+	for _, server := range dns.Servers {
+		if strings.HasPrefix(server.Tag, backupDNSGroupTag) {
+			t.Errorf("при 8.8.8.8 и 1.1.1.1 в конфиге запасной не нужен, а появился %q", server.Tag)
+		}
+	}
+}
+
+func TestTunnelDNSWithoutConfiguredResolversHasNoBackupLayer(t *testing.T) {
+	cfg := EngineConfig{
+		Mode:        ProxyModeTunnel,
+		RoutingMode: ModeGlobal,
+		Proxy:       ProxyConfig{Type: "amneziawg", IP: "1.2.3.4", Port: 51820},
+	}
+	dns := buildDNS(cfg)
+	for _, server := range dns.Servers {
+		if server.Timeout == "1s" {
+			t.Errorf("без DNS в конфиге никому не урезают время, а %q получил 1s", server.Tag)
+		}
+	}
+}
+
+func dnsLegAddrs(byTag map[string]SBDNSServer, group SBDNSServer) []string {
+	var addrs []string
+	seen := map[string]bool{}
+	var walk func(SBDNSServer)
+	walk = func(s SBDNSServer) {
+		if s.Type != "fallback" {
+			if !seen[s.Server] {
+				seen[s.Server] = true
+				addrs = append(addrs, s.Server)
+			}
+			return
+		}
+		for _, member := range s.Servers {
+			walk(byTag[member])
+		}
+	}
+	walk(group)
+	return addrs
 }
