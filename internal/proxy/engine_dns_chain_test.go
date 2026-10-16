@@ -89,8 +89,8 @@ func TestTunnelDNSFallsBackToPublicResolversAfterConfigOnes(t *testing.T) {
 	}
 
 	top := byTag[dns.Final]
-	if dns.Final != "custom-1" || top.Strategy != "sequential" || len(top.Servers) != 2 {
-		t.Fatalf("Final %q: ожидалась последовательная пара «конфиг, запасной», получено %+v", dns.Final, top)
+	if dns.Final != "custom-1" || top.Type != dnsBreakerType || len(top.Servers) != 2 {
+		t.Fatalf("Final %q: ожидался предохранитель над парой «конфиг, запасной», получено %+v", dns.Final, top)
 	}
 
 	configured := byTag[top.Servers[0]]

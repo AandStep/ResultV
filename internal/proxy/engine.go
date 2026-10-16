@@ -1636,7 +1636,8 @@ type tunnelResolver struct {
 //
 // backups are asked only after the resolvers have failed or spent
 // configuredDNSTimeout: an answer from a live configured resolver, NXDOMAIN
-// included, is final, so names only it knows keep resolving.
+// included, is final, so names only it knows keep resolving. The dnsBreaker on
+// top stops waiting for configured resolvers that keep failing.
 //
 // The group that rules and Final point at takes the first resolver's tag.
 func tunnelDNSResolvers(resolvers, backups []tunnelResolver, detour string) []SBDNSServer {
@@ -1650,11 +1651,9 @@ func tunnelDNSResolvers(resolvers, backups []tunnelResolver, detour string) []SB
 	servers = tunnelDNSGroup(servers, resolvers, configuredDNSGroupTag(resolvers), configuredDNSTimeout)
 	servers = tunnelDNSGroup(servers, backups, backupDNSGroupTag, tunnelDNSTimeout)
 	return append(servers, SBDNSServer{
-		Type:          "fallback",
+		Type:          dnsBreakerType,
 		Tag:           resolvers[0].tag,
 		Servers:       []string{configuredDNSGroupTag(resolvers), backupDNSGroupTag},
-		Strategy:      "sequential",
-		Timeout:       "6s",
 		throughDetour: detour,
 	})
 }

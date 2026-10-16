@@ -1901,8 +1901,8 @@ func TestBuildDNS_GlobalModeDefaultsToFallbackWrapper(t *testing.T) {
 				final = &dns.Servers[i]
 			}
 		}
-		if final == nil || final.Type != "fallback" {
-			t.Fatalf("dns=%v: Final=%q must name the fallback wrapper", servers, dns.Final)
+		if final == nil || (final.Type != "fallback" && final.Type != dnsBreakerType) {
+			t.Fatalf("dns=%v: Final=%q must name a wrapper, not a bare leg", servers, dns.Final)
 		}
 	}
 }

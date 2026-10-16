@@ -54,14 +54,14 @@ func TestTunnelDNSReachesNodeOverDoHNotBareTCP(t *testing.T) {
 			if !ok {
 				t.Fatalf("сервер %q не объявлен", tunnelTag)
 			}
+			for len(wrapper.Servers) > 0 && byTag[wrapper.Servers[0]].Type == "fallback" {
+				wrapper = byTag[wrapper.Servers[0]]
+			}
 			if wrapper.Type != "fallback" {
 				t.Errorf("обёртка должна быть fallback, получено %q", wrapper.Type)
 			}
 			if wrapper.Timeout == "" {
 				t.Error("без timeout зависшая нога висит вечно — ровно то, что чинится")
-			}
-			for len(wrapper.Servers) > 0 && byTag[wrapper.Servers[0]].Type == "fallback" {
-				wrapper = byTag[wrapper.Servers[0]]
 			}
 			if len(wrapper.Servers) != 2 {
 				t.Fatalf("ожидались две ноги, получено %v", wrapper.Servers)
