@@ -60,8 +60,8 @@ func TestTunnelDNSReachesNodeOverDoHNotBareTCP(t *testing.T) {
 			if wrapper.Timeout == "" {
 				t.Error("без timeout зависшая нога висит вечно — ровно то, что чинится")
 			}
-			if len(wrapper.Servers) != 2 {
-				t.Fatalf("ожидались две ноги, получено %v", wrapper.Servers)
+			if len(wrapper.Servers) < 2 {
+				t.Fatalf("ожидались минимум две ноги, получено %v", wrapper.Servers)
 			}
 
 			// DoH leads: it is the one remote transport the multiplexer does

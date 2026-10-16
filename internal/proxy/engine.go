@@ -1621,18 +1621,43 @@ func firstDetourServerTag(servers []SBDNSServer, detour string) string {
 // resolver pinned to a non-standard DNS port keeps that port on the tcp leg
 // while DoH tries the standard one and, failing that, hands over.
 func tunnelDNSResolver(tag, server string, port int, detour string) []SBDNSServer {
-	return []SBDNSServer{
-		{Type: "https", Tag: tag + "-doh", Server: server, Detour: detour},
-		{Type: "tcp", Tag: tag + "-tcp", Server: server, ServerPort: port, Detour: detour},
-		{
-			Type:          "fallback",
-			Tag:           tag,
-			Servers:       []string{tag + "-doh", tag + "-tcp"},
-			Strategy:      "sequential",
-			Timeout:       "5s",
-			throughDetour: detour,
-		},
+	return tunnelDNSResolvers([]tunnelResolver{{tag, server, port}}, detour)
+}
+
+type tunnelResolver struct {
+	tag    string
+	server string
+	port   int
+}
+
+// tunnelDNSResolvers chains resolvers in the order given: the wrapper of each
+// one falls through to the legs of every resolver after it, so a resolver that
+// refuses both DoH and TCP hands over to the next one instead of failing the
+// lookup. The core splits the wrapper's timeout evenly across the legs left,
+// hence the timeout grows with the chain.
+func tunnelDNSResolvers(resolvers []tunnelResolver, detour string) []SBDNSServer {
+	const perResolverTimeout = 5 * time.Second
+	servers := make([]SBDNSServer, 0, 3*len(resolvers))
+	var legs []string
+	for _, r := range resolvers {
+		servers = append(servers,
+			SBDNSServer{Type: "https", Tag: r.tag + "-doh", Server: r.server, Detour: detour},
+			SBDNSServer{Type: "tcp", Tag: r.tag + "-tcp", Server: r.server, ServerPort: r.port, Detour: detour},
+		)
+		legs = append(legs, r.tag+"-doh", r.tag+"-tcp")
 	}
+	for i, r := range resolvers {
+		chain := legs[2*i:]
+		servers = append(servers, SBDNSServer{
+			Type:          "fallback",
+			Tag:           r.tag,
+			Servers:       append([]string(nil), chain...),
+			Strategy:      "sequential",
+			Timeout:       (perResolverTimeout * time.Duration(len(chain)/2)).String(),
+			throughDetour: detour,
+		})
+	}
+	return servers
 }
 
 func buildDNS(cfg EngineConfig) *SBDNS {
@@ -1650,25 +1675,24 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		// the tunnel for all protocols, eliminating the WFP race.
 		detour := "proxy"
 
-		// Every resolver below is emitted by tunnelDNSResolver as a DoH leg, a
+		// Every resolver below is emitted by tunnelDNSResolvers as a DoH leg, a
 		// DNS-over-TCP leg and the fallback wrapper rules point at. Read its
 		// comment before changing the shape: a bare tcp server is what stopped
 		// answering on engine 1.14.
-		servers := []SBDNSServer{}
+		var resolvers []tunnelResolver
 		if len(cfg.DNSServers) > 0 {
 			for i, raw := range cfg.DNSServers {
 				server, port := splitDNSServer(raw)
 				if server == "" {
 					continue
 				}
-				servers = append(servers, tunnelDNSResolver(fmt.Sprintf("custom-%d", i+1), server, port, detour)...)
+				resolvers = append(resolvers, tunnelResolver{fmt.Sprintf("custom-%d", i+1), server, port})
 			}
-			servers = append(servers, SBDNSServer{Type: "local", Tag: "local"})
 		} else {
-			servers = append(servers, tunnelDNSResolver("google", "8.8.8.8", 0, detour)...)
-			servers = append(servers, tunnelDNSResolver("cloudflare", "1.1.1.1", 0, detour)...)
-			servers = append(servers, SBDNSServer{Type: "local", Tag: "local"})
+			resolvers = []tunnelResolver{{"google", "8.8.8.8", 0}, {"cloudflare", "1.1.1.1", 0}}
 		}
+		servers := tunnelDNSResolvers(resolvers, detour)
+		servers = append(servers, SBDNSServer{Type: "local", Tag: "local"})
 
 		dns := newSBDNS(servers)
 
