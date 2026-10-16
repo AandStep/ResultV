@@ -19,6 +19,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The UAPI dump carries the private key and the preshared key. This file is
@@ -80,5 +81,26 @@ func TestWGStatsSamplerNoOpWithoutSink(t *testing.T) {
 func TestWGStatsReportsMissingEndpoint(t *testing.T) {
 	if _, err := wgStatsLine(context.Background()); err == nil {
 		t.Error("контекст без менеджера эндпоинтов должен давать ошибку")
+	}
+}
+
+func TestWGTraceLineReadsDeviceAndStackCounters(t *testing.T) {
+	now := time.Unix(1_000_100, 0)
+	dump := "private_key=secret\nlast_handshake_time_sec=1000090\ntx_bytes=2048000\nrx_bytes=512\n"
+	got := wgTraceLine(30*time.Second, dump, now, wgTraceStack{retransmits: 41, timeouts: 2, failed: 3, ok: true})
+	want := "[WG] 30с: отправлено 2000 КБ, получено 0 КБ, рукопожатие 10с назад; TCP через туннель: ретрансмитов 41, таймаутов 2, неудачных соединений 3"
+	if got != want {
+		t.Fatalf("строка:\n%s\nожидалась:\n%s", got, want)
+	}
+	if strings.Contains(got, "secret") {
+		t.Fatal("в видимый лог попал ключ")
+	}
+}
+
+func TestWGTraceLineWithoutHandshake(t *testing.T) {
+	got := wgTraceLine(10*time.Second, "last_handshake_time_sec=0\ntx_bytes=0\nrx_bytes=0\n", time.Unix(5, 0), wgTraceStack{})
+	want := "[WG] 10с: отправлено 0 КБ, получено 0 КБ, рукопожатия не было"
+	if got != want {
+		t.Fatalf("строка:\n%s\nожидалась:\n%s", got, want)
 	}
 }

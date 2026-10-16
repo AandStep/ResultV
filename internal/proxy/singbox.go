@@ -711,6 +711,7 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 	// back. Costs nothing in an ordinary session — coreLog is nil there.
 	startWGStatsSampler(boxCtx, boxCtx, coreLog)
 	watchConfiguredDNS(boxCtx, cfg, e.log)
+	startWGSessionTrace(boxCtx, e.log)
 
 	updateInboundPortValue.Store(int64(inboundPort(sbConfig, updateInboundTag)))
 	e.configPath = configPath
