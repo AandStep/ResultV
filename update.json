@@ -6,18 +6,9 @@
   },
   "releaseNotes": [
     {
-      "type": "fix",
-      "ru": "Пинг серверов выбирал неправильный адаптер для проверки соединения",
-      "en": "Fixed an issue where the ping servers were selecting the wrong adapter for connection checks"
-    },
-    {
-      "type": "feature",
-      "ru": "Теперь при перезапуске приложения с правами администратора после выбора сервера, сервер подключается автоматически",
-      "en": "Now, when the application is restarted with administrator rights after selecting a server, the server connects automatically"
-    }, {
       "type": "improve",
-      "ru": "Улучшена работа умного и адаптивного режима",
-      "en": "Improved the performance of the smart and adaptive mode"
+      "ru": "Улучшен выбор DNS для протоколов AWG: теперь выбирается наилучший из конфигурации, в случае если ни один DNS не отвечает выбирается стандартный DNS",
+      "en": "Improved DNS selection for AWG protocols: the best option from the configuration is now chosen, and if no DNS responds, the default DNS is used"
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",
