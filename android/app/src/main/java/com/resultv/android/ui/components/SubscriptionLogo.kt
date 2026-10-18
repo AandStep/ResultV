@@ -24,12 +24,12 @@ import com.resultv.android.vpn.decodePanelTitle
 
 /**
  * Square subscription avatar shared by the Proxies list and the Home group
- * headers. Shows the impVPN brand artwork when [usesImpLogo], otherwise a
- * neutral cloud-download glyph. По макету: плитка 40 на подложке LightGray,
- * знак 24 — отступ 8 со всех сторон.
+ * headers. Shows the ResultV logo for an [official] subscription, the impVPN
+ * brand artwork when [usesImpLogo], otherwise a neutral cloud-download glyph.
+ * По макету: плитка 40 на подложке LightGray, знак 24 — отступ 8 со всех сторон.
  */
 @Composable
-fun SubscriptionLogo(usesImpLogo: Boolean, size: Dp = 40.dp) {
+fun SubscriptionLogo(usesImpLogo: Boolean, size: Dp = 40.dp, official: Boolean = false) {
     Box(
         modifier = Modifier
             .size(size)
@@ -37,7 +37,14 @@ fun SubscriptionLogo(usesImpLogo: Boolean, size: Dp = 40.dp) {
             .background(RvColor.LightGray),
         contentAlignment = Alignment.Center,
     ) {
-        if (usesImpLogo) {
+        if (official) {
+            Image(
+                painter = painterResource(R.drawable.resultv_logo),
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.size(size * 0.6f),
+            )
+        } else if (usesImpLogo) {
             Image(
                 painter = painterResource(R.drawable.imp_logo),
                 contentDescription = null,
@@ -53,6 +60,19 @@ fun SubscriptionLogo(usesImpLogo: Boolean, size: Dp = 40.dp) {
             )
         }
     }
+}
+
+private const val OFFICIAL_SUBSCRIPTION_DOMAIN = "result-proxy.ru"
+
+/**
+ * Официальная подписка ResultV: https-адрес на result-proxy.ru или его
+ * поддомене. Как `isOfficialSubscription` на ПК (SubscriptionLogo.jsx).
+ */
+fun isOfficialSubscription(s: Subscription): Boolean {
+    val uri = runCatching { java.net.URI(s.url.trim()) }.getOrNull() ?: return false
+    if (!uri.scheme.equals("https", ignoreCase = true)) return false
+    val host = uri.host?.lowercase() ?: return false
+    return host == OFFICIAL_SUBSCRIPTION_DOMAIN || host.endsWith(".$OFFICIAL_SUBSCRIPTION_DOMAIN")
 }
 
 /**

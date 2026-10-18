@@ -322,6 +322,7 @@
     <string name="sub_expires_in_days">Expires in %1$d days</string>
     <string name="sub_expired">Expired</string>
     <string name="sub_valid_until">Until %1$s at %2$s</string>
+    <string name="sub_official">Official ResultV</string>
 
     <!-- Deep-link import toasts -->
     <string name="deeplink_err_decode">Could not decode the link</string>

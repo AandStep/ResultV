@@ -284,6 +284,7 @@
     <string name="sub_expires_in_days">Истекает через %1$d дн.</string>
     <string name="sub_expired">Срок истёк</string>
     <string name="sub_valid_until">До %1$s в %2$s</string>
+    <string name="sub_official">Официальная ResultV</string>
 
     <!-- Deep-link import -->
     <string name="deeplink_err_decode">Не удалось расшифровать ссылку</string>

@@ -1,5 +1,6 @@
 package com.resultv.android.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.BasicTextField
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -76,6 +78,8 @@ import com.resultv.android.theme.RvBorderBrush
 import com.resultv.android.theme.RvSpace
 import com.resultv.android.theme.SegoeUi
 import com.resultv.android.ui.components.HomeLook
+import com.resultv.android.ui.components.homeLook
+import com.resultv.android.vpn.VpnState
 import com.resultv.android.ui.components.ProfileEditSheet
 import com.resultv.android.ui.components.ProfileSortMenu
 import com.resultv.android.ui.components.ProfileSortMode
@@ -84,6 +88,7 @@ import com.resultv.android.ui.components.SubscriptionEditSheet
 import com.resultv.android.ui.components.SubscriptionLogo
 import com.resultv.android.ui.components.sortProfiles
 import com.resultv.android.ui.components.subscriptionUsesImpLogo
+import com.resultv.android.ui.components.isOfficialSubscription
 import com.resultv.android.vpn.CountryRepository
 import com.resultv.android.vpn.PingRepository
 import com.resultv.android.vpn.Profile
@@ -99,7 +104,6 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.concurrent.TimeUnit
 
 /**
  * Ключ-заглушка для «Мои серверы» в списке свёрнутых групп — той же
@@ -118,6 +122,8 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
     val pings by PingRepository.results.collectAsStateWithLifecycle()
     val pingInflight by PingRepository.inflight.collectAsStateWithLifecycle()
     val countries by CountryRepository.results.collectAsStateWithLifecycle()
+    val vpnStatus by VpnState.status.collectAsStateWithLifecycle()
+    val look = homeLook(vpnStatus)
     // Transient — these are dialogs/sheets that should always start dismissed.
     var pendingDeleteProfile by remember { mutableStateOf<Profile?>(null) }
     var pendingDeleteSub by remember { mutableStateOf<Subscription?>(null) }
@@ -222,9 +228,12 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
             // источнике, а не в порядке на экране.
             val standaloneCollapsed = !searching && STANDALONE_GROUP_ID in collapsedSubs
 
+            // Отступ снизу, как у «Настроек»: прокрученная до конца длинная
+            // подписка иначе упирается в нижнюю панель.
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = GroupLook.pagePadding),
             ) {
                 subscriptionBuckets.forEachIndexed { idx, (sub, subProfiles) ->
                     val collapsed = !searching && sub.id in collapsedSubs
@@ -291,6 +300,7 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
                                 GroupServerRowBlock(
                                     profile = p,
                                     activeId = state.activeId,
+                                    look = look,
                                     sample = pings[p.id],
                                     country = p.country ?: countries[p.id],
                                     isLoading = p.id in pingInflight,
@@ -331,6 +341,7 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
                             GroupServerRowBlock(
                                 profile = p,
                                 activeId = state.activeId,
+                                look = look,
                                 sample = pings[p.id],
                                 country = p.country ?: countries[p.id],
                                 isLoading = p.id in pingInflight,
@@ -496,6 +507,8 @@ private object GroupLook {
     val chip = 30.dp
     val chipIcon = 14.dp
     val chipGap = 4.dp
+    val verifiedGap = 4.dp
+    val verifiedIcon = 16.dp
     val countIcon = 12.dp
     val iconTint = RvColor.whiteA50
     val metaColor = RvColor.whiteA20
@@ -578,6 +591,7 @@ private fun SubscriptionHeaderBlock(
     val usesImpLogo = remember(subscription.id, subscription.name, subscription.source) {
         subscriptionUsesImpLogo(subscription)
     }
+    val official = remember(subscription.url) { isOfficialSubscription(subscription) }
 
     GroupHeaderBlock(
         modifier = modifier,
@@ -586,12 +600,24 @@ private fun SubscriptionHeaderBlock(
     ) {
         // Кнопки по макету прижаты к верху, вровень с лого, а не по центру.
         Row(horizontalArrangement = Arrangement.spacedBy(GroupLook.logoGap)) {
-            SubscriptionLogo(usesImpLogo = usesImpLogo)
+            SubscriptionLogo(usesImpLogo = usesImpLogo, official = official)
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(GroupLook.titleGap),
             ) {
-                GroupTitle(subscription.displayName)
+                if (official) {
+                    // Значок вплотную к названию, по его верху (Figma 6918:5274).
+                    Row(horizontalArrangement = Arrangement.spacedBy(GroupLook.verifiedGap)) {
+                        GroupTitle(subscription.displayName, modifier = Modifier.weight(1f, fill = false))
+                        Image(
+                            painter = painterResource(R.drawable.ic_verified),
+                            contentDescription = stringResource(R.string.sub_official),
+                            modifier = Modifier.size(GroupLook.verifiedIcon),
+                        )
+                    }
+                } else {
+                    GroupTitle(subscription.displayName)
+                }
                 if (usage.hasExpiry) ExpiryLine(usage)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(GroupLook.chipGap)) {
@@ -691,8 +717,9 @@ private fun GroupTitle(text: String, modifier: Modifier = Modifier) {
 }
 
 /**
- * «До 16.08.26 в 21:32» под названием подписки. Цвет предупреждает о сроке:
- * жёлтый за неделю до конца, красный с надписью «Истекла» — после.
+ * «До 16.08.26 в 21:32» под названием подписки — цветом остальной меты
+ * карточки, как в макете (Figma 6864:4900) и на ПК: срок не подкрашивается.
+ * После срока — надпись «Истекла» тем же цветом.
  */
 @Composable
 private fun ExpiryLine(usage: SubscriptionUsage) {
@@ -707,15 +734,10 @@ private fun ExpiryLine(usage: SubscriptionUsage) {
         }
         stringResource(R.string.sub_valid_until, date, time)
     }
-    val daysLeft = TimeUnit.MILLISECONDS.toDays(expireMs - System.currentTimeMillis())
     Text(
         text = text,
         style = GroupLook.metaStyle,
-        color = when {
-            usage.expired -> RvColor.Errors
-            daysLeft <= 7 -> RvColor.Warning
-            else -> GroupLook.metaColor
-        },
+        color = GroupLook.metaColor,
         maxLines = 1,
     )
 }
@@ -760,6 +782,11 @@ private fun ServerCount(count: Int) {
 private fun GroupServerRowBlock(
     profile: Profile,
     activeId: String?,
+    // Состояние туннеля. Выбранный сервер всегда на подложке — как наведённый
+    // на ПК, чтобы нажатие было видно сразу. Цвет состояния — только у
+    // выбранного и только по туннелю: жёлтый при подключении, зелёный, когда
+    // подключён; выбранный, но не запущенный — без зелёного.
+    look: HomeLook,
     sample: PingRepository.Sample?,
     country: String?,
     isLoading: Boolean,
@@ -787,11 +814,13 @@ private fun GroupServerRowBlock(
             isAuto = profile.isAuto,
             isActive = profile.id == activeId,
             isFavorite = profile.isFavorite,
-            accent = if (profile.id == activeId) HomeLook.Success else HomeLook.Idle,
+            accent = if (profile.id == activeId) look else HomeLook.Idle,
             onClick = onClick,
             onLongClick = onLongClick,
             surface = Color.Transparent,
-            activeSurface = RvColor.Grey,
+            // Dark Grey, а не Grey: Grey — заливка шапки группы, и строка
+            // сливалась бы с ней (на ПК так же, Figma 6744:4162).
+            activeSurface = RvColor.DarkGrey,
             latencyMs = sample?.takeIf { it.reachable }?.latencyMs,
             offlineReason = sample?.takeUnless { it.reachable }?.reason,
             isLoading = isLoading,

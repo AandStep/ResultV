@@ -209,10 +209,9 @@ fun HomeScreen(
                         pingInflight = pingInflight,
                         countries = countries,
                         sortMode = sortMode,
-                        onSelect = {
-                            ProfileRepository.setActive(it.id)
-                            dropdownOpen = false
-                        },
+                        // Список не сворачивается сам: промахнувшийся
+                        // перевыбирает сразу, закрывают его стрелкой.
+                        onSelect = { ProfileRepository.setActive(it.id) },
                         onLongPress = { editingProfileId = it.id },
                     )
                 }
@@ -462,6 +461,9 @@ private fun ProfileDropdown(
                             badges = p.badges,
                             countryCode = p.country ?: countries[p.id],
                             isAuto = p.isAuto,
+                            // Выбранный — на подложке, как наведённый на ПК, чтобы
+                            // нажатие было видно сразу. Цвет состояния — только по
+                            // туннелю (accent): не запущенный — без зелёного.
                             isActive = p.id == activeId,
                             isFavorite = p.isFavorite,
                             accent = if (p.id == activeId) accent else HomeLook.Idle,
