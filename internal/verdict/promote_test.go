@@ -104,3 +104,34 @@ func TestLookupIPPrefersExactOverPrefix(t *testing.T) {
 		t.Fatalf("exact address must win over its prefix: got %v, ok=%v", rec.Decision, ok)
 	}
 }
+
+func TestAgreeingDirectSubdomainsDoNotPromote(t *testing.T) {
+	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	s := testStore(&now)
+	s.SetNamespace("home")
+
+	s.Learn("www.example.com", Direct)
+	s.Learn("apis.example.com", Direct)
+	s.Learn("ogs.example.com", Direct)
+
+	if rec, ok := s.Lookup("play.example.com"); ok {
+		t.Fatalf("three direct siblings condemned an unmeasured one to direct: %v", rec.Decision)
+	}
+	if _, ok := s.Lookup("example.com"); ok {
+		t.Fatal("the parent got a direct verdict nobody measured")
+	}
+}
+
+func TestLearnedDirectPrefixDoesNotCoverNeighbour(t *testing.T) {
+	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	s := testStore(&now)
+	s.SetNamespace("home")
+
+	s.LearnIP(netip.MustParseAddr("203.0.113.1"), Direct)
+	s.LearnIP(netip.MustParseAddr("203.0.113.2"), Direct)
+	s.LearnIP(netip.MustParseAddr("203.0.113.3"), Direct)
+
+	if rec, ok := s.LookupIP(netip.MustParseAddr("203.0.113.99")); ok {
+		t.Fatalf("direct neighbours answered for an unmeasured address: %v", rec.Decision)
+	}
+}
