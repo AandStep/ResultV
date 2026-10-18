@@ -2,8 +2,8 @@
 # build-android-aar.sh — Rebuild the gomobile AAR for the Android app.
 #
 # Usage:
-#   ./scripts/build-android-aar.sh              # default tags
-#   ./scripts/build-android-aar.sh --with-naive  # include NaiveProxy outbound
+#   DIST=full ./scripts/build-android-aar.sh    # сайт: всё, включая ad-block
+#   DIST=play ./scripts/build-android-aar.sh    # Google Play: без фильтрации
 #
 # Env:
 #   SUBSCRIPTION_ENCRYPT_KEY  Hex-encoded 32-byte AES-GCM key embedded into
@@ -17,7 +17,7 @@
 # Prerequisites:
 #   - Go toolchain (go.mod-compatible version)
 #   - gomobile (sagernet fork): go install github.com/sagernet/gomobile/cmd/gomobile@v0.1.12
-#   - Android SDK with NDK installed (ANDROID_HOME set, or android/local.properties)
+#   - Android SDK with NDK 28+ installed (ANDROID_HOME set, or android/local.properties)
 #   - JDK 17+ (JAVA_HOME, or Android Studio's bundled JBR on macOS)
 #   - gomobile init (run once per machine)
 #
@@ -88,11 +88,18 @@ PATH="${JAVA_HOME}/bin:${PATH:-}"
 # tag ships a binary nobody tested.
 TAGS="$(tr -d ' \t\r\n' < "${REPO_ROOT}/scripts/android-build-tags.txt")"
 
-# Optional: NaiveProxy support (blocked by NDK 27.x ld.lld, see Known issues)
-if [[ "${1:-}" == "--with-naive" ]]; then
-    TAGS="${TAGS},with_naive_outbound"
-    echo "⚠️  Including with_naive_outbound — requires compatible NDK/cronet-go"
+# NaiveProxy. Без тега sing-box регистрирует заглушку, и Naive-сервер, который
+# интерфейс даёт добавить, не подключается: "naive outbound is not included in
+# this build". Тег живёт здесь, а не в android-build-tags.txt: cronet-go
+# собирается только через cgo под NDK, и хостовый `go build`/`go test` с этим
+# тегом падает. libcronet.a собран свежим clang, и ld.lld из NDK 27 его не
+# линкует ("unknown relocation (315)") — нужен NDK 28+, как в CI cronet-go.
+ndk_major="$(sed -nE 's/^Pkg\.Revision *= *([0-9]+).*/\1/p' "${ANDROID_NDK_HOME}/source.properties" 2>/dev/null || true)"
+if [[ -z "${ndk_major}" || "${ndk_major}" -lt 28 ]]; then
+    echo "ERROR: NDK ${ndk_major:-?} at ${ANDROID_NDK_HOME} is too old for NaiveProxy (cronet-go needs NDK 28+)." >&2
+    exit 1
 fi
+TAGS="${TAGS},with_naive_outbound"
 
 # Distribution: `full` ships everything, `play` drops both filtering features.
 # no_mitm swaps mobile/libbox_filter.go for its stub, which takes

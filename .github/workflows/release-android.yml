@@ -61,12 +61,26 @@ jobs:
           go install github.com/sagernet/gomobile/cmd/gobind@v0.1.12
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
+      # NaiveProxy тянет libcronet.a, который NDK 27 не линкует (см.
+      # scripts/build-android-aar.sh). Предустановленный на раннере NDK может
+      # оказаться старым, поэтому версия задаётся явно — та же r28, что в CI
+      # самого cronet-go.
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28
+          add-to-path: false
+
       - name: Initialize gomobile
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: gomobile init
 
       - name: Build AAR
         env:
           SUBSCRIPTION_ENCRYPT_KEY: ${{ secrets.SUBSCRIPTION_ENCRYPT_KEY }}
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           chmod +x scripts/build-android-aar.sh
           ./scripts/build-android-aar.sh
