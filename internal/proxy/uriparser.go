@@ -1586,6 +1586,11 @@ func parseWireGuardURI(uri string) (config.ProxyEntry, error) {
 			extra["mtu"] = v
 		}
 	}
+	// DNS из [Interface] .conf. Ключ — тот же, под которым его кладёт парсер
+	// .conf на ПК: оттуда его читает сборка конфига (nodeDNSServers в mobile).
+	if dns := splitCSV(getQueryParamCI(params, "dns")); len(dns) > 0 {
+		extra["dns_servers"] = dns
+	}
 	extraJSON, _ := json.Marshal(extra)
 	host := u.Hostname()
 	return config.ProxyEntry{
@@ -1641,6 +1646,11 @@ func parseAmneziaWGURI(uri string) (config.ProxyEntry, error) {
 		if v, convErr := strconv.Atoi(mtu); convErr == nil {
 			extra["mtu"] = v
 		}
+	}
+	// DNS из [Interface] .conf. Ключ — тот же, под которым его кладёт парсер
+	// .conf на ПК: оттуда его читает сборка конфига (nodeDNSServers в mobile).
+	if dns := splitCSV(getQueryParamCI(params, "dns")); len(dns) > 0 {
+		extra["dns_servers"] = dns
 	}
 
 	// Amnezia-specific obfuscation parameters.

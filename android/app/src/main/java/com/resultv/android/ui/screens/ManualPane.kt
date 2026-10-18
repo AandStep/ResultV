@@ -185,6 +185,7 @@ private data class ProtocolSpec(
 private val NameField = Field("name", R.string.manual_field_name, placeholderRes = R.string.manual_field_name_placeholder)
 private val HostField = Field("host", R.string.manual_field_host, required = true, placeholderRes = R.string.manual_field_host_placeholder)
 private val PortField = Field("port", R.string.manual_field_port, kind = FieldKind.Number, required = true, default = "443")
+private const val DNS_PLACEHOLDER = "1.1.1.1, 8.8.8.8"
 
 private fun enc(s: String): String = URLEncoder.encode(s, "UTF-8")
 
@@ -380,6 +381,8 @@ private val Protocols: List<ProtocolSpec> = listOf(
             Field("allowed_ips", R.string.manual_field_allowed_ips, default = "0.0.0.0/0, ::/0"),
             Field("pre_shared_key", R.string.manual_field_psk, kind = FieldKind.Password),
             Field("mtu", R.string.manual_field_mtu, kind = FieldKind.Number, default = "1408"),
+            // DNS из .conf: без поля сохранение правки выбросило бы его из ссылки.
+            Field("dns", R.string.manual_field_dns, placeholderLiteral = DNS_PLACEHOLDER),
         ),
         build = { v ->
             "wg://${enc(v["private_key"]!!)}@${v["host"]}:${v["port"]}" +
@@ -389,6 +392,7 @@ private val Protocols: List<ProtocolSpec> = listOf(
                     "allowed_ips" to v["allowed_ips"].orEmpty(),
                     "pre_shared_key" to v["pre_shared_key"].orEmpty(),
                     "mtu" to v["mtu"].orEmpty(),
+                    "dns" to v["dns"].orEmpty(),
                 )) + frag(v["name"].orEmpty())
         },
     ),
@@ -408,6 +412,7 @@ private val Protocols: List<ProtocolSpec> = listOf(
             Field("allowed_ips", R.string.manual_field_allowed_ips, default = "0.0.0.0/0, ::/0"),
             Field("pre_shared_key", R.string.manual_field_psk, kind = FieldKind.Password),
             Field("mtu", R.string.manual_field_mtu, kind = FieldKind.Number, default = "1408"),
+            Field("dns", R.string.manual_field_dns, placeholderLiteral = DNS_PLACEHOLDER),
             // AmneziaWG obfuscation params — protocol-defined, not localised.
             Field("jc", R.string.awg_jc, kind = FieldKind.Number),
             Field("jmin", R.string.awg_jmin, kind = FieldKind.Number),
@@ -449,6 +454,7 @@ private val Protocols: List<ProtocolSpec> = listOf(
                 "allowed_ips" to v["allowed_ips"].orEmpty(),
                 "pre_shared_key" to v["pre_shared_key"].orEmpty(),
                 "mtu" to v["mtu"].orEmpty(),
+                "dns" to v["dns"].orEmpty(),
             )
             listOf("jc", "jmin", "jmax", "s1", "s2", "s3", "s4",
                 "h1", "h2", "h3", "h4",

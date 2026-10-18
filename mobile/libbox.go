@@ -1557,6 +1557,43 @@ func applyKillSwitch(sb *proxy.SingBoxConfig, armed, panicMode bool) {
 
 // adaptiveSmartActive — единственное место, где решается, жива ли фича.
 // Smart-режим обязателен: в Global маршрут и так финалится в proxy.
+// nodeDNSServers читает резолверы, которые узел принёс с собой: dns_servers,
+// а за ним dns — те же ключи и тот же порядок, что у dnsServersFromProxyExtra
+// на ПК. Список или строка через запятую, без повторов.
+func nodeDNSServers(extra json.RawMessage) []string {
+	if len(extra) == 0 {
+		return nil
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(extra, &m); err != nil {
+		return nil
+	}
+	read := func(key string) []string {
+		var raw []string
+		switch v := m[key].(type) {
+		case []interface{}:
+			for _, item := range v {
+				raw = append(raw, fmt.Sprint(item))
+			}
+		case string:
+			raw = strings.Split(v, ",")
+		}
+		seen := map[string]bool{}
+		var out []string
+		for _, s := range raw {
+			if s = strings.TrimSpace(s); s != "" && !seen[s] {
+				seen[s] = true
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	if v := read("dns_servers"); len(v) > 0 {
+		return v
+	}
+	return read("dns")
+}
+
 func adaptiveSmartActive(opts BuildOptions) bool {
 	return opts.AdaptiveSmart && opts.SmartMode
 }
@@ -1616,6 +1653,12 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 				cfg.DNSServers = append(cfg.DNSServers, s)
 			}
 		}
+	}
+	// DNS из конфига узла (строка DNS в .conf WireGuard/AmneziaWG) сильнее
+	// пресета, как на ПК (dnsServersFromProxyExtra в app.go). Мёртвый — не
+	// беда: за ним стоят публичные запасные (tunnelDNSResolvers).
+	if fromNode := nodeDNSServers(entry.Extra); len(fromNode) > 0 {
+		cfg.DNSServers = fromNode
 	}
 
 	sb := proxy.BuildTunnelModeConfig(cfg)

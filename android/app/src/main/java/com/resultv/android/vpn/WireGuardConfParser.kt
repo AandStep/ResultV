@@ -51,6 +51,9 @@ object WireGuardConfParser {
         val allowedIps = peer["allowedips"].orEmpty().ifBlank { "0.0.0.0/0, ::/0" }
         val preSharedKey = peer["presharedkey"].orEmpty()
         val mtu = iface["mtu"].orEmpty()
+        // DNS из конфига перекрывает пресет из настроек (так же на ПК): резолвер
+        // провайдера туннеля часто знает имена, которых не знают публичные.
+        val dns = iface["dns"].orEmpty()
 
         // Amnezia-specific obfuscation fields — presence of any of these
         // switches the scheme to awg://.
@@ -109,6 +112,7 @@ object WireGuardConfParser {
             "allowed_ips" to allowedIps,
             "pre_shared_key" to preSharedKey,
             "mtu" to mtu,
+            "dns" to dns,
         )
         if (isAmnezia) {
             listOf(

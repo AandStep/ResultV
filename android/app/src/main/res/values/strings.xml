@@ -211,6 +211,7 @@
     <string name="manual_field_allowed_ips">Allowed IPs</string>
     <string name="manual_field_psk">Pre-shared key</string>
     <string name="manual_field_mtu">MTU</string>
+    <string name="manual_field_dns" translatable="false">DNS</string>
 
     <!-- AmneziaWG protocol-defined parameter labels (not localised) -->
     <string name="awg_jc" translatable="false">Jc</string>
