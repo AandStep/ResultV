@@ -36,11 +36,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.resultv.android.BuildConfig
 import com.resultv.android.R
 import com.resultv.android.theme.RvColor
 import com.resultv.android.theme.RvIcon
 import com.resultv.android.theme.RvMotion
 import com.resultv.android.theme.RvRadius
+import com.resultv.android.theme.SegoeUi
 import com.resultv.android.vpn.VpnState
 import com.resultv.android.vpn.VpnStatus
 
@@ -98,11 +100,26 @@ fun HomeHeader(
             modifier = Modifier.fillMaxWidth().height(HeaderLook.touch),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            androidx.compose.foundation.Image(
-                painter = painterResource(R.drawable.resultv_logo),
-                contentDescription = null,
-                modifier = Modifier.size(width = 24.dp, height = 30.dp),
-            )
+            // Логотип и версия приложения через 8 (Figma 6955:5010).
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                androidx.compose.foundation.Image(
+                    painter = painterResource(R.drawable.resultv_logo),
+                    contentDescription = null,
+                    modifier = Modifier.size(width = 24.dp, height = 30.dp),
+                )
+                Text(
+                    text = "v${BuildConfig.VERSION_NAME}",
+                    fontFamily = SegoeUi,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 12.sp,
+                    lineHeight = 13.2.sp,
+                    color = RvColor.whiteA50,
+                    maxLines = 1,
+                )
+            }
             Spacer(Modifier.weight(1f))
             IconButton(
                 onClick = onOpenWebsite,
