@@ -122,6 +122,9 @@ func serversByTag(servers []SBDNSServer) map[string]SBDNSServer {
 // ничего, ядро добирается до членов по тегу. Требование «через туннель»
 // относится к ногам, и здесь оно с них и спрашивается — то есть проверка после
 // перехода на DoH стала строже, а не слабее.
+//
+// Обёртки вложены (параллельная группа резолверов из конфига, запасная за ней),
+// поэтому член-обёртка разворачивается так же, до самых ног.
 func assertDialsThroughTunnel(t *testing.T, byTag map[string]SBDNSServer, s SBDNSServer) {
 	t.Helper()
 	if s.Type == "fallback" {
@@ -132,6 +135,10 @@ func assertDialsThroughTunnel(t *testing.T, byTag map[string]SBDNSServer, s SBDN
 			leg, ok := byTag[legTag]
 			if !ok {
 				t.Fatalf("fallback %q ссылается на незарегистрированный сервер %q", s.Tag, legTag)
+			}
+			if leg.Type == "fallback" {
+				assertDialsThroughTunnel(t, byTag, leg)
+				continue
 			}
 			if leg.Detour != "proxy" {
 				t.Fatalf("нога %q обёртки %q должна набираться через туннель, получено detour=%q",

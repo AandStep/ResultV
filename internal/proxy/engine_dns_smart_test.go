@@ -39,8 +39,8 @@ func dnsForSmart(t *testing.T, proxyType string) *SBDNS {
 }
 
 // hasSmartRule reports whether dns carries the block-list DNS rule that
-// buildDNS's Smart-mode branch adds. With dns.Final no longer set for either
-// the active or inactive case (Fix 1), this rule's presence — not Final — is
+// buildDNS's Smart-mode branch adds. dns.Final names the tunnel wrapper in
+// both the active and inactive case, so this rule's presence — not Final — is
 // what actually distinguishes "the split applied" from "it did not".
 func hasSmartRule(dns *SBDNS) bool {
 	for _, r := range dns.Rules {
@@ -59,12 +59,12 @@ func hasSmartRule(dns *SBDNS) bool {
 // PlatformInterface.LocalDNSTransport, which this app does not implement —
 // without it "local" falls back to sing-box's built-in transport, which
 // targets 127.0.0.1:53 when /etc/resolv.conf is absent, breaking every
-// lookup outside the block-list. So Final must stay unset, while the
-// block-list rule (asserted in full by
+// lookup outside the block-list. So Final names the tunnel wrapper, never
+// "local", while the block-list rule (asserted in full by
 // TestSmartDNSSendsBlockedDomainsThroughTheTunnel) must survive the removal.
 func TestSmartDNSDoesNotSetFinal(t *testing.T) {
 	dns := dnsForSmart(t, "VLESS")
-	if dns.Final != "" {
+	if dns.Final != firstUpstreamDNSTag(dns.Servers) {
 		t.Fatalf("Smart mode must not redirect default DNS to the system resolver until LocalDNSTransport exists, got final=%q", dns.Final)
 	}
 	if !hasSmartRule(dns) {
@@ -129,7 +129,7 @@ func TestGlobalDNSStaysOnTheTunnel(t *testing.T) {
 		DataDir:   t.TempDir(),
 		IsAndroid: true,
 	})
-	if dns.Final != "" {
+	if dns.Final != firstUpstreamDNSTag(dns.Servers) {
 		t.Fatalf("Global mode must not redirect DNS to the system resolver, got final=%q", dns.Final)
 	}
 }

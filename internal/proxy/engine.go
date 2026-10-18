@@ -886,18 +886,135 @@ func smartRuleSetActive(cfg EngineConfig) bool {
 // резолвер, прибитый к нестандартному порту DNS, сохраняет этот порт на ноге
 // tcp, пока DoH пробует стандартный и, не преуспев, передаёт ход.
 func tunnelDNSResolver(tag, server string, port int, detour string) []SBDNSServer {
-	return []SBDNSServer{
-		{Type: "https", Tag: tag + "-doh", Server: server, Detour: detour},
-		{Type: "tcp", Tag: tag + "-tcp", Server: server, ServerPort: port, Detour: detour},
-		{
-			Type:          "fallback",
-			Tag:           tag,
-			Servers:       []string{tag + "-doh", tag + "-tcp"},
-			Strategy:      "sequential",
-			Timeout:       "5s",
-			throughDetour: detour,
-		},
+	return tunnelDNSResolvers([]tunnelResolver{{tag, server, port}}, nil, detour)
+}
+
+type tunnelResolver struct {
+	tag    string
+	server string
+	port   int
+}
+
+// tunnelDNSResolvers спрашивает резолверы параллельно, каждый — сперва по DoH,
+// потом по TCP, и берёт первый ответ. Последовательная цепочка платила полный
+// таймаут мёртвого резолвера на каждом имени, прежде чем дойти до следующего.
+//
+// backups спрашиваются, только когда резолверы отказали или потратили
+// configuredDNSTimeout: ответ живого резолвера из конфига, NXDOMAIN в том
+// числе, окончателен, так что имена, известные только ему, резолвятся.
+//
+// На ПК поверх стоит dnsBreaker, перестающий ждать резолвер, который раз за
+// разом молчит. Это свой тип DNS-транспорта, а libbox строит ядро на закрытом
+// реестре, — поэтому здесь мёртвый резолвер из конфига стоит секунду на каждое
+// имя, которого нет в кэше.
+//
+// Группа, на которую указывают правила и Final, берёт тег первого резолвера.
+func tunnelDNSResolvers(resolvers, backups []tunnelResolver, detour string) []SBDNSServer {
+	servers := tunnelDNSLegs(resolvers, detour)
+	if len(backups) == 0 {
+		servers = tunnelDNSGroup(servers, resolvers, resolvers[0].tag, tunnelDNSTimeout)
+		servers[len(servers)-1].throughDetour = detour
+		return servers
 	}
+	servers = append(servers, tunnelDNSLegs(backups, detour)...)
+	servers = tunnelDNSGroup(servers, resolvers, configuredDNSGroupTag(resolvers), configuredDNSTimeout)
+	servers = tunnelDNSGroup(servers, backups, backupDNSGroupTag, tunnelDNSTimeout)
+	return append(servers, SBDNSServer{
+		Type:          "fallback",
+		Tag:           resolvers[0].tag,
+		Servers:       []string{configuredDNSGroupTag(resolvers), backupDNSGroupTag},
+		Strategy:      "sequential",
+		Timeout:       "6s",
+		throughDetour: detour,
+	})
+}
+
+const (
+	tunnelDNSTimeout     = "5s"
+	configuredDNSTimeout = "1s"
+	backupDNSGroupTag    = "backup"
+)
+
+var backupDNSResolvers = []tunnelResolver{{"backup-google", "8.8.8.8", 0}, {"backup-cloudflare", "1.1.1.1", 0}}
+
+func configuredDNSGroupTag(resolvers []tunnelResolver) string {
+	return resolvers[0].tag + "-cfg"
+}
+
+func tunnelDNSLegs(resolvers []tunnelResolver, detour string) []SBDNSServer {
+	servers := make([]SBDNSServer, 0, 2*len(resolvers))
+	for _, r := range resolvers {
+		servers = append(servers,
+			SBDNSServer{Type: "https", Tag: r.tag + "-doh", Server: r.server, Detour: detour},
+			SBDNSServer{Type: "tcp", Tag: r.tag + "-tcp", Server: r.server, ServerPort: r.port, Detour: detour},
+		)
+	}
+	return servers
+}
+
+func tunnelDNSGroup(servers []SBDNSServer, resolvers []tunnelResolver, tag, timeout string) []SBDNSServer {
+	if len(resolvers) == 1 {
+		r := resolvers[0]
+		return append(servers, SBDNSServer{
+			Type:     "fallback",
+			Tag:      tag,
+			Servers:  []string{r.tag + "-doh", r.tag + "-tcp"},
+			Strategy: "sequential",
+			Timeout:  timeout,
+		})
+	}
+	members := make([]string, 0, len(resolvers))
+	for _, r := range resolvers {
+		servers = append(servers, SBDNSServer{
+			Type:     "fallback",
+			Tag:      r.tag + "-seq",
+			Servers:  []string{r.tag + "-doh", r.tag + "-tcp"},
+			Strategy: "sequential",
+			Timeout:  timeout,
+		})
+		members = append(members, r.tag+"-seq")
+	}
+	return append(servers, SBDNSServer{
+		Type:     "fallback",
+		Tag:      tag,
+		Servers:  members,
+		Strategy: "parallel",
+		Timeout:  timeout,
+	})
+}
+
+// tunnelDNSPlan называет резолверы туннеля: из конфига с публичными запасными
+// за ними, или одни публичные, когда своих не задано.
+func tunnelDNSPlan(cfg EngineConfig) (resolvers, backups []tunnelResolver) {
+	for i, raw := range cfg.DNSServers {
+		server, port := splitDNSServer(raw)
+		if server == "" {
+			continue
+		}
+		resolvers = append(resolvers, tunnelResolver{fmt.Sprintf("custom-%d", i+1), server, port})
+	}
+	if len(resolvers) == 0 {
+		return []tunnelResolver{{"google", "8.8.8.8", 0}, {"cloudflare", "1.1.1.1", 0}}, nil
+	}
+	return resolvers, backupDNSFor(resolvers)
+}
+
+// backupDNSFor возвращает публичные резолверы, которых ещё нет среди заданных.
+func backupDNSFor(resolvers []tunnelResolver) []tunnelResolver {
+	var backups []tunnelResolver
+	for _, b := range backupDNSResolvers {
+		configured := false
+		for _, r := range resolvers {
+			if r.server == b.server {
+				configured = true
+				break
+			}
+		}
+		if !configured {
+			backups = append(backups, b)
+		}
+	}
+	return backups
 }
 
 const (
@@ -934,36 +1051,14 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		// tunnel exists to avoid.
 		detour := "proxy"
 
-		servers := []SBDNSServer{}
-		if len(cfg.DNSServers) > 0 {
-			for i, raw := range cfg.DNSServers {
-				server, port := splitDNSServer(raw)
-				if server == "" {
-					continue
-				}
-				servers = append(servers,
-					tunnelDNSResolver(fmt.Sprintf("custom-%d", i+1), server, port, detour)...)
-			}
-			servers = append(servers, SBDNSServer{Type: "local", Tag: "local"})
-		} else {
-			if detour != "" {
-				// Серверы type: tls отсюда убраны вместе с голым tcp: tls —
-				// тот же мультиплексируемый транспорт, и после появления ноги
-				// DoH он не добавляет пути, только ещё одно место, где запрос
-				// может замолчать.
-				servers = nil
-				servers = append(servers, tunnelDNSResolver("google", "8.8.8.8", 0, detour)...)
-				servers = append(servers, tunnelDNSResolver("cloudflare", "1.1.1.1", 0, detour)...)
-				servers = append(servers, SBDNSServer{Type: "local", Tag: "local"})
-			} else {
-				servers = []SBDNSServer{
-					{Type: "udp", Tag: "udp", Server: "8.8.8.8", Detour: detour},
-					{Type: "tls", Tag: "google", Server: "8.8.8.8", Detour: detour},
-					{Type: "tls", Tag: "cloudflare", Server: "1.1.1.1", Detour: detour},
-					{Type: "local", Tag: "local"},
-				}
-			}
-		}
+		// Каждый резолвер ниже tunnelDNSResolvers эмитит ногой DoH, ногой
+		// DNS-over-TCP и обёрткой fallback, на которую указывают правила. Прежде
+		// чем менять форму, прочитать комментарий tunnelDNSResolver: голый tcp —
+		// то, что замолчало на ядре 1.14. Серверов type: tls здесь нет по той же
+		// причине — это тот же мультиплексируемый транспорт.
+		resolvers, backups := tunnelDNSPlan(cfg)
+		servers := tunnelDNSResolvers(resolvers, backups, detour)
+		servers = append(servers, SBDNSServer{Type: "local", Tag: "local"})
 
 		dns := newSBDNS(servers)
 
@@ -1083,6 +1178,12 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			})
 		}
 
+		// Без final ядро берёт первый зарегистрированный сервер — голую ногу
+		// DoH, и резолвер без DoH (а таков DNS из конфига AWG вроде 100.64.0.1)
+		// никогда не доходит до своей ноги TCP. Сервер local на Android пуст
+		// (см. Smart выше), поэтому final — обёртка туннеля в любом режиме.
+		dns.Final = firstUpstreamDNSTag(servers)
+
 		return dns
 	}
 
@@ -1149,7 +1250,16 @@ func splitDNSServer(raw string) (string, int) {
 // ногам: нога — это один транспорт из двух, и правило, указавшее на неё,
 // потеряло бы второй. Откат на первый нелокальный сервер сохранён для
 // конфигураций, где обёртки нет вовсе.
+//
+// Обёртка, несущая детур, — верхняя: внутренние группы (параллельная из
+// конфига, запасная) — тоже fallback, но правило, указавшее на них, потеряло бы
+// остальные. Поэтому первой ищется она, и только потом любая fallback.
 func firstUpstreamDNSTag(servers []SBDNSServer) string {
+	for _, s := range servers {
+		if s.throughDetour != "" && s.Tag != "" {
+			return s.Tag
+		}
+	}
 	for _, s := range servers {
 		if s.Type == "fallback" && s.Tag != "" {
 			return s.Tag

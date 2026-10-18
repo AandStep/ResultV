@@ -447,6 +447,11 @@ func TestAdaptiveSmart_CoreAcceptsTheBuiltConfig(t *testing.T) {
 		{"включено с кил-свитчем", BuildOptions{SmartMode: true, AdaptiveSmart: true, KillSwitchArmed: true}},
 		{"включено, кил-свитч сработал", BuildOptions{SmartMode: true, AdaptiveSmart: true, KillSwitchArmed: true, KillSwitchPanic: true}},
 		{"выключено", BuildOptions{SmartMode: true}},
+		// Свои DNS дают другую форму: параллельную группу, запасную за ней и
+		// обёртку поверх. strategy "parallel" ядро должно принять так же.
+		{"свой DNS", BuildOptions{DNSServers: "10.8.0.1"}},
+		{"два своих DNS", BuildOptions{DNSServers: "10.8.0.1, 9.9.9.9:5353"}},
+		{"два своих DNS в Smart", BuildOptions{SmartMode: true, AdaptiveSmart: true, DNSServers: "8.8.8.8, 8.8.4.4"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b, _ := json.Marshal(tc.opts)
