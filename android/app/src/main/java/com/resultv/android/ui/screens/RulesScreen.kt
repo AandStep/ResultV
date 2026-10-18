@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -52,6 +53,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -375,6 +377,11 @@ private fun AppList(mode: RoutingMode, tab: RuleAction) {
     // so the badges follow a freshly downloaded blocklist.
     val smartSnapshot by SmartListRepository.state.collectAsStateWithLifecycle()
     var autoIn by remember { mutableStateOf<Set<String>>(emptySet()) }
+    // Для какого каталога и режима autoIn уже посчитан. Отмеченные стоят
+    // наверху, а авто-отмеченные известны только после этого подсчёта: покажи
+    // список раньше — он откроется по алфавиту и тут же пересортируется, и
+    // отмеченные уедут за верхний край. Поэтому до подсчёта — индикатор загрузки.
+    var autoInFor by remember { mutableStateOf<Pair<List<InstalledApp>, RoutingMode>?>(null) }
     LaunchedEffect(mode, apps, smartSnapshot.count, smartSnapshot.ready) {
         autoIn = if (mode != RoutingMode.Smart || apps.isEmpty()) {
             emptySet()
@@ -385,7 +392,9 @@ private fun AppList(mode: RoutingMode, tab: RuleAction) {
             val browsers = AppInventory.browserPackages(ctx)
             matched + browsers
         }
+        autoInFor = apps to mode
     }
+    val orderReady = autoInFor?.let { (forApps, forMode) -> forApps === apps && forMode == mode } == true
 
     val filtered = remember(apps, query) {
         if (query.isBlank()) apps
@@ -393,6 +402,35 @@ private fun AppList(mode: RoutingMode, tab: RuleAction) {
             it.label.contains(query, ignoreCase = true) ||
                 it.packageName.contains(query, ignoreCase = true)
         }
+    }
+
+    // В Smart вкладка «Через ВПН» — это членство в туннеле (авто + ручное), в
+    // остальных вкладках — действие приложения, совпавшее с вкладкой.
+    val smartMembershipTab = mode == RoutingMode.Smart && tab == RuleAction.IntoVpn
+    val isChecked: (InstalledApp) -> Boolean = { app ->
+        if (smartMembershipTab) {
+            AppTunnelMembership.isInSmart(app.packageName, autoIn, emptySet(), appRules)
+        } else {
+            appRules.actionOf(app.packageName, mode) == tab
+        }
+    }
+    // Отмеченные всегда наверху. Сортировка устойчивая, так что внутри обеих
+    // частей остаётся порядок каталога: пользовательские, затем системные, по имени.
+    // Не rememberSaveable: каталог грузится заново при каждом показе, и список
+    // открывается с начала — с отмеченных.
+    val listState = remember { LazyListState() }
+    val atTop by remember {
+        derivedStateOf { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0 }
+    }
+    val ordered = remember(filtered, appRules, autoIn, mode, tab) {
+        // Отметка, сделанная в начале списка, поднимает строку на место выше
+        // первой видимой, а ленивый список держит позицию за первой видимой —
+        // и только что отмеченное ушло бы за верхний край. requestScrollToItem
+        // не прокручивает, а говорит перемеру держаться за индекс, а не за
+        // ключ. На открытии списка он ничего не делает: порядок к первому кадру
+        // уже окончательный (orderReady).
+        if (atTop) listState.requestScrollToItem(0)
+        filtered.sortedByDescending(isChecked)
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(RvSpace.nest2)) {
@@ -413,7 +451,7 @@ private fun AppList(mode: RoutingMode, tab: RuleAction) {
             color = RvColor.whiteA50,
         )
 
-        if (loading) {
+        if (loading || !orderReady) {
             Box(modifier = Modifier.fillMaxWidth().padding(RvSpace.nest1), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
@@ -421,14 +459,14 @@ private fun AppList(mode: RoutingMode, tab: RuleAction) {
             // Список фиксированной высоты со своей прокруткой и затуханием
             // снизу — страница из-за сотни приложений не растёт.
             Box(modifier = Modifier.fillMaxWidth().height(280.dp)) {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(filtered, key = { it.packageName }) { app ->
-                    val smartMembershipTab = mode == RoutingMode.Smart && tab == RuleAction.IntoVpn
+            LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                items(ordered, key = { it.packageName }) { app ->
+                    // Отмеченная строка уезжает наверх — видимым движением, а
+                    // не исчезновением из-под пальца.
+                    val rowModifier = Modifier.animateItem()
                     if (smartMembershipTab) {
                         val auto = app.packageName in autoIn
-                        val inVpn = AppTunnelMembership.isInSmart(
-                            app.packageName, autoIn, emptySet(), appRules
-                        )
+                        val inVpn = isChecked(app)
                         val blocked = app.packageName in appRules.blocked
                         AppRow(
                             app = app,
@@ -440,6 +478,7 @@ private fun AppList(mode: RoutingMode, tab: RuleAction) {
                                     app.packageName, wantIn = !inVpn, isAuto = auto
                                 )
                             },
+                            modifier = rowModifier,
                         )
                     } else {
                         val effective = appRules.actionOf(app.packageName, mode)
@@ -455,6 +494,7 @@ private fun AppList(mode: RoutingMode, tab: RuleAction) {
                                 if (effective == tab) AppRoutingRepository.clearAction(app.packageName, tab)
                                 else AppRoutingRepository.setAction(app.packageName, tab)
                             },
+                            modifier = rowModifier,
                         )
                     }
                 }
@@ -482,12 +522,13 @@ private fun AppRow(
     blockedElsewhere: Boolean,
     autoBadge: Boolean,
     onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Row(
         // Весь ряд — одна цель нажатия: попасть в 20-dp квадрат флажка пальцем
         // трудно, а сама строка выглядит нажимаемой. Роль Checkbox отдаёт ряду
         // семантику флажка — TalkBack объявляет одну цель, а не две.
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .toggleable(value = checked, role = Role.Checkbox, onValueChange = { onToggle() })
             .padding(vertical = RvSpace.nest3),
