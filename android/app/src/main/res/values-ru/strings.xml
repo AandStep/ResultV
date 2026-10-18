@@ -322,6 +322,8 @@
     <!-- Logs -->
     <string name="settings_group_logs">Логи</string>
     <string name="settings_group_logs_items">• События подключения и приложения</string>
+    <string name="settings_privacy_policy">Политика конфиденциальности</string>
+    <string name="settings_privacy_policy_items">• Какие данные покидают устройство и куда</string>
     <string name="settings_group_appearance_items">• Язык интерфейса</string>
     <string name="settings_appearance_language_desc">Язык подписей в приложении</string>
     <string name="settings_label_interface">Интерфейс</string>

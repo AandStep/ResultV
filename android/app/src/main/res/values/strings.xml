@@ -360,6 +360,8 @@
     <!-- Logs -->
     <string name="settings_group_logs">Logs</string>
     <string name="settings_group_logs_items">• Connection and app events</string>
+    <string name="settings_privacy_policy">Privacy policy</string>
+    <string name="settings_privacy_policy_items">• What leaves the device and where</string>
     <string name="settings_group_appearance_items">• Interface language</string>
     <string name="settings_appearance_language_desc">Language of the app\'s labels</string>
     <string name="settings_label_interface">Interface</string>

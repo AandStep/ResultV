@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -52,6 +53,8 @@ import com.resultv.android.theme.rvBorder
 import com.resultv.android.ui.components.DarkSheetSystemBars
 import com.resultv.android.ui.components.SettingIcon
 import com.resultv.android.vpn.SettingsRepository
+
+private const val PRIVACY_POLICY_URL = "https://result-proxy.ru/privacy.html"
 
 private data class DnsPreset(val key: String, val label: String, val servers: String)
 
@@ -154,6 +157,16 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {
             title = stringResource(R.string.settings_group_logs),
             description = stringResource(R.string.settings_group_logs_items),
             onClick = onOpenLogs,
+        )
+        // Play требует, чтобы политика была доступна и из самого приложения,
+        // а не только по ссылке в консоли.
+        val uriHandler = LocalUriHandler.current
+        SettingsEntry(
+            icon = Icons.Outlined.Policy,
+            tint = RvCategory.Violet,
+            title = stringResource(R.string.settings_privacy_policy),
+            description = stringResource(R.string.settings_privacy_policy_items),
+            onClick = { runCatching { uriHandler.openUri(PRIVACY_POLICY_URL) } },
         )
     }
 
