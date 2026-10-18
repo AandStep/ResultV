@@ -85,7 +85,11 @@ func pingViaNode(entry config.ProxyEntry, method, testURL string, timeout time.D
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	ms, ok, reason := pingThroughNodeProbe(ctx, proxyConfigFromEntry(entry), method, url)
+	// Проба Reality заодно выучивает, нужен ли узлу X25519MLKEM768, — и
+	// подключение потом берёт выученное, а не пробует заново.
+	_, ms, ok, reason := probeRealityMLKEM(proxyConfigFromEntry(entry), func(p ProxyConfig) (int64, bool, string) {
+		return pingThroughNodeProbe(ctx, p, method, url)
+	})
 	return ms, ok, reason, pingCheckTypeFor(method)
 }
 

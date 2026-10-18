@@ -49,6 +49,10 @@ type ProxyConfig struct {
 	URI             string          `json:"uri,omitempty"`
 	Extra           json.RawMessage `json:"extra,omitempty"`
 	SubscriptionURL string          `json:"subscriptionUrl,omitempty"`
+
+	// RealityMLKEM puts the X25519MLKEM768 key share into a Reality ClientHello.
+	// Learned per node, see reality_mlkem.go. Not serialized.
+	RealityMLKEM bool `json:"-"`
 }
 
 type EngineConfig struct {
@@ -440,8 +444,8 @@ type SBReality struct {
 	ShortID   string `json:"short_id,omitempty"`
 	SpiderX   string `json:"spider_x,omitempty"`
 
-	// Xray clients never strip the X25519MLKEM768 key share, and REALITY
-	// servers since Xray-core v26.9.8 reject a ClientHello without it.
+	// REALITY servers since Xray-core v26.9.8 reject a ClientHello without
+	// the X25519MLKEM768 key share; see reality_mlkem.go.
 	SupportX25519MLKEM768 bool `json:"support_x25519mlkem768,omitempty"`
 }
 

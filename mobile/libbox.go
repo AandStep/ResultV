@@ -101,6 +101,9 @@ const browserAdBlockProxyHost = "172.19.0.3"
 // redirect rule pointing at port 0 would silently swallow browser traffic.
 const defaultBrowserAdBlockPort = 8130
 
+// learnRealityMLKEM — переменная, чтобы тест сборки конфига не ходил в сеть.
+var learnRealityMLKEM = proxy.LearnRealityMLKEMForConnect
+
 // BrowserAdBlockProxyHost is the host Kotlin must hand to
 // ProxyInfo.buildDirectProxy. Exported as a function so the address stays owned
 // by the side that also owns the TUN prefix it has to live in.
@@ -1596,6 +1599,13 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 		// adaptiveSmartActive, не opts.AdaptiveSmart: вне Smart-режима фича
 		// нерабочая, и гейт живёт в одном месте, покрытом тестом.
 		AdaptiveSmart: adaptiveSmartActive(opts),
+	}
+	// Reality: нужен ли узлу X25519MLKEM768, выясняется пробой до старта и
+	// запоминается — дальше перезагрузки берут выученное без пробы. В панике
+	// kill switch узел уже признан мёртвым, и конфиг блокировки не должен ждать
+	// восемь секунд пробы.
+	if !opts.KillSwitchPanic {
+		cfg.Proxy = learnRealityMLKEM(context.Background(), cfg.Proxy)
 	}
 	// Узел, на котором ядро вот-вот поднимут. Нужен применению AmneziaWG 3.1
 	// после старта — в конфиг эти ключи не попадают (см. awg31.go).
