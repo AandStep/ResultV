@@ -142,16 +142,16 @@ const AppContent = () => {
 
     if (!isConfigLoaded) {
         return (
-            <div className="fixed inset-0 flex flex-col items-center justify-center bg-zinc-950">
+            <div className="fixed inset-0 flex flex-col items-center justify-center bg-[color:var(--rv-black)]">
                 <div className="relative flex items-center justify-center">
                     <img
                         src={logo}
                         alt="ResultV"
                         className="w-10 h-10 absolute drop-shadow-[0_0_15px_rgba(0,126,58,0.8)] z-10"
                     />
-                    <div className="w-20 h-20 border-4 border-zinc-800 border-t-[#00A819] rounded-full animate-spin"></div>
+                    <div className="w-20 h-20 border-4 border-[color:var(--rv-light-gray)] border-t-[#00A819] rounded-full animate-spin"></div>
                 </div>
-                <p className="text-zinc-500 mt-6 font-medium animate-pulse">
+                <p className="text-[color:var(--rv-white-a50)] mt-6 font-medium animate-pulse">
                     {t("app.loading")}
                 </p>
             </div>

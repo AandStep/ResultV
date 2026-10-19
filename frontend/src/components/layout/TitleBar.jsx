@@ -48,10 +48,10 @@ const ControlButton = ({ onClick, danger, ariaLabel, children }) => (
     aria-label={ariaLabel}
     onClick={onClick}
     style={noDragStyle}
-    className={`h-full w-[46px] flex items-center justify-center rounded-none border-0 bg-transparent p-0 text-zinc-300 transition-colors hover:border-transparent ${
+    className={`h-full w-[46px] flex items-center justify-center rounded-none border-0 bg-transparent p-0 text-[color:var(--rv-white-a80)] transition-colors hover:border-transparent ${
       danger
-        ? "hover:bg-[#c42b1c] hover:text-white"
-        : "hover:bg-white/[0.06] active:bg-white/[0.04]"
+        ? "hover:bg-[#c42b1c] hover:text-[#fff]"
+        : "hover:bg-[color:var(--rv-white-a08)] active:bg-[color:var(--rv-white-a05)]"
     }`}
   >
     {children}
@@ -107,7 +107,7 @@ export const TitleBar = ({ overlay = false }) => {
       className={`flex h-8 items-stretch justify-end select-none ${
         overlay
           ? "absolute inset-x-0 top-0 z-50 bg-transparent"
-          : "w-full shrink-0 bg-zinc-900"
+          : "w-full shrink-0 bg-[color:var(--rv-grey)]"
       }`}
     >
       <ControlButton ariaLabel="Свернуть" onClick={() => WindowMinimise()}>

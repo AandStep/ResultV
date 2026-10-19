@@ -38,6 +38,7 @@ import wailsAPI from "../../utils/wailsAPI";
 import AppSidebar from "./AppSidebar";
 import ConfigPasswordDialog from "./ConfigPasswordDialog";
 import { isWindowsHost } from "../../utils/adminDialog";
+import { applyTheme } from "../../lib/theme";
 import SettingsPage, {
   DNS_PRESETS,
   SUBSCRIPTION_HOURS,
@@ -147,6 +148,7 @@ export default function SettingsScreen() {
     alwaysAdmin: !!settings?.alwaysRunAsAdmin,
     alwaysAdminAvailable: isWindowsHost,
     language: i18n.language?.startsWith("en") ? "en" : "ru",
+    theme: settings?.theme || "dark",
     subAutoUpdate: settings?.subscriptionAutoUpdate !== false,
     subIntervalHours: intervalHours,
     subHwid: settings?.subscriptionSendHWID !== false,
@@ -180,6 +182,9 @@ export default function SettingsScreen() {
         return updateSetting("alwaysRunAsAdmin", value);
       case "language":
         return i18n.changeLanguage(value);
+      case "theme":
+        applyTheme(value);
+        return updateSetting("theme", value);
       case "subAutoUpdate":
         return updateSetting("subscriptionAutoUpdate", value);
       case "subIntervalHours":
@@ -468,6 +473,11 @@ export default function SettingsScreen() {
           { value: "ru", label: t("settings.language.ru") },
           { value: "en", label: t("settings.language.en") },
         ]}
+        themes={[
+          { value: "dark", label: t("settings.theme.dark") },
+          { value: "light", label: t("settings.theme.light") },
+          { value: "system", label: t("settings.theme.system") },
+        ]}
         dnsPresets={DNS_PRESETS.map((preset) => ({
           ...preset,
           label: t(`settings.dns.preset_${preset.id}`),
@@ -498,6 +508,7 @@ export default function SettingsScreen() {
             connectOnStartup: row("connect_on_startup"),
             alwaysAdmin: row("always_admin"),
             language: row("language"),
+            theme: row("theme"),
             subAutoUpdate: row("subscription_auto_update"),
             subInterval: row("subscription_interval"),
             subHwid: row("subscription_hwid"),

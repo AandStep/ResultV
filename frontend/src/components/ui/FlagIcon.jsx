@@ -22,9 +22,9 @@ export const FlagIcon = ({ code, className = "" }) => {
   const [imgError, setImgError] = useState(false);
 
   if (!code || code === "unknown" || code === "🌐")
-    return <Globe className="w-6 h-6 text-zinc-500 shrink-0" />;
+    return <Globe className="w-6 h-6 text-[color:var(--rv-white-a50)] shrink-0" />;
   if (code === "local" || code === "🏠")
-    return <Server className="w-6 h-6 text-zinc-500 shrink-0" />;
+    return <Server className="w-6 h-6 text-[color:var(--rv-white-a50)] shrink-0" />;
 
   let isoCode = null;
 
@@ -58,7 +58,7 @@ export const FlagIcon = ({ code, className = "" }) => {
   }
 
   return (
-    <span className="text-sm font-bold uppercase tracking-wider text-zinc-300 shrink-0 font-sans">
+    <span className="text-sm font-bold uppercase tracking-wider text-[color:var(--rv-white-a80)] shrink-0 font-sans">
       {isoCode || code}
     </span>
   );

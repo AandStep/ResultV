@@ -21,6 +21,7 @@ import wailsAPI from "../utils/wailsAPI";
 import { adminRestartDialog } from "../utils/adminDialog";
 import { applyCountries, detectCountry, redetectCountries } from "../utils/network";
 import { mergeSubscriptionRefreshCountries } from "../utils/proxyParser";
+// import { applyTheme } from "../lib/theme";
 
 const RULES_PUSH_DEBOUNCE_MS = 400;
 
@@ -215,6 +216,7 @@ export const useAppConfig = (addLog) => {
                     }
                     if (config.settings) {
                         setSettings({ ...defaultSettings, ...config.settings });
+                        // applyTheme(config.settings.theme);
                     }
                     if (config.subscriptions && Array.isArray(config.subscriptions)) {
                         setSubscriptions(config.subscriptions);

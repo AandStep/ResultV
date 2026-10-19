@@ -339,6 +339,13 @@
       "ru": "Русский",
       "en": "English"
     },
+    "theme": {
+      "title": "Theme",
+      "desc": "Light or dark window appearance.",
+      "dark": "Dark",
+      "light": "Light",
+      "system": "Follow system"
+    },
     "ping_type": {
       "title": "Ping type",
       "desc": "How latency is measured. “Auto” picks the probe by node protocol."

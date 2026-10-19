@@ -142,3 +142,25 @@ func alwaysRunAsAdminSetting() bool {
 	}
 	return m.GetConfig().Settings.AlwaysRunAsAdmin
 }
+
+// Светлая тема отложена до доработки. Чтобы включить: читать настройки один
+// раз (AppSettings вместо alwaysRunAsAdminSetting), BackgroundColour =
+// windowBackground(saved.Theme), Theme = windowsTheme(saved.Theme), а в
+// CustomTheme добавить LightMode* = windows.RGB(236, 238, 237).
+//
+// func windowBackground(theme string) *options.RGBA {
+// 	if theme == "light" {
+// 		return &options.RGBA{R: 236, G: 238, B: 237, A: 1}
+// 	}
+// 	return &options.RGBA{R: 24, G: 24, B: 27, A: 1}
+// }
+//
+// func windowsTheme(theme string) windows.Theme {
+// 	switch theme {
+// 	case "light":
+// 		return windows.Light
+// 	case "system":
+// 		return windows.SystemDefault
+// 	}
+// 	return windows.Dark
+// }

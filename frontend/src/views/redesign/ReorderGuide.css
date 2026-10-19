@@ -94,6 +94,7 @@
   height: 24px;
   border-radius: 8px;
   background: var(--rv-main-color);
+  color: var(--rv-on-accent);
   font-size: 12px;
   font-weight: 700;
 }
@@ -136,7 +137,7 @@
   stroke: var(--rv-black);
   stroke-width: 1.4;
   paint-order: stroke;
-  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.6));
+  filter: drop-shadow(0 2px 3px var(--rv-drop-a60));
 }
 
 /* Кончик стрелки в значке стоит в точке (6.5, 2.5) из 24. */
@@ -255,13 +256,13 @@
   }
   36% {
     transform: translateY(0) scale(1.05);
-    box-shadow: 0 14px 28px 0 rgba(0, 0, 0, 0.6);
+    box-shadow: 0 14px 28px 0 var(--rv-drop-a60);
     border-color: var(--rv-main-color);
     animation-timing-function: cubic-bezier(0.45, 0, 0.25, 1);
   }
   62% {
     transform: translateY(calc(2 * var(--guide-step))) scale(1.05);
-    box-shadow: 0 14px 28px 0 rgba(0, 0, 0, 0.6);
+    box-shadow: 0 14px 28px 0 var(--rv-drop-a60);
     border-color: var(--rv-main-color);
     animation-timing-function: cubic-bezier(0.3, 0, 0.2, 1);
   }

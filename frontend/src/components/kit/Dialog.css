@@ -54,6 +54,7 @@
   padding: var(--rv-space-24);
   border-radius: var(--rv-radius-32);
   background: var(--rv-grey);
+  filter: var(--rv-float-filter);
   font-family: var(--rv-font-family);
   overflow-y: auto;
 }

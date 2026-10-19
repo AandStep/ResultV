@@ -67,6 +67,12 @@ export const LANGUAGES = [
   { value: "en", label: "English" },
 ];
 
+export const THEMES = [
+  { value: "dark", label: "Тёмная" },
+  { value: "light", label: "Светлая" },
+  { value: "system", label: "Как в системе" },
+];
+
 export const SUBSCRIPTION_HOURS = [
   { hours: 1, label: "1 ч" },
   { hours: 2, label: "2 ч" },
@@ -195,6 +201,7 @@ export const SETTINGS_PAGE_TEXT = {
       desc: "Нужно для TUN. С автозапуском Windows не спрашивает подтверждения при входе.",
     },
     language: { title: "Язык интерфейса", desc: "Язык подписей в приложении." },
+    theme: { title: "Тема оформления", desc: "Светлое или тёмное оформление окна." },
     subAutoUpdate: {
       title: "Автоматическое обновление",
       desc: "Обновлять подписки по расписанию.",
@@ -314,6 +321,7 @@ export default function SettingsPage({
   onChange,
   tunStacks = TUN_STACKS,
   languages = LANGUAGES,
+  themes = THEMES,
   intervals = SUBSCRIPTION_HOURS,
   dnsPresets = DNS_PRESETS,
   pingTypes = PING_TYPES,
@@ -382,6 +390,16 @@ export default function SettingsPage({
             aria-label={rows.language.title}
           />
         </Row>
+        {/* Светлая тема отложена до доработки.
+        <Row title={rows.theme.title} description={rows.theme.desc}>
+          <Select
+            options={themes}
+            value={values.theme || "dark"}
+            onChange={set("theme")}
+            aria-label={rows.theme.title}
+          />
+        </Row>
+        */}
       </>
     ),
 

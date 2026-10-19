@@ -196,8 +196,8 @@
   z-index: 10;
   scale: 1.025;
   box-shadow:
-    0 18px 40px rgba(0, 0, 0, 0.55),
-    0 4px 12px rgba(0, 0, 0, 0.4);
+    0 18px 40px var(--rv-drop-a55),
+    0 4px 12px var(--rv-drop-a40);
   user-select: none;
   transition:
     scale 320ms cubic-bezier(0.34, 1.56, 0.64, 1),

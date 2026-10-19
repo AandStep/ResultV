@@ -57,8 +57,8 @@
    */
   --rv-border: linear-gradient(
     to right,
-    rgba(255, 255, 255, 0.2),
-    rgba(255, 255, 255, 0.05)
+    var(--rv-white-a20),
+    var(--rv-white-a05)
   );
 }
 
