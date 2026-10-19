@@ -211,8 +211,8 @@ func (a *App) applyResumeMode() {
 	a.log.Info(fmt.Sprintf("[CONFIG] Режим %s применён после перезапуска с правами администратора", mode))
 }
 
-// TakePendingConnect hands the frontend the server to connect to after an
-// elevated relaunch, once. It waits for startup leftover recovery first: the
+// TakePendingConnect hands the frontend the server to connect to on startup
+// (elevated relaunch or "connect on startup"), once. It waits for startup leftover recovery first: the
 // connect must not race the cleanup of a previous session's TUN and DNS.
 func (a *App) TakePendingConnect() string {
 	a.resumeMu.Lock()
@@ -223,7 +223,8 @@ func (a *App) TakePendingConnect() string {
 		return ""
 	}
 	a.waitForLeftoverCleanup(15 * time.Second)
-	a.log.Info("[СИСТЕМА] Перезапуск с правами администратора: подключаемся к выбранному серверу")
+	a.waitForOnline(startupOnlineWait)
+	a.log.Info("[СИСТЕМА] Подключение при запуске: подключаемся к выбранному серверу")
 	return id
 }
 
@@ -503,6 +504,7 @@ func (a *App) startup(ctx context.Context) {
 	// what Init found on disk.
 	a.seedChangelogVersionOnFreshInstall()
 	a.applyResumeMode()
+	a.applyConnectOnStartup()
 
 	a.proxy = proxy.NewManager(a.log)
 	a.proxy.Init(a.ctx)

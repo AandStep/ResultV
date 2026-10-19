@@ -340,6 +340,33 @@ export const wailsAPI = {
     }
   },
 
+  verifyTunnelTraffic: async () => {
+    try {
+      const verify = window?.go?.main?.App?.VerifyTunnelTraffic;
+      if (!verify) return true;
+      return await verify();
+    } catch (e) {
+      console.error("wailsAPI.verifyTunnelTraffic error:", e);
+      return true;
+    }
+  },
+
+  setAlwaysRunAsAdmin: async (enabled) => {
+    const fn = window?.go?.main?.App?.SetAlwaysRunAsAdmin;
+    if (!fn) return;
+    await fn(!!enabled);
+  },
+
+  enableAlwaysAdminAndRestart: async (proxyId = "", mode = "") => {
+    try {
+      const fn = window?.go?.main?.App?.EnableAlwaysAdminAndRestart;
+      if (fn) await fn(String(proxyId ?? ""), String(mode ?? ""));
+    } catch (e) {
+      console.error("wailsAPI.enableAlwaysAdminAndRestart error:", e);
+      throw e;
+    }
+  },
+
   takePendingConnect: async () => {
     try {
       const take = window?.go?.main?.App?.TakePendingConnect;

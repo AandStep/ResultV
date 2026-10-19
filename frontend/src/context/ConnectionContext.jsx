@@ -152,7 +152,7 @@ export const ConnectionProvider = ({ children }) => {
     // состояние через ref.
     const resumeTakenRef = useRef(false);
     const resumeStateRef = useRef({});
-    resumeStateRef.current = { proxies, isConnected, selectAndConnect };
+    resumeStateRef.current = { proxies, isConnected, selectAndConnect, disconnectOnly };
     useEffect(() => {
         if (!isConfigLoaded || resumeTakenRef.current) return;
         resumeTakenRef.current = true;
@@ -164,10 +164,14 @@ export const ConnectionProvider = ({ children }) => {
             if (connected || isSwitchingRef.current) return;
             const proxy = list.find((p) => String(p.id) === String(id));
             if (!proxy) {
-                addLog("После перезапуска с правами сервер для подключения не найден.", "warning");
+                addLog("Сервер для подключения при запуске не найден.", "warning");
                 return;
             }
             await connect(proxy);
+            if (await wailsAPI.verifyTunnelTraffic()) return;
+            addLog("Страховка автоподключения: трафик не идёт — переподключение.", "warning");
+            await resumeStateRef.current.disconnectOnly();
+            await resumeStateRef.current.selectAndConnect(proxy);
         })();
     }, [isConfigLoaded, addLog]);
 
