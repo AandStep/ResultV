@@ -66,3 +66,11 @@ func TestRestartAsAdminArgs_CarryParentPID(t *testing.T) {
 		t.Fatalf("потерян аргумент возобновления: %s", got)
 	}
 }
+
+func TestSelfElevateParams(t *testing.T) {
+	got := selfElevateParams([]string{`C:\R\ResultV.exe`, "--autostart", ElevatedFromFlag + "11", "resultv://add?x=1 2"}, 77)
+	want := ElevatedFromFlag + `77 --autostart "resultv://add?x=1 2"`
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}

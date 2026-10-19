@@ -18,7 +18,13 @@
 package system
 
 import (
+	"errors"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -39,6 +45,39 @@ func WaitForElevationParent(args []string) {
 	}
 	defer windows.CloseHandle(h)
 	_, _ = windows.WaitForSingleObject(h, uint32(parentExitTimeout/time.Millisecond))
+}
+
+func selfElevateParams(args []string, parentPID int) string {
+	parts := []string{ElevatedFromFlag + strconv.Itoa(parentPID)}
+	for _, a := range args[1:] {
+		if strings.HasPrefix(a, ElevatedFromFlag) {
+			continue
+		}
+		parts = append(parts, windows.EscapeArg(a))
+	}
+	return strings.Join(parts, " ")
+}
+
+// RelaunchElevated starts this executable elevated with the same arguments.
+// false with a nil error means the user declined the UAC prompt.
+func RelaunchElevated(args []string) (bool, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return false, err
+	}
+	verb, _ := windows.UTF16PtrFromString("runas")
+	file, _ := windows.UTF16PtrFromString(exe)
+	params, _ := windows.UTF16PtrFromString(selfElevateParams(args, os.Getpid()))
+	info := shellExecuteInfo{lpVerb: verb, lpFile: file, lpParameters: params, nShow: 1}
+	info.cbSize = uint32(unsafe.Sizeof(info))
+	ret, _, callErr := procShellExecuteExW.Call(uintptr(unsafe.Pointer(&info)))
+	if ret != 0 {
+		return true, nil
+	}
+	if errors.Is(callErr, windows.ERROR_CANCELLED) {
+		return false, nil
+	}
+	return false, fmt.Errorf("ShellExecuteExW: %w", callErr)
 }
 
 func KeepInvokerOwnership() func() { return func() {} }

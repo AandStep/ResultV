@@ -26,6 +26,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
 
+	"resultproxy-wails/internal/config"
 	"resultproxy-wails/internal/system"
 )
 
@@ -59,6 +60,16 @@ func main() {
 		}
 	})
 	defer cleanupMessenger()
+
+	if runtime.GOOS == "windows" && !system.IsAdmin() && !system.ArgsElevatedFrom(os.Args) && alwaysRunAsAdminSetting() {
+		if ok, err := system.RelaunchElevated(os.Args); ok {
+			cleanupMessenger()
+			system.ReleaseSingletonLock()
+			os.Exit(0)
+		} else if err != nil {
+			log.Printf("relaunch elevated: %v", err)
+		}
+	}
 
 	opts := &options.App{
 		Title: "ResultV",
@@ -117,4 +128,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("wails.Run: %v", err)
 	}
+}
+
+func alwaysRunAsAdminSetting() bool {
+	dir := system.UserDataDir()
+	cs, err := config.NewCryptoService(dir)
+	if err != nil {
+		return false
+	}
+	m := config.NewManager(cs)
+	if err := m.Init(dir); err != nil {
+		return false
+	}
+	return m.GetConfig().Settings.AlwaysRunAsAdmin
 }

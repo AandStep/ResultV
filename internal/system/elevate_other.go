@@ -25,4 +25,6 @@ func restartAsAdminLinux(exePath string, args []string) error {
 
 func WaitForElevationParent(args []string) {}
 
+func RelaunchElevated(args []string) (bool, error) { return false, nil }
+
 func KeepInvokerOwnership() func() { return func() {} }
