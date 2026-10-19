@@ -115,7 +115,7 @@ func DisableAutostart() error {
 }
 
 func IsAutostartEnabled() bool {
-	if runAutostartValuePresent() {
+	if runAutostartValuePresent() || ElevatedAutostartPresent() {
 		return true
 	}
 	return legacyScheduledTaskPresent()
