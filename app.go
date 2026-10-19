@@ -524,6 +524,7 @@ func (a *App) startup(ctx context.Context) {
 	a.killSwitch = system.NewKillSwitch()
 	a.leftoverDone = make(chan struct{})
 	go a.recoverLeftovers()
+	go a.syncAutostartOnStartup()
 
 	// Re-evaluate a live AUTO group's pick for as long as the app runs. Started
 	// unconditionally and gated per tick (connected, on an AUTO member, setting
@@ -1459,17 +1460,14 @@ func (a *App) SetAutostart(enable bool) error {
 	if err != nil {
 		return fmt.Errorf("getting executable path: %w", err)
 	}
+	_, alwaysAdmin := a.currentSettingsAutostart()
+	if err := syncAutostart(exe, enable, alwaysAdmin); err != nil {
+		a.log.Error(fmt.Sprintf("[СИСТЕМА] Ошибка изменения автозапуска: %v", err))
+		return err
+	}
 	if enable {
-		if err := system.EnableAutostart(exe); err != nil {
-			a.log.Error(fmt.Sprintf("[СИСТЕМА] Ошибка создания автозапуска: %v", err))
-			return err
-		}
 		a.log.Success("[СИСТЕМА] Автозапуск включен")
 	} else {
-		if err := system.DisableAutostart(); err != nil {
-			a.log.Warning(fmt.Sprintf("[СИСТЕМА] Ошибка удаления автозапуска: %v", err))
-			return err
-		}
 		a.log.Info("[СИСТЕМА] Автозапуск отключен")
 	}
 	return nil
