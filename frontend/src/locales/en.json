@@ -243,6 +243,14 @@
       "title": "Run at startup",
       "desc": "Launch the app together with Windows."
     },
+    "connect_on_startup": {
+      "title": "Connect on startup",
+      "desc": "Connect to the last server as soon as the app starts."
+    },
+    "always_admin": {
+      "title": "Always run as administrator",
+      "desc": "Required for TUN. With run at startup, Windows won't ask for confirmation at sign-in."
+    },
     "killswitch": {
       "title": "Enable Kill Switch",
       "desc": "Cuts the internet if the proxy goes down."
@@ -726,6 +734,7 @@
     "adminTitle": "Administrator rights required",
     "adminMessage": "Tunnel mode needs administrator privileges for the virtual network adapter. Click the button below and approve the UAC prompt — the app will restart elevated.",
     "restartAsAdmin": "Restart as administrator",
+    "alwaysAdmin": "Always run as administrator",
     "endpointOnly": "WireGuard and AmneziaWG do not work in Proxy mode — Tunnel only.",
     "elevationFailedTitle": "Could not get privileges",
     "elevationCancelled": "The password prompt was closed. The app keeps running without administrator rights.",

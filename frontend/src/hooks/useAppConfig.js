@@ -18,6 +18,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import wailsAPI from "../utils/wailsAPI";
+import { adminRestartDialog } from "../utils/adminDialog";
 import { applyCountries, detectCountry, redetectCountries } from "../utils/network";
 import { mergeSubscriptionRefreshCountries } from "../utils/proxyParser";
 
@@ -79,6 +80,7 @@ export const useAppConfig = (addLog) => {
     });
     const confirmResolverRef = useRef(null);
     const dialogConfirmRef = useRef(null);
+    const dialogSecondaryRef = useRef(null);
     // AddRoutingList/UpdateRoutingList/DeleteRoutingList/RefreshRoutingList
     // already persist + reconnect on the Go side (applyRoutingRulesAndReconnect).
     // Reflecting their result into `routingRules` via setRoutingRules would
@@ -115,6 +117,10 @@ export const useAppConfig = (addLog) => {
             typeof options.onConfirmAction === "function"
                 ? options.onConfirmAction
                 : null;
+        dialogSecondaryRef.current =
+            typeof options.onSecondaryAction === "function"
+                ? options.onSecondaryAction
+                : null;
         setAppDialog({
             isOpen: true,
             title: options.title || "",
@@ -123,6 +129,7 @@ export const useAppConfig = (addLog) => {
             showCancel: false,
             confirmText: options.confirmText || "",
             cancelText: "",
+            secondaryText: dialogSecondaryRef.current ? options.secondaryText || "" : "",
         });
     }, []);
 
@@ -155,6 +162,12 @@ export const useAppConfig = (addLog) => {
             }
         }
     }, [resetDialog, t]);
+
+    const handleAppDialogSecondary = useCallback(() => {
+        dialogConfirmRef.current = dialogSecondaryRef.current;
+        dialogSecondaryRef.current = null;
+        return handleAppDialogConfirm();
+    }, [handleAppDialogConfirm]);
 
     const showConfirmDialog = useCallback((options = {}) => {
         dialogConfirmRef.current = null;
@@ -268,14 +281,7 @@ export const useAppConfig = (addLog) => {
             // и поднимаем после перезапуска.
             const askRestart = (message) => {
                 addLog(message || t("tunnel.adminMessage"), "error");
-                showAlertDialog({
-                    title: t("tunnel.adminTitle"),
-                    message: t("tunnel.adminMessage"),
-                    variant: "warning",
-                    confirmText: t("tunnel.restartAsAdmin"),
-                    onConfirmAction: () =>
-                        wailsAPI.restartAsAdmin(settings.lastSelectedProxyId, value),
-                });
+                showAlertDialog(adminRestartDialog(t, settings.lastSelectedProxyId, value));
             };
             modeApplyingRef.current = true;
             if (value === "tunnel") {
@@ -329,11 +335,12 @@ export const useAppConfig = (addLog) => {
             return;
         }
 
-        if (key === "autostart") {
+        if (key === "autostart" || key === "alwaysRunAsAdmin") {
             const nextSettings = { ...settings, [key]: value };
             setSettings(nextSettings);
             try {
-                await wailsAPI.setAutostart(value);
+                if (key === "autostart") await wailsAPI.setAutostart(value);
+                else await wailsAPI.setAlwaysRunAsAdmin(value);
                 await persistSettings(nextSettings);
             } catch (err) {
                 console.error("Autostart error:", err);
@@ -627,5 +634,6 @@ export const useAppConfig = (addLog) => {
         showConfirmDialog,
         closeAppDialog,
         handleAppDialogConfirm,
+        handleAppDialogSecondary,
     };
 };

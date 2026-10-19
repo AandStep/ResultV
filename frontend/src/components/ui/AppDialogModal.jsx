@@ -48,7 +48,9 @@ const AppDialogModal = ({
   showCancel = false,
   confirmText,
   cancelText,
+  secondaryText,
   onConfirm,
+  onSecondary,
   onClose,
 }) => {
   const { t } = useTranslation();
@@ -68,6 +70,7 @@ const AppDialogModal = ({
           {showCancel && (
             <Button onClick={onClose}>{cancelText || t("common.cancel", "Отмена")}</Button>
           )}
+          {secondaryText && <Button onClick={onSecondary}>{secondaryText}</Button>}
           <Button variant={BUTTON_VARIANT[look]} onClick={onConfirm}>
             {confirmText ||
               (showCancel ? t("common.confirm", "Подтвердить") : t("common.ok", "OK"))}

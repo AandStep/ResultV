@@ -38,6 +38,7 @@ import UpdateNotificationModal from "./components/ui/UpdateNotificationModal";
 import UpdaterModal from "./components/ui/UpdaterModal";
 import ChangelogModal from "./components/ui/ChangelogModal";
 import ProtocolWarningModal from "./components/ui/ProtocolWarningModal";
+import { adminRestartDialog } from "./utils/adminDialog";
 import AppDialogModal from "./components/ui/AppDialogModal";
 import DeepLinkImportModal from "./components/ui/DeepLinkImportModal";
 
@@ -51,6 +52,7 @@ const AppContent = () => {
         appDialog,
         closeAppDialog,
         handleAppDialogConfirm,
+        handleAppDialogSecondary,
         showAlertDialog,
     } = useConfigContext();
     const { updateAvailable, latestVersionData, currentVersion, hasPlatformAsset, recheck } =
@@ -118,11 +120,9 @@ const AppContent = () => {
                 // old surprise mid-startup UAC. The elevated instance cleans
                 // them on its own startup pass and shows the normal notice.
                 showAlertDialog({
+                    ...adminRestartDialog(t),
                     title: t("leftovers.elevTitle"),
                     message: `${t("leftovers.elevLead")}\n\n${bullets}\n\n${t("leftovers.elevTail")}`,
-                    variant: "warning",
-                    confirmText: t("tunnel.restartAsAdmin"),
-                    onConfirmAction: () => wailsAPI.restartAsAdmin(),
                 });
                 return;
             }
@@ -204,6 +204,8 @@ const AppContent = () => {
                 cancelText={appDialog?.cancelText}
                 onClose={() => closeAppDialog(false)}
                 onConfirm={handleAppDialogConfirm}
+                secondaryText={appDialog?.secondaryText}
+                onSecondary={handleAppDialogSecondary}
             />
 
             <DeepLinkImportModal />

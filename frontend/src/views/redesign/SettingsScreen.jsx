@@ -37,6 +37,7 @@ import {
 import wailsAPI from "../../utils/wailsAPI";
 import AppSidebar from "./AppSidebar";
 import ConfigPasswordDialog from "./ConfigPasswordDialog";
+import { isWindowsHost } from "../../utils/adminDialog";
 import SettingsPage, {
   DNS_PRESETS,
   SUBSCRIPTION_HOURS,
@@ -142,6 +143,9 @@ export default function SettingsScreen() {
   const values = {
     tunStack: settings?.tunStack || "default",
     autostart: !!settings?.autostart,
+    connectOnStartup: !!settings?.connectOnStartup,
+    alwaysAdmin: !!settings?.alwaysRunAsAdmin,
+    alwaysAdminAvailable: isWindowsHost,
     language: i18n.language?.startsWith("en") ? "en" : "ru",
     subAutoUpdate: settings?.subscriptionAutoUpdate !== false,
     subIntervalHours: intervalHours,
@@ -170,6 +174,10 @@ export default function SettingsScreen() {
         return updateSetting("tunStack", value === "default" ? "" : value);
       case "autostart":
         return updateSetting("autostart", value);
+      case "connectOnStartup":
+        return updateSetting("connectOnStartup", value);
+      case "alwaysAdmin":
+        return updateSetting("alwaysRunAsAdmin", value);
       case "language":
         return i18n.changeLanguage(value);
       case "subAutoUpdate":
@@ -487,6 +495,8 @@ export default function SettingsScreen() {
           rows: {
             tunStack: row("tun_stack"),
             autostart: row("autostart"),
+            connectOnStartup: row("connect_on_startup"),
+            alwaysAdmin: row("always_admin"),
             language: row("language"),
             subAutoUpdate: row("subscription_auto_update"),
             subInterval: row("subscription_interval"),

@@ -186,6 +186,14 @@ export const SETTINGS_PAGE_TEXT = {
       title: "Запуск при старте системы",
       desc: "Запускать приложение вместе с Windows.",
     },
+    connectOnStartup: {
+      title: "Подключаться при запуске",
+      desc: "Сразу подключать последний сервер, когда приложение запускается.",
+    },
+    alwaysAdmin: {
+      title: "Всегда запускать от имени администратора",
+      desc: "Нужно для TUN. С автозапуском Windows не спрашивает подтверждения при входе.",
+    },
     language: { title: "Язык интерфейса", desc: "Язык подписей в приложении." },
     subAutoUpdate: {
       title: "Автоматическое обновление",
@@ -358,6 +366,14 @@ export default function SettingsPage({
         <Row title={rows.autostart.title} description={rows.autostart.desc}>
           <Tumbler checked={!!values.autostart} onChange={set("autostart")} />
         </Row>
+        <Row title={rows.connectOnStartup.title} description={rows.connectOnStartup.desc}>
+          <Tumbler checked={!!values.connectOnStartup} onChange={set("connectOnStartup")} />
+        </Row>
+        {values.alwaysAdminAvailable && (
+          <Row title={rows.alwaysAdmin.title} description={rows.alwaysAdmin.desc}>
+            <Tumbler checked={!!values.alwaysAdmin} onChange={set("alwaysAdmin")} />
+          </Row>
+        )}
         <Row title={rows.language.title} description={rows.language.desc}>
           <Select
             options={languages}

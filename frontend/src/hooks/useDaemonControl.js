@@ -18,6 +18,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import wailsAPI from "../utils/wailsAPI";
+import { adminRestartDialog } from "../utils/adminDialog";
 import { isEndpointProtocol } from "../utils/proxyParser";
 import { useToast } from "../context/ToastContext";
 
@@ -264,11 +265,7 @@ export const useDaemonControl = (
             if (admin) return true;
             addLog(t("tunnel.adminMessage"), "error");
             showAlertDialog({
-                title: t("tunnel.adminTitle"),
-                message: t("tunnel.adminMessage"),
-                variant: "warning",
-                confirmText: t("tunnel.restartAsAdmin"),
-                onConfirmAction: () => wailsAPI.restartAsAdmin(proxy?.id),
+                ...adminRestartDialog(t, proxy?.id),
             });
             return false;
         },
@@ -479,11 +476,7 @@ export const useDaemonControl = (
                             "error",
                         );
                         showAlertDialog({
-                            title: t("tunnel.adminTitle"),
-                            message: t("tunnel.adminMessage"),
-                            variant: "warning",
-                            confirmText: t("tunnel.restartAsAdmin"),
-                            onConfirmAction: () => wailsAPI.restartAsAdmin(targetProxy.id),
+                            ...adminRestartDialog(t, targetProxy.id),
                         });
                         bumpGen();
                         isSwitchingRef.current = false;
@@ -822,11 +815,7 @@ export const useDaemonControl = (
                             "error",
                         );
                         showAlertDialog({
-                            title: t("tunnel.adminTitle"),
-                            message: t("tunnel.adminMessage"),
-                            variant: "warning",
-                            confirmText: t("tunnel.restartAsAdmin"),
-                            onConfirmAction: () => wailsAPI.restartAsAdmin(proxy.id),
+                            ...adminRestartDialog(t, proxy.id),
                         });
                         bumpGen();
                         isSwitchingRef.current = false;
