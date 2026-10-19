@@ -254,6 +254,9 @@ ks_dns_next:
 
 ks_cleanup_done:
 
+  nsExec::ExecToLog 'schtasks /delete /tn ResultVAutostartAdmin /f'
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "ResultV"
+
   RMDir /r $INSTDIR
 
   Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
