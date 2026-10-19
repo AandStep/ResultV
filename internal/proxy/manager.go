@@ -799,8 +799,12 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	// Serialize against any other connect/disconnect/reconnect (see opMu). Held
 	// for the whole call — including the lock-free slow phase — so two operations
 	// can never both reach engine.Start.
+	tWait := time.Now()
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
+	if waited := time.Since(tWait); waited > time.Second {
+		m.log.Info(fmt.Sprintf("[PROXY] Подключение ждало завершения предыдущей операции (в т.ч. уборки хвостов) %d мс", waited.Milliseconds()))
+	}
 
 	// ── Phase 1: quick setup under lock ──────────────────────────────────────
 	m.mu.Lock()
@@ -3446,6 +3450,8 @@ type LeftoverScan struct {
 func (s LeftoverScan) Any() bool { return s.Proxy || s.DNS || s.Tun }
 
 func (m *Manager) RecoverSystemLeftovers() (scan LeftoverScan) {
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
 	if m.sessionActive() {
 		return
 	}
@@ -3475,18 +3481,26 @@ func (m *Manager) RecoverSystemLeftovers() (scan LeftoverScan) {
 		return
 	}
 
+	cleanupStart := time.Now()
+	var dnsDur, tunDur time.Duration
 	if hasDNSLeft && !m.sessionActive() {
+		t := time.Now()
 		if err := m.sysDNS.Restore(); err != nil {
 			m.logDNSRestoreWarning(err)
 		}
+		dnsDur = time.Since(t)
 	}
 	if hasTunLeft && !m.sessionActive() {
+		t := time.Now()
 		if err := clearLeftoverTunFn(); err != nil {
 			m.log.Warning(fmt.Sprintf("[СИСТЕМА] Ошибка снятия остаточного туннель-адаптера: %v", err))
 		} else {
 			m.log.Success("[СИСТЕМА] Снят остаточный туннель-адаптер и его маршрут по умолчанию")
 		}
+		tunDur = time.Since(t)
 	}
+	m.log.Info(fmt.Sprintf("[СИСТЕМА] Уборка хвостов прошлого сеанса: %d мс (dns=%d мс, tun=%d мс)",
+		time.Since(cleanupStart).Milliseconds(), dnsDur.Milliseconds(), tunDur.Milliseconds()))
 	return
 }
 
