@@ -45,6 +45,7 @@ export default function Dialog({
   showClose = true,
   children,
   actions,
+  stackActions = false,
   className = "",
   ...rest
 }) {
@@ -97,7 +98,11 @@ export default function Dialog({
 
         {children}
 
-        {actions && <div className="rv-dialog__actions">{actions}</div>}
+        {actions && (
+          <div className={`rv-dialog__actions${stackActions ? " rv-dialog__actions--stack" : ""}`}>
+            {actions}
+          </div>
+        )}
       </div>
     </div>,
     document.body,
