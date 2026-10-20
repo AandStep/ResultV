@@ -265,3 +265,21 @@ func TestBuildTunnelModeConfig_AppDirectBuildsInCore(t *testing.T) {
 		}
 	}
 }
+
+// Listing an app next to its launcher, or twice, never cancels anything out:
+// unlike the old site list, a match is a match however many entries hit it.
+func TestFamilyResolver_OverlappingEntriesStayDirect(t *testing.T) {
+	lists := newAppLists([]string{"steam.exe", "EasyAntiCheat_EOS.exe", "steam.exe", "dota2.exe"}, nil)
+	tree := newFakeLineage(pServices, pEAC, pExplorer, pSteam, pGame)
+	r := newFamilyResolver(lists, tree)
+	for _, p := range []processtree.Process{pSteam, pGame, pEAC} {
+		if got := r.family(p.PID, p.Image); got != familyDirect {
+			t.Errorf("%s: family %d, want direct", p.Image, got)
+		}
+	}
+	delete(tree.procs, pSteam.PID)
+	r = newFamilyResolver(lists, tree)
+	if got := r.family(pEAC.PID, pEAC.Image); got != familyDirect {
+		t.Errorf("a listed anti-cheat must stay direct with no launcher running, got %d", got)
+	}
+}
