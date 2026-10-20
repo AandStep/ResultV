@@ -275,6 +275,9 @@ type SBDNS struct {
 	// an expired entry — the same bargain the Smart lists already make at
 	// startup. Set by newSBDNS, never by hand.
 	Optimistic *SBDNSOptimistic `json:"optimistic,omitempty"`
+	// ReverseMapping lets the router name a connection made to an address the
+	// app got from a lookup. app-direct needs that name to resolve it again.
+	ReverseMapping bool `json:"reverse_mapping,omitempty"`
 }
 
 // SBDNSOptimistic configures sing-box 1.14's optimistic DNS cache: an expired
@@ -343,6 +346,7 @@ type SBDNSRule struct {
 	Domain           []string `json:"domain,omitempty"`
 	DomainSuffix     []string `json:"domain_suffix,omitempty"`
 	ProcessPathRegex []string `json:"process_path_regex,omitempty"`
+	PackageName      []string `json:"package_name,omitempty"`
 	RuleSet          []string `json:"rule_set,omitempty"`
 	// QueryType is no longer a filter that only applies to what the inbound
 	// asks. On sing-box 1.14 an internal resolve — the dial for a
@@ -698,6 +702,7 @@ type SBRouteRule struct {
 	IPCidr           []string `json:"ip_cidr,omitempty"`
 	ProcessName      []string `json:"process_name,omitempty"`
 	ProcessPathRegex []string `json:"process_path_regex,omitempty"`
+	PackageName      []string `json:"package_name,omitempty"`
 	RuleSet          []string `json:"rule_set,omitempty"`
 	Outbound         string   `json:"outbound,omitempty"`
 	Action           string   `json:"action,omitempty"`
@@ -985,7 +990,7 @@ func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 			Listen:     host,
 			ListenPort: port,
 		}, updateInbound()},
-		Outbounds:    buildOutbounds(cfg.Proxy, nodeResolver, ""),
+		Outbounds:    append(buildOutbounds(cfg.Proxy, nodeResolver, ""), appDirectOutbounds(cfg)...),
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
 	}
@@ -1177,6 +1182,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	// named before the DNS block exists.
 	nodeResolver := serverDomainResolverTag(cfg.Proxy, ProxyModeTunnel, nil)
 	outbounds := buildOutbounds(cfg.Proxy, nodeResolver, directDomainResolverTag(cfg))
+	outbounds = append(outbounds, appDirectOutbounds(cfg)...)
 	if adaptiveSmartActive(cfg) {
 		smart := SBOutbound{
 			Type:      smartOutboundTag,
@@ -1838,38 +1844,16 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			}
 		}
 
-		// Whitelisted apps (split-tunnel direct) must resolve via the local
-		// system resolver, NOT through the proxy detour. Otherwise the TCP
-		// connection is bypassed but the DNS lookup still rides the tunnel —
-		// for SSH/SFTP clients (WinSCP, etc.) this manifests as silent
-		// "Failed to establish connection" because the encrypted DNS detour
-		// to a public resolver is slower than the SSH handshake timeout.
-		//
-		// Same Windows defect as the self-exemption above, and it predates the
-		// adaptive work: getaddrinfo hands the query to the DNS Client service,
-		// so the engine sees svchost and this regex does not match. The rule
-		// therefore does not do the job it was written for — an excluded app's
-		// lookups are still resolved by whatever the rules below decide, not by
-		// this one. It is kept rather than deleted because it is free and it is
-		// correct wherever a process resolves names itself instead of calling
-		// getaddrinfo; it must not be read as a guarantee.
-		//
-		// What the excluded app's lookup actually hits, once this rule misses:
-		// in Smart mode without the adaptive engine, dns.Final = "local" below,
-		// so it lands on the system resolver and the original symptom is gone
-		// by accident. With the adaptive engine on, the fakeip catch-all is the
-		// last rule and claims every A/AAAA, so the app is handed a fake
-		// address — which still works, because the route-level process rule
-		// (buildRoute matches processes on the connection, where Windows does
-		// preserve the owner) sends the connection direct and the direct
-		// outbound resolves the real name. Global mode keeps the original
-		// symptom in full. A real fix needs a selector the Windows resolver
-		// preserves, and the rule language has none today.
-		if rx := appWhitelistPathRegexes(cfg.AppWhitelist); len(rx) > 0 {
+		// An excluded family resolves through the system resolver. This catches
+		// only an app that sends its own queries: Windows asks on behalf of
+		// everyone else from the DNS Client service, which carries no family.
+		// Those connections are put right afterwards by app-direct.
+		if len(cfg.AppWhitelist) > 0 {
 			dns.Rules = append(dns.Rules, SBDNSRule{
-				ProcessPathRegex: rx,
-				Server:           "local",
+				PackageName: []string{familyTagDirect},
+				Server:      "local",
 			})
+			dns.ReverseMapping = true
 		}
 
 		// Excluded domains leave direct, so they resolve via the system resolver.
@@ -1896,10 +1880,10 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		// unusable.
 		if smartRuleSetActive(cfg) {
 			if tunnelTag := firstDetourServerTag(dns.Servers, detour); tunnelTag != "" {
-				if rx := appWhitelistPathRegexes(cfg.AppForceVPN); len(rx) > 0 {
+				if len(cfg.AppForceVPN) > 0 {
 					dns.Rules = append(dns.Rules, SBDNSRule{
-						ProcessPathRegex: rx,
-						Server:           tunnelTag,
+						PackageName: []string{familyTagVPN},
+						Server:      tunnelTag,
 					})
 				}
 				dns.Rules = append(dns.Rules, SBDNSRule{
@@ -2131,6 +2115,11 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		Outbound: "proxy",
 	})
 
+	// The app lists outrank everything the user configures by address: naming
+	// an app is the most explicit thing they can say, and it covers every
+	// process the app starts (appfamily.go).
+	rules = append(rules, appFamilyRouteRules(cfg)...)
+
 	// User routing lists win over the built-in Smart/whitelist/ad-block rules:
 	// inserted here, after the DNS/server infra rules but before every built-in.
 	rules = appendRoutingListRouteRules(cfg.RoutingLists, rules, cfg.RoutingOrder)
@@ -2202,39 +2191,6 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 				})
 			}
 		}
-	}
-
-	// Force-VPN apps: the whole process family goes through the tunnel. Placed
-	// before the app-whitelist direct rule so an explicit "via VPN" beats an
-	// accidental overlap with the exclusion list (the UI prevents adding one
-	// app to both). Tunnel-only: in proxy mode apps that ignore the system
-	// proxy never reach us, so the rule would be dead weight.
-	if cfg.Mode == ProxyModeTunnel {
-		if rx := appWhitelistPathRegexes(cfg.AppForceVPN); len(rx) > 0 {
-			// Sending an app through the tunnel wholesale is the workaround
-			// users reach for when a service half-works; it must not hand them
-			// back the QUIC hang the Smart rule below cures. Smart-only on
-			// purpose: in Global mode every app already rides the proxy, so
-			// singling out the force-VPN list would fix QUIC for those apps and
-			// leave it broken for the rest — an inconsistency worth deciding on
-			// its own rather than inheriting from here.
-			if cfg.RoutingMode == ModeSmart {
-				rules = append(rules, quicRejectRule(SBRouteRule{ProcessPathRegex: rx}))
-			}
-			rules = append(rules, SBRouteRule{
-				Action:           "route",
-				ProcessPathRegex: rx,
-				Outbound:         "proxy",
-			})
-		}
-	}
-
-	if rx := appWhitelistPathRegexes(cfg.AppWhitelist); len(rx) > 0 {
-		rules = append(rules, SBRouteRule{
-			Action:           "route",
-			ProcessPathRegex: rx,
-			Outbound:         "direct",
-		})
 	}
 
 	// Built-in Smart coverage for apps the block-lists structurally cannot
@@ -2398,6 +2354,49 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 
 	route.Rules = rules
 	return route
+}
+
+// appFamilyVPNList is the "via VPN" app list in force for this config. It only
+// exists in tunnel mode: in proxy mode an app that ignores the system proxy
+// never reaches the engine, so there is nothing to force.
+func appFamilyVPNList(cfg EngineConfig) []string {
+	if cfg.Mode != ProxyModeTunnel {
+		return nil
+	}
+	return cfg.AppForceVPN
+}
+
+// appFamilyRouteRules routes the app families. An explicit "via VPN" comes
+// first so it beats an accidental overlap with the exclusions.
+func appFamilyRouteRules(cfg EngineConfig) []SBRouteRule {
+	var rules []SBRouteRule
+	if len(appFamilyVPNList(cfg)) > 0 {
+		vpn := SBRouteRule{PackageName: []string{familyTagVPN}}
+		// Forcing an app through the tunnel must not hand back the QUIC hang
+		// the Smart rules cure. In Global every app already rides the node.
+		if cfg.RoutingMode == ModeSmart {
+			rules = append(rules, quicRejectRule(vpn))
+		}
+		vpn.Action = "route"
+		vpn.Outbound = "proxy"
+		rules = append(rules, vpn)
+	}
+	if len(cfg.AppWhitelist) > 0 {
+		rules = append(rules, SBRouteRule{
+			Action:      "route",
+			PackageName: []string{familyTagDirect},
+			Outbound:    appDirectTag,
+		})
+	}
+	return rules
+}
+
+// appDirectOutbounds is the outbound the excluded families leave through.
+func appDirectOutbounds(cfg EngineConfig) []SBOutbound {
+	if len(cfg.AppWhitelist) == 0 {
+		return nil
+	}
+	return []SBOutbound{{Type: appDirectTag, Tag: appDirectTag}}
 }
 
 // resolveBeforeEndpoint puts a resolve through the tunnel resolver in front of

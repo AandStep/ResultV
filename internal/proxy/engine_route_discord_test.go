@@ -110,24 +110,14 @@ func TestBuildTunnelModeConfig_DiscordRuleEnablesFindProcess(t *testing.T) {
 	}
 }
 
-// An explicit user exclusion must still win: the app-whitelist direct rule is
-// emitted before the built-in, so "Discord в обход VPN" stays honoured.
+// An explicit user exclusion must still win: the excluded family is routed
+// before the built-in, so "Discord в обход VPN" stays honoured.
 func TestBuildRoute_SmartMode_UserExclusionBeatsBuiltinDiscordRule(t *testing.T) {
 	cfg := smartTunnelCfg()
 	cfg.AppWhitelist = []string{"discord.exe"}
 	route := buildRoute(cfg)
 
-	directIdx := -1
-	for i, r := range route.Rules {
-		if r.Outbound != "direct" || r.Action != "route" {
-			continue
-		}
-		for _, rx := range r.ProcessPathRegex {
-			if strings.Contains(strings.ToLower(rx), "discord") {
-				directIdx = i
-			}
-		}
-	}
+	directIdx := familyRuleIndex(route.Rules, familyTagDirect, appDirectTag)
 	if directIdx < 0 {
 		t.Fatal("user exclusion for discord.exe produced no direct rule")
 	}

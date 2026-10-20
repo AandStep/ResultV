@@ -44,6 +44,7 @@ import (
 	"github.com/sagernet/sing/service"
 
 	"resultproxy-wails/internal/logger"
+	"resultproxy-wails/internal/system/processtree"
 	"resultproxy-wails/internal/verdict"
 )
 
@@ -642,6 +643,12 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 	// verdict is written a few seconds after connect by startUDPRelayProbe, so
 	// anything sampled here would be "not measured" for the whole session.
 	boxCtx = service.ContextWith[nodeUDPCheck](boxCtx, nodeUDPCheckFor(cfg.Proxy))
+	// The app lists reach the core through the process lookup: see
+	// familyPlatform for why that is a platform interface.
+	if lists := newAppLists(cfg.AppWhitelist, appFamilyVPNList(cfg)); !lists.empty() {
+		resolver := newFamilyResolver(lists, processtree.Default())
+		boxCtx = service.ContextWith[adapter.PlatformInterface](boxCtx, newFamilyPlatform(resolver))
+	}
 	boxCtx = extendedBoxContext(boxCtx)
 
 	var options option.Options
@@ -1298,7 +1305,7 @@ func (t *trafficTracker) logConnection(metadata adapter.InboundContext, outbound
 	// before handing it over (fork route/route.go:158), so at this point the
 	// answer literally does not exist. It books its own traffic once it knows,
 	// via attributeProxyConn and logProxyConnection.
-	if outTag == "direct" || outTag == "block" || outTag == smartOutboundTag {
+	if outTag == "direct" || outTag == "block" || outTag == smartOutboundTag || outTag == appDirectTag {
 		return host, dest, false
 	}
 

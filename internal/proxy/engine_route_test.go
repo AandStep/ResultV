@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -946,21 +947,15 @@ func TestBuildTunnelModeConfig_AppWhitelistGetsLocalDNSRule(t *testing.T) {
 	}
 	var found bool
 	for _, r := range cfg.DNS.Rules {
-		if r.Server != "local" || len(r.ProcessPathRegex) == 0 {
-			continue
-		}
-		for _, rx := range r.ProcessPathRegex {
-			if strings.Contains(rx, "WinSCP") {
-				found = true
-				break
-			}
-		}
-		if found {
-			break
+		if r.Server == "local" && slices.Contains(r.PackageName, familyTagDirect) {
+			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("expected dns rule routing whitelisted process to local resolver, got rules=%+v", cfg.DNS.Rules)
+		t.Fatalf("expected dns rule routing the excluded family to the local resolver, got rules=%+v", cfg.DNS.Rules)
+	}
+	if !cfg.DNS.ReverseMapping {
+		t.Fatal("app-direct needs reverse mapping to name connections made by address")
 	}
 }
 
@@ -1168,63 +1163,21 @@ func TestUpdateInbound_RoutedToProxyInBothModes(t *testing.T) {
 	}
 }
 
-// TestBuildRoute_ProxyMode_AppWhitelistGetsDirectRule covers the actual
-// excluded-process rule. In proxy mode the mixed inbound terminates the
-// connection locally; sing-box looks up the originating PID and matches
-// against process_path_regex. The rule must point at the direct outbound
-// so the excluded app bypasses the tunnel.
+// TestBuildRoute_ProxyMode_AppWhitelistGetsDirectRule covers the excluded
+// family in proxy mode: the mixed inbound terminates the connection locally,
+// the core looks up the originating PID, and the family tag sends it to
+// app-direct.
 func TestBuildRoute_ProxyMode_AppWhitelistGetsDirectRule(t *testing.T) {
 	cfg := EngineConfig{
 		Mode:         ProxyModeProxy,
 		AppWhitelist: []string{"steam.exe", "steamwebhelper.exe"},
 	}
 	route := buildRoute(cfg)
-	if route == nil {
-		t.Fatal("route missing")
+	if familyRuleIndex(route.Rules, familyTagDirect, appDirectTag) < 0 {
+		t.Fatalf("expected the excluded family routed to app-direct, rules=%+v", route.Rules)
 	}
-	var found bool
-	for _, r := range route.Rules {
-		if r.Outbound != "direct" || len(r.ProcessPathRegex) == 0 {
-			continue
-		}
-		if len(r.ProcessPathRegex) >= 2 {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected process_path_regex direct rule with both entries, rules=%+v", route.Rules)
-	}
-}
-
-// TestBuildRoute_ExplicitBrowserExclusionGetsDirectRule guards the other half
-// of the browser fix: descendant auto-capture filters browsers out (so a
-// launcher can't drag the user's browser out of the VPN), but a browser the
-// user EXPLICITLY lists as an excluded app must still route direct. The
-// process-tree filter only touches discovered descendants, never user roots,
-// so the root flows straight into the direct process_path_regex rule.
-func TestBuildRoute_ExplicitBrowserExclusionGetsDirectRule(t *testing.T) {
-	cfg := EngineConfig{
-		Mode:         ProxyModeProxy,
-		AppWhitelist: []string{"chrome.exe"},
-	}
-	route := buildRoute(cfg)
-	if route == nil {
-		t.Fatal("route missing")
-	}
-	var found bool
-	for _, r := range route.Rules {
-		if r.Outbound != "direct" || len(r.ProcessPathRegex) == 0 {
-			continue
-		}
-		for _, rx := range r.ProcessPathRegex {
-			if strings.Contains(strings.ToLower(rx), "chrome") {
-				found = true
-			}
-		}
-	}
-	if !found {
-		t.Fatalf("explicit chrome.exe exclusion must produce a direct process rule, rules=%+v", route.Rules)
+	if !route.FindProcess {
+		t.Fatal("find_process must be on for the family tag to exist")
 	}
 }
 
@@ -1241,18 +1194,8 @@ func TestBuildRouteAppForceVPN(t *testing.T) {
 	}
 	route := buildRoute(cfg)
 
-	forceIdx, whitelistIdx := -1, -1
-	for i, rule := range route.Rules {
-		if len(rule.ProcessPathRegex) == 0 {
-			continue
-		}
-		if rule.Outbound == "proxy" && strings.Contains(rule.ProcessPathRegex[0], "Telegram") {
-			forceIdx = i
-		}
-		if rule.Outbound == "direct" && strings.Contains(rule.ProcessPathRegex[0], "steam") {
-			whitelistIdx = i
-		}
-	}
+	forceIdx := familyRuleIndex(route.Rules, familyTagVPN, "proxy")
+	whitelistIdx := familyRuleIndex(route.Rules, familyTagDirect, appDirectTag)
 	if forceIdx == -1 {
 		t.Fatal("force-VPN process rule missing in tunnel mode")
 	}
@@ -1268,10 +1211,8 @@ func TestBuildRouteAppForceVPN(t *testing.T) {
 
 	cfg.Mode = ProxyModeProxy
 	route = buildRoute(cfg)
-	for _, rule := range route.Rules {
-		if rule.Outbound == "proxy" && len(rule.ProcessPathRegex) > 0 {
-			t.Error("force-VPN rule must not be emitted in proxy mode")
-		}
+	if familyRuleIndex(route.Rules, familyTagVPN, "proxy") >= 0 {
+		t.Error("force-VPN rule must not be emitted in proxy mode")
 	}
 }
 
@@ -1561,8 +1502,7 @@ func TestBuildDNS_SmartModeTunnelsBlockedAndForceVPN(t *testing.T) {
 		if len(r.RuleSet) == 1 && r.RuleSet[0] == smartRuleSetTag && r.Server == tunnelTag {
 			blockedRule = true
 		}
-		if len(r.ProcessPathRegex) == 1 && r.Server == tunnelTag &&
-			strings.Contains(r.ProcessPathRegex[0], "Battle") {
+		if r.Server == tunnelTag && slices.Contains(r.PackageName, familyTagVPN) {
 			forceRule = true
 		}
 	}
@@ -1740,16 +1680,12 @@ func TestBuildRoute_ForceVPNApps_RejectQUIC(t *testing.T) {
 	route := buildRoute(cfg)
 
 	reject := indexOfRule(route.Rules, func(r SBRouteRule) bool {
-		return isQUICReject(r) && len(r.ProcessPathRegex) == 1 &&
-			strings.Contains(r.ProcessPathRegex[0], "Discord")
+		return isQUICReject(r) && slices.Contains(r.PackageName, familyTagVPN)
 	})
 	if reject < 0 {
 		t.Fatalf("expected a udp:443 reject for force-VPN apps, rules=%+v", route.Rules)
 	}
-	proxyRoute := indexOfRule(route.Rules, func(r SBRouteRule) bool {
-		return r.Action == "route" && r.Outbound == "proxy" &&
-			len(r.ProcessPathRegex) == 1 && strings.Contains(r.ProcessPathRegex[0], "Discord")
-	})
+	proxyRoute := familyRuleIndex(route.Rules, familyTagVPN, "proxy")
 	if proxyRoute < 0 {
 		t.Fatal("force-VPN proxy route rule disappeared")
 	}
@@ -1846,13 +1782,7 @@ func TestBuildRoute_SmartMode_BackstopAfterAppWhitelist(t *testing.T) {
 		AppWhitelist: []string{"game.exe"},
 	}
 	rules := buildRoute(cfg).Rules
-	appIdx := -1
-	for i, r := range rules {
-		if len(r.ProcessPathRegex) == 1 && strings.Contains(r.ProcessPathRegex[0], "game") {
-			appIdx = i
-			break
-		}
-	}
+	appIdx := familyRuleIndex(rules, familyTagDirect, appDirectTag)
 	if appIdx < 0 {
 		t.Fatal("app-whitelist rule missing")
 	}

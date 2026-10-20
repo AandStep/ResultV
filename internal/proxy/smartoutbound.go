@@ -521,6 +521,7 @@ func (s *smartOutbound) lookupAndRefresh(metadata *adapter.InboundContext) (verd
 func extendedBoxContext(ctx context.Context) context.Context {
 	outbounds := include.OutboundRegistry()
 	outbound.Register[smartOutboundOptions](outbounds, smartOutboundTag, newSmartOutbound)
+	outbound.Register[appDirectOptions](outbounds, appDirectTag, newAppDirectOutbound)
 	dnsTransports := include.DNSTransportRegistry()
 	registerDNSBreaker(dnsTransports)
 	return box.Context(

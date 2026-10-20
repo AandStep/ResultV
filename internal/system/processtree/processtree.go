@@ -10,248 +10,352 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
-// Package processtree watches the OS process tree and reports the set of
-// descendant executables of a user-specified set of "root" applications.
-// Used by the routing engine to keep the app whitelist in sync with the
-// current process tree (e.g., adding steamwebhelper.exe automatically when
-// steam.exe is in the user's exclusion list).
+// Package processtree answers which processes started a given one, including
+// ancestors that have already exited. The routing engine uses it to extend an
+// app exclusion to everything the app launched.
 package processtree
 
 import (
-	"context"
 	"sort"
-	"strings"
 	"sync"
+	"time"
 )
 
-// Snapshot is the result of a tree scan: the user-supplied roots and the
-// discovered descendants. Both lists contain lowercase basenames.
-type Snapshot struct {
-	Roots       []string
-	Descendants []string
+// Process is one generation of a PID. Windows hands a freed PID to the next
+// process, so a PID alone does not name a process; PID plus creation time does.
+type Process struct {
+	PID       uint32
+	ParentPID uint32
+	// Created is in the platform's own clock and is only ever compared with
+	// other values from the same Tracker. Zero means the platform cannot tell.
+	Created int64
+	// Image is the executable path as the OS reports it: a DOS path from a live
+	// query, an NT device path from an ETW event, a bare name on some platforms.
+	Image string
 }
 
-// Equal reports whether two snapshots have the same descendant set.
-// Roots are user-controlled and ignored in equality.
-func (s Snapshot) Equal(other Snapshot) bool {
-	if len(s.Descendants) != len(other.Descendants) {
-		return false
-	}
-	for i := range s.Descendants {
-		if s.Descendants[i] != other.Descendants[i] {
-			return false
-		}
-	}
-	return true
+type record struct {
+	Process
+	// seen is the latest moment the process is known to have been alive.
+	seen int64
+	// exited is the exact exit time when an event reported it.
+	exited int64
+	// gone means the process is known to be dead, exit time or not.
+	gone bool
 }
 
-// Logger is the minimal logging surface used by the monitor.
-// Pass nil to silence diagnostic output.
-type Logger interface {
-	Warning(string)
-	Info(string)
+type source interface {
+	// live describes the process currently holding pid.
+	live(pid uint32) (Process, bool)
+	now() int64
+	// young reports whether a creation time lies within d of now.
+	young(created int64, d time.Duration) bool
 }
 
-// Monitor watches the OS process tree on a background goroutine.
-// Zero value is not usable — construct via New.
-type Monitor struct {
-	mu       sync.Mutex
-	roots    []string
-	onChange func(Snapshot)
-	last     Snapshot
-	cancel   context.CancelFunc
-	log      Logger
+const (
+	maxGenerations = 4
+	maxRecords     = 8192
+	maxDepth       = 64
+)
 
-	scan func(roots []string) Snapshot
+// lagWait bounds how long an ancestry walk waits for the event feed to report
+// a parent that started and exited moments ago.
+const lagWait = 300 * time.Millisecond
+
+// Tracker keeps every generation of every PID it has seen, so a chain survives
+// a launcher that exits right after starting the game.
+type Tracker struct {
+	mu    sync.Mutex
+	src   source
+	gens  map[uint32][]*record
+	count int
+	// events is set while a feed reports starts and exits as they happen. A
+	// walk that hits an unknown parent then waits for the feed to catch up.
+	events bool
+	sleep  func(time.Duration)
 }
 
-// New constructs a platform-specific monitor. Passing a nil logger silences
-// diagnostics. Returns a stub that emits empty snapshots on platforms where
-// process-tree scanning is not implemented.
-func New(log Logger) *Monitor {
-	return &Monitor{log: log, scan: platformScan}
+func newTracker(src source) *Tracker {
+	return &Tracker{src: src, gens: make(map[uint32][]*record), sleep: time.Sleep}
 }
 
-// SetRoots replaces the set of root applications to watch.
-// Roots are normalized to lowercase basenames; empty entries are dropped.
-// Safe to call before or after Start.
-func (m *Monitor) SetRoots(roots []string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.roots = normalizeRoots(roots)
+// Observe records a process seen alive at time seen.
+func (t *Tracker) Observe(p Process, seen int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.observeLocked(p, seen)
 }
 
-// OnChange registers a callback invoked whenever the descendant set changes.
-// The callback runs on the monitor's goroutine; keep it cheap or hand off
-// to another goroutine. Pass nil to clear.
-func (m *Monitor) OnChange(fn func(Snapshot)) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.onChange = fn
-}
-
-// Start begins monitoring. Stop or ctx cancellation halts the goroutine.
-// Calling Start while already running is a no-op.
-func (m *Monitor) Start(ctx context.Context) {
-	m.mu.Lock()
-	if m.cancel != nil {
-		m.mu.Unlock()
-		return
-	}
-	loopCtx, cancel := context.WithCancel(ctx)
-	m.cancel = cancel
-	m.mu.Unlock()
-
-	go m.loop(loopCtx)
-}
-
-// Stop halts the monitor goroutine. Safe to call multiple times.
-func (m *Monitor) Stop() {
-	m.mu.Lock()
-	cancel := m.cancel
-	m.cancel = nil
-	m.last = Snapshot{}
-	m.mu.Unlock()
-	if cancel != nil {
-		cancel()
+// Started records a process start reported by an event feed. Its parent was
+// alive at that moment, which is what lets the chain outlive the parent.
+func (t *Tracker) Started(p Process) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.observeLocked(p, p.Created)
+	if r := t.generationAtLocked(p.ParentPID, p.Created); r != nil && r.seen < p.Created {
+		r.seen = p.Created
 	}
 }
 
-// Trigger forces an immediate scan and emit. Useful right after SetRoots so
-// the manager doesn't have to wait for the next tick before reflecting a
-// new exclusion list.
-func (m *Monitor) Trigger() {
-	m.tick()
-}
-
-// Scan performs a single one-shot scan and returns the result without starting
-// a goroutine. Used by callers that need an initial snapshot before deciding
-// whether to spin up a long-running monitor (e.g., engine startup).
-//
-// Roots are normalized identically to SetRoots — paths are stripped to
-// basenames, lowercased, and deduplicated.
-func Scan(roots []string) Snapshot {
-	normalized := normalizeRoots(roots)
-	if len(normalized) == 0 {
-		return Snapshot{}
-	}
-	snap := platformScan(normalized)
-	snap.Descendants = filterAutoCaptured(snap.Descendants)
-	sort.Strings(snap.Descendants)
-	return snap
-}
-
-func (m *Monitor) loop(ctx context.Context) {
-	ticker := newTicker()
-	defer ticker.Stop()
-
-	m.tick()
-	for {
-		select {
-		case <-ctx.Done():
+// Exited records an exit reported by an event feed.
+func (t *Tracker) Exited(pid uint32, created, at int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, r := range t.gens[pid] {
+		if r.Created == created {
+			r.exited = at
+			r.gone = true
 			return
-		case <-ticker.C():
-			m.tick()
 		}
 	}
 }
 
-func (m *Monitor) tick() {
-	m.mu.Lock()
-	roots := append([]string(nil), m.roots...)
-	cb := m.onChange
-	prev := m.last
-	scanFn := m.scan
-	m.mu.Unlock()
-
-	if scanFn == nil {
-		return
+// rescan applies a full read of the process table: procs are the processes it
+// could describe, present every PID it listed, described or not. A PID missing
+// from present has exited.
+func (t *Tracker) rescan(procs []Process, present map[uint32]bool, now int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, p := range procs {
+		t.observeLocked(p, now)
 	}
-
-	snap := scanFn(roots)
-	snap.Descendants = filterAutoCaptured(snap.Descendants)
-	sort.Strings(snap.Descendants)
-
-	if snap.Equal(prev) {
-		return
-	}
-
-	m.mu.Lock()
-	m.last = snap
-	m.mu.Unlock()
-
-	if cb != nil {
-		cb(snap)
+	for pid, gs := range t.gens {
+		if present[pid] {
+			continue
+		}
+		for _, r := range gs {
+			r.gone = true
+		}
 	}
 }
 
-func normalizeRoots(in []string) []string {
-	if len(in) == 0 {
+func (t *Tracker) setEvents(on bool) {
+	t.mu.Lock()
+	t.events = on
+	t.mu.Unlock()
+}
+
+func (t *Tracker) observeLocked(p Process, seen int64) *record {
+	gs := t.gens[p.PID]
+	for _, r := range gs {
+		if r.Created == p.Created {
+			if seen > r.seen {
+				r.seen = seen
+			}
+			if r.Image == "" {
+				r.Image = p.Image
+			}
+			if r.ParentPID == 0 {
+				r.ParentPID = p.ParentPID
+			}
+			return r
+		}
+	}
+	r := &record{Process: p, seen: seen}
+	gs = append(gs, r)
+	sort.Slice(gs, func(i, j int) bool { return gs[i].Created < gs[j].Created })
+	// A PID is reused only after its holder exits, so every older generation
+	// is dead.
+	for _, older := range gs {
+		if older.Created < p.Created {
+			older.gone = true
+		}
+	}
+	if len(gs) > maxGenerations {
+		gs = gs[len(gs)-maxGenerations:]
+	}
+	t.gens[p.PID] = gs
+	t.count++
+	if t.count > maxRecords {
+		t.evictLocked()
+	}
+	return r
+}
+
+// generationAtLocked returns the generation of pid that was alive at time at,
+// or nil when nothing proves one was.
+func (t *Tracker) generationAtLocked(pid uint32, at int64) *record {
+	gs := t.gens[pid]
+	for i := len(gs) - 1; i >= 0; i-- {
+		r := gs[i]
+		if r.Created > at {
+			continue
+		}
+		// Only the newest generation started before at can have held the PID
+		// then: every older one exited before this one started.
+		switch {
+		case r.exited != 0:
+			if r.exited >= at {
+				return r
+			}
+		case r.seen >= at, !r.gone:
+			return r
+		}
 		return nil
 	}
-	seen := make(map[string]struct{}, len(in))
-	out := make([]string, 0, len(in))
-	for _, raw := range in {
-		s := strings.TrimSpace(strings.ToLower(raw))
-		if s == "" {
-			continue
+	return nil
+}
+
+// Identify describes the process holding pid now, without walking its
+// ancestors.
+func (t *Tracker) Identify(pid uint32) (Process, bool) {
+	p, ok := t.src.live(pid)
+	if !ok {
+		return Process{}, false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.observeLocked(p, t.src.now()).Process, true
+}
+
+// Ancestry returns the process holding pid followed by its ancestors, nearest
+// first. Nil when pid is unknown.
+func (t *Tracker) Ancestry(pid uint32) []Process {
+	now := t.src.now()
+	self, ok := t.src.live(pid)
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if ok {
+		self = t.observeLocked(self, now).Process
+	} else if gs := t.gens[pid]; len(gs) > 0 {
+		self = gs[len(gs)-1].Process
+	} else {
+		return nil
+	}
+
+	chain := []Process{self}
+	cur := self
+	for len(chain) < maxDepth {
+		parent, ok := t.parentLocked(cur, now)
+		if !ok {
+			break
 		}
-		// Strip path components if any caller passed a full path.
-		if i := strings.LastIndexAny(s, `/\`); i >= 0 {
-			s = s[i+1:]
+		chain = append(chain, parent)
+		cur = parent
+	}
+	return chain
+}
+
+func (t *Tracker) parentLocked(child Process, now int64) (Process, bool) {
+	ppid := child.ParentPID
+	if ppid == 0 || ppid == child.PID {
+		return Process{}, false
+	}
+	if p, ok := t.src.live(ppid); ok {
+		// Alive now and older than the child means it held the PID when the
+		// child started: it is the parent.
+		if p.Created <= child.Created {
+			return t.observeLocked(p, now).Process, true
 		}
-		if s == "" {
-			continue
+		t.observeLocked(p, now)
+	}
+	if r := t.generationAtLocked(ppid, child.Created); r != nil {
+		return r.Process, true
+	}
+	// The parent may have started and exited faster than the feed delivers.
+	if !t.events || !t.src.young(child.Created, 10*time.Second) {
+		return Process{}, false
+	}
+	for waited := time.Duration(0); waited < lagWait; waited += 25 * time.Millisecond {
+		t.mu.Unlock()
+		t.sleep(25 * time.Millisecond)
+		t.mu.Lock()
+		if r := t.generationAtLocked(ppid, child.Created); r != nil {
+			return r.Process, true
 		}
-		if _, dup := seen[s]; dup {
-			continue
+	}
+	return Process{}, false
+}
+
+// Young reports whether p started within d of now.
+func (t *Tracker) Young(p Process, d time.Duration) bool {
+	return t.src.young(p.Created, d)
+}
+
+// Live returns every generation not known to have exited.
+func (t *Tracker) Live() []Process {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var out []Process
+	for _, gs := range t.gens {
+		for _, r := range gs {
+			if !r.gone {
+				out = append(out, r.Process)
+			}
 		}
-		seen[s] = struct{}{}
-		out = append(out, s)
 	}
 	return out
 }
 
-// autoCaptureBlockedBrowsers are desktop-browser executables that must never be
-// auto-added to the app-exclusion set through descendant capture. A browser
-// launched — even indirectly — by an excluded app (a game launcher or Electron
-// app opening a link in the default browser) becomes a descendant in the OS
-// process tree; without this guard the scan would pull the user's ENTIRE web
-// traffic out of the VPN silently, because a browser is a single-instance
-// process family. Users who genuinely want a browser bypassed must add it as an
-// explicit root, which flows through a separate, unfiltered path.
-//
-// Mirrors the desktop-browser set formerly kept alongside the routing rules.
-// (browserProcessPathRegexes); keep the two lists in sync.
-var autoCaptureBlockedBrowsers = map[string]struct{}{
-	"chrome.exe":        {},
-	"chromium.exe":      {},
-	"msedge.exe":        {},
-	"brave.exe":         {},
-	"firefox.exe":       {},
-	"opera.exe":         {},
-	"vivaldi.exe":       {},
-	"browser.exe":       {},
-	"waterfox.exe":      {},
-	"librewolf.exe":     {},
-	"yandex.exe":        {},
-	"yandexbrowser.exe": {},
+// evictLocked drops the longest-dead records, keeping three quarters of the
+// cap. The living are kept whatever their number.
+func (t *Tracker) evictLocked() {
+	var dead []*record
+	for _, gs := range t.gens {
+		for _, r := range gs {
+			if r.gone {
+				dead = append(dead, r)
+			}
+		}
+	}
+	sort.Slice(dead, func(i, j int) bool { return deathTime(dead[i]) < deathTime(dead[j]) })
+	drop := t.count - maxRecords*3/4
+	if drop > len(dead) {
+		drop = len(dead)
+	}
+	victims := make(map[*record]struct{}, drop)
+	for _, r := range dead[:drop] {
+		victims[r] = struct{}{}
+	}
+	for pid, gs := range t.gens {
+		kept := gs[:0]
+		for _, r := range gs {
+			if _, v := victims[r]; !v {
+				kept = append(kept, r)
+			}
+		}
+		if len(kept) == 0 {
+			delete(t.gens, pid)
+		} else {
+			t.gens[pid] = kept
+		}
+	}
+	t.count -= drop
 }
 
-// filterAutoCaptured drops browser executables from a discovered descendant set.
-// See autoCaptureBlockedBrowsers for the rationale. Platform scans already
-// lowercase basenames; we normalize defensively for injected scanners (tests)
-// and any non-Windows caller.
-func filterAutoCaptured(descendants []string) []string {
-	if len(descendants) == 0 {
-		return descendants
+func deathTime(r *record) int64 {
+	if r.exited != 0 {
+		return r.exited
 	}
-	out := make([]string, 0, len(descendants))
-	for _, d := range descendants {
-		if _, blocked := autoCaptureBlockedBrowsers[strings.ToLower(strings.TrimSpace(d))]; blocked {
-			continue
-		}
-		out = append(out, d)
+	return r.seen
+}
+
+var (
+	defaultOnce    sync.Once
+	defaultTracker *Tracker
+)
+
+// Default returns the process-wide tracker, starting it on first use. It keeps
+// running for the life of the process: history recorded between sessions is
+// what links a game to a launcher that exited before the user connected.
+func Default() *Tracker {
+	defaultOnce.Do(func() {
+		defaultTracker = newTracker(platformSource{})
+		startPlatform(defaultTracker)
+	})
+	return defaultTracker
+}
+
+// NewLive returns a tracker that only asks the OS about running processes, with
+// no history behind it.
+func NewLive() *Tracker {
+	return newTracker(platformSource{})
+}
+
+// Shutdown stops the platform event feed, if one is running.
+func Shutdown() {
+	if defaultTracker != nil {
+		stopPlatform()
 	}
-	return out
 }

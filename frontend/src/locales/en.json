@@ -414,9 +414,9 @@
     "sitesDirectDesc": "Sites added to this list will not go through the VPN.",
     "sitesPlaceholder": "Enter an IP or host and press Enter to add",
     "appsVpn": "Apps through the VPN",
-    "appsVpnDesc": "All traffic from these apps goes into the tunnel.",
+    "appsVpnDesc": "All traffic from these apps and everything they launch goes into the tunnel.",
     "appsDirect": "Apps direct",
-    "appsDirectDesc": "All traffic from these apps will not go through the VPN.",
+    "appsDirectDesc": "All traffic from these apps and everything they launch will not go through the VPN.",
     "appsPlaceholder": "For example {{example}}",
     "pickFile": "Choose a file on the computer",
     "clear": "Clear the list",
@@ -441,7 +441,7 @@
       "placeholder": "E.g.: proxy.com",
       "add_btn": "Add",
       "fast_add": "Quickly add domains to exceptions:",
-      "tooltip": "If the list contains a general mask (e.g., .ru) and a specific domain (e.g., avito.ru), the specific domain will be proxied (acting as an exception to the exclusion rule)."
+      "tooltip": "One entry per site is enough: it covers its subdomains too."
     },
     "apps": {
       "title": "Exception Applications",
