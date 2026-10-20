@@ -963,6 +963,7 @@ func processPathRegex(entry string) string {
 }
 
 func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
+	cfg = cfg.forRoutingMode()
 	port := cfg.LocalPort
 	if port == 0 {
 		port = getFreeLocalPort(14081)
@@ -1111,6 +1112,7 @@ func isLeakableIPv6(ip net.IP) bool {
 }
 
 func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
+	cfg = cfg.forRoutingMode()
 	tunIPv4 := "172.19.0.1/30"
 	if cfg.TunIPv4 != "" {
 		tunIPv4 = cfg.TunIPv4
@@ -1753,6 +1755,7 @@ func backupDNSFor(resolvers []tunnelResolver) []tunnelResolver {
 }
 
 func buildDNS(cfg EngineConfig) *SBDNS {
+	cfg = cfg.forRoutingMode()
 	if cfg.Mode == ProxyModeTunnel {
 		// All DNS servers route through the proxy/endpoint outbound (tag
 		// "proxy" — same tag for SS/VLESS outbounds and for the WG/AWG
@@ -2035,6 +2038,7 @@ func splitDNSServer(raw string) (string, int) {
 }
 
 func buildRoute(cfg EngineConfig) *SBRoute {
+	cfg = cfg.forRoutingMode()
 	builtinAppRegexes := smartTunneledAppRegexes(cfg)
 	findProcess := len(cfg.AppWhitelist) > 0 ||
 		(cfg.Mode == ProxyModeTunnel && len(cfg.AppForceVPN) > 0) ||
@@ -2194,9 +2198,8 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	}
 
 	// Built-in Smart coverage for apps the block-lists structurally cannot
-	// reach (see smartTunneledApps). Deliberately placed AFTER the
-	// app-whitelist direct rule: a user who puts Discord in
-	// "Приложения-исключения" means it, and their exclusion keeps winning.
+	// reach (see smartTunneledApps). Smart has no exclusions list, so nothing
+	// above takes Discord out of the tunnel.
 	// Placed BEFORE the blocked-domain/CIDR rules so the process decision is
 	// taken once for the whole app instead of being split between a tunnelled
 	// signalling half and a direct media half — that split is the bug.
@@ -2237,18 +2240,10 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	}
 
 	// Smart mode: tunnel the censored block-list, leave everything else direct
-	// (Final="direct"). Placed BEFORE the whitelist block so a blocked domain
-	// that also sits under a whitelisted suffix still tunnels — matching
-	// Router.ShouldProxy, where a blocked resource wins over a whitelist match.
-	// This ordering is what makes the Smart-mode UI work:
-	// there the domain list edits config.RoutingRules.CustomBlockedDomains
-	// ("route via VPN", see RulesView.jsx), which Router.GetBlockedDomains
-	// unions into cfg.BlockedDomains — while cfg.Whitelist still carries the
-	// exclusions the user set in Global mode. Emitting the whitelist first
-	// would let a stale Global exclusion override an explicit Smart-mode
-	// "send this via VPN". The block-list domains are already normalized
-	// suffixes. App-whitelist (process) direct rules above keep priority, so
-	// an excluded app's traffic stays direct even for blocked domains.
+	// (Final="direct"). The Smart sites list ("route via VPN") edits
+	// config.RoutingRules.CustomBlockedDomains, which Router.GetBlockedDomains
+	// unions into cfg.BlockedDomains. The block-list domains are already
+	// normalized suffixes.
 	//
 	// A pre-compiled binary rule-set is preferred when the caller supplied one:
 	// inlining ~78k suffixes costs ~160 ms of config marshal/parse/index per
@@ -2356,6 +2351,24 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	return route
 }
 
+// listsForMode keeps the lists the given mode shows and drops the rest. Each
+// mode has its own screen of lists, and an entry made on the other screen
+// must not act here: "via VPN" apps left over from Smart outranked the Global
+// exclusions, and Global exclusions sent Smart's blocked sites past the tunnel.
+func listsForMode(mode RoutingMode, sitesDirect, appsDirect, appsVPN []string) ([]string, []string, []string) {
+	if mode == ModeSmart {
+		return nil, nil, appsVPN
+	}
+	return sitesDirect, appsDirect, nil
+}
+
+// forRoutingMode is cfg with only the current mode's lists. Every config
+// builder starts here, so no path can see the other mode's entries.
+func (cfg EngineConfig) forRoutingMode() EngineConfig {
+	cfg.Whitelist, cfg.AppWhitelist, cfg.AppForceVPN = listsForMode(cfg.RoutingMode, cfg.Whitelist, cfg.AppWhitelist, cfg.AppForceVPN)
+	return cfg
+}
+
 // appFamilyVPNList is the "via VPN" app list in force for this config. It only
 // exists in tunnel mode: in proxy mode an app that ignores the system proxy
 // never reaches the engine, so there is nothing to force.
@@ -2363,7 +2376,7 @@ func appFamilyVPNList(cfg EngineConfig) []string {
 	if cfg.Mode != ProxyModeTunnel {
 		return nil
 	}
-	return cfg.AppForceVPN
+	return cfg.forRoutingMode().AppForceVPN
 }
 
 // appFamilyRouteRules routes the app families. An explicit "via VPN" comes

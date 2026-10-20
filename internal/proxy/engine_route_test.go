@@ -160,12 +160,10 @@ func TestBuildRoute_SmartMode_NestedExceptionDirect(t *testing.T) {
 // tunnels. In first-match routing that means the blocked rule must precede the
 // whitelist direct rule.
 //
-// This is what makes the Smart-mode UI behave: there the domain list edits
-// config.RoutingRules.CustomBlockedDomains ("route via VPN", RulesView.jsx),
-// which Router.GetBlockedDomains unions into BlockedDomains, while Whitelist
-// still holds the exclusions set in Global mode. Flip this order and a stale
-// Global exclusion silently overrides an explicit Smart-mode "send via VPN".
-func TestBuildRoute_SmartMode_BlockedWinsOverWhitelist(t *testing.T) {
+// The sites list is per mode. Smart shows "sites via VPN" (BlockedDomains),
+// Global shows "sites direct" (Whitelist); entries left on the Global screen
+// must not reach Smart.
+func TestBuildRoute_SmartMode_IgnoresGlobalSitesList(t *testing.T) {
 	cfg := EngineConfig{
 		Mode:           ProxyModeTunnel,
 		RoutingMode:    ModeSmart,
@@ -174,32 +172,15 @@ func TestBuildRoute_SmartMode_BlockedWinsOverWhitelist(t *testing.T) {
 		BlockedDomains: []string{"instagram.com"},
 	}
 	route := buildRoute(cfg)
-	blockedIdx, comDirectIdx := -1, -1
-	for i, r := range route.Rules {
-		if r.Outbound == "proxy" {
-			for _, d := range r.DomainSuffix {
-				if d == "instagram.com" {
-					blockedIdx = i
-				}
-			}
-		}
-		if r.Outbound == "direct" {
-			for _, d := range r.DomainSuffix {
-				if d == "com" {
-					comDirectIdx = i
-				}
-			}
+	for _, r := range route.Rules {
+		if slices.Contains(r.DomainSuffix, "com") {
+			t.Fatalf("a Global sites entry acts in Smart: %+v", r)
 		}
 	}
-	if blockedIdx == -1 {
+	if indexOfRule(route.Rules, func(r SBRouteRule) bool {
+		return r.Outbound == "proxy" && slices.Contains(r.DomainSuffix, "instagram.com")
+	}) < 0 {
 		t.Fatalf("expected blocked instagram.com → proxy rule, rules=%+v", route.Rules)
-	}
-	if comDirectIdx == -1 {
-		t.Fatalf("expected whitelist com → direct rule, rules=%+v", route.Rules)
-	}
-	if blockedIdx > comDirectIdx {
-		t.Fatalf("blocked rule (idx=%d) must precede whitelist direct rule (idx=%d) so blocked wins, rules=%+v",
-			blockedIdx, comDirectIdx, route.Rules)
 	}
 }
 
@@ -1183,10 +1164,8 @@ func TestBuildRoute_ProxyMode_AppWhitelistGetsDirectRule(t *testing.T) {
 }
 
 func TestBuildRouteAppForceVPN(t *testing.T) {
-	// Deliberately NOT Discord.exe: Smart mode now emits a built-in
-	// process->proxy rule for it (smartTunneledApps), so a Discord fixture
-	// would make "which rule did we find" ambiguous and stop measuring the
-	// force-VPN/whitelist ordering this test exists for.
+	// Deliberately NOT Discord.exe: Smart mode emits a built-in process rule
+	// for it (smartTunneledApps), which would blur which rule was found.
 	cfg := EngineConfig{
 		Mode:         ProxyModeTunnel,
 		RoutingMode:  ModeSmart,
@@ -1194,22 +1173,28 @@ func TestBuildRouteAppForceVPN(t *testing.T) {
 		AppWhitelist: []string{"steam.exe"},
 	}
 	route := buildRoute(cfg)
-
-	forceIdx := familyRuleIndex(route.Rules, familyTagVPN, "proxy")
-	whitelistIdx := familyRuleIndex(route.Rules, familyTagDirect, "direct")
-	if forceIdx == -1 {
-		t.Fatal("force-VPN process rule missing in tunnel mode")
+	if familyRuleIndex(route.Rules, familyTagVPN, "proxy") < 0 {
+		t.Fatal("force-VPN family rule missing in Smart")
 	}
-	if whitelistIdx == -1 {
-		t.Fatal("app-whitelist rule missing")
-	}
-	if forceIdx > whitelistIdx {
-		t.Errorf("force-VPN rule (%d) must precede app-whitelist direct rule (%d)", forceIdx, whitelistIdx)
+	if familyRuleIndex(route.Rules, familyTagDirect, "direct") >= 0 {
+		t.Error("the Global exclusions list must not act in Smart")
 	}
 	if !route.FindProcess {
 		t.Error("find_process must be enabled when force-VPN list is set")
 	}
 
+	// The case behind the broken exclusions: the same games on both screens,
+	// and the Smart list outranking the Global one.
+	cfg.RoutingMode = ModeGlobal
+	route = buildRoute(cfg)
+	if familyRuleIndex(route.Rules, familyTagVPN, "proxy") >= 0 {
+		t.Error("the Smart via-VPN list must not act in Global")
+	}
+	if familyRuleIndex(route.Rules, familyTagDirect, appDirectTag) < 0 {
+		t.Error("the Global exclusions list must act in Global")
+	}
+
+	cfg.RoutingMode = ModeSmart
 	cfg.Mode = ProxyModeProxy
 	route = buildRoute(cfg)
 	if familyRuleIndex(route.Rules, familyTagVPN, "proxy") >= 0 {
@@ -1339,22 +1324,18 @@ func TestRoutingListMissingCacheSkipped(t *testing.T) {
 }
 
 // TestBuildRoute_SmartMode_UsesRuleSetWhenCompiled verifies that a compiled
-// block-list is referenced by tag instead of being inlined as domain_suffix,
-// and that it keeps its position ahead of the whitelist direct rule (the
-// ordering that makes an explicit "route via VPN" win — see
-// TestBuildRoute_SmartMode_BlockedWinsOverWhitelist).
+// block-list is referenced by tag instead of being inlined as domain_suffix.
 func TestBuildRoute_SmartMode_UsesRuleSetWhenCompiled(t *testing.T) {
 	cfg := EngineConfig{
 		Mode:             ProxyModeTunnel,
 		RoutingMode:      ModeSmart,
 		Proxy:            ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
-		Whitelist:        []string{".com"},
 		BlockedDomains:   []string{"instagram.com"},
 		SmartRuleSetPath: filepath.Join("C:", "data", "routing", "smart-deadbeefdeadbeef.srs"),
 	}
 	route := buildRoute(cfg)
 
-	blockedIdx, comDirectIdx := -1, -1
+	blockedIdx := -1
 	for i, r := range route.Rules {
 		if r.Outbound == "proxy" {
 			for _, tag := range r.RuleSet {
@@ -1368,22 +1349,9 @@ func TestBuildRoute_SmartMode_UsesRuleSetWhenCompiled(t *testing.T) {
 				}
 			}
 		}
-		if r.Outbound == "direct" {
-			for _, d := range r.DomainSuffix {
-				if d == "com" {
-					comDirectIdx = i
-				}
-			}
-		}
 	}
 	if blockedIdx == -1 {
 		t.Fatalf("expected a rule referencing %q, rules=%+v", smartRuleSetTag, route.Rules)
-	}
-	if comDirectIdx == -1 {
-		t.Fatalf("expected whitelist com → direct rule, rules=%+v", route.Rules)
-	}
-	if blockedIdx > comDirectIdx {
-		t.Fatalf("rule-set rule (idx=%d) must precede whitelist direct rule (idx=%d)", blockedIdx, comDirectIdx)
 	}
 
 	var declared bool
@@ -1773,25 +1741,25 @@ func TestBuildRoute_GlobalMode_NoQUICBackstop(t *testing.T) {
 	}
 }
 
-// An app the user excluded from the tunnel keeps its own routing decision, and
+// An app the user sent through the tunnel keeps its own routing decision, and
 // that decision is terminal — the backstop must never reach it.
-func TestBuildRoute_SmartMode_BackstopAfterAppWhitelist(t *testing.T) {
+func TestBuildRoute_SmartMode_BackstopAfterAppForceVPN(t *testing.T) {
 	cfg := EngineConfig{
-		Mode:         ProxyModeTunnel,
-		RoutingMode:  ModeSmart,
-		Proxy:        ProxyConfig{Type: "hysteria2", IP: "1.2.3.4", Port: 443},
-		AppWhitelist: []string{"game.exe"},
+		Mode:        ProxyModeTunnel,
+		RoutingMode: ModeSmart,
+		Proxy:       ProxyConfig{Type: "hysteria2", IP: "1.2.3.4", Port: 443},
+		AppForceVPN: []string{"game.exe"},
 	}
 	rules := buildRoute(cfg).Rules
-	appIdx := familyRuleIndex(rules, familyTagDirect, "direct")
+	appIdx := familyRuleIndex(rules, familyTagVPN, "proxy")
 	if appIdx < 0 {
-		t.Fatal("app-whitelist rule missing")
+		t.Fatal("force-VPN family rule missing")
 	}
 	if !isBareQUICBackstop(rules[len(rules)-1]) {
 		t.Fatal("backstop missing")
 	}
 	if appIdx >= len(rules)-1 {
-		t.Fatalf("app-whitelist rule at %d must precede the backstop at %d", appIdx, len(rules)-1)
+		t.Fatalf("force-VPN family rule at %d must precede the backstop at %d", appIdx, len(rules)-1)
 	}
 }
 

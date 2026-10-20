@@ -211,15 +211,25 @@ func TestBuildRoute_AppFamiliesPrecedeRoutingLists(t *testing.T) {
 		RoutingLists: []RoutingListSpec{{Tag: "rl-test", Path: list, Action: "proxy"}},
 	}
 	rules := buildRoute(cfg).Rules
-	vpn := familyRuleIndex(rules, familyTagVPN, "proxy")
 	direct := familyRuleIndex(rules, familyTagDirect, appDirectTag)
 	listIdx := indexOfRule(rules, func(r SBRouteRule) bool { return slices.Contains(r.RuleSet, "rl-test") })
 	sites := indexOfRule(rules, func(r SBRouteRule) bool { return slices.Contains(r.DomainSuffix, "example.org") })
-	if vpn < 0 || direct < 0 || listIdx < 0 || sites < 0 {
-		t.Fatalf("missing rule: vpn=%d direct=%d list=%d sites=%d, rules=%+v", vpn, direct, listIdx, sites, rules)
+	if direct < 0 || listIdx < 0 || sites < 0 {
+		t.Fatalf("missing rule: direct=%d list=%d sites=%d, rules=%+v", direct, listIdx, sites, rules)
 	}
-	if !(vpn < direct && direct < listIdx && direct < sites) {
-		t.Fatalf("order vpn=%d direct=%d list=%d sites=%d: the app families must come first", vpn, direct, listIdx, sites)
+	if !(direct < listIdx && direct < sites) {
+		t.Fatalf("order direct=%d list=%d sites=%d: the excluded family must come first", direct, listIdx, sites)
+	}
+	if familyRuleIndex(rules, familyTagVPN, "proxy") >= 0 {
+		t.Fatal("the Smart via-VPN list must not act in Global")
+	}
+
+	cfg.RoutingMode = ModeSmart
+	rules = buildRoute(cfg).Rules
+	vpn := familyRuleIndex(rules, familyTagVPN, "proxy")
+	listIdx = indexOfRule(rules, func(r SBRouteRule) bool { return slices.Contains(r.RuleSet, "rl-test") })
+	if vpn < 0 || listIdx < 0 || vpn > listIdx {
+		t.Fatalf("in Smart the VPN family must come before the routing lists: vpn=%d list=%d", vpn, listIdx)
 	}
 	for _, r := range rules {
 		if len(r.ProcessPathRegex) > 0 && r.Outbound != "direct" {

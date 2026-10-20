@@ -792,7 +792,10 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		listenHost = "0.0.0.0"
 	}
 
-	m.warnProbeDomainOverlap(mode, proxyTypeLower, whitelist)
+	// The system proxy bypass list is the Global sites list too: in Smart it
+	// would take a blocked site past the proxy altogether.
+	modeSites, _, _ := listsForMode(routingMode, whitelist, nil, nil)
+	m.warnProbeDomainOverlap(mode, proxyTypeLower, modeSites)
 
 	engineCfg := EngineConfig{
 		Proxy:             proxy,
@@ -906,7 +909,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		proxyType := strings.ToLower(proxy.Type)
 		if (proxyType == "http" || proxyType == "https" || proxyType == "socks5" || proxyType == "socks") && m.sysProxy != nil {
 			directAddr := fmt.Sprintf("%s:%d", proxy.IP, proxy.Port)
-			if setErr := m.sysProxy.Set(directAddr, whitelist); setErr == nil {
+			if setErr := m.sysProxy.Set(directAddr, modeSites); setErr == nil {
 				m.log.Info(fmt.Sprintf("[PROXY] Fallback: системный прокси → %s (sing-box недоступен)", directAddr))
 				m.mu.Lock()
 				m.connected = true
@@ -1025,7 +1028,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	var gpoConflict bool
 	if mode == ProxyModeProxy && m.sysProxy != nil {
 		proxyAddr := fmt.Sprintf("127.0.0.1:%d", actualLocalPort)
-		if err := m.sysProxy.Set(proxyAddr, whitelist); err != nil {
+		if err := m.sysProxy.Set(proxyAddr, modeSites); err != nil {
 			m.log.Warning(fmt.Sprintf("[PROXY] Ошибка установки системного прокси: %v", err))
 		} else {
 			m.log.Success("[СИСТЕМА] Системный прокси применён успешно")

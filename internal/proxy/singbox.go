@@ -645,7 +645,7 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 	boxCtx = service.ContextWith[nodeUDPCheck](boxCtx, nodeUDPCheckFor(cfg.Proxy))
 	// The app lists reach the core through the process lookup: see
 	// familyPlatform for why that is a platform interface.
-	if lists := newAppLists(cfg.AppWhitelist, appFamilyVPNList(cfg)); !lists.empty() {
+	if lists := newAppLists(cfg.forRoutingMode().AppWhitelist, appFamilyVPNList(cfg)); !lists.empty() {
 		resolver := newFamilyResolver(lists, processtree.Default())
 		boxCtx = service.ContextWith[adapter.PlatformInterface](boxCtx, newFamilyPlatform(resolver))
 	}

@@ -110,20 +110,17 @@ func TestBuildTunnelModeConfig_DiscordRuleEnablesFindProcess(t *testing.T) {
 	}
 }
 
-// An explicit user exclusion must still win: the excluded family is routed
-// before the built-in, so "Discord в обход VPN" stays honoured.
-func TestBuildRoute_SmartMode_UserExclusionBeatsBuiltinDiscordRule(t *testing.T) {
+// Smart has no exclusions list of its own: an entry left on the Global screen
+// must not take Discord out of the tunnel there.
+func TestBuildRoute_SmartMode_GlobalExclusionDoesNotReachDiscord(t *testing.T) {
 	cfg := smartTunnelCfg()
 	cfg.AppWhitelist = []string{"discord.exe"}
 	route := buildRoute(cfg)
-
-	directIdx := familyRuleIndex(route.Rules, familyTagDirect, "direct")
-	if directIdx < 0 {
-		t.Fatal("user exclusion for discord.exe produced no direct rule")
+	if familyRuleIndex(route.Rules, familyTagDirect, "direct") >= 0 {
+		t.Fatal("a Global exclusion acts in Smart")
 	}
-	proxyIdx := discordRuleIndex(route.Rules)
-	if proxyIdx >= 0 && proxyIdx < directIdx {
-		t.Fatalf("built-in Discord rule at %d shadows the user exclusion at %d", proxyIdx, directIdx)
+	if discordRuleIndex(route.Rules) < 0 {
+		t.Fatal("the built-in Discord rule disappeared")
 	}
 }
 
