@@ -24,7 +24,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -1875,17 +1874,11 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 
 		// Excluded domains leave direct, so they resolve via the system resolver.
 		if cfg.RoutingMode != ModeSmart {
-			if tunnelTag := firstDetourServerTag(dns.Servers, detour); tunnelTag != "" {
-				for _, w := range whitelistSuffixes(cfg.Whitelist) {
-					server := tunnelTag
-					if w.direct {
-						server = "local"
-					}
-					dns.Rules = append(dns.Rules, SBDNSRule{
-						DomainSuffix: []string{w.suffix},
-						Server:       server,
-					})
-				}
+			if suffixes := whitelistSuffixes(cfg.Whitelist); len(suffixes) > 0 {
+				dns.Rules = append(dns.Rules, SBDNSRule{
+					DomainSuffix: suffixes,
+					Server:       "local",
+				})
 			}
 		}
 
@@ -2290,8 +2283,8 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	// Smart mode: tunnel the censored block-list, leave everything else direct
 	// (Final="direct"). Placed BEFORE the whitelist block so a blocked domain
 	// that also sits under a whitelisted suffix still tunnels — matching
-	// Router.ShouldProxy, where a blocked resource wins over an odd (single)
-	// whitelist match. This ordering is what makes the Smart-mode UI work:
+	// Router.ShouldProxy, where a blocked resource wins over a whitelist match.
+	// This ordering is what makes the Smart-mode UI work:
 	// there the domain list edits config.RoutingRules.CustomBlockedDomains
 	// ("route via VPN", see RulesView.jsx), which Router.GetBlockedDomains
 	// unions into cfg.BlockedDomains — while cfg.Whitelist still carries the
@@ -2344,15 +2337,11 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		})
 	}
 
-	for _, w := range whitelistSuffixes(cfg.Whitelist) {
-		outbound := "proxy"
-		if w.direct {
-			outbound = "direct"
-		}
+	if suffixes := whitelistSuffixes(cfg.Whitelist); len(suffixes) > 0 {
 		rules = append(rules, SBRouteRule{
 			Action:       "route",
-			DomainSuffix: []string{w.suffix},
-			Outbound:     outbound,
+			DomainSuffix: suffixes,
+			Outbound:     "direct",
 		})
 	}
 
@@ -2434,17 +2423,12 @@ func resolveBeforeEndpoint(rules []SBRouteRule, server string) []SBRouteRule {
 	return out
 }
 
-type whitelistSuffix struct {
-	suffix string
-	direct bool
-}
-
-// whitelistSuffixes orders the exclusion list deepest-first and marks each
-// suffix direct on an odd number of matches, so a nested entry ("avito.ru"
-// under ".ru") flips its parent back to the tunnel.
-func whitelistSuffixes(whitelist []string) []whitelistSuffix {
+// whitelistSuffixes normalizes the site exclusion list into domain suffixes.
+// Every entry means "direct", a nested one included: "www.example.com" next to
+// "example.com" used to cancel it out.
+func whitelistSuffixes(whitelist []string) []string {
 	seen := make(map[string]struct{}, len(whitelist))
-	var normalized []string
+	var out []string
 	for _, w := range whitelist {
 		n := normalizeRule(w)
 		if n == "" {
@@ -2454,34 +2438,7 @@ func whitelistSuffixes(whitelist []string) []whitelistSuffix {
 			continue
 		}
 		seen[n] = struct{}{}
-		normalized = append(normalized, n)
-	}
-	if len(normalized) == 0 {
-		return nil
-	}
-
-	ordered := append([]string(nil), normalized...)
-	sort.SliceStable(ordered, func(i, j int) bool {
-		di := strings.Count(ordered[i], ".")
-		dj := strings.Count(ordered[j], ".")
-		if di != dj {
-			return di > dj
-		}
-		if len(ordered[i]) != len(ordered[j]) {
-			return len(ordered[i]) > len(ordered[j])
-		}
-		return ordered[i] < ordered[j]
-	})
-
-	out := make([]whitelistSuffix, 0, len(ordered))
-	for _, suffix := range ordered {
-		matchCount := 0
-		for _, rule := range normalized {
-			if suffix == rule || strings.HasSuffix(suffix, "."+rule) {
-				matchCount++
-			}
-		}
-		out = append(out, whitelistSuffix{suffix: suffix, direct: matchCount%2 == 1})
+		out = append(out, n)
 	}
 	return out
 }

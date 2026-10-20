@@ -27,48 +27,36 @@ import (
 	"testing"
 )
 
-func TestBuildRoute_NestedDomainException_ProducesProxyOverride(t *testing.T) {
+// The same site entered twice — bare, with www. and as a URL — must stay direct
+// under every spelling. Two entries used to cancel each other out, so the www.
+// address the browser actually opens went through the tunnel.
+func TestBuildRoute_NestedSiteEntriesAllDirect(t *testing.T) {
 	cfg := EngineConfig{
-		RoutingMode: ModeWhitelist,
-		Whitelist:   []string{".ru", "2ip.ru"},
+		RoutingMode: ModeGlobal,
+		Whitelist:   []string{"https://www.example.com/", "www.example.com", "example.com", "shop.example.org", "www.shop.example.org", ".ru", "2ip.ru"},
 	}
 
 	route := buildRoute(cfg)
-	if route == nil {
-		t.Fatal("expected non-nil route")
-	}
-
-	var ruDirect bool
-	var twoIPProxy bool
-	var twoIPRuleIndex = -1
-	var ruRuleIndex = -1
-
-	for i, r := range route.Rules {
-		if len(r.DomainSuffix) != 1 {
-			continue
+	direct := map[string]bool{}
+	for _, r := range route.Rules {
+		for _, d := range r.DomainSuffix {
+			if r.Outbound != "direct" {
+				t.Fatalf("site exclusion %q routed to %q, rules=%+v", d, r.Outbound, route.Rules)
+			}
+			direct[d] = true
 		}
-		switch r.DomainSuffix[0] {
-		case "ru":
-			if r.Outbound == "direct" {
-				ruDirect = true
-				ruRuleIndex = i
-			}
-		case "2ip.ru":
-			if r.Outbound == "proxy" {
-				twoIPProxy = true
-				twoIPRuleIndex = i
-			}
+	}
+	for _, want := range []string{"www.example.com", "example.com", "shop.example.org", "www.shop.example.org", "ru", "2ip.ru"} {
+		if !direct[want] {
+			t.Fatalf("%q missing from the direct rule, rules=%+v", want, route.Rules)
 		}
 	}
 
-	if !ruDirect {
-		t.Fatalf("expected direct rule for ru suffix, rules=%+v", route.Rules)
-	}
-	if !twoIPProxy {
-		t.Fatalf("expected proxy override rule for 2ip.ru suffix, rules=%+v", route.Rules)
-	}
-	if twoIPRuleIndex > ruRuleIndex {
-		t.Fatalf("expected more specific rule (2ip.ru) before ru: twoIP=%d ru=%d", twoIPRuleIndex, ruRuleIndex)
+	r := NewRouter()
+	for _, host := range []string{"www.example.com", "example.com", "www.shop.example.org", "2ip.ru", "m.2ip.ru"} {
+		if !r.IsWhitelisted(host, cfg.Whitelist).IsWhitelisted {
+			t.Fatalf("Router.IsWhitelisted(%q) = false, want true", host)
+		}
 	}
 }
 
@@ -144,11 +132,9 @@ func TestBuildRoute_SmartMode_BlockedDomainsTunneled(t *testing.T) {
 	}
 }
 
-// TestBuildRoute_SmartMode_NestedExceptionTunneled mirrors
-// router_test.go TestShouldProxy_SmartMode_NestedExceptions: with whitelist
-// [.ru, avito.ru] the even (double) match makes avito.ru a nested exception
-// that must tunnel, while the catch-all stays direct.
-func TestBuildRoute_SmartMode_NestedExceptionTunneled(t *testing.T) {
+// TestBuildRoute_SmartMode_NestedExceptionDirect: a nested entry is an
+// exclusion like any other, Smart mode included.
+func TestBuildRoute_SmartMode_NestedExceptionDirect(t *testing.T) {
 	cfg := EngineConfig{
 		Mode:        ProxyModeTunnel,
 		RoutingMode: ModeSmart,
@@ -156,14 +142,12 @@ func TestBuildRoute_SmartMode_NestedExceptionTunneled(t *testing.T) {
 		Whitelist:   []string{".ru", "avito.ru"},
 	}
 	route := buildRoute(cfg)
-	var avitoProxy bool
 	for _, r := range route.Rules {
-		if r.Outbound == "proxy" && len(r.DomainSuffix) == 1 && r.DomainSuffix[0] == "avito.ru" {
-			avitoProxy = true
+		for _, d := range r.DomainSuffix {
+			if d == "avito.ru" && r.Outbound != "direct" {
+				t.Fatalf("nested exception avito.ru routed to %q, rules=%+v", r.Outbound, route.Rules)
+			}
 		}
-	}
-	if !avitoProxy {
-		t.Fatalf("smart mode nested exception avito.ru must tunnel, rules=%+v", route.Rules)
 	}
 	if route.Final != "direct" {
 		t.Fatalf("smart mode must keep Final=direct, got %q", route.Final)
@@ -1626,7 +1610,7 @@ func TestBuildDNS_GlobalModeUnchanged(t *testing.T) {
 }
 
 // TestBuildDNS_GlobalWhitelistResolvesLocally: excluded domains resolve via
-// local, nested exceptions stay on the tunnel resolver.
+// local, nested ones included.
 func TestBuildDNS_GlobalWhitelistResolvesLocally(t *testing.T) {
 	cfg := smartDNSConfig()
 	cfg.RoutingMode = ModeGlobal
@@ -1634,23 +1618,17 @@ func TestBuildDNS_GlobalWhitelistResolvesLocally(t *testing.T) {
 	dns := buildDNS(cfg)
 	tunnelTag := firstDetourServerTag(dns.Servers, "proxy")
 
-	ru, avito := -1, -1
-	for i, r := range dns.Rules {
-		if len(r.DomainSuffix) != 1 {
-			continue
-		}
-		switch {
-		case r.DomainSuffix[0] == "ru" && r.Server == "local":
-			ru = i
-		case r.DomainSuffix[0] == "avito.ru" && r.Server == tunnelTag:
-			avito = i
+	local := map[string]bool{}
+	for _, r := range dns.Rules {
+		for _, d := range r.DomainSuffix {
+			if r.Server != "local" {
+				t.Fatalf("excluded suffix %q resolves via %q, rules: %+v", d, r.Server, dns.Rules)
+			}
+			local[d] = true
 		}
 	}
-	if ru < 0 {
-		t.Fatalf("excluded suffix must resolve via local, rules: %+v", dns.Rules)
-	}
-	if avito < 0 || avito > ru {
-		t.Fatalf("nested exception must resolve through the tunnel ahead of its parent, rules: %+v", dns.Rules)
+	if !local["ru"] || !local["avito.ru"] {
+		t.Fatalf("excluded suffixes must resolve via local, rules: %+v", dns.Rules)
 	}
 	if dns.Final != tunnelTag {
 		t.Fatalf("everything else must stay on the tunnel resolver, got Final=%q", dns.Final)

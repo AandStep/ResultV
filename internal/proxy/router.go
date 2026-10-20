@@ -180,9 +180,8 @@ func (r *Router) IsWhitelisted(hostname string, whitelist []string) WhitelistRes
 		return WhitelistResult{IsWhitelisted: false, MatchingRules: nil}
 	}
 
-	
 	return WhitelistResult{
-		IsWhitelisted: len(matching)%2 == 1,
+		IsWhitelisted: true,
 		MatchingRules: matching,
 	}
 }
@@ -194,9 +193,6 @@ func (r *Router) ShouldProxy(hostname string, mode RoutingMode, whitelist []stri
 
 	switch mode {
 	case ModeSmart:
-		if !result.IsWhitelisted && len(result.MatchingRules) > 0 {
-			return true, "Nested exception: [" + strings.Join(result.MatchingRules, ", ") + "]"
-		}
 		blocked := r.IsBlockedDomain(hostname)
 		if result.IsWhitelisted {
 			if blocked {
@@ -268,27 +264,7 @@ func (r *Router) GetSafeOSWhitelist(whitelist []string) []string {
 		}
 	}
 
-	var safe []string
-	for _, rule := range normalized {
-		
-		result := r.IsWhitelisted(rule, whitelist)
-		if !result.IsWhitelisted {
-			continue
-		}
-
-		
-		hasChild := false
-		for _, other := range normalized {
-			if other != rule && strings.HasSuffix(other, "."+rule) {
-				hasChild = true
-				break
-			}
-		}
-		if !hasChild {
-			safe = append(safe, rule)
-		}
-	}
-	return safe
+	return normalized
 }
 
 
