@@ -24,3 +24,5 @@ func ElevatedAutostartPresent() bool       { return false }
 func ElevatedAutostartCommands(string, bool) ([]string, func(), error) {
 	return nil, func() {}, nil
 }
+
+func ExecuteElevatedCommands([]string) error { return nil }
