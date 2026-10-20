@@ -23,52 +23,41 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
 
-func TestBuildRoute_NestedDomainException_ProducesProxyOverride(t *testing.T) {
+// The same site entered twice — bare, with www. and as a URL — must stay direct
+// under every spelling. Two entries used to cancel each other out, so the www.
+// address the browser actually opens went through the tunnel.
+func TestBuildRoute_NestedSiteEntriesAllDirect(t *testing.T) {
 	cfg := EngineConfig{
-		RoutingMode: ModeWhitelist,
-		Whitelist:   []string{".ru", "2ip.ru"},
+		RoutingMode: ModeGlobal,
+		Whitelist:   []string{"https://www.example.com/", "www.example.com", "example.com", "shop.example.org", "www.shop.example.org", ".ru", "2ip.ru"},
 	}
 
 	route := buildRoute(cfg)
-	if route == nil {
-		t.Fatal("expected non-nil route")
-	}
-
-	var ruDirect bool
-	var twoIPProxy bool
-	var twoIPRuleIndex = -1
-	var ruRuleIndex = -1
-
-	for i, r := range route.Rules {
-		if len(r.DomainSuffix) != 1 {
-			continue
+	direct := map[string]bool{}
+	for _, r := range route.Rules {
+		for _, d := range r.DomainSuffix {
+			if r.Outbound != "direct" {
+				t.Fatalf("site exclusion %q routed to %q, rules=%+v", d, r.Outbound, route.Rules)
+			}
+			direct[d] = true
 		}
-		switch r.DomainSuffix[0] {
-		case "ru":
-			if r.Outbound == "direct" {
-				ruDirect = true
-				ruRuleIndex = i
-			}
-		case "2ip.ru":
-			if r.Outbound == "proxy" {
-				twoIPProxy = true
-				twoIPRuleIndex = i
-			}
+	}
+	for _, want := range []string{"www.example.com", "example.com", "shop.example.org", "www.shop.example.org", "ru", "2ip.ru"} {
+		if !direct[want] {
+			t.Fatalf("%q missing from the direct rule, rules=%+v", want, route.Rules)
 		}
 	}
 
-	if !ruDirect {
-		t.Fatalf("expected direct rule for ru suffix, rules=%+v", route.Rules)
-	}
-	if !twoIPProxy {
-		t.Fatalf("expected proxy override rule for 2ip.ru suffix, rules=%+v", route.Rules)
-	}
-	if twoIPRuleIndex > ruRuleIndex {
-		t.Fatalf("expected more specific rule (2ip.ru) before ru: twoIP=%d ru=%d", twoIPRuleIndex, ruRuleIndex)
+	r := NewRouter()
+	for _, host := range []string{"www.example.com", "example.com", "www.shop.example.org", "2ip.ru", "m.2ip.ru"} {
+		if !r.IsWhitelisted(host, cfg.Whitelist).IsWhitelisted {
+			t.Fatalf("Router.IsWhitelisted(%q) = false, want true", host)
+		}
 	}
 }
 
@@ -144,11 +133,9 @@ func TestBuildRoute_SmartMode_BlockedDomainsTunneled(t *testing.T) {
 	}
 }
 
-// TestBuildRoute_SmartMode_NestedExceptionTunneled mirrors
-// router_test.go TestShouldProxy_SmartMode_NestedExceptions: with whitelist
-// [.ru, avito.ru] the even (double) match makes avito.ru a nested exception
-// that must tunnel, while the catch-all stays direct.
-func TestBuildRoute_SmartMode_NestedExceptionTunneled(t *testing.T) {
+// TestBuildRoute_SmartMode_NestedExceptionDirect: a nested entry is an
+// exclusion like any other, Smart mode included.
+func TestBuildRoute_SmartMode_NestedExceptionDirect(t *testing.T) {
 	cfg := EngineConfig{
 		Mode:        ProxyModeTunnel,
 		RoutingMode: ModeSmart,
@@ -156,14 +143,12 @@ func TestBuildRoute_SmartMode_NestedExceptionTunneled(t *testing.T) {
 		Whitelist:   []string{".ru", "avito.ru"},
 	}
 	route := buildRoute(cfg)
-	var avitoProxy bool
 	for _, r := range route.Rules {
-		if r.Outbound == "proxy" && len(r.DomainSuffix) == 1 && r.DomainSuffix[0] == "avito.ru" {
-			avitoProxy = true
+		for _, d := range r.DomainSuffix {
+			if d == "avito.ru" && r.Outbound != "direct" {
+				t.Fatalf("nested exception avito.ru routed to %q, rules=%+v", r.Outbound, route.Rules)
+			}
 		}
-	}
-	if !avitoProxy {
-		t.Fatalf("smart mode nested exception avito.ru must tunnel, rules=%+v", route.Rules)
 	}
 	if route.Final != "direct" {
 		t.Fatalf("smart mode must keep Final=direct, got %q", route.Final)
@@ -175,12 +160,10 @@ func TestBuildRoute_SmartMode_NestedExceptionTunneled(t *testing.T) {
 // tunnels. In first-match routing that means the blocked rule must precede the
 // whitelist direct rule.
 //
-// This is what makes the Smart-mode UI behave: there the domain list edits
-// config.RoutingRules.CustomBlockedDomains ("route via VPN", RulesView.jsx),
-// which Router.GetBlockedDomains unions into BlockedDomains, while Whitelist
-// still holds the exclusions set in Global mode. Flip this order and a stale
-// Global exclusion silently overrides an explicit Smart-mode "send via VPN".
-func TestBuildRoute_SmartMode_BlockedWinsOverWhitelist(t *testing.T) {
+// The sites list is per mode. Smart shows "sites via VPN" (BlockedDomains),
+// Global shows "sites direct" (Whitelist); entries left on the Global screen
+// must not reach Smart.
+func TestBuildRoute_SmartMode_IgnoresGlobalSitesList(t *testing.T) {
 	cfg := EngineConfig{
 		Mode:           ProxyModeTunnel,
 		RoutingMode:    ModeSmart,
@@ -189,32 +172,15 @@ func TestBuildRoute_SmartMode_BlockedWinsOverWhitelist(t *testing.T) {
 		BlockedDomains: []string{"instagram.com"},
 	}
 	route := buildRoute(cfg)
-	blockedIdx, comDirectIdx := -1, -1
-	for i, r := range route.Rules {
-		if r.Outbound == "proxy" {
-			for _, d := range r.DomainSuffix {
-				if d == "instagram.com" {
-					blockedIdx = i
-				}
-			}
-		}
-		if r.Outbound == "direct" {
-			for _, d := range r.DomainSuffix {
-				if d == "com" {
-					comDirectIdx = i
-				}
-			}
+	for _, r := range route.Rules {
+		if slices.Contains(r.DomainSuffix, "com") {
+			t.Fatalf("a Global sites entry acts in Smart: %+v", r)
 		}
 	}
-	if blockedIdx == -1 {
+	if indexOfRule(route.Rules, func(r SBRouteRule) bool {
+		return r.Outbound == "proxy" && slices.Contains(r.DomainSuffix, "instagram.com")
+	}) < 0 {
 		t.Fatalf("expected blocked instagram.com → proxy rule, rules=%+v", route.Rules)
-	}
-	if comDirectIdx == -1 {
-		t.Fatalf("expected whitelist com → direct rule, rules=%+v", route.Rules)
-	}
-	if blockedIdx > comDirectIdx {
-		t.Fatalf("blocked rule (idx=%d) must precede whitelist direct rule (idx=%d) so blocked wins, rules=%+v",
-			blockedIdx, comDirectIdx, route.Rules)
 	}
 }
 
@@ -962,21 +928,15 @@ func TestBuildTunnelModeConfig_AppWhitelistGetsLocalDNSRule(t *testing.T) {
 	}
 	var found bool
 	for _, r := range cfg.DNS.Rules {
-		if r.Server != "local" || len(r.ProcessPathRegex) == 0 {
-			continue
-		}
-		for _, rx := range r.ProcessPathRegex {
-			if strings.Contains(rx, "WinSCP") {
-				found = true
-				break
-			}
-		}
-		if found {
-			break
+		if r.Server == "local" && slices.Contains(r.PackageName, familyTagDirect) {
+			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("expected dns rule routing whitelisted process to local resolver, got rules=%+v", cfg.DNS.Rules)
+		t.Fatalf("expected dns rule routing the excluded family to the local resolver, got rules=%+v", cfg.DNS.Rules)
+	}
+	if !cfg.DNS.ReverseMapping {
+		t.Fatal("app-direct needs reverse mapping to name connections made by address")
 	}
 }
 
@@ -1184,71 +1144,28 @@ func TestUpdateInbound_RoutedToProxyInBothModes(t *testing.T) {
 	}
 }
 
-// TestBuildRoute_ProxyMode_AppWhitelistGetsDirectRule covers the actual
-// excluded-process rule. In proxy mode the mixed inbound terminates the
-// connection locally; sing-box looks up the originating PID and matches
-// against process_path_regex. The rule must point at the direct outbound
-// so the excluded app bypasses the tunnel.
+// TestBuildRoute_ProxyMode_AppWhitelistGetsDirectRule covers the excluded
+// family in proxy mode: the mixed inbound terminates the connection locally,
+// the core looks up the originating PID, and the family tag sends it direct.
+// Apps hand names to a proxy, so there is no address to take back from the
+// node's resolver.
 func TestBuildRoute_ProxyMode_AppWhitelistGetsDirectRule(t *testing.T) {
 	cfg := EngineConfig{
 		Mode:         ProxyModeProxy,
 		AppWhitelist: []string{"steam.exe", "steamwebhelper.exe"},
 	}
 	route := buildRoute(cfg)
-	if route == nil {
-		t.Fatal("route missing")
+	if familyRuleIndex(route.Rules, familyTagDirect, "direct") < 0 {
+		t.Fatalf("expected the excluded family routed direct, rules=%+v", route.Rules)
 	}
-	var found bool
-	for _, r := range route.Rules {
-		if r.Outbound != "direct" || len(r.ProcessPathRegex) == 0 {
-			continue
-		}
-		if len(r.ProcessPathRegex) >= 2 {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected process_path_regex direct rule with both entries, rules=%+v", route.Rules)
-	}
-}
-
-// TestBuildRoute_ExplicitBrowserExclusionGetsDirectRule guards the other half
-// of the browser fix: descendant auto-capture filters browsers out (so a
-// launcher can't drag the user's browser out of the VPN), but a browser the
-// user EXPLICITLY lists as an excluded app must still route direct. The
-// process-tree filter only touches discovered descendants, never user roots,
-// so the root flows straight into the direct process_path_regex rule.
-func TestBuildRoute_ExplicitBrowserExclusionGetsDirectRule(t *testing.T) {
-	cfg := EngineConfig{
-		Mode:         ProxyModeProxy,
-		AppWhitelist: []string{"chrome.exe"},
-	}
-	route := buildRoute(cfg)
-	if route == nil {
-		t.Fatal("route missing")
-	}
-	var found bool
-	for _, r := range route.Rules {
-		if r.Outbound != "direct" || len(r.ProcessPathRegex) == 0 {
-			continue
-		}
-		for _, rx := range r.ProcessPathRegex {
-			if strings.Contains(strings.ToLower(rx), "chrome") {
-				found = true
-			}
-		}
-	}
-	if !found {
-		t.Fatalf("explicit chrome.exe exclusion must produce a direct process rule, rules=%+v", route.Rules)
+	if !route.FindProcess {
+		t.Fatal("find_process must be on for the family tag to exist")
 	}
 }
 
 func TestBuildRouteAppForceVPN(t *testing.T) {
-	// Deliberately NOT Discord.exe: Smart mode now emits a built-in
-	// process->proxy rule for it (smartTunneledApps), so a Discord fixture
-	// would make "which rule did we find" ambiguous and stop measuring the
-	// force-VPN/whitelist ordering this test exists for.
+	// Deliberately NOT Discord.exe: Smart mode emits a built-in process rule
+	// for it (smartTunneledApps), which would blur which rule was found.
 	cfg := EngineConfig{
 		Mode:         ProxyModeTunnel,
 		RoutingMode:  ModeSmart,
@@ -1256,38 +1173,32 @@ func TestBuildRouteAppForceVPN(t *testing.T) {
 		AppWhitelist: []string{"steam.exe"},
 	}
 	route := buildRoute(cfg)
-
-	forceIdx, whitelistIdx := -1, -1
-	for i, rule := range route.Rules {
-		if len(rule.ProcessPathRegex) == 0 {
-			continue
-		}
-		if rule.Outbound == "proxy" && strings.Contains(rule.ProcessPathRegex[0], "Telegram") {
-			forceIdx = i
-		}
-		if rule.Outbound == "direct" && strings.Contains(rule.ProcessPathRegex[0], "steam") {
-			whitelistIdx = i
-		}
+	if familyRuleIndex(route.Rules, familyTagVPN, "proxy") < 0 {
+		t.Fatal("force-VPN family rule missing in Smart")
 	}
-	if forceIdx == -1 {
-		t.Fatal("force-VPN process rule missing in tunnel mode")
-	}
-	if whitelistIdx == -1 {
-		t.Fatal("app-whitelist rule missing")
-	}
-	if forceIdx > whitelistIdx {
-		t.Errorf("force-VPN rule (%d) must precede app-whitelist direct rule (%d)", forceIdx, whitelistIdx)
+	if familyRuleIndex(route.Rules, familyTagDirect, "direct") >= 0 {
+		t.Error("the Global exclusions list must not act in Smart")
 	}
 	if !route.FindProcess {
 		t.Error("find_process must be enabled when force-VPN list is set")
 	}
 
+	// The case behind the broken exclusions: the same games on both screens,
+	// and the Smart list outranking the Global one.
+	cfg.RoutingMode = ModeGlobal
+	route = buildRoute(cfg)
+	if familyRuleIndex(route.Rules, familyTagVPN, "proxy") >= 0 {
+		t.Error("the Smart via-VPN list must not act in Global")
+	}
+	if familyRuleIndex(route.Rules, familyTagDirect, appDirectTag) < 0 {
+		t.Error("the Global exclusions list must act in Global")
+	}
+
+	cfg.RoutingMode = ModeSmart
 	cfg.Mode = ProxyModeProxy
 	route = buildRoute(cfg)
-	for _, rule := range route.Rules {
-		if rule.Outbound == "proxy" && len(rule.ProcessPathRegex) > 0 {
-			t.Error("force-VPN rule must not be emitted in proxy mode")
-		}
+	if familyRuleIndex(route.Rules, familyTagVPN, "proxy") >= 0 {
+		t.Error("force-VPN rule must not be emitted in proxy mode")
 	}
 }
 
@@ -1413,22 +1324,18 @@ func TestRoutingListMissingCacheSkipped(t *testing.T) {
 }
 
 // TestBuildRoute_SmartMode_UsesRuleSetWhenCompiled verifies that a compiled
-// block-list is referenced by tag instead of being inlined as domain_suffix,
-// and that it keeps its position ahead of the whitelist direct rule (the
-// ordering that makes an explicit "route via VPN" win — see
-// TestBuildRoute_SmartMode_BlockedWinsOverWhitelist).
+// block-list is referenced by tag instead of being inlined as domain_suffix.
 func TestBuildRoute_SmartMode_UsesRuleSetWhenCompiled(t *testing.T) {
 	cfg := EngineConfig{
 		Mode:             ProxyModeTunnel,
 		RoutingMode:      ModeSmart,
 		Proxy:            ProxyConfig{Type: "ss", IP: "1.2.3.4", Port: 443, Password: "p"},
-		Whitelist:        []string{".com"},
 		BlockedDomains:   []string{"instagram.com"},
 		SmartRuleSetPath: filepath.Join("C:", "data", "routing", "smart-deadbeefdeadbeef.srs"),
 	}
 	route := buildRoute(cfg)
 
-	blockedIdx, comDirectIdx := -1, -1
+	blockedIdx := -1
 	for i, r := range route.Rules {
 		if r.Outbound == "proxy" {
 			for _, tag := range r.RuleSet {
@@ -1442,22 +1349,9 @@ func TestBuildRoute_SmartMode_UsesRuleSetWhenCompiled(t *testing.T) {
 				}
 			}
 		}
-		if r.Outbound == "direct" {
-			for _, d := range r.DomainSuffix {
-				if d == "com" {
-					comDirectIdx = i
-				}
-			}
-		}
 	}
 	if blockedIdx == -1 {
 		t.Fatalf("expected a rule referencing %q, rules=%+v", smartRuleSetTag, route.Rules)
-	}
-	if comDirectIdx == -1 {
-		t.Fatalf("expected whitelist com → direct rule, rules=%+v", route.Rules)
-	}
-	if blockedIdx > comDirectIdx {
-		t.Fatalf("rule-set rule (idx=%d) must precede whitelist direct rule (idx=%d)", blockedIdx, comDirectIdx)
 	}
 
 	var declared bool
@@ -1577,8 +1471,7 @@ func TestBuildDNS_SmartModeTunnelsBlockedAndForceVPN(t *testing.T) {
 		if len(r.RuleSet) == 1 && r.RuleSet[0] == smartRuleSetTag && r.Server == tunnelTag {
 			blockedRule = true
 		}
-		if len(r.ProcessPathRegex) == 1 && r.Server == tunnelTag &&
-			strings.Contains(r.ProcessPathRegex[0], "Battle") {
+		if r.Server == tunnelTag && slices.Contains(r.PackageName, familyTagVPN) {
 			forceRule = true
 		}
 	}
@@ -1626,7 +1519,7 @@ func TestBuildDNS_GlobalModeUnchanged(t *testing.T) {
 }
 
 // TestBuildDNS_GlobalWhitelistResolvesLocally: excluded domains resolve via
-// local, nested exceptions stay on the tunnel resolver.
+// local, nested ones included.
 func TestBuildDNS_GlobalWhitelistResolvesLocally(t *testing.T) {
 	cfg := smartDNSConfig()
 	cfg.RoutingMode = ModeGlobal
@@ -1634,23 +1527,17 @@ func TestBuildDNS_GlobalWhitelistResolvesLocally(t *testing.T) {
 	dns := buildDNS(cfg)
 	tunnelTag := firstDetourServerTag(dns.Servers, "proxy")
 
-	ru, avito := -1, -1
-	for i, r := range dns.Rules {
-		if len(r.DomainSuffix) != 1 {
-			continue
-		}
-		switch {
-		case r.DomainSuffix[0] == "ru" && r.Server == "local":
-			ru = i
-		case r.DomainSuffix[0] == "avito.ru" && r.Server == tunnelTag:
-			avito = i
+	local := map[string]bool{}
+	for _, r := range dns.Rules {
+		for _, d := range r.DomainSuffix {
+			if r.Server != "local" {
+				t.Fatalf("excluded suffix %q resolves via %q, rules: %+v", d, r.Server, dns.Rules)
+			}
+			local[d] = true
 		}
 	}
-	if ru < 0 {
-		t.Fatalf("excluded suffix must resolve via local, rules: %+v", dns.Rules)
-	}
-	if avito < 0 || avito > ru {
-		t.Fatalf("nested exception must resolve through the tunnel ahead of its parent, rules: %+v", dns.Rules)
+	if !local["ru"] || !local["avito.ru"] {
+		t.Fatalf("excluded suffixes must resolve via local, rules: %+v", dns.Rules)
 	}
 	if dns.Final != tunnelTag {
 		t.Fatalf("everything else must stay on the tunnel resolver, got Final=%q", dns.Final)
@@ -1762,16 +1649,12 @@ func TestBuildRoute_ForceVPNApps_RejectQUIC(t *testing.T) {
 	route := buildRoute(cfg)
 
 	reject := indexOfRule(route.Rules, func(r SBRouteRule) bool {
-		return isQUICReject(r) && len(r.ProcessPathRegex) == 1 &&
-			strings.Contains(r.ProcessPathRegex[0], "Discord")
+		return isQUICReject(r) && slices.Contains(r.PackageName, familyTagVPN)
 	})
 	if reject < 0 {
 		t.Fatalf("expected a udp:443 reject for force-VPN apps, rules=%+v", route.Rules)
 	}
-	proxyRoute := indexOfRule(route.Rules, func(r SBRouteRule) bool {
-		return r.Action == "route" && r.Outbound == "proxy" &&
-			len(r.ProcessPathRegex) == 1 && strings.Contains(r.ProcessPathRegex[0], "Discord")
-	})
+	proxyRoute := familyRuleIndex(route.Rules, familyTagVPN, "proxy")
 	if proxyRoute < 0 {
 		t.Fatal("force-VPN proxy route rule disappeared")
 	}
@@ -1858,31 +1741,25 @@ func TestBuildRoute_GlobalMode_NoQUICBackstop(t *testing.T) {
 	}
 }
 
-// An app the user excluded from the tunnel keeps its own routing decision, and
+// An app the user sent through the tunnel keeps its own routing decision, and
 // that decision is terminal — the backstop must never reach it.
-func TestBuildRoute_SmartMode_BackstopAfterAppWhitelist(t *testing.T) {
+func TestBuildRoute_SmartMode_BackstopAfterAppForceVPN(t *testing.T) {
 	cfg := EngineConfig{
-		Mode:         ProxyModeTunnel,
-		RoutingMode:  ModeSmart,
-		Proxy:        ProxyConfig{Type: "hysteria2", IP: "1.2.3.4", Port: 443},
-		AppWhitelist: []string{"game.exe"},
+		Mode:        ProxyModeTunnel,
+		RoutingMode: ModeSmart,
+		Proxy:       ProxyConfig{Type: "hysteria2", IP: "1.2.3.4", Port: 443},
+		AppForceVPN: []string{"game.exe"},
 	}
 	rules := buildRoute(cfg).Rules
-	appIdx := -1
-	for i, r := range rules {
-		if len(r.ProcessPathRegex) == 1 && strings.Contains(r.ProcessPathRegex[0], "game") {
-			appIdx = i
-			break
-		}
-	}
+	appIdx := familyRuleIndex(rules, familyTagVPN, "proxy")
 	if appIdx < 0 {
-		t.Fatal("app-whitelist rule missing")
+		t.Fatal("force-VPN family rule missing")
 	}
 	if !isBareQUICBackstop(rules[len(rules)-1]) {
 		t.Fatal("backstop missing")
 	}
 	if appIdx >= len(rules)-1 {
-		t.Fatalf("app-whitelist rule at %d must precede the backstop at %d", appIdx, len(rules)-1)
+		t.Fatalf("force-VPN family rule at %d must precede the backstop at %d", appIdx, len(rules)-1)
 	}
 }
 
@@ -1901,8 +1778,8 @@ func TestBuildDNS_GlobalModeDefaultsToFallbackWrapper(t *testing.T) {
 				final = &dns.Servers[i]
 			}
 		}
-		if final == nil || final.Type != "fallback" {
-			t.Fatalf("dns=%v: Final=%q must name the fallback wrapper", servers, dns.Final)
+		if final == nil || (final.Type != "fallback" && final.Type != dnsBreakerType) {
+			t.Fatalf("dns=%v: Final=%q must name a wrapper, not a bare leg", servers, dns.Final)
 		}
 	}
 }

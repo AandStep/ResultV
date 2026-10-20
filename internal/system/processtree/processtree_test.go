@@ -13,186 +13,211 @@
 package processtree
 
 import (
-	"context"
-	"reflect"
-	"sort"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
 
-func TestNormalizeRootsDedupesAndStrips(t *testing.T) {
-	got := normalizeRoots([]string{"Steam.exe", "STEAM.EXE", "", `C:\Foo\Bar\app.EXE`, "  ", "discord"})
-	want := []string{"steam.exe", "app.exe", "discord"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("normalizeRoots: got %v, want %v", got, want)
+type fakeSource struct {
+	mu    sync.Mutex
+	procs map[uint32]Process
+	clock int64
+}
+
+func newFakeSource(procs ...Process) *fakeSource {
+	s := &fakeSource{procs: map[uint32]Process{}, clock: 1000}
+	for _, p := range procs {
+		s.procs[p.PID] = p
+	}
+	return s
+}
+
+func (s *fakeSource) live(pid uint32) (Process, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.procs[pid]
+	return p, ok
+}
+
+func (s *fakeSource) now() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.clock
+}
+
+func (s *fakeSource) young(created int64, d time.Duration) bool {
+	return s.now()-created < 100
+}
+
+func (s *fakeSource) exit(pid uint32) {
+	s.mu.Lock()
+	delete(s.procs, pid)
+	s.mu.Unlock()
+}
+
+func pids(chain []Process) []uint32 {
+	out := make([]uint32, len(chain))
+	for i, p := range chain {
+		out[i] = p.PID
+	}
+	return out
+}
+
+func assertChain(t *testing.T, got []Process, want ...uint32) {
+	t.Helper()
+	ids := pids(got)
+	if len(ids) != len(want) {
+		t.Fatalf("chain %v, want %v", ids, want)
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Fatalf("chain %v, want %v", ids, want)
+		}
 	}
 }
 
-func TestSnapshotEqualIgnoresRoots(t *testing.T) {
-	a := Snapshot{Roots: []string{"steam.exe"}, Descendants: []string{"a", "b"}}
-	b := Snapshot{Roots: []string{"chrome.exe"}, Descendants: []string{"a", "b"}}
-	if !a.Equal(b) {
-		t.Fatal("snapshots with same descendants should be equal regardless of roots")
-	}
-	c := Snapshot{Roots: []string{"steam.exe"}, Descendants: []string{"a"}}
-	if a.Equal(c) {
-		t.Fatal("snapshots with different descendants must not be equal")
+var (
+	explorer = Process{PID: 100, ParentPID: 50, Created: 10, Image: `C:\Windows\explorer.exe`}
+	steam    = Process{PID: 200, ParentPID: 100, Created: 20, Image: `C:\Steam\steam.exe`}
+	launcher = Process{PID: 300, ParentPID: 200, Created: 30, Image: `C:\Games\launcher.exe`}
+	game     = Process{PID: 400, ParentPID: 300, Created: 40, Image: `C:\Games\game.exe`}
+)
+
+func TestAncestryWalksLiveParents(t *testing.T) {
+	src := newFakeSource(explorer, steam, launcher, game)
+	tr := newTracker(src)
+	assertChain(t, tr.Ancestry(game.PID), 400, 300, 200, 100)
+}
+
+func TestAncestryUnknownPID(t *testing.T) {
+	tr := newTracker(newFakeSource())
+	if got := tr.Ancestry(999); got != nil {
+		t.Fatalf("unknown pid gave %v", pids(got))
 	}
 }
 
-func TestMonitorEmitsOnChangeAndDedupes(t *testing.T) {
-	m := New(nil)
+// A newer process now holding the parent's PID is not the parent.
+func TestAncestryRejectsReusedParentPID(t *testing.T) {
+	impostor := Process{PID: 300, ParentPID: 100, Created: 50, Image: `C:\Other\other.exe`}
+	src := newFakeSource(explorer, steam, impostor, game)
+	tr := newTracker(src)
+	assertChain(t, tr.Ancestry(game.PID), 400)
+}
 
-	var counter atomic.Int32
-	var lastSnap Snapshot
-	var mu sync.Mutex
+// The launcher exited after starting the game; the start events recorded it.
+func TestAncestryKeepsExitedLauncher(t *testing.T) {
+	src := newFakeSource(explorer, steam, game)
+	tr := newTracker(src)
+	tr.Started(launcher)
+	tr.Started(game)
+	tr.Exited(launcher.PID, launcher.Created, 45)
+	assertChain(t, tr.Ancestry(game.PID), 400, 300, 200, 100)
+}
 
-	m.OnChange(func(s Snapshot) {
-		counter.Add(1)
-		mu.Lock()
-		lastSnap = s
-		mu.Unlock()
-	})
+// The launcher exited and its PID went to another process; the history still
+// knows which generation started the game.
+func TestAncestryKeepsExitedLauncherAfterReuse(t *testing.T) {
+	impostor := Process{PID: 300, ParentPID: 100, Created: 50}
+	src := newFakeSource(explorer, steam, game, impostor)
+	tr := newTracker(src)
+	tr.Started(launcher)
+	tr.Started(game)
+	tr.Exited(launcher.PID, launcher.Created, 45)
+	tr.Started(impostor)
+	assertChain(t, tr.Ancestry(game.PID), 400, 300, 200, 100)
+}
 
-	state := []string{"a.exe", "b.exe"}
-	var stateMu sync.Mutex
-	m.scan = func(roots []string) Snapshot {
-		stateMu.Lock()
-		defer stateMu.Unlock()
-		out := append([]string(nil), state...)
-		sort.Strings(out)
-		return Snapshot{Roots: roots, Descendants: out}
+// A generation that exited before the child started cannot be its parent,
+// even when the real parent was never recorded.
+func TestAncestryRejectsGenerationDeadBeforeChild(t *testing.T) {
+	old := Process{PID: 300, ParentPID: 200, Created: 5}
+	src := newFakeSource(explorer, steam, game)
+	tr := newTracker(src)
+	tr.Started(old)
+	tr.Exited(old.PID, old.Created, 8)
+	assertChain(t, tr.Ancestry(game.PID), 400)
+}
+
+// Seen alive by a scan, then gone without an event: still the parent, since
+// nothing says the PID changed hands.
+func TestAncestryTrustsScannedParentNotYetSwept(t *testing.T) {
+	src := newFakeSource(explorer, steam, launcher, game)
+	tr := newTracker(src)
+	tr.Observe(launcher, 35)
+	src.exit(launcher.PID)
+	assertChain(t, tr.Ancestry(game.PID), 400, 300, 200, 100)
+}
+
+// Once a scan finds the PID missing, a parent seen only before the child
+// started proves nothing.
+func TestAncestryDropsSweptParentSeenBeforeChild(t *testing.T) {
+	src := newFakeSource(explorer, steam, launcher, game)
+	tr := newTracker(src)
+	tr.Observe(launcher, 35)
+	src.exit(launcher.PID)
+	tr.rescan(nil, map[uint32]bool{explorer.PID: true, steam.PID: true, game.PID: true}, 60)
+	assertChain(t, tr.Ancestry(game.PID), 400)
+}
+
+// With an event feed running, a walk waits for a parent the feed has not
+// delivered yet.
+func TestAncestryWaitsForLaggingFeed(t *testing.T) {
+	src := newFakeSource(explorer, steam, game)
+	src.clock = 50
+	tr := newTracker(src)
+	tr.setEvents(true)
+	var once sync.Once
+	tr.sleep = func(time.Duration) {
+		once.Do(func() {
+			tr.Started(launcher)
+			tr.Exited(launcher.PID, launcher.Created, 45)
+		})
 	}
+	assertChain(t, tr.Ancestry(game.PID), 400, 300, 200, 100)
+}
 
-	m.SetRoots([]string{"steam.exe"})
-	m.Trigger()
+func TestAncestryDoesNotWaitWithoutFeed(t *testing.T) {
+	src := newFakeSource(explorer, steam, game)
+	tr := newTracker(src)
+	tr.sleep = func(time.Duration) { t.Fatal("waited without an event feed") }
+	assertChain(t, tr.Ancestry(game.PID), 400)
+}
 
-	if got := counter.Load(); got != 1 {
-		t.Fatalf("expected 1 emit after first scan, got %d", got)
+func TestAncestryStopsAtDepthLimit(t *testing.T) {
+	src := newFakeSource()
+	for i := uint32(1); i <= 2*maxDepth; i++ {
+		src.procs[i] = Process{PID: i, ParentPID: i + 1, Created: int64(1000 - i)}
 	}
-	mu.Lock()
-	if !reflect.DeepEqual(lastSnap.Descendants, []string{"a.exe", "b.exe"}) {
-		t.Fatalf("unexpected descendants: %v", lastSnap.Descendants)
-	}
-	mu.Unlock()
-
-	// Same scan result -> no emit.
-	m.Trigger()
-	if got := counter.Load(); got != 1 {
-		t.Fatalf("expected no second emit when scan unchanged, got %d", got)
-	}
-
-	// Add a child -> emit.
-	stateMu.Lock()
-	state = append(state, "c.exe")
-	stateMu.Unlock()
-	m.Trigger()
-	if got := counter.Load(); got != 2 {
-		t.Fatalf("expected 2nd emit after change, got %d", got)
-	}
-
-	// Remove child -> emit.
-	stateMu.Lock()
-	state = []string{"a.exe"}
-	stateMu.Unlock()
-	m.Trigger()
-	if got := counter.Load(); got != 3 {
-		t.Fatalf("expected 3rd emit after removal, got %d", got)
+	tr := newTracker(src)
+	if got := len(tr.Ancestry(1)); got != maxDepth {
+		t.Fatalf("chain length %d, want %d", got, maxDepth)
 	}
 }
 
-func TestMonitorStartStopGoroutine(t *testing.T) {
-	m := New(nil)
-	m.scan = func(roots []string) Snapshot {
-		return Snapshot{Roots: roots}
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	m.Start(ctx)
-	// Calling Start a second time must not spawn another goroutine.
-	m.Start(ctx)
-	m.Stop()
-
-	// After Stop, a fresh Start should work again.
-	m.Start(context.Background())
-	m.Stop()
-}
-
-func TestMonitorEmptyRootsEmitsEmptyDescendants(t *testing.T) {
-	m := New(nil)
-	var snap Snapshot
-	var got atomic.Bool
-	m.OnChange(func(s Snapshot) {
-		snap = s
-		got.Store(true)
-	})
-	m.scan = func(roots []string) Snapshot {
-		// platformScan returns empty descendants for empty roots; emulate that.
-		return Snapshot{Roots: roots}
-	}
-	m.SetRoots(nil)
-	m.Trigger()
-	// First scan against zero-value last is a change (empty Descendants vs
-	// empty), but Equal compares descendant slices and both are nil so no emit.
-	if got.Load() {
-		t.Fatalf("did not expect emit on initial empty-equal-empty scan, snap=%+v", snap)
+func TestLiveSkipsExited(t *testing.T) {
+	tr := newTracker(newFakeSource())
+	tr.Started(steam)
+	tr.Started(launcher)
+	tr.Exited(launcher.PID, launcher.Created, 45)
+	live := tr.Live()
+	if len(live) != 1 || live[0].PID != steam.PID {
+		t.Fatalf("live = %v", pids(live))
 	}
 }
 
-func TestFilterAutoCapturedDropsBrowsers(t *testing.T) {
-	in := []string{"chrome.exe", "steamwebhelper.exe", "MSEDGE.EXE", "helper.exe", "firefox.exe", "browser.exe"}
-	got := filterAutoCaptured(in)
-	want := []string{"steamwebhelper.exe", "helper.exe"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("filterAutoCaptured: got %v, want %v", got, want)
+func TestEvictionKeepsTheLiving(t *testing.T) {
+	tr := newTracker(newFakeSource())
+	tr.Started(steam)
+	for i := uint32(0); i < maxRecords+10; i++ {
+		p := Process{PID: 10000 + i, ParentPID: steam.PID, Created: int64(100 + i)}
+		tr.Started(p)
+		tr.Exited(p.PID, p.Created, int64(101+i))
 	}
-}
-
-func TestFilterAutoCapturedKeepsNonBrowsers(t *testing.T) {
-	in := []string{"a.exe", "b.exe", "steamwebhelper.exe"}
-	got := filterAutoCaptured(in)
-	if !reflect.DeepEqual(got, in) {
-		t.Fatalf("filterAutoCaptured altered non-browser set: got %v, want %v", got, in)
+	if tr.count > maxRecords {
+		t.Fatalf("count %d over the cap", tr.count)
 	}
-}
-
-// TestMonitorFiltersBrowserDescendants is the regression for the silent
-// VPN-bypass bug: an excluded launcher (e.g. a game launcher) spawns chrome.exe,
-// which the tree scan reports as a descendant. Without filtering, the whole
-// browser would be auto-excluded and all web traffic would leave the VPN.
-func TestMonitorFiltersBrowserDescendants(t *testing.T) {
-	m := New(nil)
-	var lastSnap Snapshot
-	var mu sync.Mutex
-	var got atomic.Bool
-	m.OnChange(func(s Snapshot) {
-		mu.Lock()
-		lastSnap = s
-		mu.Unlock()
-		got.Store(true)
-	})
-	m.scan = func(roots []string) Snapshot {
-		return Snapshot{Roots: roots, Descendants: []string{"chrome.exe", "steamwebhelper.exe"}}
-	}
-	m.SetRoots([]string{"majestic launcher.exe"})
-	m.Trigger()
-
-	if !got.Load() {
-		t.Fatal("expected an emit for the non-browser descendant")
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	want := []string{"steamwebhelper.exe"}
-	if !reflect.DeepEqual(lastSnap.Descendants, want) {
-		t.Fatalf("browser descendant not filtered: got %v, want %v", lastSnap.Descendants, want)
-	}
-}
-
-func TestScanIntervalIsReasonable(t *testing.T) {
-	if scanInterval <= 0 || scanInterval > 2*time.Second {
-		t.Fatalf("scanInterval out of expected range: %v", scanInterval)
+	live := tr.Live()
+	if len(live) != 1 || live[0].PID != steam.PID {
+		t.Fatalf("eviction dropped a living process, live = %v", pids(live))
 	}
 }

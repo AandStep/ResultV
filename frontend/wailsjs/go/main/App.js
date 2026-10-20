@@ -66,6 +66,10 @@ export function Disconnect() {
   return window['go']['main']['App']['Disconnect']();
 }
 
+export function EnableAlwaysAdminAndRestart(arg1, arg2) {
+  return window['go']['main']['App']['EnableAlwaysAdminAndRestart'](arg1, arg2);
+}
+
 export function ExportConfig(arg1) {
   return window['go']['main']['App']['ExportConfig'](arg1);
 }
@@ -210,6 +214,10 @@ export function SetActiveRoutingProfile(arg1) {
   return window['go']['main']['App']['SetActiveRoutingProfile'](arg1);
 }
 
+export function SetAlwaysRunAsAdmin(arg1) {
+  return window['go']['main']['App']['SetAlwaysRunAsAdmin'](arg1);
+}
+
 export function SetAutostart(arg1) {
   return window['go']['main']['App']['SetAutostart'](arg1);
 }
@@ -264,4 +272,8 @@ export function UpdateRules(arg1) {
 
 export function UpdateSubscription(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['UpdateSubscription'](arg1, arg2, arg3, arg4);
+}
+
+export function VerifyTunnelTraffic() {
+  return window['go']['main']['App']['VerifyTunnelTraffic']();
 }

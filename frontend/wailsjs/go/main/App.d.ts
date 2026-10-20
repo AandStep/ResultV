@@ -39,6 +39,8 @@ export function DetectCountry(arg1:string):Promise<string>;
 
 export function Disconnect():Promise<void>;
 
+export function EnableAlwaysAdminAndRestart(arg1:string,arg2:string):Promise<void>;
+
 export function ExportConfig(arg1:string):Promise<string>;
 
 export function FetchSubscription(arg1:string,arg2:boolean):Promise<main.SubscriptionPreview>;
@@ -111,6 +113,8 @@ export function SaveRoutingProfile(arg1:config.RoutingProfile):Promise<config.Ro
 
 export function SetActiveRoutingProfile(arg1:string):Promise<void>;
 
+export function SetAlwaysRunAsAdmin(arg1:boolean):Promise<void>;
+
 export function SetAutostart(arg1:boolean):Promise<void>;
 
 export function SetMode(arg1:string):Promise<void>;
@@ -138,3 +142,5 @@ export function UpdateRoutingList(arg1:config.RoutingList):Promise<void>;
 export function UpdateRules(arg1:config.RoutingRules):Promise<void>;
 
 export function UpdateSubscription(arg1:string,arg2:string,arg3:boolean,arg4:number):Promise<void>;
+
+export function VerifyTunnelTraffic():Promise<boolean>;

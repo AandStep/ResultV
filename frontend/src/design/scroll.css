@@ -46,12 +46,12 @@
 
 .rv-scroll::-webkit-scrollbar-thumb {
   border-radius: var(--rv-radius-pill);
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--rv-white-a08);
   transition: background var(--rv-transition);
 }
 
 .rv-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--rv-white-a16);
 }
 
 /*
@@ -91,5 +91,5 @@
 }
 
 .rv-scroll-dialog::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.4);
+  background: var(--rv-white-a40);
 }

@@ -28,7 +28,7 @@
   line-height: 1.5;
   font-weight: 400;
 
-  color-scheme: light dark;
+  color-scheme: dark;
   color: rgba(255, 255, 255, 0.87);
   background-color: #242424;
 
@@ -36,6 +36,21 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  color: var(--rv-white-a80);
+  background-color: var(--rv-black);
+}
+
+/* Смена темы перекрашивает всё разом: без этого часть элементов плыла бы
+   своим переходом 300 мс, а часть переключалась бы сразу. */
+.rv-theme-switching,
+.rv-theme-switching *,
+.rv-theme-switching *::before,
+.rv-theme-switching *::after {
+  transition: none !important;
 }
 
 a {
@@ -105,6 +120,18 @@ button:focus-visible {
 
 ::-webkit-scrollbar-corner {
   background: transparent;
+}
+
+:where([data-theme="light"]) ::-webkit-scrollbar-track {
+  background: var(--rv-white-a05);
+}
+
+:where([data-theme="light"]) ::-webkit-scrollbar-thumb {
+  background: var(--rv-white-a20);
+}
+
+:where([data-theme="light"]) ::-webkit-scrollbar-thumb:hover {
+  background: var(--rv-white-a40);
 }
 
 button,

@@ -249,6 +249,8 @@ func (s Subscription) EffectiveShowOnHome() bool {
 
 type AppSettings struct {
 	Autostart                       bool     `json:"autostart"`
+	ConnectOnStartup                bool     `json:"connectOnStartup,omitempty"`
+	AlwaysRunAsAdmin                bool     `json:"alwaysRunAsAdmin,omitempty"`
 	KillSwitch                      bool     `json:"killswitch"`
 	Mode                            string   `json:"mode"`
 	Language                        string   `json:"language"`

@@ -79,6 +79,9 @@ func ArgsResumeAfterElevation(args []string) (proxyID, mode string) {
 	return proxyID, mode
 }
 
+// ArgsElevatedFrom reports whether this process is itself an elevated relaunch.
+func ArgsElevatedFrom(args []string) bool { return elevatedFromPID(args) > 0 }
+
 func elevatedFromPID(args []string) int {
 	for _, a := range args {
 		if v, ok := strings.CutPrefix(a, ElevatedFromFlag); ok {

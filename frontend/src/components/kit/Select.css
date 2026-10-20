@@ -86,6 +86,7 @@
   flex-direction: column;
   border-radius: var(--rv-radius-16);
   background: var(--rv-dark-grey);
+  filter: var(--rv-float-filter);
   font-family: var(--rv-font-family);
 
   /* Меню раскрывается от кнопки: опорный угол — тот, что к ней ближе.

@@ -1,52 +1,32 @@
 {
-  "version": "3.5.5",
+  "version": "",
   "releaseTitle": {
     "ru": "Общие улучшения и фиксы",
     "en": "General improvements and fixes"
   },
   "releaseNotes": [
     {
-      "type": "fix",
-      "ru": "Пинг серверов выбирал неправильный адаптер для проверки соединения",
-      "en": "Fixed an issue where the ping servers were selecting the wrong adapter for connection checks"
-    },
-    {
-      "type": "feature",
-      "ru": "Теперь при перезапуске приложения с правами администратора после выбора сервера, сервер подключается автоматически",
-      "en": "Now, when the application is restarted with administrator rights after selecting a server, the server connects automatically"
-    },
-    {
       "type": "improve",
-      "ru": "Улучшена работа умного и адаптивного режима",
-      "en": "Improved the performance of the smart and adaptive mode"
+      "ru": "Улучшен выбор DNS для протоколов AWG: теперь выбирается наилучший из конфигурации, в случае если ни один DNS не отвечает выбирается стандартный DNS",
+      "en": "Improved DNS selection for AWG protocols: the best option from the configuration is now chosen, and if no DNS responds, the default DNS is used"
+    },{
+      "type": "feature",
+      "ru": "Приложение теперь может автоматически запускаться при старте системы и стартовать последний используемый сервер. Два тумблера в настройках -> дополнительные настройки.",
+      "en": "The application can now automatically start at system boot and launch the last used server. Two toggles in settings -> advanced settings."
+    },{
+      "type": "fix",
+      "ru": "Исключённое приложение теперь пускает напрямую всё, что оно запускает: добавьте Steam — и все его игры пойдут мимо ВПН, вместе с DNS",
+      "en": "An excluded app now takes everything it launches with it: add Steam and all its games bypass the VPN, DNS included"
+    },{
+      "type": "fix",
+      "ru": "Сайт, добавленный в исключения дважды (с www и без), больше не уходит в ВПН",
+      "en": "A site added to exclusions twice (with and without www) no longer goes through the VPN"
+    },{
+      "type": "fix",
+      "ru": "Списки умного и глобального режимов больше не мешают друг другу: в каждом режиме работают только его правила",
+      "en": "Smart and Global mode lists no longer interfere: each mode applies only its own rules"
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",
-  "platforms": {
-    "windows-amd64-portable": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.5/ResultV.exe",
-      "sha256": "3e41ca71dfcce763df7adc8c0cdbc5d3605db10701551715a67f1470af9b87de",
-      "size": 62265856
-    },
-    "windows-amd64-installer": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.5/ResultV-amd64-installer.exe",
-      "sha256": "ef20a9ca97be72880105a31eee80b66d9e901ab4ebcc2f119996ac527d181fa1",
-      "size": 29168362
-    },
-    "darwin-universal": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.5/ResultV.dmg",
-      "sha256": "ae3a4dd32cf0f13d3435608b0205cbf36cf5f04530f44aeb030a7f1dfafd82e8",
-      "size": 65667054
-    },
-    "linux-amd64-appimage": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.5/ResultV-3.5.5-x86_64.AppImage",
-      "sha256": "4e19a6443dd55f455207ca50543d188397e8b59ed9c0a02591df28dea36de77b",
-      "size": 26421752
-    },
-    "linux-amd64-deb": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.5/resultv_3.5.5_amd64.deb",
-      "sha256": "b7e86c56ddc6878599300f17343a8ecdd3207c51f2fa65285e12710b5e6447f2",
-      "size": 28165204
-    }
-  }
+  "platforms": {}
 }

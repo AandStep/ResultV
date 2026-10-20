@@ -63,11 +63,12 @@ func IsAdmin() bool {
 }
 
 func RestartAsAdmin(exePath string, args ...string) error {
-	psArgs := fmt.Sprintf(`Start-Process -FilePath '%s' -Verb RunAs`, exePath)
-	if len(args) > 0 {
-		psArgs += fmt.Sprintf(` -ArgumentList '%s'`, strings.Join(args, " "))
-	}
-	return command("powershell", "-Command", psArgs).Start()
+	return command("powershell", "-Command", restartAsAdminPSCommand(exePath, args, os.Getpid())).Start()
+}
+
+func restartAsAdminPSCommand(exePath string, args []string, parentPID int) string {
+	all := append([]string{ElevatedFromFlag + strconv.Itoa(parentPID)}, args...)
+	return fmt.Sprintf(`Start-Process -FilePath '%s' -Verb RunAs -ArgumentList '%s'`, exePath, strings.Join(all, " "))
 }
 
 var (

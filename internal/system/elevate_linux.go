@@ -150,6 +150,8 @@ func parseStatusRealUID(f io.Reader) (int, bool) {
 // WaitForElevationParent blocks until the instance that launched us through
 // pkexec has exited, so the single-instance lock does not hand this launch
 // back to the quitting parent.
+func RelaunchElevated(args []string) (bool, error) { return false, nil }
+
 func WaitForElevationParent(args []string) {
 	pid := elevatedFromPID(args)
 	if pid <= 0 {

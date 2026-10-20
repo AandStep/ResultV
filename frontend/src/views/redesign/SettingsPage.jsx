@@ -67,6 +67,12 @@ export const LANGUAGES = [
   { value: "en", label: "English" },
 ];
 
+export const THEMES = [
+  { value: "dark", label: "Тёмная" },
+  { value: "light", label: "Светлая" },
+  { value: "system", label: "Как в системе" },
+];
+
 export const SUBSCRIPTION_HOURS = [
   { hours: 1, label: "1 ч" },
   { hours: 2, label: "2 ч" },
@@ -186,7 +192,16 @@ export const SETTINGS_PAGE_TEXT = {
       title: "Запуск при старте системы",
       desc: "Запускать приложение вместе с Windows.",
     },
+    connectOnStartup: {
+      title: "Подключаться при запуске",
+      desc: "Сразу подключать последний сервер, когда приложение запускается.",
+    },
+    alwaysAdmin: {
+      title: "Всегда запускать от имени администратора",
+      desc: "Нужно для TUN. С автозапуском Windows не спрашивает подтверждения при входе.",
+    },
     language: { title: "Язык интерфейса", desc: "Язык подписей в приложении." },
+    theme: { title: "Тема оформления", desc: "Светлое или тёмное оформление окна." },
     subAutoUpdate: {
       title: "Автоматическое обновление",
       desc: "Обновлять подписки по расписанию.",
@@ -306,6 +321,7 @@ export default function SettingsPage({
   onChange,
   tunStacks = TUN_STACKS,
   languages = LANGUAGES,
+  themes = THEMES,
   intervals = SUBSCRIPTION_HOURS,
   dnsPresets = DNS_PRESETS,
   pingTypes = PING_TYPES,
@@ -358,6 +374,14 @@ export default function SettingsPage({
         <Row title={rows.autostart.title} description={rows.autostart.desc}>
           <Tumbler checked={!!values.autostart} onChange={set("autostart")} />
         </Row>
+        <Row title={rows.connectOnStartup.title} description={rows.connectOnStartup.desc}>
+          <Tumbler checked={!!values.connectOnStartup} onChange={set("connectOnStartup")} />
+        </Row>
+        {values.alwaysAdminAvailable && (
+          <Row title={rows.alwaysAdmin.title} description={rows.alwaysAdmin.desc}>
+            <Tumbler checked={!!values.alwaysAdmin} onChange={set("alwaysAdmin")} />
+          </Row>
+        )}
         <Row title={rows.language.title} description={rows.language.desc}>
           <Select
             options={languages}
@@ -366,6 +390,16 @@ export default function SettingsPage({
             aria-label={rows.language.title}
           />
         </Row>
+        {/* Светлая тема отложена до доработки.
+        <Row title={rows.theme.title} description={rows.theme.desc}>
+          <Select
+            options={themes}
+            value={values.theme || "dark"}
+            onChange={set("theme")}
+            aria-label={rows.theme.title}
+          />
+        </Row>
+        */}
       </>
     ),
 

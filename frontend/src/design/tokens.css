@@ -174,7 +174,11 @@
   --rv-errors-a20: rgba(242, 13, 70, 0.2);
   --rv-errors-a50: rgba(242, 13, 70, 0.5);
 
+  --rv-white-a05: rgba(255, 255, 255, 0.05);
+  --rv-white-a08: rgba(255, 255, 255, 0.08);
+  --rv-white-a16: rgba(255, 255, 255, 0.16);
   --rv-white-a20: rgba(255, 255, 255, 0.2);
+  --rv-white-a40: rgba(255, 255, 255, 0.4);
   --rv-white-a50: rgba(255, 255, 255, 0.5);
   --rv-light-gray-a50: rgba(31, 31, 31, 0.5);
   --rv-second-a10: rgba(0, 168, 25, 0.1);
@@ -184,6 +188,18 @@
 
   --rv-black-a25: rgba(20, 20, 20, 0.25);
   --rv-black-a80: rgba(20, 20, 20, 0.8);
+
+  /* Текст и иконки на сплошной заливке фирменным цветом. */
+  --rv-on-accent: var(--rv-white-a80);
+
+  /* Тени поднятых при перетаскивании элементов. */
+  --rv-drop-a60: rgba(0, 0, 0, 0.6);
+  --rv-drop-a55: rgba(0, 0, 0, 0.55);
+  --rv-drop-a40: rgba(0, 0, 0, 0.4);
+
+  /* Тень всплывающих слоёв: меню, плашек, окон. На тёмном их отделяет
+     светлота, поэтому тени нет. */
+  --rv-float-filter: none;
 
   /* --- Отступы --------------------------------------------------------- */
   /*
@@ -292,6 +308,56 @@
     to right,
     rgba(255, 255, 255, 0.2),
     rgba(255, 255, 255, 0.15)
+  );
+}
+
+/*
+ * Светлая тема. В Figma её нет — палитра собрана из тёмной по смыслу ступеней,
+ * а не зеркалом: страница светло-серая, карточки белые, поля и кнопка питания
+ * чуть утоплены. «Белые» ступени становятся чернилами, жёлтый затемнён до
+ * читаемого на белом, остальные фирменные цвета прежние.
+ */
+:root[data-theme="light"] {
+  --rv-white: #161a17;
+  --rv-black: #eceeed;
+  --rv-dark-grey: #f5f6f5;
+  --rv-grey: #ffffff;
+  --rv-light-gray: #eef0ef;
+
+  --rv-warning: #b58900;
+
+  --rv-icon-default: var(--rv-white-a50);
+  --rv-overlay: rgba(22, 26, 23, 0.3);
+
+  --rv-white-a05: rgba(22, 26, 23, 0.045);
+  --rv-white-a08: rgba(22, 26, 23, 0.07);
+  --rv-white-a10: rgba(22, 26, 23, 0.09);
+  --rv-white-a16: rgba(22, 26, 23, 0.14);
+  --rv-white-a20: rgba(22, 26, 23, 0.24);
+  --rv-white-a40: rgba(22, 26, 23, 0.36);
+  --rv-white-a50: rgba(22, 26, 23, 0.56);
+  --rv-white-a80: rgba(22, 26, 23, 0.84);
+  --rv-black-a20: rgba(22, 26, 23, 0.08);
+  --rv-black-a25: rgba(22, 26, 23, 0.1);
+  --rv-black-a80: rgba(22, 26, 23, 0.16);
+  --rv-light-gray-a50: rgba(22, 26, 23, 0.05);
+
+  --rv-on-accent: #ffffff;
+
+  --rv-drop-a60: rgba(22, 26, 23, 0.16);
+  --rv-drop-a55: rgba(22, 26, 23, 0.14);
+  --rv-drop-a40: rgba(22, 26, 23, 0.08);
+  --rv-float-filter: drop-shadow(0 8px 20px rgba(22, 26, 23, 0.12));
+
+  --rv-border: linear-gradient(
+    to right,
+    rgba(22, 26, 23, 0.1),
+    rgba(22, 26, 23, 0.06)
+  );
+  --rv-border-hover: linear-gradient(
+    to right,
+    rgba(22, 26, 23, 0.18),
+    rgba(22, 26, 23, 0.13)
   );
 }
 

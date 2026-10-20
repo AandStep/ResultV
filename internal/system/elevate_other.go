@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-//go:build !linux
+//go:build !linux && !windows
 
 package system
 
@@ -24,5 +24,7 @@ func restartAsAdminLinux(exePath string, args []string) error {
 }
 
 func WaitForElevationParent(args []string) {}
+
+func RelaunchElevated(args []string) (bool, error) { return false, nil }
 
 func KeepInvokerOwnership() func() { return func() {} }

@@ -243,6 +243,14 @@
       "title": "Run at startup",
       "desc": "Launch the app together with Windows."
     },
+    "connect_on_startup": {
+      "title": "Connect on startup",
+      "desc": "Connect to the last server as soon as the app starts."
+    },
+    "always_admin": {
+      "title": "Always run as administrator",
+      "desc": "Required for TUN. With run at startup, Windows won't ask for confirmation at sign-in."
+    },
     "killswitch": {
       "title": "Enable Kill Switch",
       "desc": "Cuts the internet if the proxy goes down."
@@ -271,7 +279,7 @@
     "subscription_user_agent": {
       "title": "User agent",
       "desc": "Empty — the default ResultV header.",
-      "placeholder": "ResultV/3.5.5/Windows/11_10.0.26200"
+      "placeholder": "ResultV/3.5.6/Windows/11_10.0.26200"
     },
     "dns": {
       "title": "DNS Servers",
@@ -330,6 +338,13 @@
       "desc": "Language of the app's labels.",
       "ru": "Русский",
       "en": "English"
+    },
+    "theme": {
+      "title": "Theme",
+      "desc": "Light or dark window appearance.",
+      "dark": "Dark",
+      "light": "Light",
+      "system": "Follow system"
     },
     "ping_type": {
       "title": "Ping type",
@@ -399,9 +414,9 @@
     "sitesDirectDesc": "Sites added to this list will not go through the VPN.",
     "sitesPlaceholder": "Enter an IP or host and press Enter to add",
     "appsVpn": "Apps through the VPN",
-    "appsVpnDesc": "All traffic from these apps goes into the tunnel.",
+    "appsVpnDesc": "All traffic from these apps and everything they launch goes into the tunnel.",
     "appsDirect": "Apps direct",
-    "appsDirectDesc": "All traffic from these apps will not go through the VPN.",
+    "appsDirectDesc": "All traffic from these apps and everything they launch will not go through the VPN.",
     "appsPlaceholder": "For example {{example}}",
     "pickFile": "Choose a file on the computer",
     "clear": "Clear the list",
@@ -426,7 +441,7 @@
       "placeholder": "E.g.: proxy.com",
       "add_btn": "Add",
       "fast_add": "Quickly add domains to exceptions:",
-      "tooltip": "If the list contains a general mask (e.g., .ru) and a specific domain (e.g., avito.ru), the specific domain will be proxied (acting as an exception to the exclusion rule)."
+      "tooltip": "One entry per site is enough: it covers its subdomains too."
     },
     "apps": {
       "title": "Exception Applications",
@@ -726,6 +741,7 @@
     "adminTitle": "Administrator rights required",
     "adminMessage": "Tunnel mode needs administrator privileges for the virtual network adapter. Click the button below and approve the UAC prompt — the app will restart elevated.",
     "restartAsAdmin": "Restart as administrator",
+    "alwaysAdmin": "Always run as administrator",
     "endpointOnly": "WireGuard and AmneziaWG do not work in Proxy mode — Tunnel only.",
     "elevationFailedTitle": "Could not get privileges",
     "elevationCancelled": "The password prompt was closed. The app keeps running without administrator rights.",

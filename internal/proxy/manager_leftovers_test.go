@@ -16,7 +16,9 @@
 package proxy
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"resultproxy-wails/internal/logger"
 )
@@ -268,5 +270,60 @@ func TestRecoverSystemLeftovers_NoneWhenClean(t *testing.T) {
 	}
 	if sysDNS.restoreCalls != 0 {
 		t.Fatal("system DNS Restore must not run when no snapshot exists")
+	}
+}
+
+// TestRecoverSystemLeftovers_ConnectWaitsForCleanup: после перезагрузки уборка
+// хвостов идёт секундами (холодный PowerShell), а подключение после перезапуска
+// с правами стартует, не дождавшись её. Новый туннель поднимается на том же
+// адаптере, и недоделанный Remove-NetRoute сносит уже его маршруты.
+func TestRecoverSystemLeftovers_ConnectWaitsForCleanup(t *testing.T) {
+	stubAdmin(t, true)
+	prevProbe := probeHTTPThroughProxyProbe
+	probeHTTPThroughProxyProbe = func(string) (bool, string) { return true, "" }
+	t.Cleanup(func() { probeHTTPThroughProxyProbe = prevProbe })
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	prevHas, prevClear := hasLeftoverTunFn, clearLeftoverTunFn
+	hasLeftoverTunFn = func() bool { return true }
+	clearLeftoverTunFn = func() error {
+		close(entered)
+		<-release
+		return nil
+	}
+	t.Cleanup(func() { hasLeftoverTunFn, clearLeftoverTunFn = prevHas, prevClear })
+
+	log := logger.New()
+	engine := &serialGuardEngine{}
+	m := NewManager(log)
+	m.engine = engine
+	m.sysProxy = &stubSystemProxy{}
+	m.sysDNS = &stubSystemDNS{snapshot: true}
+
+	recovered := make(chan struct{})
+	go func() {
+		m.RecoverSystemLeftovers()
+		close(recovered)
+	}()
+	<-entered
+
+	res := make(chan ConnectResultDTO, 1)
+	go func() {
+		res <- m.Connect(context.Background(),
+			ProxyConfig{IP: "10.0.0.1", Port: 1080, Type: "trojan", Password: "x"},
+			ProxyModeProxy, ModeGlobal, nil, nil, nil, false, 0, false, nil, "", "", false, false)
+	}()
+
+	time.Sleep(150 * time.Millisecond)
+	if engine.IsRunning() {
+		close(release)
+		t.Fatal("подключение запустило движок, пока уборка хвостов ещё снимала маршруты адаптера")
+	}
+
+	close(release)
+	<-recovered
+	if r := <-res; !r.Success {
+		t.Fatalf("после уборки подключение должно пройти: %+v", r)
 	}
 }

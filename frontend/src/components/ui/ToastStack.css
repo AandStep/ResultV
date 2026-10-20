@@ -58,6 +58,7 @@
   border: 0;
   border-radius: var(--rv-radius-24) 0 0 var(--rv-radius-24);
   background: var(--rv-light-gray);
+  filter: var(--rv-float-filter);
   font-family: var(--rv-font-family);
   text-align: left;
   pointer-events: auto;
@@ -70,6 +71,11 @@
    * интерфейса — 300 мс с той же кривой.
    */
   transition: transform var(--rv-transition), opacity var(--rv-transition);
+}
+
+/* На светлой странице светло-серая плашка теряется — она белая. */
+:root[data-theme="light"] .rv-toast {
+  background: var(--rv-grey);
 }
 
 .rv-toast[data-offstage="true"] {

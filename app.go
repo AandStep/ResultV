@@ -211,8 +211,8 @@ func (a *App) applyResumeMode() {
 	a.log.Info(fmt.Sprintf("[CONFIG] Режим %s применён после перезапуска с правами администратора", mode))
 }
 
-// TakePendingConnect hands the frontend the server to connect to after an
-// elevated relaunch, once. It waits for startup leftover recovery first: the
+// TakePendingConnect hands the frontend the server to connect to on startup
+// (elevated relaunch or "connect on startup"), once. It waits for startup leftover recovery first: the
 // connect must not race the cleanup of a previous session's TUN and DNS.
 func (a *App) TakePendingConnect() string {
 	a.resumeMu.Lock()
@@ -223,7 +223,8 @@ func (a *App) TakePendingConnect() string {
 		return ""
 	}
 	a.waitForLeftoverCleanup(15 * time.Second)
-	a.log.Info("[СИСТЕМА] Перезапуск с правами администратора: подключаемся к выбранному серверу")
+	a.waitForOnline(startupOnlineWait)
+	a.log.Info("[СИСТЕМА] Подключение при запуске: подключаемся к выбранному серверу")
 	return id
 }
 
@@ -503,6 +504,7 @@ func (a *App) startup(ctx context.Context) {
 	// what Init found on disk.
 	a.seedChangelogVersionOnFreshInstall()
 	a.applyResumeMode()
+	a.applyConnectOnStartup()
 
 	a.proxy = proxy.NewManager(a.log)
 	a.proxy.Init(a.ctx)
@@ -524,6 +526,7 @@ func (a *App) startup(ctx context.Context) {
 	a.killSwitch = system.NewKillSwitch()
 	a.leftoverDone = make(chan struct{})
 	go a.recoverLeftovers()
+	go a.syncAutostartOnStartup()
 
 	// Re-evaluate a live AUTO group's pick for as long as the app runs. Started
 	// unconditionally and gated per tick (connected, on an AUTO member, setting
@@ -1459,17 +1462,14 @@ func (a *App) SetAutostart(enable bool) error {
 	if err != nil {
 		return fmt.Errorf("getting executable path: %w", err)
 	}
+	_, alwaysAdmin := a.currentSettingsAutostart()
+	if err := syncAutostart(exe, enable, alwaysAdmin); err != nil {
+		a.log.Error(fmt.Sprintf("[СИСТЕМА] Ошибка изменения автозапуска: %v", err))
+		return err
+	}
 	if enable {
-		if err := system.EnableAutostart(exe); err != nil {
-			a.log.Error(fmt.Sprintf("[СИСТЕМА] Ошибка создания автозапуска: %v", err))
-			return err
-		}
 		a.log.Success("[СИСТЕМА] Автозапуск включен")
 	} else {
-		if err := system.DisableAutostart(); err != nil {
-			a.log.Warning(fmt.Sprintf("[СИСТЕМА] Ошибка удаления автозапуска: %v", err))
-			return err
-		}
 		a.log.Info("[СИСТЕМА] Автозапуск отключен")
 	}
 	return nil

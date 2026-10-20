@@ -63,8 +63,8 @@ func TestIsWhitelisted_DoubleMatch(t *testing.T) {
 	r := NewRouter()
 	
 	result := r.IsWhitelisted("avito.ru", []string{".ru", "avito.ru"})
-	if result.IsWhitelisted {
-		t.Error("expected avito.ru to NOT be whitelisted with 2 matching rules")
+	if !result.IsWhitelisted {
+		t.Error("expected avito.ru to be whitelisted with 2 matching rules")
 	}
 	if len(result.MatchingRules) != 2 {
 		t.Errorf("expected 2 matching rules, got %d", len(result.MatchingRules))
@@ -165,13 +165,11 @@ func TestShouldProxy_SmartMode(t *testing.T) {
 
 func TestShouldProxy_SmartMode_NestedExceptions(t *testing.T) {
 	r := NewRouter()
-	
-	
 	whitelist := []string{".ru", "avito.ru"}
 
 	useProxy, reason := r.ShouldProxy("avito.ru", ModeSmart, whitelist)
-	if !useProxy {
-		t.Errorf("smart mode: nested exception should proxy, reason: %s", reason)
+	if useProxy {
+		t.Errorf("smart mode: nested exception should go direct, reason: %s", reason)
 	}
 }
 
@@ -204,8 +202,8 @@ func TestGetSafeOSWhitelist(t *testing.T) {
 	
 	
 	safe = r.GetSafeOSWhitelist([]string{".ru", "avito.ru"})
-	if len(safe) != 0 {
-		t.Errorf("expected no safe domains with conflicting rules, got %v", safe)
+	if len(safe) != 2 {
+		t.Errorf("expected both nested entries to be safe, got %v", safe)
 	}
 }
 

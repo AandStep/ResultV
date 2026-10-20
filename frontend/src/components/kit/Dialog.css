@@ -54,6 +54,7 @@
   padding: var(--rv-space-24);
   border-radius: var(--rv-radius-32);
   background: var(--rv-grey);
+  filter: var(--rv-float-filter);
   font-family: var(--rv-font-family);
   overflow-y: auto;
 }
@@ -195,4 +196,14 @@
 
 .rv-dialog__actions > .rv-btn:first-child:not(:last-child) {
   flex: 0 1 auto;
+}
+
+.rv-dialog__actions--stack {
+  flex-direction: column;
+}
+
+.rv-dialog__actions--stack > .rv-btn,
+.rv-dialog__actions--stack > .rv-btn:first-child:not(:last-child) {
+  flex: 0 0 auto;
+  width: 100%;
 }

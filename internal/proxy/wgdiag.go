@@ -19,12 +19,15 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/sagernet/gvisor/pkg/tcpip"
 	"github.com/sagernet/gvisor/pkg/tcpip/stack"
 	wgprotocol "github.com/sagernet/sing-box/protocol/wireguard"
+
+	"resultproxy-wails/internal/logger"
 )
 
 // The question a WireGuard log cannot answer on its own: when a tunnel goes
@@ -100,21 +103,9 @@ func startWGStatsSampler(ctx context.Context, boxCtx context.Context, core *core
 
 // wgStatsLine reads the device's UAPI dump and keeps the fields worth having.
 func wgStatsLine(boxCtx context.Context) (string, error) {
-	endpoint, err := wgEndpointFrom(boxCtx)
+	dump, err := wgDeviceDump(boxCtx)
 	if err != nil {
 		return "", err
-	}
-	deviceValue, err := awg31Device(endpoint)
-	if err != nil {
-		return "", err
-	}
-	getter, ok := deviceValue.(ipcGetter)
-	if !ok {
-		return "", &awg31Error{"устройство не отдаёт UAPI"}
-	}
-	dump, err := getter.IpcGet()
-	if err != nil {
-		return "", &awg31Error{"UAPI не прочитан: " + err.Error()}
 	}
 	return filterWGStats(dump), nil
 }
@@ -289,4 +280,117 @@ func wgStackValue(wgEndpoint *wgprotocol.Endpoint) (any, error) {
 		return nil, &awg31Error{"устройство без gVisor-стека: " + err.Error()}
 	}
 	return stackField.Interface(), nil
+}
+
+const (
+	wgTraceInterval = 10 * time.Second
+	wgTraceDuration = 2 * time.Minute
+)
+
+type wgTraceStack struct {
+	retransmits, timeouts, failed uint64
+	ok                            bool
+}
+
+// startWGSessionTrace writes the device and stack counters into the visible
+// log for the first minutes of a WireGuard session, so an exported log alone
+// says whether the tunnel carries traffic.
+func startWGSessionTrace(boxCtx context.Context, log *logger.Logger) {
+	if boxCtx == nil || log == nil {
+		return
+	}
+	if _, err := wgEndpointFrom(boxCtx); err != nil {
+		return
+	}
+	started := time.Now()
+	go func() {
+		ticker := time.NewTicker(wgTraceInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-boxCtx.Done():
+				return
+			case <-ticker.C:
+			}
+			dump, err := wgDeviceDump(boxCtx)
+			if err != nil {
+				return
+			}
+			log.Info(wgTraceLine(time.Since(started), dump, time.Now(), wgTraceStackFrom(boxCtx)))
+			if time.Since(started) >= wgTraceDuration {
+				return
+			}
+		}
+	}()
+}
+
+func wgDeviceDump(boxCtx context.Context) (string, error) {
+	endpoint, err := wgEndpointFrom(boxCtx)
+	if err != nil {
+		return "", err
+	}
+	deviceValue, err := awg31Device(endpoint)
+	if err != nil {
+		return "", err
+	}
+	getter, ok := deviceValue.(ipcGetter)
+	if !ok {
+		return "", &awg31Error{"устройство не отдаёт UAPI"}
+	}
+	dump, err := getter.IpcGet()
+	if err != nil {
+		return "", &awg31Error{"UAPI не прочитан: " + err.Error()}
+	}
+	return dump, nil
+}
+
+func wgTraceStackFrom(boxCtx context.Context) wgTraceStack {
+	endpoint, err := wgEndpointFrom(boxCtx)
+	if err != nil {
+		return wgTraceStack{}
+	}
+	provider, err := wgStackFrom(endpoint)
+	if err != nil {
+		return wgTraceStack{}
+	}
+	stats := provider.Stats()
+	value := func(c *tcpip.StatCounter) uint64 {
+		if c == nil {
+			return 0
+		}
+		return c.Value()
+	}
+	return wgTraceStack{
+		retransmits: value(stats.TCP.Retransmits),
+		timeouts:    value(stats.TCP.EstablishedTimedout),
+		failed:      value(stats.TCP.FailedConnectionAttempts),
+		ok:          true,
+	}
+}
+
+func wgTraceLine(elapsed time.Duration, dump string, now time.Time, st wgTraceStack) string {
+	fields := map[string]int64{}
+	for _, line := range strings.Split(dump, "\n") {
+		key, raw, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "tx_bytes", "rx_bytes", "last_handshake_time_sec":
+			if n, err := strconv.ParseInt(raw, 10, 64); err == nil {
+				fields[key] = n
+			}
+		}
+	}
+	handshake := "рукопожатия не было"
+	if sec := fields["last_handshake_time_sec"]; sec > 0 {
+		handshake = fmt.Sprintf("рукопожатие %dс назад", int64(now.Sub(time.Unix(sec, 0)).Seconds()))
+	}
+	line := fmt.Sprintf("[WG] %dс: отправлено %d КБ, получено %d КБ, %s",
+		int64(elapsed.Round(time.Second).Seconds()), fields["tx_bytes"]/1024, fields["rx_bytes"]/1024, handshake)
+	if st.ok {
+		line += fmt.Sprintf("; TCP через туннель: ретрансмитов %d, таймаутов %d, неудачных соединений %d",
+			st.retransmits, st.timeouts, st.failed)
+	}
+	return line
 }

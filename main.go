@@ -26,6 +26,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
 
+	"resultproxy-wails/internal/config"
 	"resultproxy-wails/internal/system"
 )
 
@@ -59,6 +60,16 @@ func main() {
 		}
 	})
 	defer cleanupMessenger()
+
+	if runtime.GOOS == "windows" && !system.IsAdmin() && !system.ArgsElevatedFrom(os.Args) && alwaysRunAsAdminSetting() {
+		if ok, err := system.RelaunchElevated(os.Args); ok {
+			cleanupMessenger()
+			system.ReleaseSingletonLock()
+			os.Exit(0)
+		} else if err != nil {
+			log.Printf("relaunch elevated: %v", err)
+		}
+	}
 
 	opts := &options.App{
 		Title: "ResultV",
@@ -118,3 +129,38 @@ func main() {
 		log.Fatalf("wails.Run: %v", err)
 	}
 }
+
+func alwaysRunAsAdminSetting() bool {
+	dir := system.UserDataDir()
+	cs, err := config.NewCryptoService(dir)
+	if err != nil {
+		return false
+	}
+	m := config.NewManager(cs)
+	if err := m.Init(dir); err != nil {
+		return false
+	}
+	return m.GetConfig().Settings.AlwaysRunAsAdmin
+}
+
+// Светлая тема отложена до доработки. Чтобы включить: читать настройки один
+// раз (AppSettings вместо alwaysRunAsAdminSetting), BackgroundColour =
+// windowBackground(saved.Theme), Theme = windowsTheme(saved.Theme), а в
+// CustomTheme добавить LightMode* = windows.RGB(236, 238, 237).
+//
+// func windowBackground(theme string) *options.RGBA {
+// 	if theme == "light" {
+// 		return &options.RGBA{R: 236, G: 238, B: 237, A: 1}
+// 	}
+// 	return &options.RGBA{R: 24, G: 24, B: 27, A: 1}
+// }
+//
+// func windowsTheme(theme string) windows.Theme {
+// 	switch theme {
+// 	case "light":
+// 		return windows.Light
+// 	case "system":
+// 		return windows.SystemDefault
+// 	}
+// 	return windows.Dark
+// }

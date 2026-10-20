@@ -84,6 +84,6 @@
 
 .rv-mode-tumbler__segment[data-selected="true"] {
   background: var(--rv-main-color);
-  color: var(--rv-white-a80);
+  color: var(--rv-on-accent);
   cursor: default;
 }

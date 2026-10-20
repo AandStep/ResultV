@@ -178,12 +178,6 @@ type Manager struct {
 	reloadActive  atomic.Bool
 	reloadSession *reloadSession
 
-	// procTracker watches the OS process tree and feeds child-process exe
-	// names back into the engine's app whitelist whenever the user has
-	// excluded a parent app (Steam, Discord, etc.). Lifecycle is bound to
-	// the connection: started on Connect, stopped on Disconnect.
-	procTracker *processtree.Monitor
-
 	// proxyDead is set by the health watchdog after consecutive probe
 	// failures against the proxy server. It surfaces "VPN is dead but the
 	// sing-box process is still alive" to the UI so it can offer to drop
@@ -358,8 +352,6 @@ func (m *Manager) Init(ctx context.Context) {
 	m.isAdmin = isAdminCheck()
 	m.sysProxy = newSystemProxy(m.router)
 	m.sysDNS = NewSystemDNS()
-	m.procTracker = processtree.New(nil)
-	m.procTracker.OnChange(m.onProcessTreeChange)
 
 	// The verdict store is an optimisation, never a precondition: a failure to
 	// load it costs a few extra probes, so it must not be able to block a
@@ -393,37 +385,6 @@ func (m *Manager) logDNSRestoreWarning(err error) {
 	m.log.Warning(fmt.Sprintf("[СИСТЕМА] Не удалось восстановить DNS из снапшота: %v", err))
 }
 
-// effectiveAppWhitelist merges user-specified roots with currently-running
-// descendants discovered by the process tree scan. Returns a deduped, ordered
-// list. Used at engine boot so the initial config already excludes the full
-// process family — without it the user would see one immediate hot-reload
-// right after every connect.
-func (m *Manager) effectiveAppWhitelist(userRoots []string) []string {
-	if len(userRoots) == 0 {
-		return nil
-	}
-	snap := processtree.Scan(basenameRoots(userRoots))
-	return mergeAppWhitelist(userRoots, snap.Descendants)
-}
-
-// basenameRoots drops path-qualified entries from the process-tree root set.
-// processtree.normalizeRoots strips a root down to its basename, so passing
-// "Battle.net\Agent\Agent.exe" through would widen it back into a bare
-// "agent.exe" and match every unrelated agent on the machine — exactly the
-// ambiguity the path-qualified form exists to avoid. Such entries still work as
-// route and DNS rules; their parent process is normally a root already, so the
-// scan discovers the descendants regardless.
-func basenameRoots(entries []string) []string {
-	out := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if strings.ContainsAny(e, `\/`) {
-			continue
-		}
-		out = append(out, e)
-	}
-	return out
-}
-
 // warnProbeDomainOverlap logs a one-line notice when the user's
 // domain-whitelist intersects with the tunnel health-probe domains.
 // Probe-domain rules in buildRoute precede the whitelist rules, so
@@ -451,111 +412,6 @@ func (m *Manager) warnProbeDomainOverlap(mode ProxyMode, proxyTypeLower string, 
 		"[PROXY] Whitelist %v совпадает с probe-доменами (%v). Они принудительно идут через прокси первые ~1-2 сек для health-check — это не баг whitelist.",
 		hits, tunnelProbeDomains,
 	))
-}
-
-// mergeAppWhitelist returns user roots followed by any descendants that
-// aren't already in the roots list. Descendants are matched case-insensitively
-// against root basenames, so "Steam.exe" + "steam.exe" descendant collapses
-// to one entry.
-func mergeAppWhitelist(roots, descendants []string) []string {
-	if len(roots) == 0 && len(descendants) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(roots)+len(descendants))
-	out := make([]string, 0, len(roots)+len(descendants))
-	for _, r := range roots {
-		key := strings.ToLower(strings.TrimSpace(r))
-		if key == "" {
-			continue
-		}
-		if _, dup := seen[key]; dup {
-			continue
-		}
-		seen[key] = struct{}{}
-		out = append(out, r)
-	}
-	for _, d := range descendants {
-		key := strings.ToLower(strings.TrimSpace(d))
-		if key == "" {
-			continue
-		}
-		if _, dup := seen[key]; dup {
-			continue
-		}
-		seen[key] = struct{}{}
-		out = append(out, d)
-	}
-	return out
-}
-
-// onProcessTreeChange is the tracker callback. We deliberately do NOT
-// hot-reload sing-box from here: every reload tears down the TUN device
-// and breaks established TLS/QUIC sessions (Steam game traffic, Discord
-// voice, etc.), which is more disruptive than the missed exclusion.
-//
-// Instead we just log discovered descendants for diagnostics. The Connect
-// pre-scan already captures any process running at connection time, which
-// is the common case (user starts Steam, then connects). For descendants
-// that spawn after connect, the user reconnects to apply — same UX as
-// every other VPN client.
-//
-// We keep the tracker running so the data is available for a future
-// "Apply discovered exclusions" UI button if we ever want one.
-func (m *Manager) onProcessTreeChange(snap processtree.Snapshot) {
-	if len(snap.Descendants) == 0 {
-		return
-	}
-	m.mu.Lock()
-	known := m.appWhitelist
-	connected := m.connected
-	m.mu.Unlock()
-
-	if !connected {
-		return
-	}
-
-	known_set := make(map[string]struct{}, len(known))
-	for _, k := range known {
-		known_set[strings.ToLower(strings.TrimSpace(k))] = struct{}{}
-	}
-	var fresh []string
-	for _, d := range snap.Descendants {
-		if _, ok := known_set[strings.ToLower(d)]; ok {
-			continue
-		}
-		fresh = append(fresh, d)
-	}
-	if len(fresh) == 0 {
-		return
-	}
-	m.log.Info(fmt.Sprintf("[PROXY] Обнаружены новые дочерние процессы (не применены): %s. Переподключитесь чтобы добавить их в исключения.",
-		strings.Join(fresh, ", ")))
-}
-
-// startProcessTrackerLocked configures the tracker for the current user
-// whitelist and starts the watcher goroutine. Caller must hold m.mu.
-// No-op if user whitelist is empty (nothing to track).
-func (m *Manager) startProcessTrackerLocked() {
-	if m.procTracker == nil {
-		return
-	}
-	if len(m.appWhitelist) == 0 {
-		m.procTracker.Stop()
-		return
-	}
-	m.procTracker.SetRoots(m.appWhitelist)
-	ctx := m.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	m.procTracker.Start(ctx)
-}
-
-func (m *Manager) stopProcessTrackerLocked() {
-	if m.procTracker == nil {
-		return
-	}
-	m.procTracker.Stop()
 }
 
 func (m *Manager) LoadBlockedLists(paths ...string) {
@@ -799,8 +655,12 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	// Serialize against any other connect/disconnect/reconnect (see opMu). Held
 	// for the whole call — including the lock-free slow phase — so two operations
 	// can never both reach engine.Start.
+	tWait := time.Now()
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
+	if waited := time.Since(tWait); waited > time.Second {
+		m.log.Info(fmt.Sprintf("[PROXY] Подключение ждало завершения предыдущей операции (в т.ч. уборки хвостов) %d мс", waited.Milliseconds()))
+	}
 
 	// ── Phase 1: quick setup under lock ──────────────────────────────────────
 	m.mu.Lock()
@@ -932,13 +792,10 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		listenHost = "0.0.0.0"
 	}
 
-	// Pre-scan the OS process tree so the engine boots with all currently-
-	// running descendants of the user's excluded apps already in the
-	// whitelist. Without this we'd start the engine, then immediately hot-
-	// reload as soon as the tracker's first scan discovers existing children.
-	effectiveAppWhitelist := m.effectiveAppWhitelist(appWhitelist)
-
-	m.warnProbeDomainOverlap(mode, proxyTypeLower, whitelist)
+	// The system proxy bypass list is the Global sites list too: in Smart it
+	// would take a blocked site past the proxy altogether.
+	modeSites, _, _ := listsForMode(routingMode, whitelist, nil, nil)
+	m.warnProbeDomainOverlap(mode, proxyTypeLower, modeSites)
 
 	engineCfg := EngineConfig{
 		Proxy:             proxy,
@@ -946,7 +803,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		ListenAddr:        fmt.Sprintf("%s:%d", listenHost, actualLocalPort),
 		RoutingMode:       routingMode,
 		Whitelist:         whitelist,
-		AppWhitelist:      effectiveAppWhitelist,
+		AppWhitelist:      append([]string(nil), appWhitelist...),
 		AppForceVPN:       append([]string(nil), appForceVPN...),
 		KillSwitch:        killSwitch,
 		LocalPort:         actualLocalPort,
@@ -1052,7 +909,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		proxyType := strings.ToLower(proxy.Type)
 		if (proxyType == "http" || proxyType == "https" || proxyType == "socks5" || proxyType == "socks") && m.sysProxy != nil {
 			directAddr := fmt.Sprintf("%s:%d", proxy.IP, proxy.Port)
-			if setErr := m.sysProxy.Set(directAddr, whitelist); setErr == nil {
+			if setErr := m.sysProxy.Set(directAddr, modeSites); setErr == nil {
 				m.log.Info(fmt.Sprintf("[PROXY] Fallback: системный прокси → %s (sing-box недоступен)", directAddr))
 				m.mu.Lock()
 				m.connected = true
@@ -1171,7 +1028,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	var gpoConflict bool
 	if mode == ProxyModeProxy && m.sysProxy != nil {
 		proxyAddr := fmt.Sprintf("127.0.0.1:%d", actualLocalPort)
-		if err := m.sysProxy.Set(proxyAddr, whitelist); err != nil {
+		if err := m.sysProxy.Set(proxyAddr, modeSites); err != nil {
 			m.log.Warning(fmt.Sprintf("[PROXY] Ошибка установки системного прокси: %v", err))
 		} else {
 			m.log.Success("[СИСТЕМА] Системный прокси применён успешно")
@@ -1228,7 +1085,6 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	m.tunIPv6 = tunIPv6
 	m.enableIPv6 = enableIPv6
 	m.dnsLeakProtection = dnsLeakProtection
-	m.startProcessTrackerLocked()
 	m.startHealthWatchdogLocked(proxy, mode)
 	// Harden the in-process sing-box engine against CPU starvation for the
 	// lifetime of the session: under full-core load (dev `go test`/builds) a
@@ -2104,7 +1960,6 @@ func (m *Manager) Disconnect() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.stopProcessTrackerLocked()
 	m.stopHealthWatchdogLocked()
 
 	if m.connected {
@@ -2125,7 +1980,6 @@ func (m *Manager) disconnectLocked() error {
 
 	m.log.Info("[PROXY] Отключение...")
 
-	m.stopProcessTrackerLocked()
 	m.stopHealthWatchdogLocked()
 
 	// Same rationale as Disconnect(): tear down engine, system proxy and system
@@ -3301,8 +3155,8 @@ func (m *Manager) Shutdown() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.stopProcessTrackerLocked()
 	m.stopHealthWatchdogLocked()
+	processtree.Shutdown()
 
 	// Revert OS-level network state FIRST — proxy and DNS cleanup are fast
 	// and independent of the engine. If engine.Stop() hangs (sing-box
@@ -3446,6 +3300,8 @@ type LeftoverScan struct {
 func (s LeftoverScan) Any() bool { return s.Proxy || s.DNS || s.Tun }
 
 func (m *Manager) RecoverSystemLeftovers() (scan LeftoverScan) {
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
 	if m.sessionActive() {
 		return
 	}
@@ -3475,18 +3331,26 @@ func (m *Manager) RecoverSystemLeftovers() (scan LeftoverScan) {
 		return
 	}
 
+	cleanupStart := time.Now()
+	var dnsDur, tunDur time.Duration
 	if hasDNSLeft && !m.sessionActive() {
+		t := time.Now()
 		if err := m.sysDNS.Restore(); err != nil {
 			m.logDNSRestoreWarning(err)
 		}
+		dnsDur = time.Since(t)
 	}
 	if hasTunLeft && !m.sessionActive() {
+		t := time.Now()
 		if err := clearLeftoverTunFn(); err != nil {
 			m.log.Warning(fmt.Sprintf("[СИСТЕМА] Ошибка снятия остаточного туннель-адаптера: %v", err))
 		} else {
 			m.log.Success("[СИСТЕМА] Снят остаточный туннель-адаптер и его маршрут по умолчанию")
 		}
+		tunDur = time.Since(t)
 	}
+	m.log.Info(fmt.Sprintf("[СИСТЕМА] Уборка хвостов прошлого сеанса: %d мс (dns=%d мс, tun=%d мс)",
+		time.Since(cleanupStart).Milliseconds(), dnsDur.Milliseconds(), tunDur.Milliseconds()))
 	return
 }
 

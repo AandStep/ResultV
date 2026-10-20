@@ -54,6 +54,9 @@ func TestTunnelDNSReachesNodeOverDoHNotBareTCP(t *testing.T) {
 			if !ok {
 				t.Fatalf("сервер %q не объявлен", tunnelTag)
 			}
+			for len(wrapper.Servers) > 0 && byTag[wrapper.Servers[0]].Type == "fallback" {
+				wrapper = byTag[wrapper.Servers[0]]
+			}
 			if wrapper.Type != "fallback" {
 				t.Errorf("обёртка должна быть fallback, получено %q", wrapper.Type)
 			}

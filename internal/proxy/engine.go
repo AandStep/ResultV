@@ -24,7 +24,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -276,6 +275,9 @@ type SBDNS struct {
 	// an expired entry — the same bargain the Smart lists already make at
 	// startup. Set by newSBDNS, never by hand.
 	Optimistic *SBDNSOptimistic `json:"optimistic,omitempty"`
+	// ReverseMapping lets the router name a connection made to an address the
+	// app got from a lookup. app-direct needs that name to resolve it again.
+	ReverseMapping bool `json:"reverse_mapping,omitempty"`
 }
 
 // SBDNSOptimistic configures sing-box 1.14's optimistic DNS cache: an expired
@@ -344,6 +346,7 @@ type SBDNSRule struct {
 	Domain           []string `json:"domain,omitempty"`
 	DomainSuffix     []string `json:"domain_suffix,omitempty"`
 	ProcessPathRegex []string `json:"process_path_regex,omitempty"`
+	PackageName      []string `json:"package_name,omitempty"`
 	RuleSet          []string `json:"rule_set,omitempty"`
 	// QueryType is no longer a filter that only applies to what the inbound
 	// asks. On sing-box 1.14 an internal resolve — the dial for a
@@ -699,6 +702,7 @@ type SBRouteRule struct {
 	IPCidr           []string `json:"ip_cidr,omitempty"`
 	ProcessName      []string `json:"process_name,omitempty"`
 	ProcessPathRegex []string `json:"process_path_regex,omitempty"`
+	PackageName      []string `json:"package_name,omitempty"`
 	RuleSet          []string `json:"rule_set,omitempty"`
 	Outbound         string   `json:"outbound,omitempty"`
 	Action           string   `json:"action,omitempty"`
@@ -959,6 +963,7 @@ func processPathRegex(entry string) string {
 }
 
 func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
+	cfg = cfg.forRoutingMode()
 	port := cfg.LocalPort
 	if port == 0 {
 		port = getFreeLocalPort(14081)
@@ -986,7 +991,7 @@ func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 			Listen:     host,
 			ListenPort: port,
 		}, updateInbound()},
-		Outbounds:    buildOutbounds(cfg.Proxy, nodeResolver, ""),
+		Outbounds:    append(buildOutbounds(cfg.Proxy, nodeResolver, ""), appDirectOutbounds(cfg)...),
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
 	}
@@ -1107,6 +1112,7 @@ func isLeakableIPv6(ip net.IP) bool {
 }
 
 func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
+	cfg = cfg.forRoutingMode()
 	tunIPv4 := "172.19.0.1/30"
 	if cfg.TunIPv4 != "" {
 		tunIPv4 = cfg.TunIPv4
@@ -1178,6 +1184,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 	// named before the DNS block exists.
 	nodeResolver := serverDomainResolverTag(cfg.Proxy, ProxyModeTunnel, nil)
 	outbounds := buildOutbounds(cfg.Proxy, nodeResolver, directDomainResolverTag(cfg))
+	outbounds = append(outbounds, appDirectOutbounds(cfg)...)
 	if adaptiveSmartActive(cfg) {
 		smart := SBOutbound{
 			Type:      smartOutboundTag,
@@ -1621,21 +1628,134 @@ func firstDetourServerTag(servers []SBDNSServer, detour string) string {
 // resolver pinned to a non-standard DNS port keeps that port on the tcp leg
 // while DoH tries the standard one and, failing that, hands over.
 func tunnelDNSResolver(tag, server string, port int, detour string) []SBDNSServer {
-	return []SBDNSServer{
-		{Type: "https", Tag: tag + "-doh", Server: server, Detour: detour},
-		{Type: "tcp", Tag: tag + "-tcp", Server: server, ServerPort: port, Detour: detour},
-		{
-			Type:          "fallback",
-			Tag:           tag,
-			Servers:       []string{tag + "-doh", tag + "-tcp"},
-			Strategy:      "sequential",
-			Timeout:       "5s",
-			throughDetour: detour,
-		},
+	return tunnelDNSResolvers([]tunnelResolver{{tag, server, port}}, nil, detour)
+}
+
+type tunnelResolver struct {
+	tag    string
+	server string
+	port   int
+}
+
+// tunnelDNSResolvers asks the resolvers in parallel, each one over DoH and then
+// TCP, and takes the first answer. A sequential chain paid the full timeout of
+// a dead resolver on every lookup before reaching the next one.
+//
+// backups are asked only after the resolvers have failed or spent
+// configuredDNSTimeout: an answer from a live configured resolver, NXDOMAIN
+// included, is final, so names only it knows keep resolving. The dnsBreaker on
+// top stops waiting for configured resolvers that keep failing.
+//
+// The group that rules and Final point at takes the first resolver's tag.
+func tunnelDNSResolvers(resolvers, backups []tunnelResolver, detour string) []SBDNSServer {
+	servers := tunnelDNSLegs(resolvers, detour)
+	if len(backups) == 0 {
+		servers = tunnelDNSGroup(servers, resolvers, resolvers[0].tag, tunnelDNSTimeout)
+		servers[len(servers)-1].throughDetour = detour
+		return servers
 	}
+	servers = append(servers, tunnelDNSLegs(backups, detour)...)
+	servers = tunnelDNSGroup(servers, resolvers, configuredDNSGroupTag(resolvers), configuredDNSTimeout)
+	servers = tunnelDNSGroup(servers, backups, backupDNSGroupTag, tunnelDNSTimeout)
+	return append(servers, SBDNSServer{
+		Type:          dnsBreakerType,
+		Tag:           resolvers[0].tag,
+		Servers:       []string{configuredDNSGroupTag(resolvers), backupDNSGroupTag},
+		throughDetour: detour,
+	})
+}
+
+const (
+	tunnelDNSTimeout     = "5s"
+	configuredDNSTimeout = "1s"
+	backupDNSGroupTag    = "backup"
+)
+
+var backupDNSResolvers = []tunnelResolver{{"backup-google", "8.8.8.8", 0}, {"backup-cloudflare", "1.1.1.1", 0}}
+
+func configuredDNSGroupTag(resolvers []tunnelResolver) string {
+	return resolvers[0].tag + "-cfg"
+}
+
+func tunnelDNSLegs(resolvers []tunnelResolver, detour string) []SBDNSServer {
+	servers := make([]SBDNSServer, 0, 2*len(resolvers))
+	for _, r := range resolvers {
+		servers = append(servers,
+			SBDNSServer{Type: "https", Tag: r.tag + "-doh", Server: r.server, Detour: detour},
+			SBDNSServer{Type: "tcp", Tag: r.tag + "-tcp", Server: r.server, ServerPort: r.port, Detour: detour},
+		)
+	}
+	return servers
+}
+
+func tunnelDNSGroup(servers []SBDNSServer, resolvers []tunnelResolver, tag, timeout string) []SBDNSServer {
+	if len(resolvers) == 1 {
+		r := resolvers[0]
+		return append(servers, SBDNSServer{
+			Type:     "fallback",
+			Tag:      tag,
+			Servers:  []string{r.tag + "-doh", r.tag + "-tcp"},
+			Strategy: "sequential",
+			Timeout:  timeout,
+		})
+	}
+	members := make([]string, 0, len(resolvers))
+	for _, r := range resolvers {
+		servers = append(servers, SBDNSServer{
+			Type:     "fallback",
+			Tag:      r.tag + "-seq",
+			Servers:  []string{r.tag + "-doh", r.tag + "-tcp"},
+			Strategy: "sequential",
+			Timeout:  timeout,
+		})
+		members = append(members, r.tag+"-seq")
+	}
+	return append(servers, SBDNSServer{
+		Type:     "fallback",
+		Tag:      tag,
+		Servers:  members,
+		Strategy: "parallel",
+		Timeout:  timeout,
+	})
+}
+
+// tunnelDNSPlan names the resolvers tunnel mode asks: the configured ones with
+// the public backups behind them, or the public ones alone when none is set.
+func tunnelDNSPlan(cfg EngineConfig) (resolvers, backups []tunnelResolver) {
+	for i, raw := range cfg.DNSServers {
+		server, port := splitDNSServer(raw)
+		if server == "" {
+			continue
+		}
+		resolvers = append(resolvers, tunnelResolver{fmt.Sprintf("custom-%d", i+1), server, port})
+	}
+	if len(resolvers) == 0 {
+		return []tunnelResolver{{"google", "8.8.8.8", 0}, {"cloudflare", "1.1.1.1", 0}}, nil
+	}
+	return resolvers, backupDNSFor(resolvers)
+}
+
+// backupDNSFor returns the public resolvers not already among the configured
+// ones.
+func backupDNSFor(resolvers []tunnelResolver) []tunnelResolver {
+	var backups []tunnelResolver
+	for _, b := range backupDNSResolvers {
+		configured := false
+		for _, r := range resolvers {
+			if r.server == b.server {
+				configured = true
+				break
+			}
+		}
+		if !configured {
+			backups = append(backups, b)
+		}
+	}
+	return backups
 }
 
 func buildDNS(cfg EngineConfig) *SBDNS {
+	cfg = cfg.forRoutingMode()
 	if cfg.Mode == ProxyModeTunnel {
 		// All DNS servers route through the proxy/endpoint outbound (tag
 		// "proxy" — same tag for SS/VLESS outbounds and for the WG/AWG
@@ -1650,25 +1770,13 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		// the tunnel for all protocols, eliminating the WFP race.
 		detour := "proxy"
 
-		// Every resolver below is emitted by tunnelDNSResolver as a DoH leg, a
+		// Every resolver below is emitted by tunnelDNSResolvers as a DoH leg, a
 		// DNS-over-TCP leg and the fallback wrapper rules point at. Read its
 		// comment before changing the shape: a bare tcp server is what stopped
 		// answering on engine 1.14.
-		servers := []SBDNSServer{}
-		if len(cfg.DNSServers) > 0 {
-			for i, raw := range cfg.DNSServers {
-				server, port := splitDNSServer(raw)
-				if server == "" {
-					continue
-				}
-				servers = append(servers, tunnelDNSResolver(fmt.Sprintf("custom-%d", i+1), server, port, detour)...)
-			}
-			servers = append(servers, SBDNSServer{Type: "local", Tag: "local"})
-		} else {
-			servers = append(servers, tunnelDNSResolver("google", "8.8.8.8", 0, detour)...)
-			servers = append(servers, tunnelDNSResolver("cloudflare", "1.1.1.1", 0, detour)...)
-			servers = append(servers, SBDNSServer{Type: "local", Tag: "local"})
-		}
+		resolvers, backups := tunnelDNSPlan(cfg)
+		servers := tunnelDNSResolvers(resolvers, backups, detour)
+		servers = append(servers, SBDNSServer{Type: "local", Tag: "local"})
 
 		dns := newSBDNS(servers)
 
@@ -1739,53 +1847,25 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			}
 		}
 
-		// Whitelisted apps (split-tunnel direct) must resolve via the local
-		// system resolver, NOT through the proxy detour. Otherwise the TCP
-		// connection is bypassed but the DNS lookup still rides the tunnel —
-		// for SSH/SFTP clients (WinSCP, etc.) this manifests as silent
-		// "Failed to establish connection" because the encrypted DNS detour
-		// to a public resolver is slower than the SSH handshake timeout.
-		//
-		// Same Windows defect as the self-exemption above, and it predates the
-		// adaptive work: getaddrinfo hands the query to the DNS Client service,
-		// so the engine sees svchost and this regex does not match. The rule
-		// therefore does not do the job it was written for — an excluded app's
-		// lookups are still resolved by whatever the rules below decide, not by
-		// this one. It is kept rather than deleted because it is free and it is
-		// correct wherever a process resolves names itself instead of calling
-		// getaddrinfo; it must not be read as a guarantee.
-		//
-		// What the excluded app's lookup actually hits, once this rule misses:
-		// in Smart mode without the adaptive engine, dns.Final = "local" below,
-		// so it lands on the system resolver and the original symptom is gone
-		// by accident. With the adaptive engine on, the fakeip catch-all is the
-		// last rule and claims every A/AAAA, so the app is handed a fake
-		// address — which still works, because the route-level process rule
-		// (buildRoute matches processes on the connection, where Windows does
-		// preserve the owner) sends the connection direct and the direct
-		// outbound resolves the real name. Global mode keeps the original
-		// symptom in full. A real fix needs a selector the Windows resolver
-		// preserves, and the rule language has none today.
-		if rx := appWhitelistPathRegexes(cfg.AppWhitelist); len(rx) > 0 {
+		// An excluded family resolves through the system resolver. This catches
+		// only an app that sends its own queries: Windows asks on behalf of
+		// everyone else from the DNS Client service, which carries no family.
+		// Those connections are put right afterwards by app-direct.
+		if len(cfg.AppWhitelist) > 0 {
 			dns.Rules = append(dns.Rules, SBDNSRule{
-				ProcessPathRegex: rx,
-				Server:           "local",
+				PackageName: []string{familyTagDirect},
+				Server:      "local",
 			})
+			dns.ReverseMapping = appDirectActive(cfg)
 		}
 
 		// Excluded domains leave direct, so they resolve via the system resolver.
 		if cfg.RoutingMode != ModeSmart {
-			if tunnelTag := firstDetourServerTag(dns.Servers, detour); tunnelTag != "" {
-				for _, w := range whitelistSuffixes(cfg.Whitelist) {
-					server := tunnelTag
-					if w.direct {
-						server = "local"
-					}
-					dns.Rules = append(dns.Rules, SBDNSRule{
-						DomainSuffix: []string{w.suffix},
-						Server:       server,
-					})
-				}
+			if suffixes := whitelistSuffixes(cfg.Whitelist); len(suffixes) > 0 {
+				dns.Rules = append(dns.Rules, SBDNSRule{
+					DomainSuffix: suffixes,
+					Server:       "local",
+				})
 			}
 		}
 
@@ -1803,10 +1883,10 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		// unusable.
 		if smartRuleSetActive(cfg) {
 			if tunnelTag := firstDetourServerTag(dns.Servers, detour); tunnelTag != "" {
-				if rx := appWhitelistPathRegexes(cfg.AppForceVPN); len(rx) > 0 {
+				if len(cfg.AppForceVPN) > 0 {
 					dns.Rules = append(dns.Rules, SBDNSRule{
-						ProcessPathRegex: rx,
-						Server:           tunnelTag,
+						PackageName: []string{familyTagVPN},
+						Server:      tunnelTag,
 					})
 				}
 				dns.Rules = append(dns.Rules, SBDNSRule{
@@ -1958,6 +2038,7 @@ func splitDNSServer(raw string) (string, int) {
 }
 
 func buildRoute(cfg EngineConfig) *SBRoute {
+	cfg = cfg.forRoutingMode()
 	builtinAppRegexes := smartTunneledAppRegexes(cfg)
 	findProcess := len(cfg.AppWhitelist) > 0 ||
 		(cfg.Mode == ProxyModeTunnel && len(cfg.AppForceVPN) > 0) ||
@@ -2038,6 +2119,11 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		Outbound: "proxy",
 	})
 
+	// The app lists outrank everything the user configures by address: naming
+	// an app is the most explicit thing they can say, and it covers every
+	// process the app starts (appfamily.go).
+	rules = append(rules, appFamilyRouteRules(cfg)...)
+
 	// User routing lists win over the built-in Smart/whitelist/ad-block rules:
 	// inserted here, after the DNS/server infra rules but before every built-in.
 	rules = appendRoutingListRouteRules(cfg.RoutingLists, rules, cfg.RoutingOrder)
@@ -2111,43 +2197,9 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		}
 	}
 
-	// Force-VPN apps: the whole process family goes through the tunnel. Placed
-	// before the app-whitelist direct rule so an explicit "via VPN" beats an
-	// accidental overlap with the exclusion list (the UI prevents adding one
-	// app to both). Tunnel-only: in proxy mode apps that ignore the system
-	// proxy never reach us, so the rule would be dead weight.
-	if cfg.Mode == ProxyModeTunnel {
-		if rx := appWhitelistPathRegexes(cfg.AppForceVPN); len(rx) > 0 {
-			// Sending an app through the tunnel wholesale is the workaround
-			// users reach for when a service half-works; it must not hand them
-			// back the QUIC hang the Smart rule below cures. Smart-only on
-			// purpose: in Global mode every app already rides the proxy, so
-			// singling out the force-VPN list would fix QUIC for those apps and
-			// leave it broken for the rest — an inconsistency worth deciding on
-			// its own rather than inheriting from here.
-			if cfg.RoutingMode == ModeSmart {
-				rules = append(rules, quicRejectRule(SBRouteRule{ProcessPathRegex: rx}))
-			}
-			rules = append(rules, SBRouteRule{
-				Action:           "route",
-				ProcessPathRegex: rx,
-				Outbound:         "proxy",
-			})
-		}
-	}
-
-	if rx := appWhitelistPathRegexes(cfg.AppWhitelist); len(rx) > 0 {
-		rules = append(rules, SBRouteRule{
-			Action:           "route",
-			ProcessPathRegex: rx,
-			Outbound:         "direct",
-		})
-	}
-
 	// Built-in Smart coverage for apps the block-lists structurally cannot
-	// reach (see smartTunneledApps). Deliberately placed AFTER the
-	// app-whitelist direct rule: a user who puts Discord in
-	// "Приложения-исключения" means it, and their exclusion keeps winning.
+	// reach (see smartTunneledApps). Smart has no exclusions list, so nothing
+	// above takes Discord out of the tunnel.
 	// Placed BEFORE the blocked-domain/CIDR rules so the process decision is
 	// taken once for the whole app instead of being split between a tunnelled
 	// signalling half and a direct media half — that split is the bug.
@@ -2188,18 +2240,10 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	}
 
 	// Smart mode: tunnel the censored block-list, leave everything else direct
-	// (Final="direct"). Placed BEFORE the whitelist block so a blocked domain
-	// that also sits under a whitelisted suffix still tunnels — matching
-	// Router.ShouldProxy, where a blocked resource wins over an odd (single)
-	// whitelist match. This ordering is what makes the Smart-mode UI work:
-	// there the domain list edits config.RoutingRules.CustomBlockedDomains
-	// ("route via VPN", see RulesView.jsx), which Router.GetBlockedDomains
-	// unions into cfg.BlockedDomains — while cfg.Whitelist still carries the
-	// exclusions the user set in Global mode. Emitting the whitelist first
-	// would let a stale Global exclusion override an explicit Smart-mode
-	// "send this via VPN". The block-list domains are already normalized
-	// suffixes. App-whitelist (process) direct rules above keep priority, so
-	// an excluded app's traffic stays direct even for blocked domains.
+	// (Final="direct"). The Smart sites list ("route via VPN") edits
+	// config.RoutingRules.CustomBlockedDomains, which Router.GetBlockedDomains
+	// unions into cfg.BlockedDomains. The block-list domains are already
+	// normalized suffixes.
 	//
 	// A pre-compiled binary rule-set is preferred when the caller supplied one:
 	// inlining ~78k suffixes costs ~160 ms of config marshal/parse/index per
@@ -2244,15 +2288,11 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		})
 	}
 
-	for _, w := range whitelistSuffixes(cfg.Whitelist) {
-		outbound := "proxy"
-		if w.direct {
-			outbound = "direct"
-		}
+	if suffixes := whitelistSuffixes(cfg.Whitelist); len(suffixes) > 0 {
 		rules = append(rules, SBRouteRule{
 			Action:       "route",
-			DomainSuffix: []string{w.suffix},
-			Outbound:     outbound,
+			DomainSuffix: suffixes,
+			Outbound:     "direct",
 		})
 	}
 
@@ -2311,6 +2351,78 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	return route
 }
 
+// listsForMode keeps the lists the given mode shows and drops the rest. Each
+// mode has its own screen of lists, and an entry made on the other screen
+// must not act here: "via VPN" apps left over from Smart outranked the Global
+// exclusions, and Global exclusions sent Smart's blocked sites past the tunnel.
+func listsForMode(mode RoutingMode, sitesDirect, appsDirect, appsVPN []string) ([]string, []string, []string) {
+	if mode == ModeSmart {
+		return nil, nil, appsVPN
+	}
+	return sitesDirect, appsDirect, nil
+}
+
+// forRoutingMode is cfg with only the current mode's lists. Every config
+// builder starts here, so no path can see the other mode's entries.
+func (cfg EngineConfig) forRoutingMode() EngineConfig {
+	cfg.Whitelist, cfg.AppWhitelist, cfg.AppForceVPN = listsForMode(cfg.RoutingMode, cfg.Whitelist, cfg.AppWhitelist, cfg.AppForceVPN)
+	return cfg
+}
+
+// appFamilyVPNList is the "via VPN" app list in force for this config. It only
+// exists in tunnel mode: in proxy mode an app that ignores the system proxy
+// never reaches the engine, so there is nothing to force.
+func appFamilyVPNList(cfg EngineConfig) []string {
+	if cfg.Mode != ProxyModeTunnel {
+		return nil
+	}
+	return cfg.forRoutingMode().AppForceVPN
+}
+
+// appFamilyRouteRules routes the app families. An explicit "via VPN" comes
+// first so it beats an accidental overlap with the exclusions.
+func appFamilyRouteRules(cfg EngineConfig) []SBRouteRule {
+	var rules []SBRouteRule
+	if len(appFamilyVPNList(cfg)) > 0 {
+		vpn := SBRouteRule{PackageName: []string{familyTagVPN}}
+		// Forcing an app through the tunnel must not hand back the QUIC hang
+		// the Smart rules cure. In Global every app already rides the node.
+		if cfg.RoutingMode == ModeSmart {
+			rules = append(rules, quicRejectRule(vpn))
+		}
+		vpn.Action = "route"
+		vpn.Outbound = "proxy"
+		rules = append(rules, vpn)
+	}
+	if len(cfg.AppWhitelist) > 0 {
+		outbound := "direct"
+		if appDirectActive(cfg) {
+			outbound = appDirectTag
+		}
+		rules = append(rules, SBRouteRule{
+			Action:      "route",
+			PackageName: []string{familyTagDirect},
+			Outbound:    outbound,
+		})
+	}
+	return rules
+}
+
+// appDirectActive reports whether excluded apps need their addresses taken
+// from the system resolver. Only Global tunnel mode answers their lookups
+// through the node: Smart already resolves them locally, and in proxy mode
+// apps hand over names.
+func appDirectActive(cfg EngineConfig) bool {
+	return cfg.Mode == ProxyModeTunnel && cfg.RoutingMode != ModeSmart && len(cfg.AppWhitelist) > 0
+}
+
+func appDirectOutbounds(cfg EngineConfig) []SBOutbound {
+	if !appDirectActive(cfg) {
+		return nil
+	}
+	return []SBOutbound{{Type: appDirectTag, Tag: appDirectTag}}
+}
+
 // resolveBeforeEndpoint puts a resolve through the tunnel resolver in front of
 // every rule that sends traffic to the endpoint. Under FakeIP such traffic
 // arrives as a name: on the pre-match path the core refuses a fake destination
@@ -2334,17 +2446,12 @@ func resolveBeforeEndpoint(rules []SBRouteRule, server string) []SBRouteRule {
 	return out
 }
 
-type whitelistSuffix struct {
-	suffix string
-	direct bool
-}
-
-// whitelistSuffixes orders the exclusion list deepest-first and marks each
-// suffix direct on an odd number of matches, so a nested entry ("avito.ru"
-// under ".ru") flips its parent back to the tunnel.
-func whitelistSuffixes(whitelist []string) []whitelistSuffix {
+// whitelistSuffixes normalizes the site exclusion list into domain suffixes.
+// Every entry means "direct", a nested one included: "www.example.com" next to
+// "example.com" used to cancel it out.
+func whitelistSuffixes(whitelist []string) []string {
 	seen := make(map[string]struct{}, len(whitelist))
-	var normalized []string
+	var out []string
 	for _, w := range whitelist {
 		n := normalizeRule(w)
 		if n == "" {
@@ -2354,34 +2461,7 @@ func whitelistSuffixes(whitelist []string) []whitelistSuffix {
 			continue
 		}
 		seen[n] = struct{}{}
-		normalized = append(normalized, n)
-	}
-	if len(normalized) == 0 {
-		return nil
-	}
-
-	ordered := append([]string(nil), normalized...)
-	sort.SliceStable(ordered, func(i, j int) bool {
-		di := strings.Count(ordered[i], ".")
-		dj := strings.Count(ordered[j], ".")
-		if di != dj {
-			return di > dj
-		}
-		if len(ordered[i]) != len(ordered[j]) {
-			return len(ordered[i]) > len(ordered[j])
-		}
-		return ordered[i] < ordered[j]
-	})
-
-	out := make([]whitelistSuffix, 0, len(ordered))
-	for _, suffix := range ordered {
-		matchCount := 0
-		for _, rule := range normalized {
-			if suffix == rule || strings.HasSuffix(suffix, "."+rule) {
-				matchCount++
-			}
-		}
-		out = append(out, whitelistSuffix{suffix: suffix, direct: matchCount%2 == 1})
+		out = append(out, n)
 	}
 	return out
 }

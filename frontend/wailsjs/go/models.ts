@@ -44,6 +44,8 @@ export namespace config {
 	}
 	export class AppSettings {
 	    autostart: boolean;
+	    connectOnStartup?: boolean;
+	    alwaysRunAsAdmin?: boolean;
 	    killswitch: boolean;
 	    mode: string;
 	    language: string;
@@ -77,6 +79,8 @@ export namespace config {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.autostart = source["autostart"];
+	        this.connectOnStartup = source["connectOnStartup"];
+	        this.alwaysRunAsAdmin = source["alwaysRunAsAdmin"];
 	        this.killswitch = source["killswitch"];
 	        this.mode = source["mode"];
 	        this.language = source["language"];

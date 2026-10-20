@@ -121,6 +121,20 @@
   --pb-glow-hover: var(--rv-errors-a50);
 }
 
+/* Светлая тема: светлый круг без тени сливается со страницей. */
+:root[data-theme="light"] .rv-power-btn:not([data-variant="success"]) {
+  --pb-bg: var(--rv-grey);
+}
+
+:root[data-theme="light"] .rv-power-btn[data-variant="default"] {
+  --pb-glow: var(--rv-drop-a40);
+  --pb-glow-hover: var(--rv-drop-a40);
+}
+
+:root[data-theme="light"] .rv-power-btn[data-variant="success"] {
+  --pb-icon: var(--rv-on-accent);
+}
+
 /* --- Состояния ---------------------------------------------------------- */
 
 /* У нейтрального варианта наведение красит обводку и иконку фирменным цветом,
