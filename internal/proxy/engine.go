@@ -1853,7 +1853,7 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 				PackageName: []string{familyTagDirect},
 				Server:      "local",
 			})
-			dns.ReverseMapping = true
+			dns.ReverseMapping = appDirectActive(cfg)
 		}
 
 		// Excluded domains leave direct, so they resolve via the system resolver.
@@ -2382,18 +2382,29 @@ func appFamilyRouteRules(cfg EngineConfig) []SBRouteRule {
 		rules = append(rules, vpn)
 	}
 	if len(cfg.AppWhitelist) > 0 {
+		outbound := "direct"
+		if appDirectActive(cfg) {
+			outbound = appDirectTag
+		}
 		rules = append(rules, SBRouteRule{
 			Action:      "route",
 			PackageName: []string{familyTagDirect},
-			Outbound:    appDirectTag,
+			Outbound:    outbound,
 		})
 	}
 	return rules
 }
 
-// appDirectOutbounds is the outbound the excluded families leave through.
+// appDirectActive reports whether excluded apps need their addresses taken
+// from the system resolver. Only Global tunnel mode answers their lookups
+// through the node: Smart already resolves them locally, and in proxy mode
+// apps hand over names.
+func appDirectActive(cfg EngineConfig) bool {
+	return cfg.Mode == ProxyModeTunnel && cfg.RoutingMode != ModeSmart && len(cfg.AppWhitelist) > 0
+}
+
 func appDirectOutbounds(cfg EngineConfig) []SBOutbound {
-	if len(cfg.AppWhitelist) == 0 {
+	if !appDirectActive(cfg) {
 		return nil
 	}
 	return []SBOutbound{{Type: appDirectTag, Tag: appDirectTag}}

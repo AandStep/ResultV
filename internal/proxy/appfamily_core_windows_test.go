@@ -39,6 +39,8 @@ import (
 	singjson "github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/service"
 
+	mDNS "github.com/miekg/dns"
+
 	"resultproxy-wails/internal/system/processtree"
 )
 
@@ -48,7 +50,7 @@ const appDirectTestHost = "game.example"
 // the node unreachable and the system resolver replaced by a record for
 // appDirectTestHost. A connection that reaches the echo server can only have
 // gone through the family rule and app-direct.
-func startFamilyCore(t *testing.T, excluded string) int {
+func startFamilyCore(t *testing.T, excluded string, nodeAnswers map[string][]string) (int, context.Context) {
 	t.Helper()
 	cfg := EngineConfig{
 		Mode:         ProxyModeTunnel,
@@ -59,7 +61,11 @@ func startFamilyCore(t *testing.T, excluded string) int {
 		LocalPort:    getFreeLocalPort(24081),
 	}
 	sb := mustBuildTunnelModeConfig(t, cfg)
+	nodeResolver := firstDetourServerTag(sb.DNS.Servers, "proxy")
 	for i, srv := range sb.DNS.Servers {
+		if srv.Tag == nodeResolver && nodeAnswers != nil {
+			sb.DNS.Servers[i] = SBDNSServer{Type: "hosts", Tag: nodeResolver, Predefined: nodeAnswers}
+		}
 		if srv.Tag == "local" {
 			sb.DNS.Servers[i] = SBDNSServer{
 				Type:       "hosts",
@@ -105,7 +111,7 @@ func startFamilyCore(t *testing.T, excluded string) int {
 		}
 		cancel()
 	})
-	return cfg.LocalPort
+	return cfg.LocalPort, boxCtx
 }
 
 func echoServer(t *testing.T) int {
@@ -127,16 +133,15 @@ func echoServer(t *testing.T) int {
 	return ln.Addr().(*net.TCPAddr).Port
 }
 
-// echoThrough opens appDirectTestHost through the core's HTTP inbound and
-// reports whether the echo came back.
-func echoThrough(proxyPort, echoPort int) error {
+// echoThrough opens target through the core's HTTP inbound and reports
+// whether the echo came back.
+func echoThrough(proxyPort int, target string) error {
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", proxyPort), 2*time.Second)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(4 * time.Second))
-	target := fmt.Sprintf("%s:%d", appDirectTestHost, echoPort)
 	if _, err := fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target); err != nil {
 		return err
 	}
@@ -180,8 +185,8 @@ func TestFamilyCore_ExcludedProcessLeavesThroughAppDirect(t *testing.T) {
 
 	exe, _ := os.Executable()
 	echo := echoServer(t)
-	port := startFamilyCore(t, filepath.Base(exe))
-	if err := echoThrough(port, echo); err != nil {
+	port, _ := startFamilyCore(t, filepath.Base(exe), nil)
+	if err := echoThrough(port, fmt.Sprintf("%s:%d", appDirectTestHost, echo)); err != nil {
 		t.Fatalf("excluded process did not get through app-direct: %v", err)
 	}
 }
@@ -194,8 +199,8 @@ func TestFamilyCore_OtherProcessStaysOnTheNode(t *testing.T) {
 	defer func() { selfPID = saved }()
 
 	echo := echoServer(t)
-	port := startFamilyCore(t, "steam.exe")
-	if err := echoThrough(port, echo); err == nil {
+	port, _ := startFamilyCore(t, "steam.exe", nil)
+	if err := echoThrough(port, fmt.Sprintf("%s:%d", appDirectTestHost, echo)); err == nil {
 		t.Fatal("a process outside the family reached the echo server without the node")
 	}
 }
@@ -214,11 +219,41 @@ func TestFamilyCore_ChildInheritsTheExclusion(t *testing.T) {
 	srvPort := srv.Listener.Addr().(*net.TCPAddr).Port
 
 	exe, _ := os.Executable()
-	port := startFamilyCore(t, filepath.Base(exe))
+	port, _ := startFamilyCore(t, filepath.Base(exe), nil)
 	out, err := exec.Command(curl, "-s", "--max-time", "5",
 		"-x", fmt.Sprintf("http://127.0.0.1:%d", port),
 		fmt.Sprintf("http://%s:%d/", appDirectTestHost, srvPort)).Output()
 	if err != nil || string(out) != "reached" {
 		t.Fatalf("child process did not inherit the exclusion: %v, output %q", err, out)
+	}
+}
+
+// The Global-mode case end to end: the lookup is answered through the node with
+// an address the excluded app cannot use, the app connects to that address, and
+// app-direct takes it to the local answer instead.
+func TestFamilyCore_AddressFromTheNodeResolverIsLocalized(t *testing.T) {
+	saved := selfPID
+	selfPID = 0
+	defer func() { selfPID = saved }()
+
+	const nodeRegion = "203.0.113.50"
+	exe, _ := os.Executable()
+	echo := echoServer(t)
+	port, boxCtx := startFamilyCore(t, filepath.Base(exe), map[string][]string{appDirectTestHost: {nodeRegion}})
+
+	msg := new(mDNS.Msg)
+	msg.SetQuestion(mDNS.Fqdn(appDirectTestHost), mDNS.TypeA)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	resp, err := service.FromContext[adapter.DNSRouter](boxCtx).Exchange(ctx, msg, adapter.DNSQueryOptions{})
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if len(resp.Answer) != 1 || resp.Answer[0].(*mDNS.A).A.String() != nodeRegion {
+		t.Fatalf("the node resolver answered %v, want %s", resp.Answer, nodeRegion)
+	}
+
+	if err := echoThrough(port, fmt.Sprintf("%s:%d", nodeRegion, echo)); err != nil {
+		t.Fatalf("the address from the node resolver was not swapped for the local one: %v", err)
 	}
 }

@@ -31,13 +31,14 @@ import (
 	"github.com/sagernet/sing/service"
 )
 
-// appDirectTag is the outbound excluded app families leave through: direct,
-// but addressed by the system resolver. Windows resolves names in the DNS
-// Client service, so an excluded app's lookup carries no process and in Global
-// is answered through the node, with a server near the node. On the
-// connection the process is known, and the name comes from the sniffer,
-// FakeIP or the reverse mapping, so it is resolved again locally. The original
-// address stays as the last fallback.
+// appDirectTag is the outbound excluded app families leave through in Global
+// mode: direct, but addressed by the system resolver. Windows resolves names
+// in the DNS Client service, so an excluded app's lookup carries no process
+// and is answered through the node, with a server near the node. On the
+// connection the process is known, so an address that came out of such an
+// answer is swapped for the local answer to the same name. An address the app
+// got anywhere else is left alone, and the original stays as the last
+// fallback.
 const appDirectTag = "app-direct"
 
 type appDirectOptions struct{}
@@ -54,8 +55,9 @@ type appDirectOutbound struct {
 	connection adapter.ConnectionManager
 	logger     logger.ContextLogger
 
-	direct adapter.Outbound
-	lookup func(ctx context.Context, fqdn string) ([]netip.Addr, error)
+	direct  adapter.Outbound
+	lookup  func(ctx context.Context, fqdn string) ([]netip.Addr, error)
+	reverse func(addr netip.Addr) (string, bool)
 }
 
 func newAppDirectOutbound(ctx context.Context, _ adapter.Router, logger log.ContextLogger, tag string, _ appDirectOptions) (adapter.Outbound, error) {
@@ -74,8 +76,9 @@ func (a *appDirectOutbound) Start() error {
 		return E.New("app-direct: outbound not found: direct")
 	}
 	a.direct = direct
+	dns := service.FromContext[adapter.DNSRouter](a.ctx)
+	a.reverse = dns.LookupReverseMapping
 	if transport, loaded := service.FromContext[adapter.DNSTransportManager](a.ctx).Transport("local"); loaded {
-		dns := service.FromContext[adapter.DNSRouter](a.ctx)
 		a.lookup = func(ctx context.Context, fqdn string) ([]netip.Addr, error) {
 			return dns.Lookup(ctx, fqdn, adapter.DNSQueryOptions{Transport: transport})
 		}
@@ -106,7 +109,7 @@ func (a *appDirectOutbound) NewPacketConnection(ctx context.Context, conn N.Pack
 // localize points the connection at what the system resolver says the name
 // is. A name it cannot resolve leaves the connection as it came.
 func (a *appDirectOutbound) localize(ctx context.Context, metadata *adapter.InboundContext, keepOriginal bool) {
-	host := appDirectHost(metadata)
+	host := a.host(metadata)
 	if host == "" || a.lookup == nil {
 		return
 	}
@@ -118,17 +121,20 @@ func (a *appDirectOutbound) localize(ctx context.Context, metadata *adapter.Inbo
 	metadata.DestinationAddresses = withOriginal(addrs, metadata.Destination, keepOriginal)
 }
 
-// appDirectHost is the name worth resolving again, or "" when there is none or
-// when the destination is on the local network.
-func appDirectHost(metadata *adapter.InboundContext) string {
+// host is the name to resolve again: the destination itself when it is a name,
+// or the name whose answer the destination address came from. The sniffed
+// name is not used: an app that got its address from a matchmaking API may
+// still present a shared name, and resolving it would move the session to
+// another server.
+func (a *appDirectOutbound) host(metadata *adapter.InboundContext) string {
 	if metadata.Destination.IsDomain() {
 		return metadata.Destination.Fqdn
 	}
-	if !metadata.Destination.IsIP() || !isPublicAddr(metadata.Destination.Addr) {
+	if !metadata.Destination.IsIP() || !isPublicAddr(metadata.Destination.Addr) || a.reverse == nil {
 		return ""
 	}
-	if M.IsDomainName(metadata.Domain) {
-		return metadata.Domain
+	if name, ok := a.reverse(metadata.Destination.Addr); ok && M.IsDomainName(name) {
+		return name
 	}
 	return ""
 }

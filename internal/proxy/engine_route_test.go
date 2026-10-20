@@ -1165,16 +1165,17 @@ func TestUpdateInbound_RoutedToProxyInBothModes(t *testing.T) {
 
 // TestBuildRoute_ProxyMode_AppWhitelistGetsDirectRule covers the excluded
 // family in proxy mode: the mixed inbound terminates the connection locally,
-// the core looks up the originating PID, and the family tag sends it to
-// app-direct.
+// the core looks up the originating PID, and the family tag sends it direct.
+// Apps hand names to a proxy, so there is no address to take back from the
+// node's resolver.
 func TestBuildRoute_ProxyMode_AppWhitelistGetsDirectRule(t *testing.T) {
 	cfg := EngineConfig{
 		Mode:         ProxyModeProxy,
 		AppWhitelist: []string{"steam.exe", "steamwebhelper.exe"},
 	}
 	route := buildRoute(cfg)
-	if familyRuleIndex(route.Rules, familyTagDirect, appDirectTag) < 0 {
-		t.Fatalf("expected the excluded family routed to app-direct, rules=%+v", route.Rules)
+	if familyRuleIndex(route.Rules, familyTagDirect, "direct") < 0 {
+		t.Fatalf("expected the excluded family routed direct, rules=%+v", route.Rules)
 	}
 	if !route.FindProcess {
 		t.Fatal("find_process must be on for the family tag to exist")
@@ -1195,7 +1196,7 @@ func TestBuildRouteAppForceVPN(t *testing.T) {
 	route := buildRoute(cfg)
 
 	forceIdx := familyRuleIndex(route.Rules, familyTagVPN, "proxy")
-	whitelistIdx := familyRuleIndex(route.Rules, familyTagDirect, appDirectTag)
+	whitelistIdx := familyRuleIndex(route.Rules, familyTagDirect, "direct")
 	if forceIdx == -1 {
 		t.Fatal("force-VPN process rule missing in tunnel mode")
 	}
@@ -1782,7 +1783,7 @@ func TestBuildRoute_SmartMode_BackstopAfterAppWhitelist(t *testing.T) {
 		AppWhitelist: []string{"game.exe"},
 	}
 	rules := buildRoute(cfg).Rules
-	appIdx := familyRuleIndex(rules, familyTagDirect, appDirectTag)
+	appIdx := familyRuleIndex(rules, familyTagDirect, "direct")
 	if appIdx < 0 {
 		t.Fatal("app-whitelist rule missing")
 	}

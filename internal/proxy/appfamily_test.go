@@ -248,9 +248,20 @@ func TestBuildTunnelModeConfig_AppDirectBuildsInCore(t *testing.T) {
 	}
 	assertCoreBuildsConfig(t, out)
 
-	cfg.AppWhitelist = nil
-	out = mustBuildTunnelModeConfig(t, cfg)
-	if slices.ContainsFunc(out.Outbounds, func(o SBOutbound) bool { return o.Tag == appDirectTag }) {
-		t.Fatal("app-direct must not be built without excluded apps")
+	if !out.DNS.ReverseMapping {
+		t.Fatal("app-direct needs the reverse mapping to know which addresses came from a lookup")
+	}
+
+	for name, c := range map[string]EngineConfig{
+		"no excluded apps": func() EngineConfig { c := cfg; c.AppWhitelist = nil; return c }(),
+		"smart mode":       func() EngineConfig { c := cfg; c.RoutingMode = ModeSmart; return c }(),
+	} {
+		out := mustBuildTunnelModeConfig(t, c)
+		if slices.ContainsFunc(out.Outbounds, func(o SBOutbound) bool { return o.Tag == appDirectTag }) {
+			t.Errorf("%s: app-direct must not be built", name)
+		}
+		if out.DNS.ReverseMapping {
+			t.Errorf("%s: reverse mapping must stay off", name)
+		}
 	}
 }

@@ -27,59 +27,53 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 )
 
-func appDirectWithLookup(answers map[string][]netip.Addr) (*appDirectOutbound, *[]string) {
-	var asked []string
-	return &appDirectOutbound{
-		logger: logger.NOP(),
-		lookup: func(_ context.Context, fqdn string) ([]netip.Addr, error) {
-			asked = append(asked, fqdn)
-			if a, ok := answers[fqdn]; ok {
-				return a, nil
-			}
-			return nil, errors.New("no such host")
-		},
-	}, &asked
-}
-
 var (
 	nodeRegionAddr = netip.MustParseAddr("203.0.113.10")
+	apiAddr        = netip.MustParseAddr("203.0.113.99")
 	localAddr      = netip.MustParseAddr("198.51.100.20")
 )
 
+// appDirectFixture answers cdn.example.com locally with localAddr, and knows
+// that nodeRegionAddr came out of a lookup of that name through the node.
+func appDirectFixture() *appDirectOutbound {
+	return &appDirectOutbound{
+		logger: logger.NOP(),
+		lookup: func(_ context.Context, fqdn string) ([]netip.Addr, error) {
+			if fqdn == "cdn.example.com" {
+				return []netip.Addr{localAddr}, nil
+			}
+			return nil, errors.New("no such host")
+		},
+		reverse: func(addr netip.Addr) (string, bool) {
+			if addr == nodeRegionAddr {
+				return "cdn.example.com", true
+			}
+			return "", false
+		},
+	}
+}
+
 // The address the app got through the node's resolver is swapped for the one
 // the system resolver gives, and kept behind it in case that one is dead.
-func TestAppDirect_ResolvesTheNameLocally(t *testing.T) {
-	a, _ := appDirectWithLookup(map[string][]netip.Addr{"cdn.example.com": {localAddr}})
-	md := adapter.InboundContext{Destination: M.SocksaddrFrom(nodeRegionAddr, 443), Domain: "cdn.example.com"}
-	a.localize(context.Background(), &md, true)
+func TestAppDirect_ResolvesTheLookedUpNameLocally(t *testing.T) {
+	md := adapter.InboundContext{Destination: M.SocksaddrFrom(nodeRegionAddr, 443)}
+	appDirectFixture().localize(context.Background(), &md, true)
 	if !slices.Equal(md.DestinationAddresses, []netip.Addr{localAddr, nodeRegionAddr}) {
 		t.Fatalf("addresses %v, want the local answer then the original", md.DestinationAddresses)
 	}
 }
 
 func TestAppDirect_UDPHasNoFallbackAddress(t *testing.T) {
-	a, _ := appDirectWithLookup(map[string][]netip.Addr{"cdn.example.com": {localAddr}})
-	md := adapter.InboundContext{Destination: M.SocksaddrFrom(nodeRegionAddr, 443), Domain: "cdn.example.com"}
-	a.localize(context.Background(), &md, false)
+	md := adapter.InboundContext{Destination: M.SocksaddrFrom(nodeRegionAddr, 443)}
+	appDirectFixture().localize(context.Background(), &md, false)
 	if !slices.Equal(md.DestinationAddresses, []netip.Addr{localAddr}) {
 		t.Fatalf("addresses %v, want the local answer alone", md.DestinationAddresses)
 	}
 }
 
-func TestAppDirect_SameAnswerIsNotDuplicated(t *testing.T) {
-	a, _ := appDirectWithLookup(map[string][]netip.Addr{"cdn.example.com": {nodeRegionAddr}})
-	md := adapter.InboundContext{Destination: M.SocksaddrFrom(nodeRegionAddr, 443), Domain: "cdn.example.com"}
-	a.localize(context.Background(), &md, true)
-	if !slices.Equal(md.DestinationAddresses, []netip.Addr{nodeRegionAddr}) {
-		t.Fatalf("addresses %v", md.DestinationAddresses)
-	}
-}
-
-// Under FakeIP the destination already is the name.
-func TestAppDirect_ResolvesAFakeIPName(t *testing.T) {
-	a, _ := appDirectWithLookup(map[string][]netip.Addr{"cdn.example.com": {localAddr}})
+func TestAppDirect_ResolvesANameDestination(t *testing.T) {
 	md := adapter.InboundContext{Destination: M.ParseSocksaddrHostPort("cdn.example.com", 443)}
-	a.localize(context.Background(), &md, true)
+	appDirectFixture().localize(context.Background(), &md, true)
 	if !slices.Equal(md.DestinationAddresses, []netip.Addr{localAddr}) {
 		t.Fatalf("addresses %v", md.DestinationAddresses)
 	}
@@ -90,14 +84,15 @@ func TestAppDirect_LeavesTheConnectionAlone(t *testing.T) {
 		name string
 		md   adapter.InboundContext
 	}{
-		{"no name", adapter.InboundContext{Destination: M.SocksaddrFrom(nodeRegionAddr, 27015)}},
-		{"local network", adapter.InboundContext{Destination: M.SocksaddrFrom(netip.MustParseAddr("192.168.1.10"), 443), Domain: "nas.example.com"}},
-		{"name the system resolver does not know", adapter.InboundContext{Destination: M.SocksaddrFrom(nodeRegionAddr, 443), Domain: "unknown.example.com"}},
+		// A game server address from a matchmaking API, presented under a
+		// shared name: resolving that name would land on another server.
+		{"address not from a lookup", adapter.InboundContext{Destination: M.SocksaddrFrom(apiAddr, 443), Domain: "cdn.example.com"}},
+		{"local network", adapter.InboundContext{Destination: M.SocksaddrFrom(netip.MustParseAddr("192.168.1.10"), 443)}},
+		{"name the system resolver does not know", adapter.InboundContext{Destination: M.ParseSocksaddrHostPort("unknown.example.com", 443)}},
 	}
 	for _, c := range cases {
-		a, _ := appDirectWithLookup(map[string][]netip.Addr{"nas.example.com": {localAddr}})
 		md := c.md
-		a.localize(context.Background(), &md, true)
+		appDirectFixture().localize(context.Background(), &md, true)
 		if md.DestinationAddresses != nil {
 			t.Errorf("%s: addresses %v, want none", c.name, md.DestinationAddresses)
 		}

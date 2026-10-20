@@ -117,7 +117,7 @@ func TestBuildRoute_SmartMode_UserExclusionBeatsBuiltinDiscordRule(t *testing.T)
 	cfg.AppWhitelist = []string{"discord.exe"}
 	route := buildRoute(cfg)
 
-	directIdx := familyRuleIndex(route.Rules, familyTagDirect, appDirectTag)
+	directIdx := familyRuleIndex(route.Rules, familyTagDirect, "direct")
 	if directIdx < 0 {
 		t.Fatal("user exclusion for discord.exe produced no direct rule")
 	}
