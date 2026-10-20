@@ -9,6 +9,22 @@
       "type": "improve",
       "ru": "Улучшен выбор DNS для протоколов AWG: теперь выбирается наилучший из конфигурации, в случае если ни один DNS не отвечает выбирается стандартный DNS",
       "en": "Improved DNS selection for AWG protocols: the best option from the configuration is now chosen, and if no DNS responds, the default DNS is used"
+    },{
+      "type": "feature",
+      "ru": "Приложение теперь может автоматически запускаться при старте системы и стартовать последний используемый сервер. Два тумблера в настройках -> дополнительные настройки.",
+      "en": "The application can now automatically start at system boot and launch the last used server. Two toggles in settings -> advanced settings."
+    },{
+      "type": "fix",
+      "ru": "Исключённое приложение теперь пускает напрямую всё, что оно запускает: добавьте Steam — и все его игры пойдут мимо ВПН, вместе с DNS",
+      "en": "An excluded app now takes everything it launches with it: add Steam and all its games bypass the VPN, DNS included"
+    },{
+      "type": "fix",
+      "ru": "Сайт, добавленный в исключения дважды (с www и без), больше не уходит в ВПН",
+      "en": "A site added to exclusions twice (with and without www) no longer goes through the VPN"
+    },{
+      "type": "fix",
+      "ru": "Списки умного и глобального режимов больше не мешают друг другу: в каждом режиме работают только его правила",
+      "en": "Smart and Global mode lists no longer interfere: each mode applies only its own rules"
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",
