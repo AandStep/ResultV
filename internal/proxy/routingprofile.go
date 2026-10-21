@@ -184,6 +184,46 @@ func decodeRoutingPayload(body string) ([]byte, error) {
 	return nil, errors.New("routing link payload is not valid base64")
 }
 
+// ParseRoutingHeader reads the `routing` header of a subscription answer — the
+// channel Happ and INCY use. The value is bare base64 or a
+// <scheme>://routing/onadd|add/<base64> link of any client; "off" withdraws the
+// provider's routing. An absent header returns a nil profile and no error.
+func ParseRoutingHeader(v string) (*config.RoutingProfile, bool, error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil, false, nil
+	}
+	low := strings.ToLower(v)
+	if low == "off" {
+		return nil, true, nil
+	}
+	body := v
+	if i := strings.Index(low, "://routing/"); i >= 0 {
+		rest := v[i+len("://routing/"):]
+		lowRest := strings.ToLower(rest)
+		switch {
+		case strings.HasPrefix(lowRest, "off"):
+			return nil, true, nil
+		case strings.HasPrefix(lowRest, "onadd/"):
+			body = rest[len("onadd/"):]
+		case strings.HasPrefix(lowRest, "add/"):
+			body = rest[len("add/"):]
+		default:
+			return nil, false, fmt.Errorf("unknown routing header action: %q", trimTo(rest, 32))
+		}
+	}
+	blob, err := decodeRoutingPayload(body)
+	if err != nil {
+		return nil, false, err
+	}
+	p, err := ParseRoutingProfileJSON(blob)
+	if err != nil {
+		return nil, false, err
+	}
+	p.Source = "subscription"
+	return &p, false, nil
+}
+
 // ParseRoutingProfileJSON reads the published JSON into a profile.
 func ParseRoutingProfileJSON(blob []byte) (config.RoutingProfile, error) {
 	var raw routingProfilePayload

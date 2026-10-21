@@ -285,3 +285,44 @@ func itoaTest(i int) string {
 	}
 	return string(buf[pos:])
 }
+
+func TestParseRoutingHeaderSpellings(t *testing.T) {
+	payload := `{"Name":"Provider","Geositeurl":"https://example.com/geosite.dat",` +
+		`"DirectSites":["geosite:private"],"ProxySites":["geosite:youtube"],"LastUpdated":"1700000000"}`
+	b64 := base64.StdEncoding.EncodeToString([]byte(payload))
+	for _, v := range []string{
+		b64,
+		"happ://routing/onadd/" + b64,
+		"incy://routing/add/" + base64.RawURLEncoding.EncodeToString([]byte(payload)),
+		"  RESULTV://Routing/OnAdd/" + b64 + "  ",
+	} {
+		p, off, err := ParseRoutingHeader(v)
+		if err != nil || off || p == nil {
+			t.Fatalf("%q: profile=%v off=%v err=%v", v, p, off, err)
+		}
+		if p.Name != "Provider" || p.OriginName != "Provider" || p.Source != "subscription" {
+			t.Errorf("%q: identity %+v", v, p)
+		}
+		if p.GeoSiteURL != "https://example.com/geosite.dat" || p.UpdatedAt != 1700000000 {
+			t.Errorf("%q: geo/updated %+v", v, p)
+		}
+		if !reflect.DeepEqual(p.ProxySites, []string{"geosite:youtube"}) {
+			t.Errorf("%q: proxy sites %v", v, p.ProxySites)
+		}
+	}
+}
+
+func TestParseRoutingHeaderOffAndAbsent(t *testing.T) {
+	for _, v := range []string{"off", "OFF", "happ://routing/off"} {
+		p, off, err := ParseRoutingHeader(v)
+		if !off || p != nil || err != nil {
+			t.Errorf("%q: want off, got profile=%v off=%v err=%v", v, p, off, err)
+		}
+	}
+	if p, off, err := ParseRoutingHeader("   "); p != nil || off || err != nil {
+		t.Errorf("empty header: profile=%v off=%v err=%v", p, off, err)
+	}
+	if p, _, err := ParseRoutingHeader("happ://routing/onadd/%%%"); p != nil || err == nil {
+		t.Errorf("garbage must be an error, got profile=%v err=%v", p, err)
+	}
+}

@@ -55,6 +55,37 @@ func embeddedRoutingListDeclarations(embedded map[string]proxy.ParsedRoutingList
 	return out
 }
 
+// routingHeaderURL is the identity of the profile a subscription sends in its
+// `routing` header, so the import toggle and tombstones treat it like a list.
+const routingHeaderURL = "header:routing"
+
+// subscriptionRoutingHeader is what the `routing` response header carried.
+type subscriptionRoutingHeader struct {
+	Profile *config.RoutingProfile
+	Off     bool
+}
+
+// subscriptionRoutingDeclarations lists everything a subscription answer offers
+// for routing. A header profile is complete on its own, so the embedded xray
+// rules — written for clients that run the JSON configs as is — are left out
+// when one is present.
+func subscriptionRoutingDeclarations(res subscriptionFetch) []config.RoutingList {
+	out := append([]config.RoutingList(nil), res.RoutingLists...)
+	if res.Routing.Off {
+		return out
+	}
+	if h := res.Routing.Profile; h != nil {
+		return append(out, config.RoutingList{
+			Name:        h.Name,
+			URL:         routingHeaderURL,
+			Action:      "proxy",
+			DomainCount: len(h.DirectSites) + len(h.ProxySites) + len(h.BlockSites),
+			CIDRCount:   len(h.DirectIPs) + len(h.ProxyIPs) + len(h.BlockIPs),
+		})
+	}
+	return append(out, embeddedRoutingListDeclarations(res.Embedded)...)
+}
+
 // syncSubscriptionRoutingProfile folds everything a subscription says about
 // routing into ONE profile.
 //
@@ -78,6 +109,7 @@ func (a *App) syncSubscriptionRoutingProfile(
 	provided []config.RoutingList,
 	disabledURLs []string,
 	embedded map[string]proxy.ParsedRoutingList,
+	header subscriptionRoutingHeader,
 	activate bool,
 ) error {
 	if a.config == nil || subID == "" {
@@ -116,6 +148,12 @@ func (a *App) syncSubscriptionRoutingProfile(
 
 	for _, p := range provided {
 		if disabled[p.URL] || tombstoned[p.URL] {
+			continue
+		}
+		if p.URL == routingHeaderURL {
+			if h := header.Profile; h != nil && !header.Off {
+				applyHeaderProfile(&profile, *h)
+			}
 			continue
 		}
 		if strings.HasPrefix(p.URL, "embedded:") {
@@ -165,6 +203,25 @@ func (a *App) syncSubscriptionRoutingProfile(
 		a.log.Warning(fmt.Sprintf("Маршрутизация подписки %q сохранена, но правила не собраны: %v", sub.Name, cerr))
 	}
 	return a.applySubscriptionRouting(activate)
+}
+
+// applyHeaderProfile takes the provider's published profile as the base: its
+// name is the identity republishes are matched by, and its geo URLs travel
+// with the rules that reference them.
+func applyHeaderProfile(dst *config.RoutingProfile, h config.RoutingProfile) {
+	dst.Name = h.Name
+	dst.OriginName = h.OriginName
+	dst.DirectSites = h.DirectSites
+	dst.DirectIPs = h.DirectIPs
+	dst.ProxySites = h.ProxySites
+	dst.ProxyIPs = h.ProxyIPs
+	dst.BlockSites = h.BlockSites
+	dst.BlockIPs = h.BlockIPs
+	dst.RouteOrder = h.RouteOrder
+	dst.DomainStrategy = h.DomainStrategy
+	dst.GeoIPURL = h.GeoIPURL
+	dst.GeoSiteURL = h.GeoSiteURL
+	dst.UpdatedAt = h.UpdatedAt
 }
 
 // applySubscriptionRouting hands the stored rules to the engine. Only a user

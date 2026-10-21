@@ -34,7 +34,7 @@ func TestSubscriptionRoutingBecomesOneProfile(t *testing.T) {
 		"direct": {Domains: []string{"gov.test", "nalog.test"}, CIDRs: []string{"10.0.0.0/8"}},
 		"block":  {Domains: []string{"ads.test"}},
 	}
-	if err := a.syncSubscriptionRoutingProfile("sub1", provided, nil, embedded, true); err != nil {
+	if err := a.syncSubscriptionRoutingProfile("sub1", provided, nil, embedded, subscriptionRoutingHeader{}, true); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 
@@ -69,7 +69,7 @@ func TestSubscriptionRoutingLinkedListStaysALink(t *testing.T) {
 	provided := []config.RoutingList{
 		{Name: "Provider list", URL: "https://127.0.0.1:9/l.lst", Action: "proxy"},
 	}
-	if err := a.syncSubscriptionRoutingProfile("sub1", provided, nil, nil, false); err != nil {
+	if err := a.syncSubscriptionRoutingProfile("sub1", provided, nil, nil, subscriptionRoutingHeader{}, false); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 	profiles := a.config.GetConfig().RoutingRules.Profiles
@@ -96,7 +96,7 @@ func TestSubscriptionRoutingRespectsTombstonesAndDisabled(t *testing.T) {
 		{URL: "https://127.0.0.1:9/on.lst", Action: "direct"},
 	}
 	if err := a.syncSubscriptionRoutingProfile(
-		"sub1", provided, []string{"https://off.test/l.lst"}, nil, false); err != nil {
+		"sub1", provided, []string{"https://off.test/l.lst"}, nil, subscriptionRoutingHeader{}, false); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 	profiles := a.config.GetConfig().RoutingRules.Profiles
@@ -119,7 +119,7 @@ func TestSubscriptionRoutingAllDisabledLeavesNoProfile(t *testing.T) {
 	// Пользователь отказался от маршрутизации подписки — пустого профиля
 	// заводить не надо, показывать в окне было бы нечего.
 	if err := a.syncSubscriptionRoutingProfile(
-		"sub1", provided, []string{"https://x.test/l.lst"}, nil, true); err != nil {
+		"sub1", provided, []string{"https://x.test/l.lst"}, nil, subscriptionRoutingHeader{}, true); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 	if got := a.config.GetConfig().RoutingRules.Profiles; len(got) != 0 {
@@ -130,7 +130,7 @@ func TestSubscriptionRoutingAllDisabledLeavesNoProfile(t *testing.T) {
 func TestSubscriptionRoutingUnknownSubscriptionIsNoop(t *testing.T) {
 	a := newTestApp(t, t.TempDir())
 	provided := []config.RoutingList{{URL: "https://x.test/l.lst", Action: "proxy"}}
-	if err := a.syncSubscriptionRoutingProfile("ghost", provided, nil, nil, true); err != nil {
+	if err := a.syncSubscriptionRoutingProfile("ghost", provided, nil, nil, subscriptionRoutingHeader{}, true); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 	if got := a.config.GetConfig().RoutingRules.Profiles; len(got) != 0 {
@@ -144,13 +144,13 @@ func TestSubscriptionRoutingContentUpdateReflected(t *testing.T) {
 	provided := []config.RoutingList{{Name: "embedded-direct", URL: "embedded:direct", Action: "direct"}}
 
 	if err := a.syncSubscriptionRoutingProfile("sub1", provided, nil,
-		map[string]proxy.ParsedRoutingList{"direct": {Domains: []string{"old.test"}}}, true); err != nil {
+		map[string]proxy.ParsedRoutingList{"direct": {Domains: []string{"old.test"}}}, subscriptionRoutingHeader{}, true); err != nil {
 		t.Fatal(err)
 	}
 	first := a.config.GetConfig().RoutingRules.Profiles[0].ID
 
 	if err := a.syncSubscriptionRoutingProfile("sub1", provided, nil,
-		map[string]proxy.ParsedRoutingList{"direct": {Domains: []string{"new.test"}}}, false); err != nil {
+		map[string]proxy.ParsedRoutingList{"direct": {Domains: []string{"new.test"}}}, subscriptionRoutingHeader{}, false); err != nil {
 		t.Fatal(err)
 	}
 	profiles := a.config.GetConfig().RoutingRules.Profiles
@@ -175,7 +175,7 @@ func TestSubscriptionRoutingReplacesLegacyLists(t *testing.T) {
 
 	provided := []config.RoutingList{{Name: "embedded-direct", URL: "embedded:direct", Action: "direct"}}
 	if err := a.syncSubscriptionRoutingProfile("sub1", provided, nil,
-		map[string]proxy.ParsedRoutingList{"direct": {Domains: []string{"gov.test"}}}, true); err != nil {
+		map[string]proxy.ParsedRoutingList{"direct": {Domains: []string{"gov.test"}}}, subscriptionRoutingHeader{}, true); err != nil {
 		t.Fatal(err)
 	}
 	rr := a.config.GetConfig().RoutingRules
@@ -196,5 +196,112 @@ func TestSubscriptionRoutingReplacesLegacyLists(t *testing.T) {
 	}
 	if len(rr.Profiles) != 1 {
 		t.Fatalf("профиль не создан: %+v", rr.Profiles)
+	}
+}
+
+func headerProfileFixture() *config.RoutingProfile {
+	return &config.RoutingProfile{
+		Name:        "Provider",
+		OriginName:  "Provider",
+		Source:      "subscription",
+		DirectSites: []string{"geosite:private", "gov.test"},
+		DirectIPs:   []string{"geoip:private"},
+		ProxySites:  []string{"geosite:youtube"},
+		BlockSites:  []string{"geosite:category-ads"},
+		RouteOrder:  "block-proxy-direct",
+		GeoSiteURL:  "https://127.0.0.1:9/geosite.dat",
+		GeoIPURL:    "https://127.0.0.1:9/geoip.dat",
+		UpdatedAt:   1700000000,
+	}
+}
+
+func TestSubscriptionRoutingHeaderProfileWins(t *testing.T) {
+	a := newTestApp(t, t.TempDir())
+	seedSubWithLists(t, a, "sub1", nil, nil)
+
+	res := subscriptionFetch{
+		Embedded: map[string]proxy.ParsedRoutingList{"direct": {Domains: []string{"embedded.test"}}},
+		Routing:  subscriptionRoutingHeader{Profile: headerProfileFixture()},
+	}
+	provided := subscriptionRoutingDeclarations(res)
+	if len(provided) != 1 || provided[0].URL != routingHeaderURL {
+		t.Fatalf("при профиле в заголовке встроенные правила не объявляются: %+v", provided)
+	}
+	if err := a.syncSubscriptionRoutingProfile("sub1", provided, nil, res.Embedded, res.Routing, true); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	rr := a.config.GetConfig().RoutingRules
+	if len(rr.Profiles) != 1 {
+		t.Fatalf("want 1 profile, got %d", len(rr.Profiles))
+	}
+	p := rr.Profiles[0]
+	if p.Name != "Provider" || p.OriginName != "Provider" || p.SubscriptionID != "sub1" || p.Source != "subscription" {
+		t.Errorf("identity: %+v", p)
+	}
+	if p.GeoSiteURL != "https://127.0.0.1:9/geosite.dat" || p.GeoIPURL != "https://127.0.0.1:9/geoip.dat" {
+		t.Errorf("geo URLs lost: %q %q", p.GeoSiteURL, p.GeoIPURL)
+	}
+	if p.RuleCount("direct") != 3 || p.RuleCount("proxy") != 1 || p.RuleCount("block") != 1 {
+		t.Errorf("rules: direct=%d proxy=%d block=%d", p.RuleCount("direct"), p.RuleCount("proxy"), p.RuleCount("block"))
+	}
+	for _, tok := range p.DirectSites {
+		if tok == "embedded.test" {
+			t.Error("встроенные правила не должны смешиваться с профилем из заголовка")
+		}
+	}
+	if rr.ActiveProfileID != p.ID {
+		t.Error("принятый при импорте профиль должен стать активным")
+	}
+}
+
+func TestSubscriptionRoutingHeaderRespectsImportOptOut(t *testing.T) {
+	a := newTestApp(t, t.TempDir())
+	seedSubWithLists(t, a, "sub1", nil, nil)
+	res := subscriptionFetch{Routing: subscriptionRoutingHeader{Profile: headerProfileFixture()}}
+	if err := a.syncSubscriptionRoutingProfile(
+		"sub1", subscriptionRoutingDeclarations(res), []string{routingHeaderURL}, nil, res.Routing, true); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if got := a.config.GetConfig().RoutingRules.Profiles; len(got) != 0 {
+		t.Fatalf("пользователь отказался от маршрутизации подписки, профиль не нужен: %+v", got)
+	}
+}
+
+func TestSubscriptionRoutingHeaderOffRemovesProfile(t *testing.T) {
+	a := newTestApp(t, t.TempDir())
+	seedSubWithLists(t, a, "sub1", nil, nil)
+	on := subscriptionFetch{Routing: subscriptionRoutingHeader{Profile: headerProfileFixture()}}
+	if err := a.syncSubscriptionRoutingProfile("sub1", subscriptionRoutingDeclarations(on), nil, nil, on.Routing, true); err != nil {
+		t.Fatal(err)
+	}
+	off := subscriptionFetch{Routing: subscriptionRoutingHeader{Off: true}}
+	if err := a.syncSubscriptionRoutingProfile("sub1", subscriptionRoutingDeclarations(off), nil, nil, off.Routing, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.config.GetConfig().RoutingRules.Profiles; len(got) != 0 {
+		t.Fatalf("провайдер снял маршрутизацию, профиль должен уйти: %+v", got)
+	}
+}
+
+func TestSubscriptionRoutingHeaderReplacesEarlierProfile(t *testing.T) {
+	a := newTestApp(t, t.TempDir())
+	seedSubWithLists(t, a, "sub1", nil, nil)
+	if err := a.syncSubscriptionRoutingProfile("sub1",
+		[]config.RoutingList{{URL: "embedded:direct", Action: "direct"}}, nil,
+		map[string]proxy.ParsedRoutingList{"direct": {Domains: []string{"gov.test"}}},
+		subscriptionRoutingHeader{}, true); err != nil {
+		t.Fatal(err)
+	}
+	res := subscriptionFetch{Routing: subscriptionRoutingHeader{Profile: headerProfileFixture()}}
+	if err := a.syncSubscriptionRoutingProfile("sub1", subscriptionRoutingDeclarations(res), nil, nil, res.Routing, false); err != nil {
+		t.Fatal(err)
+	}
+	profiles := a.config.GetConfig().RoutingRules.Profiles
+	if len(profiles) != 1 {
+		t.Fatalf("у подписки должен остаться один профиль, а не два: %+v", profiles)
+	}
+	if profiles[0].Name != "Provider" {
+		t.Errorf("непереименованный профиль должен взять имя от провайдера, got %q", profiles[0].Name)
 	}
 }

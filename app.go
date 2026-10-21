@@ -2364,6 +2364,7 @@ type subscriptionFetch struct {
 	SupportURL   string
 	RoutingLists []config.RoutingList
 	Embedded     map[string]proxy.ParsedRoutingList
+	Routing      subscriptionRoutingHeader
 }
 
 func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) (subscriptionFetch, error) {
@@ -2416,6 +2417,11 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) (subsc
 		out.IconURL = resolveSubscriptionIcon(client, subURL, resp.Header)
 		out.SupportURL = subscriptionSupportURL(subURL, resp.Header)
 		routingListsHeader := resp.Header.Get("Routing-Lists")
+		if prof, off, rerr := proxy.ParseRoutingHeader(resp.Header.Get("Routing")); rerr != nil {
+			a.log.Warning(fmt.Sprintf("Заголовок маршрутизации подписки не разобран: %v", rerr))
+		} else {
+			out.Routing = subscriptionRoutingHeader{Profile: prof, Off: off}
+		}
 
 		bodyBytes, err := io.ReadAll(resp.Body)
 		if err != nil {
@@ -2568,8 +2574,7 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) (subsc
 // and re-call with true only after surfacing the warning to the user.
 func (a *App) FetchSubscription(subURL string, allowInsecure bool) (SubscriptionPreview, error) {
 	res, err := a.fetchSubscriptionFromURL(subURL, allowInsecure)
-	lists := append(res.RoutingLists, embeddedRoutingListDeclarations(res.Embedded)...)
-	return SubscriptionPreview{Proxies: res.Entries, RoutingLists: lists}, err
+	return SubscriptionPreview{Proxies: res.Entries, RoutingLists: subscriptionRoutingDeclarations(res)}, err
 }
 
 // ParseSubscriptionText accepts pasted content. When the paste resolves to
@@ -2588,14 +2593,12 @@ func (a *App) ParseSubscriptionText(text string) (SubscriptionPreview, error) {
 	lower := strings.ToLower(text)
 	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
 		res, ferr := a.fetchSubscriptionFromURL(text, false)
-		lists := append(res.RoutingLists, embeddedRoutingListDeclarations(res.Embedded)...)
-		return SubscriptionPreview{Proxies: res.Entries, RoutingLists: lists}, ferr
+		return SubscriptionPreview{Proxies: res.Entries, RoutingLists: subscriptionRoutingDeclarations(res)}, ferr
 	}
 	if proxy.IsEncryptedSubscription(text) {
 		if resolved, err := resolveEncryptedSubscriptionURL(text); err == nil && resolved != "" {
 			res, ferr := a.fetchSubscriptionFromURL(resolved, false)
-			lists := append(res.RoutingLists, embeddedRoutingListDeclarations(res.Embedded)...)
-			return SubscriptionPreview{Proxies: res.Entries, RoutingLists: lists}, ferr
+			return SubscriptionPreview{Proxies: res.Entries, RoutingLists: subscriptionRoutingDeclarations(res)}, ferr
 		}
 	}
 	entries, err := proxy.ParseSubscriptionBody(text)
@@ -2672,8 +2675,7 @@ func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
 	if err := a.config.SaveConfig(cfg); err != nil {
 		a.log.Error(fmt.Sprintf("Ошибка сохранения после обновления подписки: %v", err))
 	}
-	provided := append(append([]config.RoutingList(nil), res.RoutingLists...), embeddedRoutingListDeclarations(res.Embedded)...)
-	if err := a.syncSubscriptionRoutingProfile(subID, provided, nil, res.Embedded, false); err != nil {
+	if err := a.syncSubscriptionRoutingProfile(subID, subscriptionRoutingDeclarations(res), nil, res.Embedded, res.Routing, false); err != nil {
 		a.log.Warning(fmt.Sprintf("Ошибка синхронизации списков маршрутизации подписки: %v", err))
 	}
 
@@ -2780,11 +2782,10 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 	if err := a.config.SaveConfig(cfg); err != nil {
 		return nil, fmt.Errorf("saving subscription: %w", err)
 	}
-	provided := append(append([]config.RoutingList(nil), res.RoutingLists...), embeddedRoutingListDeclarations(res.Embedded)...)
 	// The user answered the routing question in the import dialog just now, so
 	// what they accepted takes effect immediately rather than on some later
 	// connect.
-	if err := a.syncSubscriptionRoutingProfile(sub.ID, provided, disabledListURLs, res.Embedded, true); err != nil {
+	if err := a.syncSubscriptionRoutingProfile(sub.ID, subscriptionRoutingDeclarations(res), disabledListURLs, res.Embedded, res.Routing, true); err != nil {
 		a.log.Warning(fmt.Sprintf("[ROUTING] Не удалось применить списки подписки %q: %v", displayName, err))
 	}
 

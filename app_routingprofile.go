@@ -117,9 +117,9 @@ func (a *App) upsertRoutingProfile(incoming config.RoutingProfile, makeActive bo
 			continue
 		}
 		// The user may have renamed it; a republish of the same profile must
-		// not undo that.
+		// not undo that. An untouched name follows the publisher's.
 		incoming.ID = existing.ID
-		if existing.Name != "" {
+		if existing.Name != "" && (existing.OriginName == "" || existing.Name != existing.OriginName) {
 			incoming.Name = existing.Name
 		}
 		out[i] = incoming
@@ -159,6 +159,11 @@ func sameRoutingProfile(stored, incoming config.RoutingProfile) bool {
 	}
 	if stored.SubscriptionID != incoming.SubscriptionID {
 		return false
+	}
+	// A subscription owns exactly one profile, whatever name its provider
+	// gives it this time.
+	if incoming.Source == "subscription" && incoming.SubscriptionID != "" {
+		return true
 	}
 	return strings.EqualFold(
 		strings.TrimSpace(routingProfileHandle(stored)),
