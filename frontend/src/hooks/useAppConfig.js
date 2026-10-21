@@ -20,7 +20,7 @@ import { useTranslation } from "react-i18next";
 import wailsAPI from "../utils/wailsAPI";
 import { adminRestartDialog } from "../utils/adminDialog";
 import { applyCountries, detectCountry, redetectCountries } from "../utils/network";
-import { mergeSubscriptionRefreshCountries } from "../utils/proxyParser";
+import { flagEmojiCountry, mergeSubscriptionRefreshCountries } from "../utils/proxyParser";
 // import { applyTheme } from "../lib/theme";
 
 const RULES_PUSH_DEBOUNCE_MS = 400;
@@ -497,7 +497,7 @@ export const useAppConfig = (addLog) => {
             selectAndConnect,
             setActiveTab,
         ) => {
-            let countryCode = await detectCountry(proxyData.ip);
+            let countryCode = flagEmojiCountry(proxyData.name) || (await detectCountry(proxyData.ip));
 
             if (
                 countryCode === "unknown" &&
@@ -547,17 +547,20 @@ export const useAppConfig = (addLog) => {
             const finalProxies = await Promise.all(
                 proxiesData.map(async (p, index) => {
                     const isVpn = VPN_TYPES.includes(p.type?.toUpperCase());
+                    const known = (c) => c && c !== "unknown" && c !== "\u{1F310}";
+                    const fromName = flagEmojiCountry(p.name);
                     // Skip country detection for AUTO entries (no real host).
-                    const countryCode =
+                    const detected =
+                        fromName ||
                         p.type?.toUpperCase() === "AUTO" ||
                         p.type?.toUpperCase() === "SECTION" ||
                         !p.ip
-                            ? (p.country || "")
+                            ? ""
                             : await detectCountry(p.ip);
                     return {
                         ...p,
                         id: String(p.id || now + index),
-                        country: p.country && p.country !== "unknown" && p.country !== "\u{1F310}" ? p.country : countryCode,
+                        country: fromName || (known(detected) ? detected : known(p.country) ? p.country : detected || p.country || ""),
                         type: isVpn ? p.type : (defaultProtocol || p.type || "HTTP"),
                         port: parseInt(p.port, 10) || 0,
                     };

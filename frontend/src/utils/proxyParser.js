@@ -861,6 +861,14 @@ export const VPN_TYPES = [
 
 const FLAG_EMOJI_PREFIX = /^[\u{1F1E6}-\u{1F1FF}][\u{1F1E6}-\u{1F1FF}]\s*/u;
 
+/* «🇳🇱 Нидерланды» → "nl", без флага в начале имени — "". */
+export const flagEmojiCountry = (name) => {
+    const m = String(name || "").trim().match(/^([\u{1F1E6}-\u{1F1FF}])([\u{1F1E6}-\u{1F1FF}])/u);
+    if (!m) return "";
+    const letter = (ch) => String.fromCharCode(ch.codePointAt(0) - 0x1f1e6 + 97);
+    return letter(m[1]) + letter(m[2]);
+};
+
 
 export const formatProxyDisplayName = (name, countryCode) => {
     if (!name || typeof name !== "string") return name || "";
