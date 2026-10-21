@@ -3062,11 +3062,12 @@ func (a *App) refreshTrayProxyList() {
 		a.tray.SetDisconnected()
 		a.setWindowTitleDisconnected()
 	}
-	a.tray.UpdateProxyList(a.filterTrayProxiesDiag(cfg.Proxies), selectedID)
+	a.logTrayProxyAnomalies(cfg.Proxies)
+	a.tray.UpdateServerList(buildTrayServerList(cfg), selectedID)
 }
 
-// filterTrayProxiesDiag wraps filterTrayProxies with structured logging that
-// surfaces the two failure modes responsible for "click X, connect to Y":
+// logTrayProxyAnomalies logs the two failure modes responsible for "click X,
+// connect to Y":
 //
 //  1. Duplicate IDs in cfg.Proxies — connectFromTray's linear lookup picks
 //     the FIRST match, so the visually different second entry routes to the
@@ -3078,10 +3079,7 @@ func (a *App) refreshTrayProxyList() {
 // Both anomalies are silent corruption that the user can only detect by
 // observing wrong-server behaviour; logging them here puts a breadcrumb in
 // the log so support can immediately tell what's wrong with a saved config.
-func (a *App) filterTrayProxiesDiag(proxies []config.ProxyEntry) []config.ProxyEntry {
-	if len(proxies) == 0 {
-		return proxies
-	}
+func (a *App) logTrayProxyAnomalies(proxies []config.ProxyEntry) {
 	// ID duplicate detection.
 	idCounts := make(map[string]int, len(proxies))
 	for _, p := range proxies {
@@ -3146,72 +3144,6 @@ func (a *App) filterTrayProxiesDiag(proxies []config.ProxyEntry) []config.ProxyE
 				autoLabel, orphans, len(parsed.Members)))
 		}
 	}
-	return filterTrayProxies(proxies)
-}
-
-// filterTrayProxies returns the proxy entries shown in the tray Servers
-// submenu.
-//
-// Decision (user-driven, 2026-05-28 follow-up #2): the tray shows ONLY the
-// "individual" servers carrying their original subscription name — never
-// AUTO heads, never AUTO members. Specifically it hides:
-//
-//   - AUTO group heads (Type == "AUTO") — auto-routing silently picks a
-//     different-country member, so showing the head in the tray caused
-//     "click Austria, connect to Germany".
-//   - AUTO members — entries the subscription packed into the auto-group
-//     and that the import path renamed to generic "<flag> TYPE #N" labels.
-//     They duplicate the same backends as the human-readable individuals
-//     (subscriptions like impVPN/Remnawave commonly emit both), so showing
-//     them just clutters the tray with anonymous rows.
-//   - SECTION entries — subscription group labels with no IP/Port, never
-//     connectable.
-//
-// AUTO heads (and the routing they perform across renamed members) remain
-// available from the main React UI. The tray is the "I know exactly which
-// server I want, by name" surface; the main window is the "let the app
-// pick" surface.
-func filterTrayProxies(proxies []config.ProxyEntry) []config.ProxyEntry {
-	if len(proxies) == 0 {
-		return proxies
-	}
-	memberIDs := make(map[string]struct{})
-	for _, p := range proxies {
-		if !strings.EqualFold(p.Type, "AUTO") || len(p.Extra) == 0 {
-			continue
-		}
-		var parsed struct {
-			Members []string `json:"members"`
-		}
-		if p.Extra[0] == '"' {
-			var s string
-			if err := json.Unmarshal(p.Extra, &s); err == nil {
-				_ = json.Unmarshal([]byte(s), &parsed)
-			}
-		} else {
-			_ = json.Unmarshal(p.Extra, &parsed)
-		}
-		for _, id := range parsed.Members {
-			if id != "" {
-				memberIDs[id] = struct{}{}
-			}
-		}
-	}
-	out := make([]config.ProxyEntry, 0, len(proxies))
-	for _, p := range proxies {
-		t := strings.ToUpper(strings.TrimSpace(p.Type))
-		if t == "SECTION" {
-			continue
-		}
-		if t == "AUTO" {
-			continue
-		}
-		if _, isMember := memberIDs[p.ID]; isMember {
-			continue
-		}
-		out = append(out, p)
-	}
-	return out
 }
 
 func (a *App) setLastSelectedProxy(proxyID string) error {

@@ -22,6 +22,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/energye/systray"
 	"resultproxy-wails/internal/config"
@@ -80,38 +82,64 @@ type Tray struct {
 	miShowWindow *systray.MenuItem
 	miQuit       *systray.MenuItem
 
-	// Server submenu items, keyed by proxy ID. energye/systray cannot
-	// physically remove menu items, only Hide() them; on a list refresh we
-	// reuse existing items (SetTitle, Check/Uncheck) and Hide() the ones
-	// that disappeared. New IDs get freshly added.
-	serverItems map[string]*systray.MenuItem
-
 	selectedProxyID  string
 	connectedProxyID string
 	currentState     connectionState
 	fallbackName     string
-	proxyLookup      map[string]config.ProxyEntry
 
-	// pending* hold UpdateProxyList input that arrived before onReady fired.
-	// onReady applies them after the menu skeleton is built.
-	pendingApply       bool
-	pendingProxies     []config.ProxyEntry
-	pendingSelectedID  string
-	pendingStateInit   bool
-	pendingState       connectionState
-	pendingConnectedID string
-	pendingFallback    string
+	rows       []trayServerRow
+	rowTitles  map[string]string
+	autoHeadOf map[string]string
+	// slotIDs[i] is the proxy behind the i-th Servers item, "" for a header.
+	slotIDs []string
+
+	// energye/systray orders items by creation and cannot delete them, so
+	// the Servers items are positional slots: slot i shows row i, and slots
+	// past the end of the list are hidden.
+	renderMu      sync.Mutex
+	slots         []*traySlot
+	serversActive bool
+}
+
+// TrayServerGroup is one block of the Servers submenu. An empty Label means
+// no header line.
+type TrayServerGroup struct {
+	Label   string
+	Proxies []config.ProxyEntry
+}
+
+// TrayServerList is the content of the Servers submenu, in display order.
+type TrayServerList struct {
+	Groups []TrayServerGroup
+	// AutoHeadOf maps an AUTO member to the AUTO head listed in its place:
+	// a connection made through the head is reported with the member's ID.
+	AutoHeadOf map[string]string
+}
+
+type trayServerRow struct {
+	proxyID string
+	title   string
+	icon    string
+}
+
+type traySlot struct {
+	item    *systray.MenuItem
+	visible bool
+	header  bool
+	title   string
+	icon    string
+	mark    trayMark
+	iconSet bool
 }
 
 // NewTray returns a tray bound to the given .ico bytes (used as the
 // notification-area icon) and the callback bundle.
 func NewTray(icon []byte, cb TrayCallbacks) *Tray {
 	return &Tray{
-		icon:        icon,
-		callbacks:   cb,
-		exited:      make(chan struct{}),
-		serverItems: make(map[string]*systray.MenuItem),
-		proxyLookup: make(map[string]config.ProxyEntry),
+		icon:          icon,
+		callbacks:     cb,
+		exited:        make(chan struct{}),
+		serversActive: true,
 	}
 }
 
@@ -171,25 +199,9 @@ func (t *Tray) onReady() {
 
 	t.mu.Lock()
 	t.running = true
-	pendingApply := t.pendingApply
-	proxies := t.pendingProxies
-	selectedID := t.pendingSelectedID
-	pendingStateInit := t.pendingStateInit
-	state := t.pendingState
-	connectedID := t.pendingConnectedID
-	fallback := t.pendingFallback
-	t.pendingApply = false
-	t.pendingProxies = nil
-	t.pendingStateInit = false
 	t.mu.Unlock()
 
-	if pendingApply {
-		t.applyProxyList(proxies, selectedID)
-	}
-	if pendingStateInit {
-		t.applyConnectionState(state, connectedID, fallback)
-	}
-
+	t.renderServers()
 	t.refreshTooltipAndItems()
 }
 
@@ -283,17 +295,9 @@ func (t *Tray) SetDisconnected() {
 func (t *Tray) SetKillSwitchActive() {
 	t.mu.Lock()
 	t.currentState = connectionStateKillSwitch
-	running := t.running
-	if !running {
-		t.pendingStateInit = true
-		t.pendingState = connectionStateKillSwitch
-		t.pendingConnectedID = t.connectedProxyID
-		t.pendingFallback = t.fallbackName
-	}
 	t.mu.Unlock()
-	if running {
-		t.refreshTooltipAndItems()
-	}
+	t.refreshTooltipAndItems()
+	t.renderServers()
 }
 
 func (t *Tray) applyConnectionState(state connectionState, proxyID, fallbackName string) {
@@ -309,129 +313,164 @@ func (t *Tray) applyConnectionState(state connectionState, proxyID, fallbackName
 		t.connectedProxyID = ""
 		t.fallbackName = ""
 	}
-	running := t.running
-	if !running {
-		t.pendingStateInit = true
-		t.pendingState = state
-		t.pendingConnectedID = t.connectedProxyID
-		t.pendingFallback = t.fallbackName
-	}
 	t.mu.Unlock()
-	if running {
-		t.refreshTooltipAndItems()
-		t.refreshSelectedCheckmark()
-	}
+	t.refreshTooltipAndItems()
+	t.renderServers()
 }
 
-// UpdateProxyList rebuilds the Servers submenu. The caller is expected to
-// pre-filter the list (no AUTO heads, no SECTION entries) — the tray does
-// not implement AUTO routing.
-func (t *Tray) UpdateProxyList(proxies []config.ProxyEntry, selectedProxyID string) {
-	t.mu.Lock()
-	running := t.running
-	if !running {
-		t.pendingApply = true
-		// Defensive copy: caller's slice may be mutated after this call.
-		t.pendingProxies = append([]config.ProxyEntry(nil), proxies...)
-		t.pendingSelectedID = selectedProxyID
-		t.mu.Unlock()
-		return
+// UpdateServerList replaces the content of the Servers submenu.
+func (t *Tray) UpdateServerList(list TrayServerList, selectedProxyID string) {
+	var rows []trayServerRow
+	titles := make(map[string]string)
+	for _, g := range list.Groups {
+		if g.Label != "" {
+			rows = append(rows, trayServerRow{title: g.Label})
+		}
+		for _, p := range g.Proxies {
+			if p.ID == "" {
+				continue
+			}
+			row := trayServerRow{proxyID: p.ID, title: trayServerTitle(p), icon: trayServerIcon(p)}
+			rows = append(rows, row)
+			titles[p.ID] = row.title
+		}
 	}
-	t.mu.Unlock()
-	t.applyProxyList(proxies, selectedProxyID)
-}
 
-func (t *Tray) applyProxyList(proxies []config.ProxyEntry, selectedProxyID string) {
 	t.mu.Lock()
 	if selectedProxyID != "" {
 		t.selectedProxyID = selectedProxyID
 	}
-	// Rebuild the lookup map for tooltips.
-	t.proxyLookup = make(map[string]config.ProxyEntry, len(proxies))
-	for _, p := range proxies {
-		t.proxyLookup[p.ID] = p
-	}
-
-	seen := make(map[string]struct{}, len(proxies))
-	miServers := t.miServers
+	t.rows = rows
+	t.rowTitles = titles
+	t.autoHeadOf = list.AutoHeadOf
 	t.mu.Unlock()
 
-	if miServers == nil {
-		return
-	}
-
-	for _, p := range proxies {
-		if p.ID == "" {
-			continue
-		}
-		seen[p.ID] = struct{}{}
-		label := serverMenuLabel(p)
-		tooltip := serverMenuTooltip(p)
-
-		t.mu.Lock()
-		item, exists := t.serverItems[p.ID]
-		t.mu.Unlock()
-
-		if exists {
-			item.SetTitle(label)
-			item.SetTooltip(tooltip)
-			item.Show()
-		} else {
-			id := p.ID // capture for closure
-			item = miServers.AddSubMenuItemCheckbox(label, tooltip, false)
-			item.Click(func() {
-				// connectFromTray persists LastSelectedProxyID itself, so a
-				// separate OnSelectProxy is redundant. Dispatched to a fresh
-				// goroutine for the same reason as the main-menu handlers
-				// (see buildMenu comment).
-				go t.safeCall(func() {
-					if t.callbacks.OnConnectSelected != nil {
-						t.callbacks.OnConnectSelected(id)
-					}
-				})
-			})
-			t.mu.Lock()
-			t.serverItems[p.ID] = item
-			t.mu.Unlock()
-		}
-	}
-
-	// Hide items for proxies no longer in the list. energye/systray has no
-	// remove API, so we accept the residue in the underlying HMENU.
-	t.mu.Lock()
-	for id, item := range t.serverItems {
-		if _, ok := seen[id]; !ok {
-			item.Hide()
-		}
-	}
-	t.mu.Unlock()
-
-	t.refreshSelectedCheckmark()
+	t.renderServers()
 	t.refreshTooltipAndItems()
 }
 
-// refreshSelectedCheckmark updates the radio-like checkmark in the Servers
-// submenu so only the currently-selected (or, when connected, the connected)
-// proxy is checked.
-func (t *Tray) refreshSelectedCheckmark() {
-	t.mu.Lock()
-	target := t.connectedProxyID
-	if target == "" {
-		target = t.selectedProxyID
+// listedIDLocked maps a proxy ID to the row that stands for it: itself, or
+// the AUTO head it was reached through. "" when nothing in the list matches.
+func (t *Tray) listedIDLocked(id string) string {
+	if id == "" {
+		return ""
 	}
-	items := make(map[string]*systray.MenuItem, len(t.serverItems))
-	for k, v := range t.serverItems {
-		items[k] = v
+	if _, ok := t.rowTitles[id]; ok {
+		return id
+	}
+	if head, ok := t.autoHeadOf[id]; ok {
+		if _, listed := t.rowTitles[head]; listed {
+			return head
+		}
+	}
+	return ""
+}
+
+// renderServers brings the Servers items in line with t.rows. Each energye
+// call rewrites the native item, so only what changed is touched.
+func (t *Tray) renderServers() {
+	t.renderMu.Lock()
+	defer t.renderMu.Unlock()
+
+	t.mu.Lock()
+	rows := t.rows
+	parent := t.miServers
+	running := t.running
+	markKind := trayMarkSelected
+	markID := t.listedIDLocked(t.selectedProxyID)
+	if t.currentState == connectionStateConnected {
+		markKind = trayMarkConnected
+		markID = t.listedIDLocked(t.connectedProxyID)
 	}
 	t.mu.Unlock()
 
-	for id, item := range items {
-		if id == target {
-			item.Check()
-		} else {
-			item.Uncheck()
+	if !running || parent == nil {
+		return
+	}
+
+	ids := make([]string, len(rows))
+	for i, row := range rows {
+		ids[i] = row.proxyID
+		header := row.proxyID == ""
+		mark := trayMarkNone
+		if !header && row.proxyID == markID {
+			mark = markKind
+		}
+
+		if i == len(t.slots) {
+			t.slots = append(t.slots, t.newServerSlot(parent, i, row.title))
+		}
+		s := t.slots[i]
+		if !s.visible {
+			s.item.Show()
+			s.visible = true
+		}
+		if s.title != row.title {
+			s.item.SetTitle(trayMenuText(row.title))
+			s.title = row.title
+		}
+		if !s.iconSet || s.header != header || s.icon != row.icon || s.mark != mark {
+			if header {
+				setTrayItemIcon(s.item, trayHeaderIcon())
+			} else {
+				setTrayItemIcon(s.item, trayMenuIcon(row.icon, mark))
+			}
+			s.icon, s.mark, s.iconSet = row.icon, mark, true
+		}
+		if s.header != header {
+			if header {
+				s.item.Disable()
+			} else {
+				s.item.Enable()
+			}
+			s.header = header
 		}
 	}
+	for _, s := range t.slots[len(rows):] {
+		if s.visible {
+			s.item.Hide()
+			s.visible = false
+		}
+	}
+
+	if active := len(rows) > 0; active != t.serversActive {
+		if active {
+			parent.Enable()
+		} else {
+			parent.Disable()
+		}
+		t.serversActive = active
+	}
+
+	t.mu.Lock()
+	t.slotIDs = ids
+	t.mu.Unlock()
+}
+
+// newServerSlot adds the next Servers item. Its click resolves the proxy
+// through slotIDs, because the slot shows whatever row lands at its index.
+func (t *Tray) newServerSlot(parent *systray.MenuItem, index int, title string) *traySlot {
+	item := parent.AddSubMenuItem(trayMenuText(title), "")
+	item.Click(func() {
+		t.mu.Lock()
+		var id string
+		if index < len(t.slotIDs) {
+			id = t.slotIDs[index]
+		}
+		t.mu.Unlock()
+		if id == "" {
+			return
+		}
+		// connectFromTray persists LastSelectedProxyID itself, so a separate
+		// OnSelectProxy is redundant. Dispatched to a fresh goroutine for the
+		// same reason as the main-menu handlers (see buildMenu comment).
+		go t.safeCall(func() {
+			if t.callbacks.OnConnectSelected != nil {
+				t.callbacks.OnConnectSelected(id)
+			}
+		})
+	})
+	return &traySlot{item: item, visible: true, title: title}
 }
 
 // refreshTooltipAndItems updates the icon tooltip and the enabled state of
@@ -479,12 +518,8 @@ func (t *Tray) tooltipForStateLocked() string {
 }
 
 func (t *Tray) connectedLabelLocked() string {
-	if entry, ok := t.proxyLookup[t.connectedProxyID]; ok {
-		name := strings.TrimSpace(entry.Name)
-		if name != "" {
-			return name
-		}
-		return fmt.Sprintf("%s:%d", entry.IP, entry.Port)
+	if id := t.listedIDLocked(t.connectedProxyID); id != "" {
+		return t.rowTitles[id]
 	}
 	if t.fallbackName != "" {
 		return t.fallbackName
@@ -531,64 +566,72 @@ func (t *Tray) safeCall(fn func()) {
 	fn()
 }
 
-// serverMenuLabel renders the menu line for one proxy.
-//
-// Regular servers:   "🇦🇹  Austria"
-// AUTO group heads:  "[AUTO] Austria  ⚡"  (NO country flag prefix, even if
-//   the AUTO head somehow has one — auto-routing picks the best-pinging
-//   member which may sit in a different country, so showing a flag would
-//   mislead the user into thinking they're locking onto that country).
-//
-// The "[AUTO]" prefix is intentionally ASCII so it renders identically on
-// every Windows locale/font combination — Segoe UI Emoji has spotty support
-// for some regional-indicator pairs and we don't want the marker to ever
-// degrade to invisible.
-func serverMenuLabel(p config.ProxyEntry) string {
+// trayServerTitle mirrors formatProxyDisplayName in the main window: the
+// flag the provider put in front of the name is drawn as the icon, so the
+// emoji goes, and so does a country code repeating it.
+func trayServerTitle(p config.ProxyEntry) string {
 	name := strings.TrimSpace(p.Name)
 	if name == "" {
-		name = fmt.Sprintf("%s:%d", p.IP, p.Port)
+		return fmt.Sprintf("%s:%d", p.IP, p.Port)
 	}
-	if strings.EqualFold(strings.TrimSpace(p.Type), "AUTO") {
-		return "[AUTO] " + name + "  ⚡"
+	s := name
+	if _, rest, ok := cutFlagEmoji(s); ok {
+		s = strings.TrimLeftFunc(rest, unicode.IsSpace)
 	}
-	if flag := flagEmoji(p.Country); flag != "" {
-		return flag + "  " + name
-	}
-	return name
-}
-
-// serverMenuTooltip explains in plain Russian what clicking the entry will
-// do. For AUTO entries the tooltip names the routing behaviour explicitly
-// so the user is not surprised when a click resolves to a different country
-// than the AUTO group's display name.
-func serverMenuTooltip(p config.ProxyEntry) string {
-	if strings.EqualFold(strings.TrimSpace(p.Type), "AUTO") {
-		return "Авто-выбор: подключится к лучшему по пингу узлу подписки"
-	}
-	parts := make([]string, 0, 3)
-	if t := strings.TrimSpace(p.Type); t != "" {
-		parts = append(parts, strings.ToUpper(t))
-	}
-	if p.IP != "" && p.Port > 0 {
-		parts = append(parts, fmt.Sprintf("%s:%d", p.IP, p.Port))
-	}
-	return strings.Join(parts, " · ")
-}
-
-// flagEmoji returns the regional-indicator emoji pair for a 2-letter ISO
-// country code. Returns "" for any input that isn't exactly two ASCII
-// letters.
-func flagEmoji(country string) string {
-	c := strings.ToUpper(strings.TrimSpace(country))
-	if len(c) != 2 {
-		return ""
-	}
-	for i := 0; i < 2; i++ {
-		if c[i] < 'A' || c[i] > 'Z' {
-			return ""
+	if cc := trayCountry(p); cc != "" && len(s) > 2 && strings.EqualFold(s[:2], cc) {
+		if r, _ := utf8.DecodeRuneInString(s[2:]); unicode.IsSpace(r) {
+			if next := strings.TrimSpace(s[2:]); next != "" {
+				s = next
+			}
 		}
 	}
-	// 'A' (0x41) → regional indicator 'A' (0x1F1E6). Offset = 0x1F1A5.
-	const offset = rune(0x1F1E6 - 'A')
-	return string([]rune{rune(c[0]) + offset, rune(c[1]) + offset})
+	if s = strings.TrimSpace(s); s == "" {
+		return name
+	}
+	return s
+}
+
+func trayServerIcon(p config.ProxyEntry) string {
+	if strings.EqualFold(strings.TrimSpace(p.Type), "AUTO") {
+		return trayIconAuto
+	}
+	if cc := trayCountry(p); cc != "" && trayHasIcon(cc) {
+		return cc
+	}
+	return trayIconGlobe
+}
+
+// trayCountry returns the lowercase ISO code of the server's country: the
+// Country field (a code or a flag emoji), else the flag the name starts with.
+func trayCountry(p config.ProxyEntry) string {
+	c := strings.TrimSpace(p.Country)
+	if len(c) == 2 && isASCIILetter(c[0]) && isASCIILetter(c[1]) {
+		return strings.ToLower(c)
+	}
+	if cc, _, ok := cutFlagEmoji(c); ok {
+		return cc
+	}
+	if cc, _, ok := cutFlagEmoji(strings.TrimSpace(p.Name)); ok {
+		return cc
+	}
+	return ""
+}
+
+// cutFlagEmoji splits a leading regional-indicator pair off s and returns it
+// as a lowercase country code.
+func cutFlagEmoji(s string) (cc, rest string, ok bool) {
+	const first, last = 0x1F1E6, 0x1F1FF
+	r1, n1 := utf8.DecodeRuneInString(s)
+	if r1 < first || r1 > last {
+		return "", s, false
+	}
+	r2, n2 := utf8.DecodeRuneInString(s[n1:])
+	if r2 < first || r2 > last {
+		return "", s, false
+	}
+	return string([]rune{'a' + r1 - first, 'a' + r2 - first}), s[n1+n2:], true
+}
+
+func isASCIILetter(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
