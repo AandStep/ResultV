@@ -256,3 +256,61 @@ func TestGetRoutingProfilesCopiesOutOfTheLiveConfig(t *testing.T) {
 		t.Fatal("the returned slice aliases the live config")
 	}
 }
+
+// The UI keeps the routing rules it loaded at startup and sends all of them
+// back on every change of its own. Profiles and lists are changed only through
+// their own calls, so that copy of them is stale by then.
+func TestStaleRulesFromUIDoNotRestoreProfiles(t *testing.T) {
+	for _, via := range []string{"UpdateRules", "SaveConfig"} {
+		t.Run(via, func(t *testing.T) {
+			a := newTestApp(t, t.TempDir())
+			old, err := a.SaveRoutingProfile(config.RoutingProfile{
+				Name: "Старый", DirectSites: []string{"a.test"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := a.SetActiveRoutingProfile(old.ID); err != nil {
+				t.Fatal(err)
+			}
+			staleCfg := a.config.GetConfig()
+			stale := staleCfg.RoutingRules
+
+			fresh, err := a.SaveRoutingProfile(config.RoutingProfile{
+				Name: "Новый", DirectSites: []string{"b.test"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := a.SetActiveRoutingProfile(fresh.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err := a.DeleteRoutingProfile(old.ID); err != nil {
+				t.Fatal(err)
+			}
+
+			stale.Whitelist = []string{"changed.test"}
+			switch via {
+			case "UpdateRules":
+				err = a.UpdateRules(stale)
+			case "SaveConfig":
+				staleCfg.RoutingRules = stale
+				err = a.SaveConfig(staleCfg)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			rr := a.config.GetConfig().RoutingRules
+			if len(rr.Profiles) != 1 || rr.Profiles[0].ID != fresh.ID {
+				t.Errorf("profiles = %+v, want only %q", rr.Profiles, fresh.Name)
+			}
+			if rr.ActiveProfileID != fresh.ID {
+				t.Errorf("active = %q, want %q", rr.ActiveProfileID, fresh.ID)
+			}
+			if len(rr.Whitelist) != 1 || rr.Whitelist[0] != "changed.test" {
+				t.Errorf("the UI's own change was lost: whitelist = %v", rr.Whitelist)
+			}
+		})
+	}
+}

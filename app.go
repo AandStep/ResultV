@@ -806,12 +806,23 @@ func (a *App) SaveConfig(cfg config.AppConfig) error {
 	// The frontend holds the settings it loaded at startup; AckChangelog has
 	// moved this field on since, and a stale copy would bring the notes back.
 	cfg.Settings.LastChangelogVersion = existing.Settings.LastChangelogVersion
+	cfg.RoutingRules = keepBackendRouting(cfg.RoutingRules, existing.RoutingRules)
 	if err := a.config.SaveConfig(cfg); err != nil {
 		a.log.Error(fmt.Sprintf("Ошибка сохранения конфигурации: %v", err))
 		return err
 	}
 	a.log.Success("Конфигурация сохранена")
 	return nil
+}
+
+// keepBackendRouting puts back what only the backend changes. The UI sends the
+// routing rules it loaded at startup with every change of its own, and by then
+// its copy of profiles and lists is stale: a deleted profile would come back.
+func keepBackendRouting(incoming, stored config.RoutingRules) config.RoutingRules {
+	incoming.Profiles = stored.Profiles
+	incoming.ActiveProfileID = stored.ActiveProfileID
+	incoming.RoutingLists = stored.RoutingLists
+	return incoming
 }
 
 func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
@@ -1483,6 +1494,7 @@ func (a *App) UpdateRules(rules config.RoutingRules) error {
 	if a.config == nil {
 		return fmt.Errorf("config manager not initialized")
 	}
+	rules = keepBackendRouting(rules, a.config.GetConfig().RoutingRules)
 	if err := a.config.UpdateRoutingRules(rules); err != nil {
 		return err
 	}
