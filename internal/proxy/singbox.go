@@ -112,6 +112,27 @@ func isTunAdapterUnavailableError(err error) bool {
 	return strings.HasPrefix(lower[idx+len(marker):], "the system cannot find the file specified")
 }
 
+const tunAdapterBusyReason = "TUN-адаптер всё ещё занят прежним сеансом ResultV, который не завершается. " +
+	"Если повторное подключение не поможет, перезагрузите компьютер — именно «Перезагрузка»: " +
+	"«Завершение работы» при быстром запуске Windows это состояние не сбрасывает."
+
+// isTunAdapterBusyError reports whether Wintun refused to create the adapter
+// because a live process still owns one with the same GUID. Wintun returns the
+// HRESULT 0x800700B7, which errors.Is does not take for os.ErrExist, so sing-tun
+// passes it on bare instead of trying OpenAdapter.
+func isTunAdapterBusyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	const marker = "configure tun interface: "
+	idx := strings.Index(lower, marker)
+	if idx < 0 {
+		return false
+	}
+	return strings.HasPrefix(lower[idx+len(marker):], "cannot create a file when that file already exists")
+}
+
 func ClassifyEngineStartError(mode ProxyMode, err error) (tunnelFailed bool, reason string, errorCode string) {
 	if err == nil {
 		return false, "", ""
@@ -133,6 +154,9 @@ func ClassifyEngineStartError(mode ProxyMode, err error) (tunnelFailed bool, rea
 	// that cannot possibly help.
 	if mode == ProxyModeTunnel && isTunAdapterUnavailableError(err) {
 		return true, tunAdapterUnavailableReason, ConnectErrorTunAdapter
+	}
+	if mode == ProxyModeTunnel && isTunAdapterBusyError(err) {
+		return true, tunAdapterBusyReason, ConnectErrorTunBusy
 	}
 	if mode == ProxyModeTunnel &&
 		(strings.Contains(lower, "configure tun interface") ||

@@ -18,6 +18,8 @@ package proxy
 import (
 	"os"
 	"testing"
+
+	"resultproxy-wails/internal/system"
 )
 
 // TestMain installs a throwaway, disk-backed node-stat store for the whole
@@ -102,6 +104,9 @@ func sealSystemTunHooks() {
 	removeStaleTunAdapterFn = func() ([]string, error) {
 		panic("removeStaleTunAdapter is sealed in tests — it runs `pnputil /remove-device` on the LIVE TUN device; install stubRemoveStaleTunAdapter(t) in this test")
 	}
+	// It ends other processes of this executable — a parallel `go test` of this
+	// package among them. Answering "nobody else" is what a clean machine says.
+	releaseTunHoldersFn = func() system.OtherInstancesReport { return system.OtherInstancesReport{} }
 }
 
 // isolateNodeStats gives one test its own empty node-stat store and restores
