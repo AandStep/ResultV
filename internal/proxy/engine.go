@@ -813,12 +813,10 @@ func smartTunneledAppRegexes(cfg EngineConfig) []string {
 	return appWhitelistPathRegexes(smartTunneledApps)
 }
 
-// smartTorrentApps are the torrent clients the adaptive engine never sends
-// through the node. Their peers are bare addresses nothing knows about, so the
-// race would tunnel every peer the direct path did not answer for in time, and
-// a node that blocks BitTorrent bans the client's address for all traffic.
-// The process rule catches what the sniffer cannot: MSE-encrypted peer traffic.
-var smartTorrentApps = []string{
+// torrentApps are the torrent clients tunnel mode never sends through the node:
+// a node that blocks BitTorrent bans the client's address for all traffic. The
+// process rule catches what the sniffer cannot: MSE-encrypted peer traffic.
+var torrentApps = []string{
 	"qbittorrent.exe",
 	"uTorrent.exe",
 	"utweb.exe",
@@ -844,11 +842,17 @@ var smartTorrentApps = []string{
 	"Transmission",
 }
 
-func smartTorrentAppRegexes(cfg EngineConfig) []string {
-	if !adaptiveSmartActive(cfg) {
+// torrentDirectActive is false in proxy mode: a torrent client only reaches the
+// engine there when the user pointed it at the local proxy.
+func torrentDirectActive(cfg EngineConfig) bool {
+	return cfg.Mode == ProxyModeTunnel
+}
+
+func torrentAppRegexes(cfg EngineConfig) []string {
+	if !torrentDirectActive(cfg) {
 		return nil
 	}
-	return appWhitelistPathRegexes(smartTorrentApps)
+	return appWhitelistPathRegexes(torrentApps)
 }
 
 func quicRejectRule(sel SBRouteRule) SBRouteRule {
@@ -2078,10 +2082,10 @@ func splitDNSServer(raw string) (string, int) {
 func buildRoute(cfg EngineConfig) *SBRoute {
 	cfg = cfg.forRoutingMode()
 	builtinAppRegexes := smartTunneledAppRegexes(cfg)
-	torrentAppRegexes := smartTorrentAppRegexes(cfg)
+	torrentRegexes := torrentAppRegexes(cfg)
 	findProcess := len(cfg.AppWhitelist) > 0 ||
 		(cfg.Mode == ProxyModeTunnel && len(cfg.AppForceVPN) > 0) ||
-		len(builtinAppRegexes) > 0 || len(torrentAppRegexes) > 0
+		len(builtinAppRegexes) > 0 || len(torrentRegexes) > 0
 	// Smart mode inverts the default: everything goes direct and only the
 	// censored block-list is tunneled (see the blocked-domain rule below).
 	// Global/Whitelist keep proxy as the catch-all.
@@ -2162,6 +2166,16 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	// an app is the most explicit thing they can say, and it covers every
 	// process the app starts (appfamily.go).
 	rules = append(rules, appFamilyRouteRules(cfg)...)
+
+	// Ahead of the user's address lists: BitTorrent through the node gets the
+	// client banned there, whatever list the peer happens to fall into.
+	if torrentDirectActive(cfg) {
+		rules = append(rules, SBRouteRule{
+			Action:   "route",
+			Protocol: []string{"bittorrent"},
+			Outbound: "direct",
+		})
+	}
 
 	// User routing lists win over the built-in Smart/whitelist/ad-block rules:
 	// inserted here, after the DNS/server infra rules but before every built-in.
@@ -2278,16 +2292,6 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		})
 	}
 
-	// Ahead of the block-list: BitTorrent through the node gets the client
-	// banned there, whatever the destination is called.
-	if adaptiveSmartActive(cfg) {
-		rules = append(rules, SBRouteRule{
-			Action:   "route",
-			Protocol: []string{"bittorrent"},
-			Outbound: "direct",
-		})
-	}
-
 	// Smart mode: tunnel the censored block-list, leave everything else direct
 	// (Final="direct"). The Smart sites list ("route via VPN") edits
 	// config.RoutingRules.CustomBlockedDomains, which Router.GetBlockedDomains
@@ -2345,12 +2349,12 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		})
 	}
 
-	// After the block-list, so a blocked tracker or web seed still reaches the
-	// node; what is left is peers, which must not.
-	if len(torrentAppRegexes) > 0 {
+	// After the user's lists and the block-list, so a tracker or web seed listed
+	// for the node still reaches it; what is left is peers, which must not.
+	if len(torrentRegexes) > 0 {
 		rules = append(rules, SBRouteRule{
 			Action:           "route",
-			ProcessPathRegex: torrentAppRegexes,
+			ProcessPathRegex: torrentRegexes,
 			Outbound:         "direct",
 		})
 	}

@@ -110,22 +110,76 @@ func TestTorrentClientsForcedThroughVPNStayInTheTunnel(t *testing.T) {
 	}
 }
 
-// Without the adaptive engine nothing unlisted can reach the node, and Global
-// sends everything there on purpose.
-func TestTorrentRulesOnlyWithAdaptiveSmart(t *testing.T) {
-	cfg := adaptiveTorrentConfig()
-	cfg.AdaptiveSmart = false
-	smart := buildRoute(cfg)
 
-	cfg.RoutingMode = ModeGlobal
-	global := buildRoute(cfg)
+func globalTorrentConfig(t *testing.T) EngineConfig {
+	t.Helper()
+	dir := t.TempDir()
+	if err := WriteRoutingListRuleSet(dir, "p", ParsedRoutingList{CIDRs: []string{"198.51.100.0/24"}}); err != nil {
+		t.Fatal(err)
+	}
+	return EngineConfig{
+		Mode:        ProxyModeTunnel,
+		RoutingMode: ModeGlobal,
+		DataDir:     dir,
+		Proxy:       ProxyConfig{IP: "203.0.113.7", Port: 443, Type: "vless"},
+		RoutingLists: []RoutingListSpec{
+			{Tag: "rl-p", Path: RoutingListCachePath(dir, "p"), Action: "proxy"},
+		},
+	}
+}
 
-	for name, route := range map[string]*SBRoute{"smart": smart, "global": global} {
+func routingListRuleIndex(rules []SBRouteRule, tag string) int {
+	for i, r := range rules {
+		if slices.Contains(r.RuleSet, tag) {
+			return i
+		}
+	}
+	return -1
+}
+
+// Global sends everything to the node, and the node bans BitTorrent.
+func TestGlobalSendsTorrentsDirect(t *testing.T) {
+	route := buildRoute(globalTorrentConfig(t))
+
+	list := routingListRuleIndex(route.Rules, "rl-p")
+	if list < 0 {
+		t.Fatalf("routing list rule missing, rules=%+v", route.Rules)
+	}
+	// A peer that happens to sit in a "via VPN" range would still be banned.
+	if proto := torrentProtocolRuleIndex(route.Rules); proto < 0 || proto > list {
+		t.Errorf("bittorrent rule (idx=%d) must precede the user's lists (idx=%d)", proto, list)
+	}
+	if app := torrentClientRuleIndex(t, route.Rules); app < 0 || app < list {
+		t.Errorf("torrent client rule (idx=%d) must follow the user's lists (idx=%d)", app, list)
+	}
+	if !route.FindProcess {
+		t.Error("find_process must be on for the torrent client rule")
+	}
+}
+
+func TestTorrentRulesInEveryTunnelModeOnly(t *testing.T) {
+	smart := adaptiveTorrentConfig()
+	smart.AdaptiveSmart = false
+	whitelist := globalTorrentConfig(t)
+	whitelist.RoutingMode = ModeWhitelist
+	for name, cfg := range map[string]EngineConfig{"smart": smart, "whitelist": whitelist} {
+		route := buildRoute(cfg)
+		if torrentProtocolRuleIndex(route.Rules) < 0 || torrentClientRuleIndex(t, route.Rules) < 0 {
+			t.Errorf("%s: torrent rules missing", name)
+		}
+	}
+
+	// A torrent client set to use the local proxy asked for it.
+	for _, mode := range []RoutingMode{ModeSmart, ModeGlobal} {
+		cfg := globalTorrentConfig(t)
+		cfg.Mode = ProxyModeProxy
+		cfg.RoutingMode = mode
+		route := buildRoute(cfg)
 		if i := torrentProtocolRuleIndex(route.Rules); i >= 0 {
-			t.Errorf("%s: unexpected bittorrent rule at %d", name, i)
+			t.Errorf("proxy mode %s: unexpected bittorrent rule at %d", mode, i)
 		}
 		if i := torrentClientRuleIndex(t, route.Rules); i >= 0 {
-			t.Errorf("%s: unexpected torrent client rule at %d", name, i)
+			t.Errorf("proxy mode %s: unexpected torrent client rule at %d", mode, i)
 		}
 	}
 }
