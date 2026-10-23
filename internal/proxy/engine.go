@@ -813,6 +813,44 @@ func smartTunneledAppRegexes(cfg EngineConfig) []string {
 	return appWhitelistPathRegexes(smartTunneledApps)
 }
 
+// smartTorrentApps are the torrent clients the adaptive engine never sends
+// through the node. Their peers are bare addresses nothing knows about, so the
+// race would tunnel every peer the direct path did not answer for in time, and
+// a node that blocks BitTorrent bans the client's address for all traffic.
+// The process rule catches what the sniffer cannot: MSE-encrypted peer traffic.
+var smartTorrentApps = []string{
+	"qbittorrent.exe",
+	"uTorrent.exe",
+	"utweb.exe",
+	"BitTorrent.exe",
+	"btweb.exe",
+	"BitComet.exe",
+	"tixati.exe",
+	"transmission-qt.exe",
+	"transmission-daemon.exe",
+	"deluge.exe",
+	"deluged.exe",
+	"PicoTorrent.exe",
+	"MediaGet.exe",
+	"BiglyBT.exe",
+	"Tribler.exe",
+	"WebTorrent.exe",
+	"qbittorrent",
+	"qbittorrent-nox",
+	"transmission-gtk",
+	"transmission-qt",
+	"transmission-daemon",
+	"ktorrent",
+	"Transmission",
+}
+
+func smartTorrentAppRegexes(cfg EngineConfig) []string {
+	if !adaptiveSmartActive(cfg) {
+		return nil
+	}
+	return appWhitelistPathRegexes(smartTorrentApps)
+}
+
 func quicRejectRule(sel SBRouteRule) SBRouteRule {
 	sel.Action = "reject"
 	sel.Method = "default"
@@ -2040,9 +2078,10 @@ func splitDNSServer(raw string) (string, int) {
 func buildRoute(cfg EngineConfig) *SBRoute {
 	cfg = cfg.forRoutingMode()
 	builtinAppRegexes := smartTunneledAppRegexes(cfg)
+	torrentAppRegexes := smartTorrentAppRegexes(cfg)
 	findProcess := len(cfg.AppWhitelist) > 0 ||
 		(cfg.Mode == ProxyModeTunnel && len(cfg.AppForceVPN) > 0) ||
-		len(builtinAppRegexes) > 0
+		len(builtinAppRegexes) > 0 || len(torrentAppRegexes) > 0
 	// Smart mode inverts the default: everything goes direct and only the
 	// censored block-list is tunneled (see the blocked-domain rule below).
 	// Global/Whitelist keep proxy as the catch-all.
@@ -2239,6 +2278,16 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		})
 	}
 
+	// Ahead of the block-list: BitTorrent through the node gets the client
+	// banned there, whatever the destination is called.
+	if adaptiveSmartActive(cfg) {
+		rules = append(rules, SBRouteRule{
+			Action:   "route",
+			Protocol: []string{"bittorrent"},
+			Outbound: "direct",
+		})
+	}
+
 	// Smart mode: tunnel the censored block-list, leave everything else direct
 	// (Final="direct"). The Smart sites list ("route via VPN") edits
 	// config.RoutingRules.CustomBlockedDomains, which Router.GetBlockedDomains
@@ -2293,6 +2342,16 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 			Action:       "route",
 			DomainSuffix: suffixes,
 			Outbound:     "direct",
+		})
+	}
+
+	// After the block-list, so a blocked tracker or web seed still reaches the
+	// node; what is left is peers, which must not.
+	if len(torrentAppRegexes) > 0 {
+		rules = append(rules, SBRouteRule{
+			Action:           "route",
+			ProcessPathRegex: torrentAppRegexes,
+			Outbound:         "direct",
 		})
 	}
 
