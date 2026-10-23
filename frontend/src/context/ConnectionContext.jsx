@@ -15,7 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import React, { createContext, useContext, useState, useRef, useEffect } from "react";
+import React, { createContext, useContext, useState, useRef, useEffect, useCallback } from "react";
 import { useConfigContext } from "./ConfigContext";
 import { useLogContext } from "./LogContext";
 import { useDaemonPing } from "../hooks/useDaemonPing";
@@ -24,6 +24,10 @@ import { useDaemonControl } from "../hooks/useDaemonControl";
 import wailsAPI from "../utils/wailsAPI";
 
 const ConnectionContext = createContext();
+
+/* Сколько кнопка питания не слушает нажатий, когда подключение при запуске
+   появилось на экране и когда оно действительно началось. */
+const STARTUP_CLICK_GUARD_MS = 1000;
 
 export const ConnectionProvider = ({ children }) => {
     const {
@@ -153,12 +157,35 @@ export const ConnectionProvider = ({ children }) => {
     const resumeTakenRef = useRef(false);
     const resumeStateRef = useRef({});
     resumeStateRef.current = { proxies, isConnected, selectAndConnect, disconnectOnly };
+
+    /*
+     * Подключение при запуске ждёт уборки хвостов и сети, и кнопка на это
+     * время выглядела свободной — её нажимали по привычке. Ожидание видно
+     * сразу как запуск; нажатие в первую секунду после его появления и в
+     * первую секунду настоящего запуска пропускается, а позже, пока
+     * подключение ещё ждёт, отменяет его.
+     */
+    const [startupPending, setStartupPending] = useState(false);
+    const startupPendingRef = useRef(false);
+    const startupCancelledRef = useRef(false);
+    const startupGuardUntilRef = useRef(0);
+    const markStartupPending = (pending) => {
+        startupPendingRef.current = pending;
+        setStartupPending(pending);
+    };
+
     useEffect(() => {
         if (!isConfigLoaded || resumeTakenRef.current) return;
         resumeTakenRef.current = true;
         (async () => {
+            if (await wailsAPI.hasPendingConnect()) {
+                startupGuardUntilRef.current = Date.now() + STARTUP_CLICK_GUARD_MS;
+                markStartupPending(true);
+            }
             const id = await wailsAPI.takePendingConnect();
-            if (!id) return;
+            const wasPending = startupPendingRef.current;
+            markStartupPending(false);
+            if (!id || startupCancelledRef.current) return;
             const { proxies: list, isConnected: connected, selectAndConnect: connect } =
                 resumeStateRef.current;
             if (connected || isSwitchingRef.current) return;
@@ -166,6 +193,9 @@ export const ConnectionProvider = ({ children }) => {
             if (!proxy) {
                 addLog("Сервер для подключения при запуске не найден.", "warning");
                 return;
+            }
+            if (wasPending) {
+                startupGuardUntilRef.current = Date.now() + STARTUP_CLICK_GUARD_MS;
             }
             await connect(proxy);
             if (await wailsAPI.verifyTunnelTraffic()) return;
@@ -175,9 +205,32 @@ export const ConnectionProvider = ({ children }) => {
         })();
     }, [isConfigLoaded, addLog]);
 
+    const guardStartupClick = useCallback(
+        (action) =>
+            (...args) => {
+                if (Date.now() < startupGuardUntilRef.current) return undefined;
+                if (startupPendingRef.current) {
+                    startupCancelledRef.current = true;
+                    markStartupPending(false);
+                    addLog("Подключение при запуске отменено.", "info");
+                    return undefined;
+                }
+                return action(...args);
+            },
+        [addLog],
+    );
+    const guardedToggleConnection = useCallback(
+        (...args) => guardStartupClick(toggleConnection)(...args),
+        [guardStartupClick, toggleConnection],
+    );
+    const guardedCancelConnect = useCallback(
+        (...args) => guardStartupClick(cancelConnect)(...args),
+        [guardStartupClick, cancelConnect],
+    );
+
     const value = {
         isConnected,
-        isConnecting,
+        isConnecting: isConnecting || startupPending,
         isResolving,
         isDisconnecting,
         isProxyDead,
@@ -197,10 +250,10 @@ export const ConnectionProvider = ({ children }) => {
         isManualPingPending,
         daemonStatus,
         disconnectOnly,
-        toggleConnection,
+        toggleConnection: guardedToggleConnection,
         selectAndConnect,
         deleteProxy,
-        cancelConnect,
+        cancelConnect: guardedCancelConnect,
     };
 
     return (

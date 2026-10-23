@@ -367,6 +367,17 @@ export const wailsAPI = {
     }
   },
 
+  hasPendingConnect: async () => {
+    try {
+      const has = window?.go?.main?.App?.HasPendingConnect;
+      if (!has) return false;
+      return !!(await has());
+    } catch (e) {
+      console.error("wailsAPI.hasPendingConnect error:", e);
+      return false;
+    }
+  },
+
   takePendingConnect: async () => {
     try {
       const take = window?.go?.main?.App?.TakePendingConnect;

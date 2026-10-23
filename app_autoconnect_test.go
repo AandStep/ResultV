@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"resultproxy-wails/internal/config"
+	"resultproxy-wails/internal/logger"
 )
 
 func TestStartupConnectID(t *testing.T) {
@@ -39,5 +40,22 @@ func TestStartupConnectID(t *testing.T) {
 		if got := startupConnectID(tc.s, tc.resume); got != tc.want {
 			t.Errorf("%s: got %q want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestHasPendingConnectPeeksWithoutTaking(t *testing.T) {
+	a := &App{log: logger.New()}
+	if a.HasPendingConnect() {
+		t.Fatal("nothing armed, yet a pending connect is reported")
+	}
+	a.SetResumeAfterElevation("picked", "")
+	if !a.HasPendingConnect() || !a.HasPendingConnect() {
+		t.Fatal("an armed connect must be reported, and asking must not consume it")
+	}
+	if got := a.TakePendingConnect(); got != "picked" {
+		t.Fatalf("take after peek: got %q", got)
+	}
+	if a.HasPendingConnect() {
+		t.Fatal("still reported after it was taken")
 	}
 }

@@ -228,6 +228,16 @@ func (a *App) TakePendingConnect() string {
 	return id
 }
 
+// HasPendingConnect reports, without waiting and without taking it, whether
+// TakePendingConnect has a server to hand out. The frontend shows the start-up
+// connect from the first frame, so the button is never idle under a connect
+// that is about to begin.
+func (a *App) HasPendingConnect() bool {
+	a.resumeMu.Lock()
+	defer a.resumeMu.Unlock()
+	return a.resumeProxyID != ""
+}
+
 func (a *App) GetVersion() string {
 	return productVersionFromWailsJSON()
 }
