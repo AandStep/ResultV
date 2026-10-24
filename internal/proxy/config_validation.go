@@ -34,6 +34,9 @@ const (
 	// candidates — the adapter is node-independent, every candidate would fail
 	// identically. See isTunAdapterUnavailableError for the two error shapes.
 	ConnectErrorTunAdapter = "tun_adapter_unavailable"
+	// ConnectErrorTunBusy is returned when another live process still owns the
+	// adapter. Node-independent like tun_adapter_unavailable.
+	ConnectErrorTunBusy = "tun_adapter_busy"
 	// ConnectErrorDNSCensored is returned when a domain-addressed server can't be
 	// resolved to an IP before a TUN connect — the route-exclude/server-pin can't
 	// be built, so dialing the server would loop into the TUN or hit a poisoned IP.

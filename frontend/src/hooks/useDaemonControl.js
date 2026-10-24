@@ -219,13 +219,15 @@ export const useDaemonControl = (
         [addLog, showToast, t],
     );
 
-    // tun_adapter_unavailable — Windows не запустила Wintun-адаптер. Он один на
-    // всё приложение и от выбранного узла не зависит, так что перебор остальных
+    // tun_adapter_unavailable — Windows не запустила Wintun-адаптер,
+    // tun_adapter_busy — его держит прежний экземпляр. Адаптер один на всё
+    // приложение и от выбранного узла не зависит, так что перебор остальных
     // кандидатов авто-группы упёрся бы в тот же отказ, только медленнее.
     const isTerminalErrorCode = (code) =>
         code === "tun_privileges" ||
         code === "proxy_not_supported" ||
-        code === "tun_adapter_unavailable";
+        code === "tun_adapter_unavailable" ||
+        code === "tun_adapter_busy";
 
     // Понадобятся ли на это подключение права администратора. TUN-адаптер без
     // них не поднять, а туда ведут две дороги: включённый режим туннеля и сам

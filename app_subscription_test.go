@@ -544,3 +544,25 @@ func TestUpdateSubscriptionKeepsOfficialName(t *testing.T) {
 		t.Fatalf("regular subscription not renamed: %+v", subs[1])
 	}
 }
+
+func TestFetchSubscriptionReadsRoutingHeader(t *testing.T) {
+	payload := `{"Name":"Provider","DirectSites":["geosite:private"],"Geositeurl":"https://example.com/geosite.dat"}`
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Routing", "happ://routing/onadd/"+base64.StdEncoding.EncodeToString([]byte(payload)))
+		_, _ = w.Write([]byte("vless://af815621-b245-4149-89da-dd184cfc4b3d@example.com:443?type=tcp&security=none#Node"))
+	}))
+	defer ts.Close()
+
+	res, err := NewApp().fetchSubscriptionFromURL(ts.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := res.Routing.Profile
+	if p == nil || p.Name != "Provider" || p.GeoSiteURL != "https://example.com/geosite.dat" {
+		t.Fatalf("routing header not read: %+v", p)
+	}
+	decls := subscriptionRoutingDeclarations(res)
+	if len(decls) != 1 || decls[0].URL != routingHeaderURL {
+		t.Fatalf("import dialog must offer the header profile: %+v", decls)
+	}
+}

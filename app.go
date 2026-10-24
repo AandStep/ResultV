@@ -228,6 +228,16 @@ func (a *App) TakePendingConnect() string {
 	return id
 }
 
+// HasPendingConnect reports, without waiting and without taking it, whether
+// TakePendingConnect has a server to hand out. The frontend shows the start-up
+// connect from the first frame, so the button is never idle under a connect
+// that is about to begin.
+func (a *App) HasPendingConnect() bool {
+	a.resumeMu.Lock()
+	defer a.resumeMu.Unlock()
+	return a.resumeProxyID != ""
+}
+
 func (a *App) GetVersion() string {
 	return productVersionFromWailsJSON()
 }
@@ -806,12 +816,23 @@ func (a *App) SaveConfig(cfg config.AppConfig) error {
 	// The frontend holds the settings it loaded at startup; AckChangelog has
 	// moved this field on since, and a stale copy would bring the notes back.
 	cfg.Settings.LastChangelogVersion = existing.Settings.LastChangelogVersion
+	cfg.RoutingRules = keepBackendRouting(cfg.RoutingRules, existing.RoutingRules)
 	if err := a.config.SaveConfig(cfg); err != nil {
 		a.log.Error(fmt.Sprintf("Ошибка сохранения конфигурации: %v", err))
 		return err
 	}
 	a.log.Success("Конфигурация сохранена")
 	return nil
+}
+
+// keepBackendRouting puts back what only the backend changes. The UI sends the
+// routing rules it loaded at startup with every change of its own, and by then
+// its copy of profiles and lists is stale: a deleted profile would come back.
+func keepBackendRouting(incoming, stored config.RoutingRules) config.RoutingRules {
+	incoming.Profiles = stored.Profiles
+	incoming.ActiveProfileID = stored.ActiveProfileID
+	incoming.RoutingLists = stored.RoutingLists
+	return incoming
 }
 
 func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
@@ -1483,6 +1504,7 @@ func (a *App) UpdateRules(rules config.RoutingRules) error {
 	if a.config == nil {
 		return fmt.Errorf("config manager not initialized")
 	}
+	rules = keepBackendRouting(rules, a.config.GetConfig().RoutingRules)
 	if err := a.config.UpdateRoutingRules(rules); err != nil {
 		return err
 	}
@@ -2364,6 +2386,7 @@ type subscriptionFetch struct {
 	SupportURL   string
 	RoutingLists []config.RoutingList
 	Embedded     map[string]proxy.ParsedRoutingList
+	Routing      subscriptionRoutingHeader
 }
 
 func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) (subscriptionFetch, error) {
@@ -2416,6 +2439,11 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) (subsc
 		out.IconURL = resolveSubscriptionIcon(client, subURL, resp.Header)
 		out.SupportURL = subscriptionSupportURL(subURL, resp.Header)
 		routingListsHeader := resp.Header.Get("Routing-Lists")
+		if prof, off, rerr := proxy.ParseRoutingHeader(resp.Header.Get("Routing")); rerr != nil {
+			a.log.Warning(fmt.Sprintf("Заголовок маршрутизации подписки не разобран: %v", rerr))
+		} else {
+			out.Routing = subscriptionRoutingHeader{Profile: prof, Off: off}
+		}
 
 		bodyBytes, err := io.ReadAll(resp.Body)
 		if err != nil {
@@ -2568,8 +2596,7 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) (subsc
 // and re-call with true only after surfacing the warning to the user.
 func (a *App) FetchSubscription(subURL string, allowInsecure bool) (SubscriptionPreview, error) {
 	res, err := a.fetchSubscriptionFromURL(subURL, allowInsecure)
-	lists := append(res.RoutingLists, embeddedRoutingListDeclarations(res.Embedded)...)
-	return SubscriptionPreview{Proxies: res.Entries, RoutingLists: lists}, err
+	return SubscriptionPreview{Proxies: res.Entries, RoutingLists: subscriptionRoutingDeclarations(res)}, err
 }
 
 // ParseSubscriptionText accepts pasted content. When the paste resolves to
@@ -2588,14 +2615,12 @@ func (a *App) ParseSubscriptionText(text string) (SubscriptionPreview, error) {
 	lower := strings.ToLower(text)
 	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
 		res, ferr := a.fetchSubscriptionFromURL(text, false)
-		lists := append(res.RoutingLists, embeddedRoutingListDeclarations(res.Embedded)...)
-		return SubscriptionPreview{Proxies: res.Entries, RoutingLists: lists}, ferr
+		return SubscriptionPreview{Proxies: res.Entries, RoutingLists: subscriptionRoutingDeclarations(res)}, ferr
 	}
 	if proxy.IsEncryptedSubscription(text) {
 		if resolved, err := resolveEncryptedSubscriptionURL(text); err == nil && resolved != "" {
 			res, ferr := a.fetchSubscriptionFromURL(resolved, false)
-			lists := append(res.RoutingLists, embeddedRoutingListDeclarations(res.Embedded)...)
-			return SubscriptionPreview{Proxies: res.Entries, RoutingLists: lists}, ferr
+			return SubscriptionPreview{Proxies: res.Entries, RoutingLists: subscriptionRoutingDeclarations(res)}, ferr
 		}
 	}
 	entries, err := proxy.ParseSubscriptionBody(text)
@@ -2672,8 +2697,7 @@ func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
 	if err := a.config.SaveConfig(cfg); err != nil {
 		a.log.Error(fmt.Sprintf("Ошибка сохранения после обновления подписки: %v", err))
 	}
-	provided := append(append([]config.RoutingList(nil), res.RoutingLists...), embeddedRoutingListDeclarations(res.Embedded)...)
-	if err := a.syncSubscriptionRoutingProfile(subID, provided, nil, res.Embedded, false); err != nil {
+	if err := a.syncSubscriptionRoutingProfile(subID, subscriptionRoutingDeclarations(res), nil, res.Embedded, res.Routing, false); err != nil {
 		a.log.Warning(fmt.Sprintf("Ошибка синхронизации списков маршрутизации подписки: %v", err))
 	}
 
@@ -2780,11 +2804,10 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 	if err := a.config.SaveConfig(cfg); err != nil {
 		return nil, fmt.Errorf("saving subscription: %w", err)
 	}
-	provided := append(append([]config.RoutingList(nil), res.RoutingLists...), embeddedRoutingListDeclarations(res.Embedded)...)
 	// The user answered the routing question in the import dialog just now, so
 	// what they accepted takes effect immediately rather than on some later
 	// connect.
-	if err := a.syncSubscriptionRoutingProfile(sub.ID, provided, disabledListURLs, res.Embedded, true); err != nil {
+	if err := a.syncSubscriptionRoutingProfile(sub.ID, subscriptionRoutingDeclarations(res), disabledListURLs, res.Embedded, res.Routing, true); err != nil {
 		a.log.Warning(fmt.Sprintf("[ROUTING] Не удалось применить списки подписки %q: %v", displayName, err))
 	}
 
@@ -3062,11 +3085,12 @@ func (a *App) refreshTrayProxyList() {
 		a.tray.SetDisconnected()
 		a.setWindowTitleDisconnected()
 	}
-	a.tray.UpdateProxyList(a.filterTrayProxiesDiag(cfg.Proxies), selectedID)
+	a.logTrayProxyAnomalies(cfg.Proxies)
+	a.tray.UpdateServerList(buildTrayServerList(cfg), selectedID)
 }
 
-// filterTrayProxiesDiag wraps filterTrayProxies with structured logging that
-// surfaces the two failure modes responsible for "click X, connect to Y":
+// logTrayProxyAnomalies logs the two failure modes responsible for "click X,
+// connect to Y":
 //
 //  1. Duplicate IDs in cfg.Proxies — connectFromTray's linear lookup picks
 //     the FIRST match, so the visually different second entry routes to the
@@ -3078,10 +3102,7 @@ func (a *App) refreshTrayProxyList() {
 // Both anomalies are silent corruption that the user can only detect by
 // observing wrong-server behaviour; logging them here puts a breadcrumb in
 // the log so support can immediately tell what's wrong with a saved config.
-func (a *App) filterTrayProxiesDiag(proxies []config.ProxyEntry) []config.ProxyEntry {
-	if len(proxies) == 0 {
-		return proxies
-	}
+func (a *App) logTrayProxyAnomalies(proxies []config.ProxyEntry) {
 	// ID duplicate detection.
 	idCounts := make(map[string]int, len(proxies))
 	for _, p := range proxies {
@@ -3146,72 +3167,6 @@ func (a *App) filterTrayProxiesDiag(proxies []config.ProxyEntry) []config.ProxyE
 				autoLabel, orphans, len(parsed.Members)))
 		}
 	}
-	return filterTrayProxies(proxies)
-}
-
-// filterTrayProxies returns the proxy entries shown in the tray Servers
-// submenu.
-//
-// Decision (user-driven, 2026-05-28 follow-up #2): the tray shows ONLY the
-// "individual" servers carrying their original subscription name — never
-// AUTO heads, never AUTO members. Specifically it hides:
-//
-//   - AUTO group heads (Type == "AUTO") — auto-routing silently picks a
-//     different-country member, so showing the head in the tray caused
-//     "click Austria, connect to Germany".
-//   - AUTO members — entries the subscription packed into the auto-group
-//     and that the import path renamed to generic "<flag> TYPE #N" labels.
-//     They duplicate the same backends as the human-readable individuals
-//     (subscriptions like impVPN/Remnawave commonly emit both), so showing
-//     them just clutters the tray with anonymous rows.
-//   - SECTION entries — subscription group labels with no IP/Port, never
-//     connectable.
-//
-// AUTO heads (and the routing they perform across renamed members) remain
-// available from the main React UI. The tray is the "I know exactly which
-// server I want, by name" surface; the main window is the "let the app
-// pick" surface.
-func filterTrayProxies(proxies []config.ProxyEntry) []config.ProxyEntry {
-	if len(proxies) == 0 {
-		return proxies
-	}
-	memberIDs := make(map[string]struct{})
-	for _, p := range proxies {
-		if !strings.EqualFold(p.Type, "AUTO") || len(p.Extra) == 0 {
-			continue
-		}
-		var parsed struct {
-			Members []string `json:"members"`
-		}
-		if p.Extra[0] == '"' {
-			var s string
-			if err := json.Unmarshal(p.Extra, &s); err == nil {
-				_ = json.Unmarshal([]byte(s), &parsed)
-			}
-		} else {
-			_ = json.Unmarshal(p.Extra, &parsed)
-		}
-		for _, id := range parsed.Members {
-			if id != "" {
-				memberIDs[id] = struct{}{}
-			}
-		}
-	}
-	out := make([]config.ProxyEntry, 0, len(proxies))
-	for _, p := range proxies {
-		t := strings.ToUpper(strings.TrimSpace(p.Type))
-		if t == "SECTION" {
-			continue
-		}
-		if t == "AUTO" {
-			continue
-		}
-		if _, isMember := memberIDs[p.ID]; isMember {
-			continue
-		}
-		out = append(out, p)
-	}
-	return out
 }
 
 func (a *App) setLastSelectedProxy(proxyID string) error {

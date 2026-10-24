@@ -16,6 +16,7 @@
  */
 
 import wailsAPI from "./wailsAPI";
+import { flagEmojiCountry } from "./proxyParser";
 
 
 export const detectCountry = async (ip, { fresh = false } = {}) => {
@@ -44,17 +45,23 @@ export const detectCountry = async (ip, { fresh = false } = {}) => {
 
 const REDETECT_PARALLEL = 6;
 
+const isNode = (p) => p.ip && !["AUTO", "SECTION"].includes(String(p.type || "").toUpperCase());
+
 /*
  * Страна узла сохраняется при добавлении и дальше только наследуется, так что
  * подсеть, перепроданная в другую страну, носила бы старый флаг вечно.
  * Возвращает host → страна только для удачных ответов: при сбое у узла
  * остаётся прежний флаг, а не «unknown».
+ *
+ * Флаг в имени узла главнее API: GeoIP видит только адрес входа, а за
+ * ретранслятором выход в другой стране. Поэтому API спрашиваем лишь для узлов
+ * без флага.
  */
 export const redetectCountries = async (proxies, { fresh = false } = {}) => {
     const hosts = [
         ...new Set(
             proxies
-                .filter((p) => p.ip && !["AUTO", "SECTION"].includes(String(p.type || "").toUpperCase()))
+                .filter((p) => isNode(p) && !flagEmojiCountry(p.name))
                 .map((p) => p.ip),
         ),
     ];
@@ -71,9 +78,14 @@ export const redetectCountries = async (proxies, { fresh = false } = {}) => {
     return found;
 };
 
-export const applyCountries = (proxies, found) =>
-    found.size === 0
-        ? proxies
-        : proxies.map((p) =>
-              found.has(p.ip) && found.get(p.ip) !== p.country ? { ...p, country: found.get(p.ip) } : p,
-          );
+export const applyCountries = (proxies, found) => {
+    let changed = false;
+    const next = proxies.map((p) => {
+        if (!isNode(p)) return p;
+        const code = flagEmojiCountry(p.name) || found.get(p.ip);
+        if (!code || code === p.country) return p;
+        changed = true;
+        return { ...p, country: code };
+    });
+    return changed ? next : proxies;
+};

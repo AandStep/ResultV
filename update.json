@@ -1,5 +1,5 @@
 {
-  "version": "3.5.6",
+  "version": "",
   "releaseTitle": {
     "ru": "Общие улучшения и фиксы",
     "en": "General improvements and fixes"
@@ -7,56 +7,14 @@
   "releaseNotes": [
     {
       "type": "improve",
-      "ru": "Улучшен выбор DNS для протоколов AWG: теперь выбирается наилучший из конфигурации, в случае если ни один DNS не отвечает выбирается стандартный DNS",
-      "en": "Improved DNS selection for AWG protocols: the best option from the configuration is now chosen, and if no DNS responds, the default DNS is used"
-    },
-    {
-      "type": "feature",
-      "ru": "Приложение теперь может автоматически запускаться при старте системы и стартовать последний используемый сервер. Два тумблера в настройках -> дополнительные настройки.",
-      "en": "The application can now automatically start at system boot and launch the last used server. Two toggles in settings -> advanced settings."
-    },
-    {
-      "type": "fix",
-      "ru": "Исключённое приложение теперь пускает напрямую всё, что оно запускает: добавьте Steam — и все его игры пойдут мимо ВПН, вместе с DNS",
-      "en": "An excluded app now takes everything it launches with it: add Steam and all its games bypass the VPN, DNS included"
-    },
-    {
-      "type": "fix",
-      "ru": "Сайт, добавленный в исключения дважды (с www и без), больше не уходит в ВПН",
-      "en": "A site added to exclusions twice (with and without www) no longer goes through the VPN"
-    },
-    {
-      "type": "fix",
-      "ru": "Списки умного и глобального режимов больше не мешают друг другу: в каждом режиме работают только его правила",
-      "en": "Smart and Global mode lists no longer interfere: each mode applies only its own rules"
+      "ru": "Улучшено определение флагов, а также их отображение в трее",
+      "en": "Improved flag detection and their display in the system tray"
+    },{
+      "type": "improve",
+      "ru": "Расширена поддержка правил маршрутизации",
+      "en": "Extended support for routing rules"
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",
-  "platforms": {
-    "windows-amd64-portable": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.6/ResultV.exe",
-      "sha256": "f3ba43e813dac082e9bf36d07a6f1f2790e32199257755252ba5a79adbd240ec",
-      "size": 62412288
-    },
-    "windows-amd64-installer": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.6/ResultV-amd64-installer.exe",
-      "sha256": "9c9f4d242c92fc20fe1d794c557f51b5741c04e8785bcb1ddbf7517fb61af6dc",
-      "size": 29231380
-    },
-    "darwin-universal": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.6/ResultV.dmg",
-      "sha256": "ac3cd62a777d6066d5b4803b4c036b71fca33fef45a1edc6449249938c1aebb6",
-      "size": 65741683
-    },
-    "linux-amd64-appimage": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.6/ResultV-3.5.6-x86_64.AppImage",
-      "sha256": "ed331f7f1d4c5ae13247f03ecabb601427c4e2eee2d20a394e2503fdf310390c",
-      "size": 26450424
-    },
-    "linux-amd64-deb": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.5.6/resultv_3.5.6_amd64.deb",
-      "sha256": "0329a74640087bfc548504cfda2c367a6f1f2e5c05bb81e2e4c935c09a12de8d",
-      "size": 28194240
-    }
-  }
+  "platforms": {}
 }

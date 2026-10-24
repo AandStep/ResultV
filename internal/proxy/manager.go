@@ -464,6 +464,32 @@ var (
 // device tree, then lets the stack settle. Bounded on purpose: a node that never
 // disappears must not wedge the connect, so the retry proceeds either way — and
 // the log says which of the two happened, because they mean different things.
+// releaseTunHoldersFn waits out, and if need be ends, the other instances of
+// this executable. Measured on a bench: while another live process owns the
+// adapter, every create fails with "already exists", pnputil included; the
+// moment the owner exits, the next create succeeds.
+var releaseTunHoldersFn = func() sys.OtherInstancesReport {
+	return sys.AwaitOtherInstances(8*time.Second, 4*time.Second)
+}
+
+func (m *Manager) awaitPreviousInstances() {
+	rep := releaseTunHoldersFn()
+	if len(rep.Found) == 0 {
+		return
+	}
+	m.log.Warning(fmt.Sprintf("[СИСТЕМА] Ещё работал прежний экземпляр ResultV (pid %v): завершён принудительно %v, не завершается %v",
+		rep.Found, rep.Killed, rep.Stuck))
+}
+
+// releaseTunHolders frees the adapter for a retry after "already exists". A
+// session that failed to start leaves its adapter to a finalizer in sing-tun
+// (tun_windows.go New), so this process may be the owner itself.
+func (m *Manager) releaseTunHolders() {
+	runtime.GC()
+	m.awaitPreviousInstances()
+	time.Sleep(tunRetryDelay)
+}
+
 func (m *Manager) waitStaleTunGone() {
 	for i := 0; ; i++ {
 		if tunDevNodeGoneFn() {
@@ -531,7 +557,7 @@ func (m *Manager) startEngine(ctx context.Context, cfg EngineConfig) (err error,
 	// bounded at three attempts. Order matters: the IPv6 failure text also
 	// contains "configure tun interface", so isTransientTunError would swallow it
 	// and send us down the device-removal path — which cannot fix it.
-	ghostRemoved, ipv6Dropped := false, false
+	ghostRemoved, ipv6Dropped, holdersReleased := false, false, false
 	for attempt := 1; ; attempt++ {
 		err = m.engine.Start(ctx, cfg)
 		if err == nil {
@@ -557,7 +583,16 @@ func (m *Manager) startEngine(ctx context.Context, cfg EngineConfig) (err error,
 			m.log.Warning(fmt.Sprintf("[PROXY] TUN не принял IPv6-адрес (%s) — повтор без IPv6", extractErrorReason(err.Error())))
 			continue
 		}
-		if isTransientTunError(err) && !ghostRemoved {
+		// Ahead of the device removal, which cannot free an adapter a live
+		// process owns and only churns it under that owner.
+		busy := isTunAdapterBusyError(err)
+		if busy && !holdersReleased {
+			holdersReleased = true
+			m.log.Warning("[PROXY] TUN-адаптер занят другим процессом — освобождаем и повторяем")
+			m.releaseTunHolders()
+			continue
+		}
+		if isTransientTunError(err) && !busy && !ghostRemoved {
 			ghostRemoved = true
 			m.log.Warning(fmt.Sprintf("[PROXY] TUN не сконфигурировался (%s) — удаление залипшего адаптера и повтор", extractErrorReason(err.Error())))
 			// Report WHICH device was torn down, or that none was found. These are
@@ -591,8 +626,11 @@ func (m *Manager) startEngine(ctx context.Context, cfg EngineConfig) (err error,
 	// Say plainly what happened. The engine's own line right after this one
 	// carries Windows' raw errno, which on its own named neither the component
 	// that failed nor anything the user could check.
-	if errorCode == ConnectErrorTunAdapter {
+	switch errorCode {
+	case ConnectErrorTunAdapter:
 		m.log.Error("[PROXY] " + tunAdapterUnavailableReason)
+	case ConnectErrorTunBusy:
+		m.log.Error("[PROXY] " + tunAdapterBusyReason)
 	}
 	return err, tunnelFailed, reason, errorCode
 }
@@ -3302,6 +3340,9 @@ func (s LeftoverScan) Any() bool { return s.Proxy || s.DNS || s.Tun }
 func (m *Manager) RecoverSystemLeftovers() (scan LeftoverScan) {
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
+	// Under opMu, so neither the startup connect nor a click can reach the
+	// adapter while a quitting instance still owns it.
+	m.awaitPreviousInstances()
 	if m.sessionActive() {
 		return
 	}

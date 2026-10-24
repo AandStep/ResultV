@@ -54,6 +54,23 @@ func TestForbiddenAndUnavailableForLegalReasonsMeanBlocked(t *testing.T) {
 	}
 }
 
+// Anti-bot challenges and CDN roots answer a plain GET with 403 whichever path
+// it takes. The node seeing the same wall proves the wall is the site's own.
+func TestWallOnBothPathsIsNotABlock(t *testing.T) {
+	walls := []probeOutcome{
+		{Status: 403, Elapsed: 200 * time.Millisecond},
+		{Status: 451, Elapsed: 200 * time.Millisecond},
+		{Status: 302, Location: "https://example.com/unavailable-in-region", Elapsed: 200 * time.Millisecond},
+	}
+	for _, direct := range walls {
+		for _, viaNode := range walls {
+			if got := classifyProbe(direct, viaNode); got != verdict.Direct {
+				t.Fatalf("direct %d, node %d: got %v, want direct", direct.Status, viaNode.Status, got)
+			}
+		}
+	}
+}
+
 func TestHealthyDirectMeansDirect(t *testing.T) {
 	if got := classifyProbe(ok200(), ok200()); got != verdict.Direct {
 		t.Fatalf("got %v, want direct", got)
