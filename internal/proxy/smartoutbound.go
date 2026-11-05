@@ -522,6 +522,7 @@ func extendedBoxContext(ctx context.Context) context.Context {
 	outbounds := include.OutboundRegistry()
 	outbound.Register[smartOutboundOptions](outbounds, smartOutboundTag, newSmartOutbound)
 	outbound.Register[appDirectOptions](outbounds, appDirectTag, newAppDirectOutbound)
+	registerSocks5ExitSelector(outbounds)
 	dnsTransports := include.DNSTransportRegistry()
 	registerDNSBreaker(dnsTransports)
 	return box.Context(
