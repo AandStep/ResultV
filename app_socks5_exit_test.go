@@ -56,8 +56,11 @@ func TestSocks5ExitSaveKeepsStoredSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Port != 8001 || !status.HasPassword || !status.Enabled {
+	if status.Port != 8001 || !status.Enabled {
 		t.Fatal("saving stale app settings erased the exit profile")
+	}
+	if status.Password != password {
+		t.Fatal("the dedicated settings view cannot restore the masked password")
 	}
 	cfg, err := a.GetConfig()
 	if err != nil {
@@ -88,7 +91,7 @@ func TestSocks5ExitSaveKeepsStoredSecret(t *testing.T) {
 		t.Fatal(err)
 	}
 	status, err = a.GetSocks5ExitSettings()
-	if err != nil || status.HasPassword {
+	if err != nil || status.Password != "" {
 		t.Fatalf("clearing stored password failed: %v", err)
 	}
 	if err := a.SetSocks5ExitEnabled(false); err != nil {

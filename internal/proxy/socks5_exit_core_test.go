@@ -16,6 +16,7 @@ import (
 	"github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/route/rule"
 	singjson "github.com/sagernet/sing/common/json"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -34,6 +35,18 @@ type testExitSwitch interface {
 	Now() string
 	SelectOutbound(string) bool
 }
+
+type testExitRejectedPacket struct {
+	N.PacketConn
+	rejected error
+}
+
+func (p *testExitRejectedPacket) HandshakeFailure(err error) error {
+	p.rejected = err
+	return nil
+}
+
+func (*testExitRejectedPacket) Close() error { return nil }
 
 func TestSocks5ExitCoreSwitch(t *testing.T) {
 	target := testExitEcho(t)
@@ -97,6 +110,15 @@ func TestSocks5ExitCoreSwitch(t *testing.T) {
 		testExitRoundTrip(t, unselected)
 		chained := testExitDial(t, client, N.NetworkTCP, target)
 		testExitRoundTrip(t, chained)
+		metadata := adapter.InboundContext{Network: N.NetworkUDP, Destination: targetUDP}
+		if result := instance.Router().PreMatch(metadata, nil); result.Action != adapter.PreMatchReject {
+			t.Errorf("TUN UDP pre-match action = %v, want rejection", result.Action)
+		}
+		rejected := &testExitRejectedPacket{}
+		instance.Router().RoutePacketConnectionEx(context.Background(), rejected, metadata, nil)
+		if !rule.IsRejected(rejected.rejected) {
+			t.Errorf("router reported %v, want a normal UDP rejection", rejected.rejected)
+		}
 		// The router can have checked the previous selection's network
 		// support. The exit itself must refuse a late UDP dial.
 		out, _ := instance.Outbound().Outbound("socks5-exit")
@@ -183,6 +205,8 @@ func TestSocks5ExitCoreSwitch(t *testing.T) {
 		instance, _, client := startClient(t, socks5ExitSelectorType, "proxy", "test-password")
 		engine := &SingBoxEngine{instance: instance}
 		engine.running.Store(true)
+		existing := testExitDial(t, client, N.NetworkTCP, target)
+		testExitRoundTrip(t, existing)
 		requireBlocked := func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
@@ -197,7 +221,9 @@ func TestSocks5ExitCoreSwitch(t *testing.T) {
 		if err := engine.SetSocks5Exit(&config.Socks5ExitConfig{Enabled: true}); err != nil {
 			t.Fatal(err)
 		}
-		requireBlocked()
+		testExitRoundTrip(t, existing)
+		testExitRoundTrip(t, testExitDial(t, client, N.NetworkTCP, target))
+		testExitRoundTrip(t, testExitDial(t, client, N.NetworkUDP, targetUDP))
 		profile := config.Socks5ExitConfig{Enabled: true, Host: "127.0.0.1", Port: syntheticPort, Username: "test-user", Password: "test-password"}
 		if err := engine.SetSocks5Exit(&profile); err != nil {
 			t.Fatal(err)

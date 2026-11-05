@@ -14,6 +14,7 @@ import (
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/protocol/group"
+	"github.com/sagernet/sing-box/route/rule"
 	"github.com/sagernet/sing-tun"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -47,7 +48,7 @@ func addSocks5Exit(sb *SingBoxConfig, cfg EngineConfig) {
 	next := exit
 	next.Tag, next.Server, next.ServerPort, next.Username, next.Password = socks5ExitNextTag, "", 0, "", ""
 	initial := "proxy"
-	if p.Enabled {
+	if p.IsActive() {
 		initial = socks5ExitTag
 	}
 	sb.Outbounds = append(sb.Outbounds, exit, next, SBOutbound{
@@ -162,7 +163,8 @@ func newSocks5ExitSelector(ctx context.Context, router adapter.Router, logger lo
 	}
 	return &socks5ExitSwitch{
 		Outbound: inner, selector: inner.(*group.Selector),
-		outbounds: service.FromContext[adapter.OutboundManager](ctx),
+		outbounds:  service.FromContext[adapter.OutboundManager](ctx),
+		connection: service.FromContext[adapter.ConnectionManager](ctx),
 	}, nil
 }
 
@@ -170,11 +172,12 @@ func newSocks5ExitSelector(ctx context.Context, router adapter.Router, logger lo
 // cache a WireGuard raw flow that the selector cannot interrupt on a switch.
 type socks5ExitSwitch struct {
 	adapter.Outbound
-	selector  *group.Selector
-	outbounds adapter.OutboundManager
-	raw       adapter.FlowOutbound
-	mu        sync.RWMutex
-	revision  uint64
+	selector   *group.Selector
+	outbounds  adapter.OutboundManager
+	connection adapter.ConnectionManager
+	raw        adapter.FlowOutbound
+	mu         sync.RWMutex
+	revision   uint64
 }
 
 func (s *socks5ExitSwitch) Start() error {
@@ -187,6 +190,11 @@ func (s *socks5ExitSwitch) Now() string { return s.selector.Now() }
 
 func (s *socks5ExitSwitch) Network() []string {
 	networks := s.selector.Network()
+	// Accept UDP into the switch so the router can hand it to our rejection
+	// path instead of logging an unsupported outbound for every QUIC retry.
+	if !slices.Contains(networks, N.NetworkUDP) {
+		networks = append(slices.Clone(networks), N.NetworkUDP)
+	}
 	if s.raw != nil && !slices.Contains(networks, N.NetworkICMP) {
 		return append(slices.Clone(networks), N.NetworkICMP)
 	}
@@ -196,6 +204,9 @@ func (s *socks5ExitSwitch) Network() []string {
 // Preserve real echo requests for WireGuard when SOCKS5 is off. TCP and UDP
 // use connection forwarding so switching can interrupt their old route.
 func (s *socks5ExitSwitch) PreMatchFlow(network string, dest netip.Addr) adapter.PreMatchAction {
+	if network == N.NetworkUDP && !s.canForwardUDP() {
+		return adapter.PreMatchReject
+	}
 	if s.raw == nil || network != N.NetworkICMP {
 		return adapter.PreMatchContinue
 	}
@@ -203,6 +214,18 @@ func (s *socks5ExitSwitch) PreMatchFlow(network string, dest netip.Addr) adapter
 		return adapter.PreMatchDrop
 	}
 	return s.raw.PreMatchFlow(network, dest)
+}
+
+func (s *socks5ExitSwitch) canForwardUDP() bool {
+	return slices.Contains(s.selector.Network(), N.NetworkUDP)
+}
+
+func (s *socks5ExitSwitch) NewPacketConnection(ctx context.Context, conn N.PacketConn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
+	if !s.canForwardUDP() {
+		N.CloseOnHandshakeFailure(conn, onClose, &rule.RejectedError{Cause: rule.ErrReset})
+		return
+	}
+	s.connection.NewPacketConnection(ctx, s, conn, metadata, onClose)
 }
 
 func (s *socks5ExitSwitch) PortAddresses() (netip.Addr, netip.Addr) {
@@ -281,7 +304,7 @@ func (e *SingBoxEngine) SetSocks5Exit(profile *config.Socks5ExitConfig) error {
 		return errSocks5ExitUnavailable
 	}
 	tag := "proxy"
-	if profile.Enabled {
+	if profile.IsActive() {
 		tag = socks5ExitTag
 		if selector.Now() == tag {
 			tag = socks5ExitNextTag

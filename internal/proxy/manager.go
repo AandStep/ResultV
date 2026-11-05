@@ -706,7 +706,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	m.mu.Lock()
 
 	exitProfile := m.socks5Exit
-	exitEnabled := exitProfile != nil && exitProfile.Enabled
+	exitEnabled := exitProfile.IsActive()
 
 	if m.connected {
 		m.disconnectLocked()

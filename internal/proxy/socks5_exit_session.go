@@ -26,7 +26,7 @@ func (m *Manager) SetSocks5Exit(profile *config.Socks5ExitConfig) error {
 			if err := engine.SetSocks5Exit(profile); err != nil {
 				return err
 			}
-		} else if profile.Enabled {
+		} else if profile.IsActive() {
 			return errSocks5ExitUnavailable
 		}
 	}
@@ -41,12 +41,11 @@ func probePortForSession(localPort, firstHopProbePort int) int {
 	return localPort
 }
 
-// Startup verification must test the VPN node even when the SOCKS5 profile is
-// enabled but incomplete or temporarily unreachable.
+// Startup verification must test the VPN node independently of the SOCKS5 exit.
 func (m *Manager) Socks5ExitFirstHopProbeAddress() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if !m.connected || m.socks5Exit == nil || !m.socks5Exit.Enabled || m.localPort == 0 {
+	if !m.connected || !m.socks5Exit.IsActive() || m.localPort == 0 {
 		return ""
 	}
 	return fmt.Sprintf("127.0.0.1:%d", probePortForSession(m.localPort, m.firstHopProbePort))

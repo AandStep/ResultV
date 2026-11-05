@@ -52,6 +52,11 @@ func TestBuildTunnelSocks5Exit(t *testing.T) {
 		}
 		assertCoreAcceptsConfig(t, out)
 	}
+	cfg.Socks5Exit = &config.Socks5ExitConfig{Enabled: true}
+	pending := mustBuildTunnelModeConfig(t, cfg)
+	if selector := mustOutbound(t, pending, socks5ExitSelector); selector.Default != "proxy" {
+		t.Errorf("pending setup starts on %q, want VPN-only", selector.Default)
+	}
 	cfg.Socks5Exit = nil
 	if got := mustBuildTunnelModeConfig(t, cfg); slices.ContainsFunc(got.Outbounds, func(out SBOutbound) bool {
 		return out.Tag == "socks5-exit" || out.Tag == "socks5-exit-switch"

@@ -18,6 +18,14 @@ type Socks5ExitConfig struct {
 
 var socks5DNSName = idna.New(idna.MapForLookup(), idna.VerifyDNSLength(true))
 
+func (cfg *Socks5ExitConfig) IsActive() bool {
+	if cfg == nil || !cfg.Enabled {
+		return false
+	}
+	_, err := NormalizeSocks5ExitConfig(*cfg)
+	return err == nil
+}
+
 func NormalizeSocks5ExitConfig(cfg Socks5ExitConfig) (Socks5ExitConfig, error) {
 	host := strings.TrimSpace(cfg.Host)
 	address := host

@@ -7,11 +7,11 @@ import (
 )
 
 type Socks5ExitSettingsDTO struct {
-	Enabled     bool   `json:"enabled"`
-	Host        string `json:"host"`
-	Port        int    `json:"port"`
-	Username    string `json:"username"`
-	HasPassword bool   `json:"hasPassword"`
+	Enabled  bool   `json:"enabled"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 type Socks5ExitSettingsUpdate struct {
@@ -52,7 +52,7 @@ func (a *App) GetSocks5ExitSettings() (Socks5ExitSettingsDTO, error) {
 		return Socks5ExitSettingsDTO{}, nil
 	}
 	return Socks5ExitSettingsDTO{
-		Enabled: p.Enabled, Host: p.Host, Port: p.Port, Username: p.Username, HasPassword: p.Password != "",
+		Enabled: p.Enabled, Host: p.Host, Port: p.Port, Username: p.Username, Password: p.Password,
 	}, nil
 }
 

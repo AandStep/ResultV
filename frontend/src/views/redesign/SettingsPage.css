@@ -219,6 +219,45 @@
   color: var(--rv-white-a50);
 }
 
+.rv-settings-page__socks5-password {
+  position: relative;
+  min-width: 0;
+}
+
+.rv-settings-page__socks5-password .rv-input {
+  padding-inline-end: 48px;
+}
+
+.rv-settings-page__socks5-password .rv-input::-ms-reveal {
+  display: none;
+}
+
+.rv-settings-page__socks5-eye {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-end: 6px;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--rv-white-a50);
+  cursor: pointer;
+}
+
+.rv-settings-page__socks5-eye:hover,
+.rv-settings-page__socks5-eye:focus-visible {
+  color: white;
+}
+
+.rv-settings-page__socks5-eye:disabled {
+  cursor: default;
+}
+
 
 /* Ряд кнопок выносится за отступ карточки и гаснет у её края — заливка у
    растяжки та же, что у карточки. */

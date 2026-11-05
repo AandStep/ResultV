@@ -1,14 +1,16 @@
 {
   "socks5Exit": {
     "title": "SOCKS5 через VPN",
-    "desc": "Направляет трафик VPN через SOCKS5.",
+    "desc": "Направляет TCP-трафик VPN через SOCKS5.",
     "enterAddress": "Укажите IP или домен и порт SOCKS5.",
     "invalidAddress": "Проверьте адрес и порт SOCKS5",
     "host": "IP или домен",
     "port": "Порт",
     "username": "Логин (необязательно)",
     "password": "Пароль",
-    "passwordSaved": "Пароль сохранён",
+    "showPassword": "Показать пароль",
+    "hidePassword": "Скрыть пароль",
+    "credentialsPair": "Укажите логин и пароль или оставьте оба поля пустыми.",
     "passwordForNewAddress": "Введите пароль для нового адреса SOCKS5"
   },
   "sidebar": {

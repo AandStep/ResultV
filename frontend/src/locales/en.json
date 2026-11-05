@@ -1,14 +1,16 @@
 {
   "socks5Exit": {
     "title": "SOCKS5 over VPN",
-    "desc": "Sends VPN traffic through SOCKS5.",
+    "desc": "Sends VPN TCP traffic through SOCKS5.",
     "enterAddress": "Enter the SOCKS5 address and port.",
     "invalidAddress": "Check the SOCKS5 address and port",
     "host": "IP address or hostname",
     "port": "Port",
     "username": "Username (optional)",
     "password": "Password",
-    "passwordSaved": "Password saved",
+    "showPassword": "Show password",
+    "hidePassword": "Hide password",
+    "credentialsPair": "Enter both the username and password, or leave both blank.",
     "passwordForNewAddress": "Enter the password for the new SOCKS5 address"
   },
   "sidebar": {
