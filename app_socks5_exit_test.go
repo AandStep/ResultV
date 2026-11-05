@@ -37,6 +37,9 @@ func TestSocks5ExitSaveKeepsStoredSecret(t *testing.T) {
 	if err := a.SaveSocks5ExitSettings(update); err != nil {
 		t.Fatal(err)
 	}
+	if err := a.config.SetSocks5ExitArmed(true); err != nil {
+		t.Fatal(err)
+	}
 	stale.Settings.Language = "ru"
 	if err := a.SaveConfig(stale); err != nil {
 		t.Fatal(err)
@@ -52,7 +55,7 @@ func TestSocks5ExitSaveKeepsStoredSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Settings.Socks5Exit != nil {
+	if cfg.Settings.Socks5Exit != nil || cfg.Settings.Socks5ExitArmed {
 		t.Fatal("general UI config exposes the exit profile")
 	}
 	update.Port = 0
@@ -60,6 +63,9 @@ func TestSocks5ExitSaveKeepsStoredSecret(t *testing.T) {
 		t.Fatal("invalid profile update succeeded")
 	}
 	cfg = newManager().GetConfig()
+	if !cfg.Settings.Socks5ExitArmed {
+		t.Fatal("stale settings overwrote the startup guard")
+	}
 	if profile := cfg.Settings.Socks5Exit; profile == nil || profile.Port != 8001 || profile.Password != password {
 		t.Fatal("protected settings failed to round-trip")
 	}

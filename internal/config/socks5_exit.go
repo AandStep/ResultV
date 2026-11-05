@@ -96,3 +96,16 @@ func (m *Manager) SaveSocks5Exit(profile Socks5ExitConfig, password *string) err
 	next.Settings.Socks5Exit = &normalized
 	return m.saveConfigLocked(next)
 }
+
+// SetSocks5ExitArmed records whether auto-connect must stop after an unclean
+// restart. It does not request SOCKS5 on a fresh user-initiated session.
+func (m *Manager) SetSocks5ExitArmed(armed bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cache.Settings.Socks5ExitArmed == armed {
+		return nil
+	}
+	next := m.cache
+	next.Settings.Socks5ExitArmed = armed
+	return m.saveConfigLocked(next)
+}

@@ -24,7 +24,7 @@ func TestBuildTunnelSocks5Exit(t *testing.T) {
 		cfg.Socks5ExitEnabled = enabled
 		out := mustBuildTunnelModeConfig(t, cfg)
 		exit := mustOutbound(t, out, "socks5-exit")
-		if exit.Type != "socks" || exit.Version != "5" || exit.Network != "tcp" || exit.Detour != "proxy" {
+		if exit.Type != socks5ExitOutboundType || exit.Version != "5" || exit.Network != "tcp" || exit.Detour != "proxy" {
 			t.Fatalf("invalid SOCKS5 exit graph: %s/%s/%s/%s", exit.Type, exit.Version, exit.Network, exit.Detour)
 		}
 		if want := firstDetourServerTag(out.DNS.Servers, "proxy"); want == "" || exit.DomainResolver != want {

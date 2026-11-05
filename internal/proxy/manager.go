@@ -41,6 +41,8 @@ import (
 )
 
 type StatusDTO struct {
+	Socks5Exit Socks5ExitState `json:"socks5Exit"`
+
 	IsConnected    bool `json:"isConnected"`
 	IsEstablishing bool `json:"isEstablishing"`
 	IsProxyDead    bool `json:"isProxyDead"`
@@ -103,6 +105,9 @@ type PingOptions struct {
 }
 
 type Manager struct {
+	socks5Exit        *config.Socks5ExitConfig
+	socks5ExitEnabled bool
+
 	// opMu serializes the heavy connection-lifecycle operations — Connect,
 	// Disconnect, SetMode and ReconnectWithRoutingRules — so only one of them
 	// ever drives the single sing-box engine at a time. Without it the two
@@ -651,8 +656,15 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
 	killSwitch bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
-	dnsLeakProtection, enableIPv6 bool) ConnectResultDTO {
+	dnsLeakProtection, enableIPv6 bool, exitProfiles ...*config.Socks5ExitConfig) ConnectResultDTO {
 
+	if m.Socks5ExitState().Enabled {
+		return socks5ExitActiveResult()
+	}
+	var exitProfile *config.Socks5ExitConfig
+	if len(exitProfiles) > 0 {
+		exitProfile = exitProfiles[0]
+	}
 	m.invalidateReloads()
 
 	dataDir := resultProxyDataDir()
@@ -666,7 +678,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 
 	res := m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist, appForceVPN,
 		killSwitch, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
-		dnsLeakProtection, enableIPv6)
+		dnsLeakProtection, enableIPv6, exitProfile, false)
 
 	if shouldRetryWithoutPin(usedCachedPin, res.ErrorCode) {
 		clearServerPin(dataDir, m.secrets, proxy.IP)
@@ -674,7 +686,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 		proxy.ResolvedIP = ""
 		res = m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist, appForceVPN,
 			killSwitch, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
-			dnsLeakProtection, enableIPv6)
+			dnsLeakProtection, enableIPv6, exitProfile, false)
 	}
 	return res
 }
@@ -683,7 +695,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
 	killSwitch bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
-	dnsLeakProtection, enableIPv6 bool) ConnectResultDTO {
+	dnsLeakProtection, enableIPv6 bool, exitProfile *config.Socks5ExitConfig, restoreExit bool) ConnectResultDTO {
 
 	// Per-phase timing — emitted as one summary line on the success path so the
 	// connect budget is measured, not estimated.
@@ -702,6 +714,15 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 
 	// ── Phase 1: quick setup under lock ──────────────────────────────────────
 	m.mu.Lock()
+
+	if restoreExit {
+		exitProfile = m.socks5Exit
+	}
+	if m.socks5ExitEnabled && (!restoreExit || !supportsSocks5Exit(exitProfile, mode, routingMode, proxy.Type)) {
+		m.mu.Unlock()
+		return socks5ExitActiveResult()
+	}
+	exitEnabled := m.socks5ExitEnabled
 
 	if m.connected {
 		m.disconnectLocked()
@@ -836,6 +857,8 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	m.warnProbeDomainOverlap(mode, proxyTypeLower, modeSites)
 
 	engineCfg := EngineConfig{
+		Socks5Exit:        exitProfile,
+		Socks5ExitEnabled: exitEnabled,
 		Proxy:             proxy,
 		Mode:              mode,
 		ListenAddr:        fmt.Sprintf("%s:%d", listenHost, actualLocalPort),
@@ -951,6 +974,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 				m.log.Info(fmt.Sprintf("[PROXY] Fallback: системный прокси → %s (sing-box недоступен)", directAddr))
 				m.mu.Lock()
 				m.connected = true
+				m.socks5Exit = exitProfile
 				m.mode = mode
 				m.proxy = &proxy
 				m.killSwitch = killSwitch
@@ -1105,6 +1129,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	m.captureLiveServerIP(&proxy)
 	m.clearPendingLocked()
 	m.connected = true
+	m.socks5Exit = exitProfile
 	m.mode = mode
 	m.proxy = &proxy
 	m.killSwitch = killSwitch
@@ -1941,6 +1966,17 @@ func isLocalDNSProbeFailure(reason string) bool {
 }
 
 func (m *Manager) Disconnect() error {
+	return m.disconnect(false)
+}
+
+func (m *Manager) DisconnectForServerChange() error {
+	return m.disconnect(true)
+}
+
+func (m *Manager) disconnect(forServerChange bool) error {
+	if forServerChange && m.Socks5ExitState().Enabled {
+		return ErrSocks5ExitActive
+	}
 	disconnectStart := time.Now()
 	m.invalidateReloads()
 	// Abort any in-progress Connect so its goroutines stop. This MUST run before
@@ -1952,6 +1988,9 @@ func (m *Manager) Disconnect() error {
 	// Serialize against connect/reconnect (see opMu).
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
+	if forServerChange && m.Socks5ExitState().Enabled {
+		return ErrSocks5ExitActive
+	}
 
 	// Stop engine unconditionally before acquiring the lock.
 	// During Phase 2 of Connect(), the engine may already be running while
@@ -2005,6 +2044,8 @@ func (m *Manager) Disconnect() error {
 	}
 	m.connected = false
 	m.proxy = nil
+	m.socks5Exit = nil
+	m.socks5ExitEnabled = false
 	m.clearPendingLocked()
 	m.emitStatusLocked()
 	m.log.Info(fmt.Sprintf("[PROXY] Тайминг отключения: total=%dms", time.Since(disconnectStart).Milliseconds()))
@@ -2224,7 +2265,7 @@ func (m *Manager) reload(ctx context.Context, change func(*reloadSession)) Conne
 	res := m.connectOnce(context.WithValue(ctx, reloadStaleKey{}, stale), sess.proxy, sess.mode,
 		sess.routingMode, sess.whitelist, sess.appWhitelist, sess.appForceVPN, sess.killSwitch,
 		sess.localPort, sess.listenLAN, sess.dnsServers, sess.tunIPv4, sess.tunIPv6,
-		sess.dnsLeak, sess.enableIPv6)
+		sess.dnsLeak, sess.enableIPv6, nil, true)
 	m.reloadActive.Store(false)
 
 	if stale() {
@@ -3433,6 +3474,7 @@ func (m *Manager) buildStatusLocked(uptime, bytesDown, bytesUp, speedDown, speed
 		mode = m.pendingMode
 	}
 	return StatusDTO{
+		Socks5Exit:          m.socks5ExitStateLocked(),
 		IsConnected:         m.connected,
 		IsEstablishing:      isEstablishing,
 		IsProxyDead:         m.proxyDead,

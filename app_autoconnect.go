@@ -32,6 +32,9 @@ const (
 )
 
 func startupConnectID(s config.AppSettings, resumeID string) string {
+	if s.Socks5ExitArmed {
+		return ""
+	}
 	if resumeID != "" {
 		return resumeID
 	}
@@ -51,6 +54,11 @@ func (a *App) applyConnectOnStartup() {
 	a.resumeMu.Lock()
 	a.resumeProxyID = startupConnectID(s, a.resumeProxyID)
 	a.resumeMu.Unlock()
+	if s.Socks5ExitArmed {
+		a.startInTray = false
+		a.log.Warning("[СИСТЕМА] Автоподключение остановлено после прерывания сеанса SOCKS5 через VPN. Подключитесь вручную.")
+		return
+	}
 	if s.ConnectOnStartup {
 		a.startInTray = false
 		if s.LastSelectedProxyID == "" {

@@ -330,6 +330,7 @@ export default function SettingsPage({
   /* Адреса, по которым прокси доступен в локальной сети. Строку собирает
      приложение: своих IP страница не знает. */
   lanAddress = "",
+  socks5ExitSettings,
   onExport,
   onImport,
   sidebar,
@@ -455,6 +456,11 @@ export default function SettingsPage({
 
     network: (
       <>
+        {socks5ExitSettings && (
+          <Row title={text.socks5Exit.title} description={text.socks5Exit.desc} stacked>
+            {socks5ExitSettings}
+          </Row>
+        )}
         <Row title={rows.dns.title} description={rows.dns.desc} stacked>
           {/* Набор DNS выбирается рядом кнопок, выбранная — зелёная. */}
           <ScrollRow>

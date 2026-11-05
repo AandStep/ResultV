@@ -25,6 +25,8 @@ import (
 func TestStartupConnectID(t *testing.T) {
 	on := config.AppSettings{ConnectOnStartup: true, LastSelectedProxyID: "last"}
 	off := config.AppSettings{LastSelectedProxyID: "last"}
+	armed := on
+	armed.Socks5ExitArmed = true
 	cases := []struct {
 		name   string
 		s      config.AppSettings
@@ -35,6 +37,8 @@ func TestStartupConnectID(t *testing.T) {
 		{"настройка включена", on, "", "last"},
 		{"настройка выключена", off, "", ""},
 		{"сервер не выбран", config.AppSettings{ConnectOnStartup: true}, "", ""},
+		{"состояние цепочки неизвестно после перезапуска", armed, "", ""},
+		{"состояние цепочки неизвестно после перезапуска с сервером", armed, "picked", ""},
 	}
 	for _, tc := range cases {
 		if got := startupConnectID(tc.s, tc.resume); got != tc.want {

@@ -1,4 +1,19 @@
 {
+  "socks5Exit": {
+    "title": "SOCKS5 over VPN",
+    "desc": "An additional exit for selected domains. Explicit routing exclusions take priority.",
+    "requires": "Connect to a selected VLESS node in Global tunnel mode. Disconnect to edit settings.",
+    "host": "SOCKS5 address",
+    "port": "Port",
+    "username": "Username (optional)",
+    "password": "Password",
+    "clearPassword": "Clear saved username and password",
+    "domains": "Domains, one per line",
+    "authHint": "Standard SOCKS5 sends credentials without encryption between the VPN node and the SOCKS5 server.",
+    "save": "Save SOCKS5",
+    "saved": "SOCKS5 settings saved",
+    "switchServer": "Turn off SOCKS5 over VPN before switching servers"
+  },
   "sidebar": {
     "offline": "Daemon Offline",
     "home": "Home",

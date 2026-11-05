@@ -56,12 +56,12 @@ func TestSocks5ExitCoreSwitch(t *testing.T) {
 			"inbounds":[{"type":"socks","listen":"127.0.0.1","listen_port":%d}],
 			"outbounds":[
 				{"type":"vless","tag":"proxy","server":"127.0.0.1","server_port":%d,"uuid":%q},
-				{"type":"socks","tag":"socks5-exit","detour":"proxy","network":"tcp","server":"127.0.0.1","server_port":%d,
+				{"type":%q,"tag":"socks5-exit","detour":"proxy","network":"tcp","server":"127.0.0.1","server_port":%d,
 				 "version":"5","username":"test-user","password":%q},
 				{"type":%q,"tag":%q,"outbounds":["proxy","socks5-exit"],"default":%q,"interrupt_exist_connections":true}
 			],
 			"route":{"rules":[{"port":[%d,%d],"action":"route","outbound":%q}],"final":"proxy"}
-		}`, testExitJSONString(cachePath), localPort, firstHop, testExitUUID, syntheticPort, password, selectorType, testExitGroup, initial, target.Port, targetUDP.Port, testExitGroup))
+		}`, testExitJSONString(cachePath), localPort, firstHop, testExitUUID, socks5ExitOutboundType, syntheticPort, password, selectorType, testExitGroup, initial, target.Port, targetUDP.Port, testExitGroup))
 		out, ok := instance.Outbound().Outbound(testExitGroup)
 		if !ok {
 			t.Fatal("exit selector missing")
@@ -70,7 +70,7 @@ func TestSocks5ExitCoreSwitch(t *testing.T) {
 	}
 
 	t.Run("routes and closes only selected flows", func(t *testing.T) {
-		_, selector, client := startClient(t, socks5ExitSelectorType, "proxy", "test-password")
+		instance, selector, client := startClient(t, socks5ExitSelectorType, "proxy", "test-password")
 		selected := testExitDial(t, client, N.NetworkTCP, target)
 		unselected := testExitDial(t, client, N.NetworkTCP, control)
 		testExitRoundTrip(t, selected)
@@ -84,6 +84,18 @@ func TestSocks5ExitCoreSwitch(t *testing.T) {
 		testExitRoundTrip(t, unselected)
 		chained := testExitDial(t, client, N.NetworkTCP, target)
 		testExitRoundTrip(t, chained)
+		// The router can have checked the previous selection's network
+		// support. The exit itself must refuse a late UDP dial.
+		out, _ := instance.Outbound().Outbound("socks5-exit")
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		packet, err := out.ListenPacket(ctx, targetUDP)
+		cancel()
+		if packet != nil {
+			_ = packet.Close()
+		}
+		if !errors.Is(err, N.ErrUnknownNetwork) {
+			t.Fatalf("SOCKS5 exit did not reject UDP at its dial boundary: %v", err)
+		}
 		udp := testExitDial(t, client, N.NetworkUDP, targetUDP)
 		if _, err := udp.Write([]byte("x")); err == nil {
 			_ = udp.SetReadDeadline(time.Now().Add(250 * time.Millisecond))

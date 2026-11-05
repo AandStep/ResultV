@@ -335,7 +335,8 @@ type AppSettings struct {
 	// PingTimeoutSec bounds one measurement, 1..10, 0/absent → 3.
 	PingTimeoutSec int `json:"pingTimeoutSec,omitempty"`
 
-	Socks5Exit *Socks5ExitConfig `json:"socks5Exit,omitempty"`
+	Socks5Exit      *Socks5ExitConfig `json:"socks5Exit,omitempty"`
+	Socks5ExitArmed bool              `json:"socks5ExitArmed,omitempty"`
 }
 
 // EffectiveDNSLeakProtection returns true unless the user has explicitly
@@ -670,6 +671,7 @@ func (m *Manager) SaveConfig(cfg AppConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cfg.Settings.Socks5Exit = m.cache.Settings.Socks5Exit
+	cfg.Settings.Socks5ExitArmed = m.cache.Settings.Socks5ExitArmed
 	return m.saveConfigLocked(cfg)
 }
 

@@ -100,6 +100,7 @@ type App struct {
 
 	stateMu       sync.Mutex
 	quitRequested bool
+	socks5ExitMu  sync.Mutex
 
 	trayHidden    atomic.Uint32
 	noTray        atomic.Bool
@@ -837,7 +838,11 @@ func keepBackendRouting(incoming, stored config.RoutingRules) config.RoutingRule
 
 func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
 	killSwitch bool) (proxy.ConnectResultDTO, error) {
+	return a.connectProxy(proxyDTO, rules, killSwitch, proxyDTO.ID)
+}
 
+func (a *App) connectProxy(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
+	killSwitch bool, selectedID string) (proxy.ConnectResultDTO, error) {
 	if a.proxy == nil {
 		return proxy.ConnectResultDTO{Success: false, Message: "Proxy manager not initialized"}, nil
 	}
@@ -871,6 +876,7 @@ func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
 		"",
 		cfg.Settings.EffectiveDNSLeakProtection(),
 		cfg.Settings.EnableIPv6,
+		socks5ExitProfileFor(cfg, selectedID),
 	)
 
 	if result.Success {
@@ -1077,10 +1083,28 @@ func (a *App) CancelConnect() {
 }
 
 func (a *App) Disconnect() error {
+	return a.disconnect(false)
+}
+
+func (a *App) DisconnectForServerChange() (bool, error) {
+	err := a.disconnect(true)
+	if errors.Is(err, proxy.ErrSocks5ExitActive) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (a *App) disconnect(forServerChange bool) error {
 	if a.proxy == nil {
 		return nil
 	}
-	err := a.proxy.Disconnect()
+	a.socks5ExitMu.Lock()
+	defer a.socks5ExitMu.Unlock()
+	disconnect := a.proxy.Disconnect
+	if forServerChange {
+		disconnect = a.proxy.DisconnectForServerChange
+	}
+	err := disconnect()
 	if err == nil {
 		if a.killSwitch != nil && a.killSwitch.IsEnabled() {
 			if derr := a.killSwitch.Disable(); derr != nil {
@@ -1092,6 +1116,9 @@ func (a *App) Disconnect() error {
 		}
 		a.setWindowTitleDisconnected()
 		wailsRuntime.EventsEmit(a.ctx, "proxy:disconnected", nil)
+		if a.config != nil {
+			err = a.config.SetSocks5ExitArmed(false)
+		}
 	}
 	return err
 }
@@ -1232,6 +1259,9 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 	if a.proxy == nil {
 		return proxy.ConnectResultDTO{Success: false, Message: "proxy manager not initialized"}, nil
 	}
+	if a.proxy.Socks5ExitState().Enabled {
+		return proxy.ConnectResultDTO{Message: proxy.ErrSocks5ExitActive.Error(), ErrorCode: proxy.ConnectErrorSocks5ExitActive}, nil
+	}
 	// Without rights the tunnel attempt is doomed: refuse before tearing down
 	// the live session, instead of failing and reconnecting it in proxy mode.
 	if mode == string(proxy.ProxyModeTunnel) && !system.IsAdmin() && a.proxy.GetStatus().CurrentProxy != nil {
@@ -1267,6 +1297,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 	status := a.proxy.GetStatus()
 	if status.CurrentProxy != nil {
 		prevProxy := *status.CurrentProxy
+		exitProfile := a.proxy.CurrentSocks5ExitProfile()
 		modeSwitchDNS := append([]string(nil), cfg.Settings.DNSServers...)
 		if fromProxy := dnsServersFromProxyExtra(prevProxy); len(fromProxy) > 0 {
 			modeSwitchDNS = fromProxy
@@ -1293,6 +1324,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 			"",
 			cfg.Settings.EffectiveDNSLeakProtection(),
 			cfg.Settings.EnableIPv6,
+			exitProfile,
 		)
 		if result.Success {
 			serverName := fmt.Sprintf("%s:%d", status.CurrentProxy.IP, status.CurrentProxy.Port)
@@ -1301,6 +1333,9 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 			}
 			a.setWindowTitleConnected(*status.CurrentProxy)
 			wailsRuntime.EventsEmit(a.ctx, "proxy:connected", *status.CurrentProxy)
+		} else if result.ErrorCode == proxy.ConnectErrorSocks5ExitActive {
+			cfg.Settings.Mode = previousMode
+			_ = a.config.SaveConfig(cfg)
 		} else if result.ErrorCode == "cancelled" {
 			// User explicitly cancelled the connect (Disconnect/CancelConnect).
 			// Do NOT rollback to the previous mode — that would silently
@@ -1334,6 +1369,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 				"",
 				cfg.Settings.EffectiveDNSLeakProtection(),
 				cfg.Settings.EnableIPv6,
+				exitProfile,
 			)
 			if rollback.Success {
 				if a.tray != nil {
@@ -1504,7 +1540,11 @@ func (a *App) UpdateRules(rules config.RoutingRules) error {
 	if a.config == nil {
 		return fmt.Errorf("config manager not initialized")
 	}
-	rules = keepBackendRouting(rules, a.config.GetConfig().RoutingRules)
+	if a.proxy != nil && a.proxy.Socks5ExitState().Enabled && rules.Mode != string(proxy.ModeGlobal) {
+		return proxy.ErrSocks5ExitActive
+	}
+	previousRules := a.config.GetConfig().RoutingRules
+	rules = keepBackendRouting(rules, previousRules)
 	if err := a.config.UpdateRoutingRules(rules); err != nil {
 		return err
 	}
@@ -1538,6 +1578,14 @@ func (a *App) UpdateRules(rules config.RoutingRules) error {
 	)
 	if result.ErrorCode == proxy.ConnectErrorSuperseded || result.Message == "not connected" {
 		return nil
+	}
+	if result.ErrorCode == proxy.ConnectErrorSocks5ExitActive {
+		current := a.config.GetConfig().RoutingRules
+		if current.Mode == rules.Mode && current.Mode != previousRules.Mode {
+			current.Mode = previousRules.Mode
+			return errors.Join(proxy.ErrSocks5ExitActive, a.config.UpdateRoutingRules(current))
+		}
+		return proxy.ErrSocks5ExitActive
 	}
 	status := a.proxy.GetStatus()
 	if !result.Success || status.CurrentProxy == nil {
@@ -3787,6 +3835,9 @@ func (a *App) connectFromTray(proxyID string) error {
 	if proxyID == "" || a.config == nil {
 		return fmt.Errorf("proxy id is empty")
 	}
+	if a.proxy != nil && a.proxy.Socks5ExitState().Enabled {
+		return proxy.ErrSocks5ExitActive
+	}
 	cfg := a.config.GetConfig()
 	// Detect ID duplicates in cfg.Proxies — they cause the wrong entry to
 	// match here and silently route the user to a different server. Manual
@@ -3892,7 +3943,7 @@ func (a *App) connectCandidates(proxyID string, isAuto bool, candidates []config
 				_ = a.proxy.Disconnect()
 			}
 		}
-		result, err := a.Connect(proxy.ProxyConfig{
+		result, err := a.connectProxy(proxy.ProxyConfig{
 			ID:              candidate.ID,
 			IP:              candidate.IP,
 			Port:            candidate.Port,
@@ -3902,7 +3953,10 @@ func (a *App) connectCandidates(proxyID string, isAuto bool, candidates []config
 			URI:             candidate.URI,
 			Extra:           candidate.Extra,
 			SubscriptionURL: candidate.SubscriptionURL,
-		}, cfg.RoutingRules, cfg.Settings.KillSwitch)
+		}, cfg.RoutingRules, cfg.Settings.KillSwitch, proxyID)
+		if result.ErrorCode == proxy.ConnectErrorSocks5ExitActive {
+			return proxy.ErrSocks5ExitActive
+		}
 		// key is "" (and every RecordConnectOutcome/setLastAutoNodeKey call
 		// below a silent no-op) unless this is an AUTO group — mirrors the
 		// frontend's `if (isAuto)` guard in useDaemonControl.js. A plain
