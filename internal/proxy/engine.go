@@ -29,6 +29,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"resultproxy-wails/internal/config"
 	"resultproxy-wails/internal/verdict"
 )
 
@@ -76,6 +77,9 @@ type ProxyConfig struct {
 }
 
 type EngineConfig struct {
+	Socks5Exit        *config.Socks5ExitConfig
+	Socks5ExitEnabled bool
+
 	Proxy        ProxyConfig
 	Mode         ProxyMode
 	ListenAddr   string
@@ -479,7 +483,11 @@ type SBOutbound struct {
 	// Outbounds names the members of a group outbound. Only a group reads
 	// it — for us that is the "smart" type, whose two members are the plain
 	// direct and proxy outbounds it chooses between.
-	Outbounds []string `json:"outbounds,omitempty"`
+	Outbounds                 []string `json:"outbounds,omitempty"`
+	Default                   string   `json:"default,omitempty"`
+	InterruptExistConnections bool     `json:"interrupt_exist_connections,omitempty"`
+	Detour                    string   `json:"detour,omitempty"`
+	Network                   string   `json:"network,omitempty"`
 	// ProxyResolver is the "smart" group's DNS server for names it sends to
 	// an endpoint member, which cannot take a name (see proxyIsEndpoint).
 	ProxyResolver string `json:"proxy_resolver,omitempty"`
@@ -1005,6 +1013,9 @@ func processPathRegex(entry string) string {
 }
 
 func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
+	if cfg.Socks5ExitEnabled {
+		return SingBoxConfig{}, errSocks5ExitUnsupported
+	}
 	cfg = cfg.forRoutingMode()
 	port := cfg.LocalPort
 	if port == 0 {
@@ -1308,6 +1319,9 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 		Outbounds:    outbounds,
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
+	}
+	if err := addSocks5Exit(&sbCfg, cfg); err != nil {
+		return SingBoxConfig{}, err
 	}
 	// A fakeip server without a persistent mapping is a time bomb: see the
 	// comment on SBCacheFile.StoreFakeIP. buildExperimentalCache already emits

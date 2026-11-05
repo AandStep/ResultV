@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -635,7 +636,14 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 
 	tmpDir := os.TempDir()
 	configPath := filepath.Join(tmpDir, "resultproxy-singbox.json")
-	if err := os.WriteFile(configPath, configJSON, 0o600); err != nil {
+	diagnosticJSON := configJSON
+	if cfg.Socks5Exit != nil {
+		diagnosticJSON, err = marshalDiagnosticConfig(sbConfig)
+		if err != nil {
+			return fmt.Errorf("marshaling diagnostic config: %w", err)
+		}
+	}
+	if err := os.WriteFile(configPath, diagnosticJSON, 0o600); err != nil {
 		return fmt.Errorf("writing sing-box config: %w", err)
 	}
 
@@ -1342,6 +1350,18 @@ func (t *trafficTracker) logConnection(metadata adapter.InboundContext, outbound
 	return host, dest, true
 }
 
+
+func marshalDiagnosticConfig(cfg SingBoxConfig) ([]byte, error) {
+	for i, out := range cfg.Outbounds {
+		if out.Tag == socks5ExitTag {
+			cfg.Outbounds = slices.Clone(cfg.Outbounds)
+			cfg.Outbounds[i].Username = ""
+			cfg.Outbounds[i].Password = ""
+			break
+		}
+	}
+	return json.MarshalIndent(cfg, "", "  ")
+}
 
 func (e *SingBoxEngine) GetConfigJSON() (string, error) {
 	if e.configPath == "" {
