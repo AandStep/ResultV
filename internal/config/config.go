@@ -334,6 +334,8 @@ type AppSettings struct {
 
 	// PingTimeoutSec bounds one measurement, 1..10, 0/absent → 3.
 	PingTimeoutSec int `json:"pingTimeoutSec,omitempty"`
+
+	Socks5Exit *Socks5ExitConfig `json:"socks5Exit,omitempty"`
 }
 
 // EffectiveDNSLeakProtection returns true unless the user has explicitly
@@ -667,7 +669,11 @@ func (m *Manager) WasCreatedFresh() bool {
 func (m *Manager) SaveConfig(cfg AppConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	cfg.Settings.Socks5Exit = m.cache.Settings.Socks5Exit
+	return m.saveConfigLocked(cfg)
+}
 
+func (m *Manager) saveConfigLocked(cfg AppConfig) error {
 	if m.configPath == "" {
 		return fmt.Errorf("config manager not initialized")
 	}

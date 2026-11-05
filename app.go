@@ -801,7 +801,7 @@ func (a *App) GetConfig() (config.AppConfig, error) {
 	if a.config == nil {
 		return config.DefaultConfig(), nil
 	}
-	return a.config.GetConfig(), nil
+	return appConfigForUI(a.config.GetConfig()), nil
 }
 
 func (a *App) SaveConfig(cfg config.AppConfig) error {
@@ -1252,7 +1252,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 	// from disk, which reflects any rollback that happened above.
 	defer func() {
 		if a.ctx != nil {
-			wailsRuntime.EventsEmit(a.ctx, "config:updated", a.config.GetConfig())
+			wailsRuntime.EventsEmit(a.ctx, "config:updated", appConfigForUI(a.config.GetConfig()))
 		}
 	}()
 
@@ -1611,7 +1611,7 @@ func (a *App) ImportConfig(data, password string, allowLegacy bool) error {
 		return err
 	}
 	a.log.Success(fmt.Sprintf("Импортировано %d прокси", len(imported.Proxies)))
-	wailsRuntime.EventsEmit(a.ctx, "config:updated", merged)
+	wailsRuntime.EventsEmit(a.ctx, "config:updated", appConfigForUI(merged))
 	return nil
 }
 
