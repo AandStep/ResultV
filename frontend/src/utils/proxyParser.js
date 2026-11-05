@@ -188,6 +188,7 @@ const parseLine = (line) => {
     if (line.startsWith("naive+https://") || line.startsWith("naive://")) return parseNaiveURI(line);
     if (line.startsWith("hy2://")) return parseHysteria2(line);
     if (line.startsWith("hysteria2://")) return parseHysteria2(line);
+    if (/^socks5:\/\//i.test(line)) return parseSocks5URI(line);
 
     // A scheme this parser does not know (awg://, wg://, anything added later)
     // must not reach the bare host:port branches below: they would split
@@ -227,6 +228,25 @@ const parseLine = (line) => {
     }
 
     return null;
+};
+
+const parseSocks5URI = (line) => {
+    try {
+        const url = new URL(line);
+        const port = Number(url.port);
+        if (!url.hostname || port === 0) return null;
+
+        return {
+            ip: url.hostname.replace(/^\[(.*)\]$/, "$1"),
+            port,
+            username: decodeURIComponent(url.username),
+            password: decodeURIComponent(url.password),
+            type: "SOCKS5",
+            name: url.host,
+        };
+    } catch {
+        return null;
+    }
 };
 
 const safeB64Decode = (str) => {

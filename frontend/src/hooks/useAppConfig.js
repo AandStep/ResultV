@@ -546,7 +546,8 @@ export const useAppConfig = (addLog) => {
             const now = Date.now();
             const finalProxies = await Promise.all(
                 proxiesData.map(async (p, index) => {
-                    const isVpn = VPN_TYPES.includes(p.type?.toUpperCase());
+                    const type = p.type?.toUpperCase();
+                    const keepType = type === "SOCKS5" || VPN_TYPES.includes(type);
                     const known = (c) => c && c !== "unknown" && c !== "\u{1F310}";
                     const fromName = flagEmojiCountry(p.name);
                     // Skip country detection for AUTO entries (no real host).
@@ -561,7 +562,7 @@ export const useAppConfig = (addLog) => {
                         ...p,
                         id: String(p.id || now + index),
                         country: fromName || (known(detected) ? detected : known(p.country) ? p.country : detected || p.country || ""),
-                        type: isVpn ? p.type : (defaultProtocol || p.type || "HTTP"),
+                        type: keepType ? p.type : (defaultProtocol || p.type || "HTTP"),
                         port: parseInt(p.port, 10) || 0,
                     };
                 })
