@@ -177,6 +177,49 @@
   gap: var(--rv-space-nest-2);
 }
 
+.rv-settings-page__row.rv-settings-page__socks5 {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--rv-space-nest-2);
+}
+
+.rv-settings-page__socks5-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--rv-space-nest-2);
+}
+
+.rv-settings-page__socks5-header .rv-tumbler {
+  flex-shrink: 0;
+}
+
+.rv-settings-page__socks5-fields {
+  display: grid;
+  gap: var(--rv-space-nest-3);
+}
+
+.rv-settings-page__socks5-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--rv-space-nest-3);
+}
+
+.rv-settings-page__socks5-pair[data-address] {
+  grid-template-columns: minmax(0, 1fr) clamp(7rem, 24%, 11rem);
+}
+
+.rv-settings-page__socks5-fields .rv-input {
+  width: 100%;
+  min-width: 0;
+  height: 48px;
+}
+
+.rv-settings-page__socks5-fields .rv-input::placeholder {
+  color: var(--rv-white-a50);
+}
+
+
 /* Ряд кнопок выносится за отступ карточки и гаснет у её края — заливка у
    растяжки та же, что у карточки. */
 .rv-settings-page__row .rv-scroll-row {

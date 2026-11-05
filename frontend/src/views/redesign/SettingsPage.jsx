@@ -456,11 +456,7 @@ export default function SettingsPage({
 
     network: (
       <>
-        {socks5ExitSettings && (
-          <Row title={text.socks5Exit.title} description={text.socks5Exit.desc} stacked>
-            {socks5ExitSettings}
-          </Row>
-        )}
+        {socks5ExitSettings}
         <Row title={rows.dns.title} description={rows.dns.desc} stacked>
           {/* Набор DNS выбирается рядом кнопок, выбранная — зелёная. */}
           <ScrollRow>

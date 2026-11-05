@@ -25,19 +25,27 @@ func TestSocks5ExitSaveKeepsStoredSecret(t *testing.T) {
 		t.Fatal(err)
 	}
 	password := "test-exit-password"
+	if err := a.SetSocks5ExitEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := a.GetSocks5ExitSettings()
+	if err != nil || !pending.Enabled || pending.Host != "" {
+		t.Fatal("unable to enable SOCKS5 before filling its settings")
+	}
 	update := Socks5ExitSettingsUpdate{
 		Host: "socks.example.test", Port: 8000, Username: "test-user",
-		Password: &password, Domains: []string{"destination.example.test"},
+		Password: &password,
 	}
 	if err := a.SaveSocks5ExitSettings(update); err != nil {
 		t.Fatal(err)
 	}
 	update.Password = nil
 	update.Port++
-	if err := a.SaveSocks5ExitSettings(update); err != nil {
-		t.Fatal(err)
+	if err := a.SaveSocks5ExitSettings(update); err == nil {
+		t.Fatal("previous password would be reused at a new address")
 	}
-	if err := a.config.SetSocks5ExitArmed(true); err != nil {
+	update.Password = &password
+	if err := a.SaveSocks5ExitSettings(update); err != nil {
 		t.Fatal(err)
 	}
 	stale.Settings.Language = "ru"
@@ -48,14 +56,14 @@ func TestSocks5ExitSaveKeepsStoredSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Port != 8001 || !status.HasPassword {
+	if status.Port != 8001 || !status.HasPassword || !status.Enabled {
 		t.Fatal("saving stale app settings erased the exit profile")
 	}
 	cfg, err := a.GetConfig()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Settings.Socks5Exit != nil || cfg.Settings.Socks5ExitArmed {
+	if cfg.Settings.Socks5Exit != nil {
 		t.Fatal("general UI config exposes the exit profile")
 	}
 	update.Port = 0
@@ -63,10 +71,7 @@ func TestSocks5ExitSaveKeepsStoredSecret(t *testing.T) {
 		t.Fatal("invalid profile update succeeded")
 	}
 	cfg = newManager().GetConfig()
-	if !cfg.Settings.Socks5ExitArmed {
-		t.Fatal("stale settings overwrote the startup guard")
-	}
-	if profile := cfg.Settings.Socks5Exit; profile == nil || profile.Port != 8001 || profile.Password != password {
+	if profile := cfg.Settings.Socks5Exit; profile == nil || !profile.Enabled || profile.Port != 8001 || profile.Password != password {
 		t.Fatal("protected settings failed to round-trip")
 	}
 	stored, err := os.ReadFile(filepath.Join(dir, "proxy_config.json"))
@@ -85,5 +90,11 @@ func TestSocks5ExitSaveKeepsStoredSecret(t *testing.T) {
 	status, err = a.GetSocks5ExitSettings()
 	if err != nil || status.HasPassword {
 		t.Fatalf("clearing stored password failed: %v", err)
+	}
+	if err := a.SetSocks5ExitEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	if profile := newManager().GetConfig().Settings.Socks5Exit; profile.Enabled || profile.Host != update.Host {
+		t.Fatal("disabling the switch lost the saved proxy address")
 	}
 }

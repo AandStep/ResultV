@@ -144,7 +144,7 @@ func (s *smartOutbound) Start() error {
 		switch tag {
 		case "direct":
 			s.direct = detour
-		case "proxy":
+		case "proxy", socks5ExitSelector:
 			s.proxy = detour
 		}
 	}

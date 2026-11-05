@@ -9,22 +9,31 @@ import (
 	"net"
 	"net/netip"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/sagernet/sing-box"
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/option"
-	"github.com/sagernet/sing-box/protocol/group"
 	singjson "github.com/sagernet/sing/common/json"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/protocol/socks"
+
+	"resultproxy-wails/internal/config"
 )
 
 const (
-	testExitGroup = "test-exit"
+	testExitGroup = socks5ExitSelector
 	testExitUUID  = "90e4099f-aaf7-452d-9bc5-f9f2bb82c5b0"
 )
+
+type testExitSwitch interface {
+	adapter.Outbound
+	Now() string
+	SelectOutbound(string) bool
+}
 
 func TestSocks5ExitCoreSwitch(t *testing.T) {
 	target := testExitEcho(t)
@@ -47,7 +56,7 @@ func TestSocks5ExitCoreSwitch(t *testing.T) {
 	}`, firstHop, testExitUUID, secondHop, syntheticPort, delayedHop.port))
 
 	cachePath := filepath.Join(t.TempDir(), "cache.db")
-	startClient := func(t *testing.T, selectorType, initial, password string) (*box.Box, *group.Selector, *socks.Client) {
+	startClient := func(t *testing.T, selectorType, initial, password string) (*box.Box, testExitSwitch, *socks.Client) {
 		t.Helper()
 		localPort := testExitPort(t)
 		instance := testExitBox(t, fmt.Sprintf(`{
@@ -58,19 +67,23 @@ func TestSocks5ExitCoreSwitch(t *testing.T) {
 				{"type":"vless","tag":"proxy","server":"127.0.0.1","server_port":%d,"uuid":%q},
 				{"type":%q,"tag":"socks5-exit","detour":"proxy","network":"tcp","server":"127.0.0.1","server_port":%d,
 				 "version":"5","username":"test-user","password":%q},
-				{"type":%q,"tag":%q,"outbounds":["proxy","socks5-exit"],"default":%q,"interrupt_exist_connections":true}
+				{"type":%q,"tag":"socks5-exit-next","detour":"proxy","network":"tcp","version":"5"},
+				{"type":%q,"tag":%q,"outbounds":["proxy","socks5-exit","socks5-exit-next"],"default":%q,"interrupt_exist_connections":true}
 			],
 			"route":{"rules":[{"port":[%d,%d],"action":"route","outbound":%q}],"final":"proxy"}
-		}`, testExitJSONString(cachePath), localPort, firstHop, testExitUUID, socks5ExitOutboundType, syntheticPort, password, selectorType, testExitGroup, initial, target.Port, targetUDP.Port, testExitGroup))
+		}`, testExitJSONString(cachePath), localPort, firstHop, testExitUUID, socks5ExitOutboundType, syntheticPort, password, socks5ExitOutboundType, selectorType, testExitGroup, initial, target.Port, targetUDP.Port, testExitGroup))
 		out, ok := instance.Outbound().Outbound(testExitGroup)
 		if !ok {
 			t.Fatal("exit selector missing")
 		}
-		return instance, out.(*group.Selector), socks.NewClient(N.SystemDialer, testExitAddress(localPort), socks.Version5, "", "")
+		return instance, out.(testExitSwitch), socks.NewClient(N.SystemDialer, testExitAddress(localPort), socks.Version5, "", "")
 	}
 
 	t.Run("routes and closes only selected flows", func(t *testing.T) {
 		instance, selector, client := startClient(t, socks5ExitSelectorType, "proxy", "test-password")
+		if _, unwrapsToEndpoint := selector.(adapter.OutboundGroup); unwrapsToEndpoint {
+			t.Fatal("the TUN router can bypass live switching by caching raw endpoint flows")
+		}
 		selected := testExitDial(t, client, N.NetworkTCP, target)
 		unselected := testExitDial(t, client, N.NetworkTCP, control)
 		testExitRoundTrip(t, selected)
@@ -163,6 +176,93 @@ func TestSocks5ExitCoreSwitch(t *testing.T) {
 		}
 		if err == nil {
 			t.Fatal("target was reachable with invalid SOCKS5 credentials")
+		}
+	})
+
+	t.Run("enable first and edit live", func(t *testing.T) {
+		instance, _, client := startClient(t, socks5ExitSelectorType, "proxy", "test-password")
+		engine := &SingBoxEngine{instance: instance}
+		engine.running.Store(true)
+		requireBlocked := func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			conn, err := client.DialContext(ctx, N.NetworkTCP, target)
+			if conn != nil {
+				_ = conn.Close()
+			}
+			if err == nil {
+				t.Fatal("an enabled but invalid exit must fail closed")
+			}
+		}
+		if err := engine.SetSocks5Exit(&config.Socks5ExitConfig{Enabled: true}); err != nil {
+			t.Fatal(err)
+		}
+		requireBlocked()
+		profile := config.Socks5ExitConfig{Enabled: true, Host: "127.0.0.1", Port: syntheticPort, Username: "test-user", Password: "test-password"}
+		if err := engine.SetSocks5Exit(&profile); err != nil {
+			t.Fatal(err)
+		}
+		flow := testExitDial(t, client, N.NetworkTCP, target)
+		testExitRoundTrip(t, flow)
+		bad := profile
+		bad.Password = "wrong-password"
+		if err := engine.SetSocks5Exit(&bad); err != nil {
+			t.Fatal(err)
+		}
+		testExitClosed(t, flow)
+		requireBlocked()
+		profile.Enabled = false
+		if err := engine.SetSocks5Exit(&profile); err != nil {
+			t.Fatal(err)
+		}
+		testExitRoundTrip(t, testExitDial(t, client, N.NetworkTCP, target))
+	})
+
+	t.Run("rejects an unadvertised auth method", func(t *testing.T) {
+		listener := testExitListener(t)
+		connectSent := make(chan bool, 1)
+		go func() {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+			greeting := make([]byte, 3)
+			if _, err := io.ReadFull(conn, greeting); err != nil || !slices.Equal(greeting, []byte{5, 1, 2}) {
+				connectSent <- true
+				return
+			}
+			_, _ = conn.Write([]byte{5, 0})
+			n, _ := conn.Read(make([]byte, 1))
+			connectSent <- n != 0
+		}()
+		instance, _, client := startClient(t, socks5ExitSelectorType, "proxy", "test-password")
+		engine := &SingBoxEngine{instance: instance}
+		engine.running.Store(true)
+		profile := config.Socks5ExitConfig{
+			Enabled: true, Host: "127.0.0.1", Port: listener.Addr().(*net.TCPAddr).Port,
+			Username: "test-user", Password: "test-password",
+		}
+		if err := engine.SetSocks5Exit(&profile); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		conn, err := client.DialContext(ctx, N.NetworkTCP, target)
+		if conn != nil {
+			_ = conn.Close()
+		}
+		if err == nil {
+			t.Fatal("unexpectedly connected with an unadvertised auth method")
+		}
+		select {
+		case sent := <-connectSent:
+			if sent {
+				t.Fatal("SOCKS5 accepted a no-auth response when only password auth was offered")
+			}
+		case <-ctx.Done():
+			t.Fatal("SOCKS5 server never saw the greeting")
 		}
 	})
 

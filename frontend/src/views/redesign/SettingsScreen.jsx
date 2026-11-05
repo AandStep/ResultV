@@ -490,7 +490,6 @@ export default function SettingsScreen() {
           title: t("settings.title"),
           subtitle: t("settings.desc"),
           back: t("settings.back"),
-          socks5Exit: { title: t("socks5Exit.title"), desc: t("socks5Exit.desc") },
           groups: {
             advanced: group("advanced"),
             subscriptions: group("subscriptions"),

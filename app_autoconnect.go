@@ -17,6 +17,7 @@ package main
 
 import (
 	"net/http"
+	"net/url"
 	"time"
 
 	"resultproxy-wails/internal/config"
@@ -32,7 +33,7 @@ const (
 )
 
 func startupConnectID(s config.AppSettings, resumeID string) string {
-	if s.Socks5ExitArmed {
+	if s.LegacySocks5ExitArmed {
 		return ""
 	}
 	if resumeID != "" {
@@ -54,9 +55,9 @@ func (a *App) applyConnectOnStartup() {
 	a.resumeMu.Lock()
 	a.resumeProxyID = startupConnectID(s, a.resumeProxyID)
 	a.resumeMu.Unlock()
-	if s.Socks5ExitArmed {
+	if s.LegacySocks5ExitArmed {
 		a.startInTray = false
-		a.log.Warning("[СИСТЕМА] Автоподключение остановлено после прерывания сеанса SOCKS5 через VPN. Подключитесь вручную.")
+		a.log.Warning("[СИСТЕМА] Профиль SOCKS5 обновлён. Проверьте настройку в разделе «Сеть» и подключитесь вручную.")
 		return
 	}
 	if s.ConnectOnStartup {
@@ -94,9 +95,13 @@ func (a *App) VerifyTunnelTraffic() bool {
 	if st := a.proxy.GetStatus(); !st.IsConnected || st.Mode != proxy.ProxyModeTunnel {
 		return true
 	}
+	transport := &http.Transport{DisableKeepAlives: true}
+	if firstHop := a.proxy.Socks5ExitFirstHopProbeAddress(); firstHop != "" {
+		transport.Proxy = http.ProxyURL(&url.URL{Scheme: "socks5h", Host: firstHop})
+	}
 	client := &http.Client{
 		Timeout:   trafficProbeTimout,
-		Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true},
+		Transport: transport,
 	}
 	for i := 0; i < trafficProbeTries; i++ {
 		if i > 0 {

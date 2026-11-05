@@ -684,7 +684,7 @@ export const useDaemonControl = (
                 // as "the click didn't register".
                 const previousActive = activeProxy;
                 setActiveProxy(proxy);
-                if (!live && String(settings?.lastSelectedProxyId) !== String(proxy.id)) {
+                if (String(settings?.lastSelectedProxyId) !== String(proxy.id)) {
                     updateSetting("lastSelectedProxyId", proxy.id);
                 }
 
@@ -744,7 +744,7 @@ export const useDaemonControl = (
 
                 if (live) {
                     setIsDisconnecting(true);
-                    const disconnected = await wailsAPI.disconnectForServerChange();
+                    await wailsAPI.disconnect();
                     /* Пока рвали прежнее соединение, нас могли обогнать — и
                        тогда флаги принадлежат уже не нам. Порядок отключений
                        в ядре держит замок, так что обогнавший ещё не успел
@@ -754,20 +754,8 @@ export const useDaemonControl = (
                         addLog("Запуск остановлен.", "info");
                         return;
                     }
-                    if (!disconnected) {
-                        setActiveProxy(previousActive ?? null);
-                        setIsDisconnecting(false);
-                        setIsConnecting(false);
-                        bumpGen();
-                        isSwitchingRef.current = false;
-                        showToast({ variant: "info", message: t("socks5Exit.switchServer") });
-                        return;
-                    }
                     setIsConnected(false);
                     setIsDisconnecting(false);
-                    if (String(settings?.lastSelectedProxyId) !== String(proxy.id)) {
-                        updateSetting("lastSelectedProxyId", proxy.id);
-                    }
                 }
 
                 setIsConnecting(true);

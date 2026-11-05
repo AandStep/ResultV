@@ -41,8 +41,6 @@ import (
 )
 
 type StatusDTO struct {
-	Socks5Exit Socks5ExitState `json:"socks5Exit"`
-
 	IsConnected    bool `json:"isConnected"`
 	IsEstablishing bool `json:"isEstablishing"`
 	IsProxyDead    bool `json:"isProxyDead"`
@@ -105,8 +103,8 @@ type PingOptions struct {
 }
 
 type Manager struct {
-	socks5Exit        *config.Socks5ExitConfig
-	socks5ExitEnabled bool
+	socks5Exit       *config.Socks5ExitConfig
+	firstHopProbePort int
 
 	// opMu serializes the heavy connection-lifecycle operations — Connect,
 	// Disconnect, SetMode and ReconnectWithRoutingRules — so only one of them
@@ -656,15 +654,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
 	killSwitch bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
-	dnsLeakProtection, enableIPv6 bool, exitProfiles ...*config.Socks5ExitConfig) ConnectResultDTO {
-
-	if m.Socks5ExitState().Enabled {
-		return socks5ExitActiveResult()
-	}
-	var exitProfile *config.Socks5ExitConfig
-	if len(exitProfiles) > 0 {
-		exitProfile = exitProfiles[0]
-	}
+	dnsLeakProtection, enableIPv6 bool) ConnectResultDTO {
 	m.invalidateReloads()
 
 	dataDir := resultProxyDataDir()
@@ -678,7 +668,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 
 	res := m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist, appForceVPN,
 		killSwitch, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
-		dnsLeakProtection, enableIPv6, exitProfile, false)
+		dnsLeakProtection, enableIPv6)
 
 	if shouldRetryWithoutPin(usedCachedPin, res.ErrorCode) {
 		clearServerPin(dataDir, m.secrets, proxy.IP)
@@ -686,7 +676,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 		proxy.ResolvedIP = ""
 		res = m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist, appForceVPN,
 			killSwitch, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
-			dnsLeakProtection, enableIPv6, exitProfile, false)
+			dnsLeakProtection, enableIPv6)
 	}
 	return res
 }
@@ -695,7 +685,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
 	killSwitch bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
-	dnsLeakProtection, enableIPv6 bool, exitProfile *config.Socks5ExitConfig, restoreExit bool) ConnectResultDTO {
+	dnsLeakProtection, enableIPv6 bool) ConnectResultDTO {
 
 	// Per-phase timing — emitted as one summary line on the success path so the
 	// connect budget is measured, not estimated.
@@ -715,14 +705,8 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	// ── Phase 1: quick setup under lock ──────────────────────────────────────
 	m.mu.Lock()
 
-	if restoreExit {
-		exitProfile = m.socks5Exit
-	}
-	if m.socks5ExitEnabled && (!restoreExit || !supportsSocks5Exit(exitProfile, mode, routingMode, proxy.Type)) {
-		m.mu.Unlock()
-		return socks5ExitActiveResult()
-	}
-	exitEnabled := m.socks5ExitEnabled
+	exitProfile := m.socks5Exit
+	exitEnabled := exitProfile != nil && exitProfile.Enabled
 
 	if m.connected {
 		m.disconnectLocked()
@@ -845,6 +829,13 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	if actualLocalPort == 0 {
 		actualLocalPort = getFreeLocalPort(14081)
 	}
+	firstHopProbePort := 0
+	if exitProfile != nil && mode == ProxyModeProxy {
+		firstHopProbePort = getFreeLocalPort(0)
+		if firstHopProbePort == actualLocalPort {
+			firstHopProbePort = getFreeLocalPort(actualLocalPort%65535 + 1)
+		}
+	}
 
 	listenHost := "127.0.0.1"
 	if listenLAN {
@@ -858,7 +849,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 
 	engineCfg := EngineConfig{
 		Socks5Exit:        exitProfile,
-		Socks5ExitEnabled: exitEnabled,
+		FirstHopProbePort: firstHopProbePort,
 		Proxy:             proxy,
 		Mode:              mode,
 		ListenAddr:        fmt.Sprintf("%s:%d", listenHost, actualLocalPort),
@@ -968,13 +959,13 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		m.log.Warning(fmt.Sprintf("[PROXY] sing-box не запустился: %v", startErr))
 
 		proxyType := strings.ToLower(proxy.Type)
-		if (proxyType == "http" || proxyType == "https" || proxyType == "socks5" || proxyType == "socks") && m.sysProxy != nil {
+		if !exitEnabled && (proxyType == "http" || proxyType == "https" || proxyType == "socks5" || proxyType == "socks") && m.sysProxy != nil {
 			directAddr := fmt.Sprintf("%s:%d", proxy.IP, proxy.Port)
 			if setErr := m.sysProxy.Set(directAddr, modeSites); setErr == nil {
 				m.log.Info(fmt.Sprintf("[PROXY] Fallback: системный прокси → %s (sing-box недоступен)", directAddr))
 				m.mu.Lock()
 				m.connected = true
-				m.socks5Exit = exitProfile
+				m.firstHopProbePort = 0
 				m.mode = mode
 				m.proxy = &proxy
 				m.killSwitch = killSwitch
@@ -1038,7 +1029,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 
 	tProbe := time.Now()
 	proxyExtra := parseExtra(proxy)
-	if code, reason := runPostStartProbe(connectCtx, proxyTypeLower, proxy.IP, proxy.Port, actualLocalPort, mode, proxyExtra); code != "" {
+	if code, reason := runPostStartProbe(connectCtx, proxyTypeLower, proxy.IP, proxy.Port, probePortForSession(actualLocalPort, firstHopProbePort), mode, proxyExtra); code != "" {
 		// The override is already in flight — let it finish, then undo it.
 		// Without this an aborted connect leaves the machine pointing at our
 		// resolvers with no session behind them.
@@ -1129,7 +1120,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	m.captureLiveServerIP(&proxy)
 	m.clearPendingLocked()
 	m.connected = true
-	m.socks5Exit = exitProfile
+	m.firstHopProbePort = firstHopProbePort
 	m.mode = mode
 	m.proxy = &proxy
 	m.killSwitch = killSwitch
@@ -1966,17 +1957,6 @@ func isLocalDNSProbeFailure(reason string) bool {
 }
 
 func (m *Manager) Disconnect() error {
-	return m.disconnect(false)
-}
-
-func (m *Manager) DisconnectForServerChange() error {
-	return m.disconnect(true)
-}
-
-func (m *Manager) disconnect(forServerChange bool) error {
-	if forServerChange && m.Socks5ExitState().Enabled {
-		return ErrSocks5ExitActive
-	}
 	disconnectStart := time.Now()
 	m.invalidateReloads()
 	// Abort any in-progress Connect so its goroutines stop. This MUST run before
@@ -1988,9 +1968,6 @@ func (m *Manager) disconnect(forServerChange bool) error {
 	// Serialize against connect/reconnect (see opMu).
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
-	if forServerChange && m.Socks5ExitState().Enabled {
-		return ErrSocks5ExitActive
-	}
 
 	// Stop engine unconditionally before acquiring the lock.
 	// During Phase 2 of Connect(), the engine may already be running while
@@ -2044,8 +2021,7 @@ func (m *Manager) disconnect(forServerChange bool) error {
 	}
 	m.connected = false
 	m.proxy = nil
-	m.socks5Exit = nil
-	m.socks5ExitEnabled = false
+	m.firstHopProbePort = 0
 	m.clearPendingLocked()
 	m.emitStatusLocked()
 	m.log.Info(fmt.Sprintf("[PROXY] Тайминг отключения: total=%dms", time.Since(disconnectStart).Milliseconds()))
@@ -2265,7 +2241,7 @@ func (m *Manager) reload(ctx context.Context, change func(*reloadSession)) Conne
 	res := m.connectOnce(context.WithValue(ctx, reloadStaleKey{}, stale), sess.proxy, sess.mode,
 		sess.routingMode, sess.whitelist, sess.appWhitelist, sess.appForceVPN, sess.killSwitch,
 		sess.localPort, sess.listenLAN, sess.dnsServers, sess.tunIPv4, sess.tunIPv6,
-		sess.dnsLeak, sess.enableIPv6, nil, true)
+		sess.dnsLeak, sess.enableIPv6)
 	m.reloadActive.Store(false)
 
 	if stale() {
@@ -2431,7 +2407,7 @@ func (m *Manager) ProbeUDPRelayNow(ctx context.Context, session SessionRef) UDPR
 func (m *Manager) ProbeThroughputNow(ctx context.Context, session SessionRef) ThroughputResult {
 	m.mu.Lock()
 	current := m.isSessionLocked(session)
-	port := m.localPort
+	port := probePortForSession(m.localPort, m.firstHopProbePort)
 	m.mu.Unlock()
 
 	if !current {
@@ -3021,7 +2997,7 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy Proxy
 			return
 		}
 		ks := m.killSwitch
-		localPort := m.localPort
+		localPort := probePortForSession(m.localPort, m.firstHopProbePort)
 		engineRunning := m.engine != nil && m.engine.IsRunning()
 		var proxyUp, proxyDown int64
 		if engineRunning {
@@ -3474,7 +3450,6 @@ func (m *Manager) buildStatusLocked(uptime, bytesDown, bytesUp, speedDown, speed
 		mode = m.pendingMode
 	}
 	return StatusDTO{
-		Socks5Exit:          m.socks5ExitStateLocked(),
 		IsConnected:         m.connected,
 		IsEstablishing:      isEstablishing,
 		IsProxyDead:         m.proxyDead,

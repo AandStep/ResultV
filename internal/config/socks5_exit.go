@@ -9,11 +9,11 @@ import (
 )
 
 type Socks5ExitConfig struct {
-	Host     string   `json:"host"`
-	Port     int      `json:"port"`
-	Username string   `json:"username,omitempty"`
-	Password string   `json:"password,omitempty"`
-	Domains  []string `json:"domains"`
+	Enabled  bool   `json:"enabled,omitempty"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
 }
 
 var socks5DNSName = idna.New(idna.MapForLookup(), idna.VerifyDNSLength(true))
@@ -40,31 +40,6 @@ func NormalizeSocks5ExitConfig(cfg Socks5ExitConfig) (Socks5ExitConfig, error) {
 		return Socks5ExitConfig{}, errors.New("SOCKS5 credentials must be supplied as a pair of up to 255 bytes each")
 	}
 
-	seen := make(map[string]bool, len(cfg.Domains))
-	domains := make([]string, 0, len(cfg.Domains))
-	for _, value := range cfg.Domains {
-		if strings.TrimSpace(value) == "" {
-			continue
-		}
-		name, err := normalizeSocks5DNSName(value)
-		if err != nil {
-			return Socks5ExitConfig{}, errors.New("invalid SOCKS5 target domain")
-		}
-		if _, err := netip.ParseAddr(name); err == nil {
-			return Socks5ExitConfig{}, errors.New("SOCKS5 targets must be domain names")
-		}
-		if cfg.Host == name || strings.HasSuffix(cfg.Host, "."+name) {
-			return Socks5ExitConfig{}, errors.New("SOCKS5 host matches a target domain")
-		}
-		if !seen[name] {
-			domains = append(domains, name)
-			seen[name] = true
-		}
-	}
-	if len(domains) == 0 {
-		return Socks5ExitConfig{}, errors.New("add at least one SOCKS5 target domain")
-	}
-	cfg.Domains = domains
 	return cfg, nil
 }
 
@@ -83,29 +58,58 @@ func (m *Manager) SaveSocks5Exit(profile Socks5ExitConfig, password *string) err
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	current := m.cache.Settings.Socks5Exit
+	if current != nil {
+		profile.Enabled = current.Enabled
+	}
 	if password != nil {
 		profile.Password = *password
-	} else if current := m.cache.Settings.Socks5Exit; current != nil {
+	} else if current != nil && profile.Username != "" {
 		profile.Password = current.Password
 	}
 	normalized, err := NormalizeSocks5ExitConfig(profile)
 	if err != nil {
 		return err
 	}
+	if password == nil && current != nil && normalized.Password != "" &&
+		(normalized.Host != current.Host || normalized.Port != current.Port) {
+		return errors.New("enter the password for the new SOCKS5 address")
+	}
 	next := m.cache
 	next.Settings.Socks5Exit = &normalized
 	return m.saveConfigLocked(next)
 }
 
-// SetSocks5ExitArmed records whether auto-connect must stop after an unclean
-// restart. It does not request SOCKS5 on a fresh user-initiated session.
-func (m *Manager) SetSocks5ExitArmed(armed bool) error {
+func (m *Manager) SetSocks5ExitEnabled(enabled bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.cache.Settings.Socks5ExitArmed == armed {
+	var profile Socks5ExitConfig
+	if current := m.cache.Settings.Socks5Exit; current != nil {
+		profile = *current
+	}
+	profile.Enabled = enabled
+	return m.saveSocks5ExitLocked(&profile)
+}
+
+func (m *Manager) RestoreSocks5Exit(profile *Socks5ExitConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.saveSocks5ExitLocked(profile)
+}
+
+func (m *Manager) ClearSocks5ExitPreviewGuard() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.cache.Settings.LegacySocks5ExitArmed {
 		return nil
 	}
 	next := m.cache
-	next.Settings.Socks5ExitArmed = armed
+	next.Settings.LegacySocks5ExitArmed = false
+	return m.saveConfigLocked(next)
+}
+
+func (m *Manager) saveSocks5ExitLocked(profile *Socks5ExitConfig) error {
+	next := m.cache
+	next.Settings.Socks5Exit = profile
 	return m.saveConfigLocked(next)
 }

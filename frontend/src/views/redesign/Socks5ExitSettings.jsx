@@ -1,130 +1,140 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { EventsOn } from "../../../wailsjs/runtime/runtime";
-import { Button, Field, Textarea, Tumbler } from "../../components/kit";
+import { Input, Tumbler } from "../../components/kit";
 import wailsAPI from "../../utils/wailsAPI";
-
-function settingsForm(profile) {
-  return {
-    host: profile.host || "",
-    port: profile.port || 1080,
-    username: profile.username || "",
-    password: "",
-    hasPassword: Boolean(profile.hasPassword),
-    clearPassword: false,
-    domains: (profile.domains || []).join("\n"),
-  };
-}
 
 export default function Socks5ExitSettings() {
   const { t } = useTranslation();
-  const [form, setForm] = useState(null);
-  const [status, setStatus] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
-  const statusRevision = useRef(0);
+  const [settings, setSettings] = useState(null);
+  const [draft, setDraft] = useState(null);
+  const [switching, setSwitching] = useState(false);
+  const [error, setError] = useState("");
+  const committed = useRef(null);
+  const writes = useRef(Promise.resolve());
 
   useEffect(() => {
     let mounted = true;
-    let receivedStatus = false;
-    const unsubscribe = EventsOn("status:update", (next) => {
-      statusRevision.current++;
-      receivedStatus = true;
-      if (mounted) setStatus(next);
-    });
-    wailsAPI.getStatus().then((next) => {
-      if (mounted && !receivedStatus) setStatus(next);
-    }).catch((err) => {
-      if (mounted) setMessage(String(err?.message || err));
-    });
     wailsAPI.getSocks5ExitSettings().then((profile) => {
-      if (mounted) setForm(settingsForm(profile));
+      if (!mounted) return;
+      committed.current = profile;
+      setSettings(profile);
+      setDraft({
+        host: profile.host || "",
+        port: String(profile.port || 1080),
+        username: profile.username || "",
+        password: "",
+      });
     }).catch((err) => {
-      if (mounted) setMessage(String(err?.message || err));
+      if (mounted) setError(String(err?.message || err));
     });
-    return () => {
-      mounted = false;
-      if (typeof unsubscribe === "function") unsubscribe();
-    };
+    return () => { mounted = false; };
   }, []);
 
-  const exit = status?.socks5Exit;
-  const connected = status?.isConnected || status?.isEstablishing;
-  const editable = Boolean(status && !connected && !exit?.enabled && !busy);
-  const change = (key) => (event) => setForm({ ...form, [key]: event.target.value });
-
-  const save = async (event) => {
-    event.preventDefault();
-    if (!editable) return;
-    setBusy(true);
-    setMessage("");
-    try {
-      await wailsAPI.saveSocks5ExitSettings({
-        host: form.host,
-        port: Number(form.port),
-        username: form.username,
-        password: form.password || (form.clearPassword ? "" : null),
-        domains: form.domains.split(/\r?\n/),
-      });
-      setForm(settingsForm(await wailsAPI.getSocks5ExitSettings()));
-      setMessage(t("socks5Exit.saved"));
-    } catch (err) {
-      setMessage(String(err?.message || err));
-    } finally {
-      setBusy(false);
+  const save = () => {
+    const snapshot = draft;
+    if (!snapshot || !settings?.enabled) return;
+    const host = snapshot.host.trim();
+    const port = Number(snapshot.port);
+    if (!host || !Number.isInteger(port) || port < 1 || port > 65535) {
+      if (snapshot.host || settings.host) setError(t("socks5Exit.invalidAddress"));
+      return;
     }
+
+    writes.current = writes.current.then(async () => {
+      const previous = committed.current;
+      const password = snapshot.password || null;
+      if (previous.host === host && previous.port === port &&
+          previous.username === snapshot.username && !password) return;
+      if (previous.hasPassword && snapshot.username && !password &&
+          (previous.host !== host || previous.port !== port)) {
+        setError(t("socks5Exit.passwordForNewAddress"));
+        return;
+      }
+      if (snapshot.username && !password && !previous.hasPassword) return;
+      if (!snapshot.username && password) return;
+      try {
+        await wailsAPI.saveSocks5ExitSettings({ host, port, username: snapshot.username, password });
+        const next = await wailsAPI.getSocks5ExitSettings();
+        committed.current = next;
+        setSettings(next);
+        setDraft((current) => current === snapshot
+          ? { host: next.host, port: String(next.port), username: next.username, password: "" }
+          : current);
+        setError("");
+      } catch (err) {
+        setError(String(err?.message || err));
+      }
+    });
   };
 
   const toggle = async (enabled) => {
-    const revision = statusRevision.current;
-    setBusy(true);
-    setMessage("");
+    setSwitching(true);
+    setError("");
     try {
-      const next = await wailsAPI.setSocks5ExitEnabled(enabled);
-      if (statusRevision.current === revision) {
-        setStatus((prev) => ({ ...prev, socks5Exit: next }));
+      await writes.current;
+      await wailsAPI.setSocks5ExitEnabled(enabled);
+      const next = await wailsAPI.getSocks5ExitSettings();
+      committed.current = next;
+      setSettings(next);
+      if (!enabled) {
+        setDraft({
+          host: next.host || "", port: String(next.port || 1080),
+          username: next.username || "", password: "",
+        });
       }
     } catch (err) {
-      setMessage(String(err?.message || err));
-      const refreshRevision = statusRevision.current;
-      const current = await wailsAPI.getStatus().catch(() => null);
-      if (current && statusRevision.current === refreshRevision) setStatus(current);
+      setError(String(err?.message || err));
     } finally {
-      setBusy(false);
+      setSwitching(false);
     }
   };
 
+  const field = (key, extra = {}) => (
+    <Input
+      aria-label={t(`socks5Exit.${key}`)}
+      placeholder={t(`socks5Exit.${key}`)}
+      value={draft[key]}
+      onChange={(event) => setDraft({ ...draft, [key]: event.target.value })}
+      onBlur={save}
+      onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+      disabled={switching}
+      {...extra}
+    />
+  );
+
   return (
-    <>
-      <Tumbler
-        aria-label={t("socks5Exit.title")}
-        checked={Boolean(exit?.enabled)}
-        disabled={busy || (!exit?.available && !exit?.enabled)}
-        onChange={toggle}
-      />
-      {connected && !exit?.available && (
-        <p className="rv-settings-page__hint">{t("socks5Exit.requires")}</p>
+    <div className="rv-settings-page__row rv-settings-page__socks5">
+      <div className="rv-settings-page__socks5-header">
+        <div className="rv-settings-page__row-text">
+          <p className="rv-settings-page__row-title">{t("socks5Exit.title")}</p>
+          <p className="rv-settings-page__row-desc">
+            {t(settings?.enabled && !settings.host ? "socks5Exit.enterAddress" : "socks5Exit.desc")}
+          </p>
+        </div>
+        <Tumbler
+          aria-label={t("socks5Exit.title")}
+          checked={Boolean(settings?.enabled)}
+          disabled={!settings || switching}
+          onChange={toggle}
+        />
+      </div>
+      {settings?.enabled && draft && (
+        <div className="rv-settings-page__socks5-fields">
+          <div className="rv-settings-page__socks5-pair" data-address>
+            {field("host", { autoComplete: "off" })}
+            {field("port", { type: "number", min: 1, max: 65535 })}
+          </div>
+          <div className="rv-settings-page__socks5-pair">
+            {field("username", { autoComplete: "off" })}
+            {field("password", {
+              type: "password",
+              autoComplete: "new-password",
+              placeholder: t(settings.hasPassword ? "socks5Exit.passwordSaved" : "socks5Exit.password"),
+            })}
+          </div>
+        </div>
       )}
-      {form && (
-        <form className="rv-settings-page__custom" onSubmit={save}>
-          <Field label={t("socks5Exit.host")} value={form.host} onChange={change("host")} disabled={!editable} required />
-          <Field label={t("socks5Exit.port")} type="number" min={1} max={65535} value={form.port} onChange={change("port")} disabled={!editable} required />
-          <Field label={t("socks5Exit.username")} value={form.username} onChange={change("username")} disabled={!editable} autoComplete="off" />
-          <Field label={t("socks5Exit.password")} type="password" value={form.password} onChange={change("password")} disabled={!editable} autoComplete="new-password" />
-          {form.hasPassword && !form.clearPassword && (
-            <Button type="button" disabled={!editable} onClick={() => setForm({ ...form, username: "", password: "", clearPassword: true })}>
-              {t("socks5Exit.clearPassword")}
-            </Button>
-          )}
-          <label className="rv-settings-page__custom">
-            <span className="rv-settings-page__label">{t("socks5Exit.domains")}</span>
-            <Textarea value={form.domains} onChange={change("domains")} disabled={!editable} required />
-          </label>
-          <p className="rv-settings-page__hint">{t("socks5Exit.authHint")}</p>
-          <Button type="submit" variant="green" disabled={!editable}>{t("socks5Exit.save")}</Button>
-        </form>
-      )}
-      {message && <p className="rv-settings-page__hint" role="status">{message}</p>}
-    </>
+      {error && <p className="rv-settings-page__hint" role="alert">{error}</p>}
+    </div>
   );
 }

@@ -78,7 +78,7 @@ type ProxyConfig struct {
 
 type EngineConfig struct {
 	Socks5Exit        *config.Socks5ExitConfig
-	Socks5ExitEnabled bool
+	FirstHopProbePort int
 
 	Proxy        ProxyConfig
 	Mode         ProxyMode
@@ -1013,9 +1013,6 @@ func processPathRegex(entry string) string {
 }
 
 func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
-	if cfg.Socks5ExitEnabled {
-		return SingBoxConfig{}, errSocks5ExitUnsupported
-	}
 	cfg = cfg.forRoutingMode()
 	port := cfg.LocalPort
 	if port == 0 {
@@ -1048,6 +1045,12 @@ func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
 	}
+	if cfg.FirstHopProbePort != 0 {
+		sbCfg.Inbounds = append(sbCfg.Inbounds, SBInbound{
+			Type: "mixed", Tag: probeInboundTag, Listen: "127.0.0.1", ListenPort: cfg.FirstHopProbePort,
+		})
+	}
+	addSocks5Exit(&sbCfg, cfg)
 
 	return sbCfg, nil
 }
@@ -1320,9 +1323,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
 	}
-	if err := addSocks5Exit(&sbCfg, cfg); err != nil {
-		return SingBoxConfig{}, err
-	}
+	addSocks5Exit(&sbCfg, cfg)
 	// A fakeip server without a persistent mapping is a time bomb: see the
 	// comment on SBCacheFile.StoreFakeIP. buildExperimentalCache already emits
 	// that same file for every other reason the core caches things, so this

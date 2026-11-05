@@ -2,63 +2,45 @@ package main
 
 import (
 	"errors"
-	"runtime"
-	"strings"
 
 	"resultproxy-wails/internal/config"
-	"resultproxy-wails/internal/proxy"
 )
 
 type Socks5ExitSettingsDTO struct {
-	Host        string   `json:"host"`
-	Port        int      `json:"port"`
-	Username    string   `json:"username"`
-	Domains     []string `json:"domains"`
-	HasPassword bool     `json:"hasPassword"`
+	Enabled     bool   `json:"enabled"`
+	Host        string `json:"host"`
+	Port        int    `json:"port"`
+	Username    string `json:"username"`
+	HasPassword bool   `json:"hasPassword"`
 }
 
 type Socks5ExitSettingsUpdate struct {
-	Host     string   `json:"host"`
-	Port     int      `json:"port"`
-	Username string   `json:"username"`
-	Password *string  `json:"password"`
-	Domains  []string `json:"domains"`
+	Host     string  `json:"host"`
+	Port     int     `json:"port"`
+	Username string  `json:"username"`
+	Password *string `json:"password"`
 }
 
 func appConfigForUI(cfg config.AppConfig) config.AppConfig {
 	cfg.Settings.Socks5Exit = nil
-	cfg.Settings.Socks5ExitArmed = false
+	cfg.Settings.LegacySocks5ExitArmed = false
 	return cfg
 }
 
-func socks5ExitProfileFor(cfg config.AppConfig, selectedID string) *config.Socks5ExitConfig {
-	if runtime.GOOS != "windows" || cfg.Settings.Socks5Exit == nil || selectedID == "" {
-		return nil
-	}
-	for _, node := range cfg.Proxies {
-		if node.ID == selectedID {
-			if strings.EqualFold(node.Type, "vless") {
-				return cfg.Settings.Socks5Exit
-			}
-			return nil
-		}
-	}
-	return nil
-}
-
-func (a *App) SetSocks5ExitEnabled(enabled bool) (proxy.Socks5ExitState, error) {
-	if a.proxy == nil || a.config == nil {
-		return proxy.Socks5ExitState{}, errors.New("proxy manager not initialized")
+func (a *App) SetSocks5ExitEnabled(enabled bool) error {
+	if a.config == nil {
+		return errors.New("config manager not initialized")
 	}
 	a.socks5ExitMu.Lock()
 	defer a.socks5ExitMu.Unlock()
-	state, err := a.proxy.SetSocks5ExitEnabled(enabled, func() error {
-		return a.config.SetSocks5ExitArmed(true)
-	})
-	if !enabled && err == nil {
-		err = errors.Join(err, a.config.SetSocks5ExitArmed(false))
+	previous := a.config.GetConfig().Settings.Socks5Exit
+	if err := a.config.SetSocks5ExitEnabled(enabled); err != nil {
+		return err
 	}
-	return state, err
+	if err := a.applySocks5Exit(previous); err != nil {
+		return err
+	}
+	return a.config.ClearSocks5ExitPreviewGuard()
 }
 
 func (a *App) GetSocks5ExitSettings() (Socks5ExitSettingsDTO, error) {
@@ -70,8 +52,7 @@ func (a *App) GetSocks5ExitSettings() (Socks5ExitSettingsDTO, error) {
 		return Socks5ExitSettingsDTO{}, nil
 	}
 	return Socks5ExitSettingsDTO{
-		Host: p.Host, Port: p.Port, Username: p.Username,
-		Domains: append([]string(nil), p.Domains...), HasPassword: p.Password != "",
+		Enabled: p.Enabled, Host: p.Host, Port: p.Port, Username: p.Username, HasPassword: p.Password != "",
 	}, nil
 }
 
@@ -79,13 +60,22 @@ func (a *App) SaveSocks5ExitSettings(update Socks5ExitSettingsUpdate) error {
 	if a.config == nil {
 		return errors.New("config manager not initialized")
 	}
+	a.socks5ExitMu.Lock()
+	defer a.socks5ExitMu.Unlock()
+	previous := a.config.GetConfig().Settings.Socks5Exit
+	if err := a.config.SaveSocks5Exit(config.Socks5ExitConfig{
+		Host: update.Host, Port: update.Port, Username: update.Username,
+	}, update.Password); err != nil {
+		return err
+	}
+	return a.applySocks5Exit(previous)
+}
+
+func (a *App) applySocks5Exit(previous *config.Socks5ExitConfig) error {
 	if a.proxy != nil {
-		connected, establishing := a.proxy.SessionState()
-		if connected || establishing || a.proxy.Socks5ExitState().Enabled {
-			return errors.New("disconnect the VPN before editing SOCKS5 settings")
+		if err := a.proxy.SetSocks5Exit(a.config.GetConfig().Settings.Socks5Exit); err != nil {
+			return errors.Join(err, a.config.RestoreSocks5Exit(previous))
 		}
 	}
-	return a.config.SaveSocks5Exit(config.Socks5ExitConfig{
-		Host: update.Host, Port: update.Port, Username: update.Username, Domains: update.Domains,
-	}, update.Password)
+	return nil
 }

@@ -17,11 +17,10 @@ func TestBuildTunnelSocks5Exit(t *testing.T) {
 		Whitelist: []string{"direct.example.test"},
 		Socks5Exit: &config.Socks5ExitConfig{
 			Host: "exit.socks.test", Port: 8000, Username: "test-user", Password: "test-password",
-			Domains: []string{"example.test"},
 		},
 	}
 	for _, enabled := range []bool{false, true} {
-		cfg.Socks5ExitEnabled = enabled
+		cfg.Socks5Exit.Enabled = enabled
 		out := mustBuildTunnelModeConfig(t, cfg)
 		exit := mustOutbound(t, out, "socks5-exit")
 		if exit.Type != socks5ExitOutboundType || exit.Version != "5" || exit.Network != "tcp" || exit.Detour != "proxy" {
@@ -36,32 +35,82 @@ func TestBuildTunnelSocks5Exit(t *testing.T) {
 			want = "socks5-exit"
 		}
 		if selector.Type != socks5ExitSelectorType || selector.Default != want || !selector.InterruptExistConnections ||
-			!reflect.DeepEqual(selector.Outbounds, []string{"proxy", "socks5-exit"}) {
+			!reflect.DeepEqual(selector.Outbounds, []string{"proxy", "socks5-exit", "socks5-exit-next"}) {
 			t.Fatalf("invalid selector for enabled=%t", enabled)
 		}
 		rules := out.Route.Rules
-		last := rules[len(rules)-1]
-		if last.Outbound != "socks5-exit-switch" || !reflect.DeepEqual(last.DomainSuffix, []string{"example.test"}) ||
-			!reflect.DeepEqual(last.Inbound, []string{"tun-in"}) || out.Route.Final != "proxy" {
-			t.Fatal("SOCKS5 route is not a TUN-only rule before the ordinary VPN default")
+		if rules[0].Outbound != "proxy" || !slices.Contains(rules[0].Inbound, probeInboundTag) {
+			t.Fatal("an ordinary domain rule can intercept a first-hop health probe")
 		}
-		if !slices.ContainsFunc(rules[:len(rules)-1], func(rule SBRouteRule) bool {
+		if out.Route.Final != socks5ExitSelector {
+			t.Fatal("global traffic does not use the SOCKS5 selector")
+		}
+		if !slices.ContainsFunc(rules, func(rule SBRouteRule) bool {
 			return rule.Outbound == "direct" && slices.Contains(rule.DomainSuffix, "direct.example.test")
 		}) {
 			t.Fatal("explicit site exclusion lost priority over SOCKS5")
 		}
 		assertCoreAcceptsConfig(t, out)
 	}
-	cfg.RoutingMode = ModeSmart
-	if _, err := BuildTunnelModeConfig(cfg); err == nil {
-		t.Fatal("enabled SOCKS5 accepted an unsupported session")
-	}
-	cfg.Socks5ExitEnabled = false
+	cfg.Socks5Exit = nil
 	if got := mustBuildTunnelModeConfig(t, cfg); slices.ContainsFunc(got.Outbounds, func(out SBOutbound) bool {
 		return out.Tag == "socks5-exit" || out.Tag == "socks5-exit-switch"
 	}) {
 		t.Fatal("unsupported mode constructed the SOCKS5 route")
 	}
+}
+
+func TestSocks5ExitFollowsVPNInSmartMode(t *testing.T) {
+	cfg := EngineConfig{
+		Mode: ProxyModeTunnel, RoutingMode: ModeSmart, LocalPort: 14081,
+		Proxy:          ProxyConfig{Type: "HYSTERIA2", IP: "192.0.2.1", Port: 443},
+		BlockedDomains: []string{"example.test"},
+		Socks5Exit:     &config.Socks5ExitConfig{Enabled: true, Host: "192.0.2.2", Port: 1080},
+	}
+	out := mustBuildTunnelModeConfig(t, cfg)
+	if out.Route.Final != "direct" {
+		t.Fatal("Smart lost the direct default")
+	}
+	if !slices.ContainsFunc(out.Route.Rules, func(rule SBRouteRule) bool {
+		return rule.Outbound == socks5ExitSelector && slices.Contains(rule.DomainSuffix, "example.test")
+	}) {
+		t.Fatal("Smart VPN route did not use the SOCKS5 selector")
+	}
+	cfg.AdaptiveSmart = true
+	adaptive := mustBuildTunnelModeConfig(t, cfg)
+	if adaptive.Route.Final != smartOutboundTag {
+		t.Fatal("adaptive Smart lost its own default")
+	}
+	smart := mustOutbound(t, adaptive, smartOutboundTag)
+	if !reflect.DeepEqual(smart.Outbounds, []string{"direct", socks5ExitSelector}) {
+		t.Fatal("adaptive Smart VPN leg does not use the selector")
+	}
+	assertCoreAcceptsConfig(t, adaptive)
+}
+
+func TestSocks5ExitProxyModeKeepsFirstHopProbes(t *testing.T) {
+	cfg := EngineConfig{
+		Mode: ProxyModeProxy, RoutingMode: ModeGlobal, LocalPort: 14081, FirstHopProbePort: 14082,
+		Proxy:      ProxyConfig{Type: "HTTP", IP: "192.0.2.1", Port: 8000},
+		Socks5Exit: &config.Socks5ExitConfig{Enabled: true, Host: "192.0.2.2", Port: 1080},
+	}
+	out := mustBuildProxyModeConfig(t, cfg)
+	if out.Route.Final != socks5ExitSelector ||
+		out.Route.Rules[0].Outbound != "proxy" || !slices.Contains(out.Route.Rules[0].Inbound, probeInboundTag) {
+		t.Fatal("proxy mode does not separate user traffic and the first-hop health check")
+	}
+	assertCoreAcceptsConfig(t, out)
+}
+
+func TestSocks5ExitUsesWireGuardEndpointAsFirstHop(t *testing.T) {
+	cfg := adaptiveWireGuardConfig(t)
+	cfg.Socks5Exit = &config.Socks5ExitConfig{Enabled: true, Host: "socks.example.test", Port: 1080}
+	out := mustBuildTunnelModeConfig(t, cfg)
+	exit := mustOutbound(t, out, socks5ExitTag)
+	if exit.Detour != "proxy" || len(out.Endpoints) != 1 || out.Endpoints[0].Tag != exit.Detour {
+		t.Fatal("the SOCKS5 dialer does not point to the WireGuard endpoint")
+	}
+	assertCoreBuildsConfig(t, out)
 }
 
 func TestSocks5ExitDiagnosticsRedact(t *testing.T) {
