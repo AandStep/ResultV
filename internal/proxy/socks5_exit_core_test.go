@@ -237,11 +237,11 @@ func TestSocks5ExitCoreSwitch(t *testing.T) {
 		}
 		testExitClosed(t, flow)
 		requireBlocked()
-		profile.Enabled = false
-		if err := engine.SetSocks5Exit(&profile); err != nil {
+		if err := engine.SetSocks5Exit(&config.Socks5ExitConfig{Enabled: true}); err != nil {
 			t.Fatal(err)
 		}
 		testExitRoundTrip(t, testExitDial(t, client, N.NetworkTCP, target))
+		testExitRoundTrip(t, testExitDial(t, client, N.NetworkUDP, targetUDP))
 	})
 
 	t.Run("rejects an unadvertised auth method", func(t *testing.T) {

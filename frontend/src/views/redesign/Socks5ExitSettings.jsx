@@ -4,6 +4,9 @@ import { Eye, EyeOff } from "lucide-react";
 import { Input, Tumbler } from "../../components/kit";
 import wailsAPI from "../../utils/wailsAPI";
 
+// A save triggered by leaving the settings page can outlive the form.
+let pendingWrite = Promise.resolve();
+
 function profileDraft(profile) {
   return {
     host: profile.host || "",
@@ -22,11 +25,10 @@ export default function Socks5ExitSettings() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const committed = useRef(null);
-  const writes = useRef(Promise.resolve());
 
   useEffect(() => {
     let mounted = true;
-    wailsAPI.getSocks5ExitSettings().then((profile) => {
+    pendingWrite.then(() => wailsAPI.getSocks5ExitSettings()).then((profile) => {
       if (!mounted) return;
       committed.current = profile;
       setSettings(profile);
@@ -42,12 +44,13 @@ export default function Socks5ExitSettings() {
     if (!snapshot || !settings?.enabled) return;
     const host = snapshot.host.trim();
     const port = Number(snapshot.port);
-    if (!host || !Number.isInteger(port) || port < 1 || port > 65535) {
+    const cleared = !host && !snapshot.port && !snapshot.username && !snapshot.password;
+    if (!cleared && (!host || !Number.isInteger(port) || port < 1 || port > 65535)) {
       if (snapshot.host || settings.host) setError(t("socks5Exit.invalidAddress"));
       return;
     }
 
-    writes.current = writes.current.then(async () => {
+    pendingWrite = pendingWrite.then(async () => {
       const previous = committed.current;
       const addressChanged = previous.host !== host || previous.port !== port;
       if (!addressChanged && previous.username === snapshot.username &&
@@ -77,24 +80,25 @@ export default function Socks5ExitSettings() {
     });
   };
 
-  const toggle = async (enabled) => {
+  const toggle = (enabled) => {
     setSwitching(true);
     setError("");
-    try {
-      await writes.current;
-      await wailsAPI.setSocks5ExitEnabled(enabled);
-      const next = await wailsAPI.getSocks5ExitSettings();
-      committed.current = next;
-      setSettings(next);
-      if (!enabled) {
-        setDraft(profileDraft(next));
-        setShowPassword(false);
+    pendingWrite = pendingWrite.then(async () => {
+      try {
+        await wailsAPI.setSocks5ExitEnabled(enabled);
+        const next = await wailsAPI.getSocks5ExitSettings();
+        committed.current = next;
+        setSettings(next);
+        if (!enabled) {
+          setDraft(profileDraft(next));
+          setShowPassword(false);
+        }
+      } catch (err) {
+        setError(String(err?.message || err));
+      } finally {
+        setSwitching(false);
       }
-    } catch (err) {
-      setError(String(err?.message || err));
-    } finally {
-      setSwitching(false);
-    }
+    });
   };
 
   const field = (key, extra = {}) => (

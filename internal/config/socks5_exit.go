@@ -75,6 +75,9 @@ func (m *Manager) SaveSocks5Exit(profile Socks5ExitConfig, password *string) err
 	} else if current != nil && profile.Username != "" {
 		profile.Password = current.Password
 	}
+	if strings.TrimSpace(profile.Host) == "" && profile.Port == 0 && profile.Username == "" && profile.Password == "" {
+		return m.saveSocks5ExitLocked(&Socks5ExitConfig{Enabled: profile.Enabled})
+	}
 	normalized, err := NormalizeSocks5ExitConfig(profile)
 	if err != nil {
 		return err
@@ -83,9 +86,7 @@ func (m *Manager) SaveSocks5Exit(profile Socks5ExitConfig, password *string) err
 		(normalized.Host != current.Host || normalized.Port != current.Port) {
 		return errors.New("enter the password for the new SOCKS5 address")
 	}
-	next := m.cache
-	next.Settings.Socks5Exit = &normalized
-	return m.saveConfigLocked(next)
+	return m.saveSocks5ExitLocked(&normalized)
 }
 
 func (m *Manager) SetSocks5ExitEnabled(enabled bool) error {

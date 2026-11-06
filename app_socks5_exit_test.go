@@ -101,3 +101,43 @@ func TestSocks5ExitSaveKeepsStoredSecret(t *testing.T) {
 		t.Fatal("disabling the switch lost the saved proxy address")
 	}
 }
+
+func TestSocks5ExitClearingAllFieldsPersists(t *testing.T) {
+	dir := t.TempDir()
+	newApp := func() *App {
+		m := config.NewManager(config.NewCryptoServiceWithID("socks5-exit-clear-test"))
+		if err := m.Init(dir); err != nil {
+			t.Fatal(err)
+		}
+		return &App{config: m}
+	}
+	a := newApp()
+	if err := a.SetSocks5ExitEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	password := "test-password"
+	if err := a.SaveSocks5ExitSettings(Socks5ExitSettingsUpdate{
+		Host: "socks.example.test", Port: 8000, Username: "test-user", Password: &password,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	empty := ""
+	if err := a.SaveSocks5ExitSettings(Socks5ExitSettingsUpdate{Password: &empty}); err != nil {
+		t.Fatalf("clearing all fields: %v", err)
+	}
+	requireEmpty := func() {
+		t.Helper()
+		got, err := a.GetSocks5ExitSettings()
+		if err != nil || got != (Socks5ExitSettingsDTO{Enabled: true}) {
+			t.Fatal("clearing must persist an empty profile with the toggle still on")
+		}
+	}
+	requireEmpty()
+	for _, enabled := range []bool{false, true} {
+		if err := a.SetSocks5ExitEnabled(enabled); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a = newApp()
+	requireEmpty()
+}
