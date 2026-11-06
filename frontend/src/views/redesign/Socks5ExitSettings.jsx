@@ -143,7 +143,6 @@ export default function Socks5ExitSettings() {
             </div>
           </div>
           <Button
-            className="rv-settings-page__socks5-save"
             variant="green"
             disabled={!dirty || busy}
             onClick={save}

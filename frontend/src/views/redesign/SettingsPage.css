@@ -219,12 +219,6 @@
   color: var(--rv-white-a50);
 }
 
-.rv-settings-page__socks5-fields > .rv-settings-page__socks5-save {
-  justify-self: end;
-  height: 48px;
-  padding-inline: var(--rv-space-24);
-}
-
 .rv-settings-page__socks5-password {
   position: relative;
   min-width: 0;
