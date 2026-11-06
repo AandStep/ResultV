@@ -2,7 +2,7 @@
   "socks5Exit": {
     "title": "SOCKS5 через VPN",
     "desc": "Направляет TCP-трафик VPN через SOCKS5.",
-    "enterAddress": "Укажите IP или домен и порт SOCKS5.",
+    "enterAddress": "Укажите IP или домен и порт, затем нажмите «Сохранить».",
     "invalidAddress": "Проверьте адрес и порт SOCKS5",
     "host": "IP или домен",
     "port": "Порт",

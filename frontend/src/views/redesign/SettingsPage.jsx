@@ -456,7 +456,6 @@ export default function SettingsPage({
 
     network: (
       <>
-        {socks5ExitSettings}
         <Row title={rows.dns.title} description={rows.dns.desc} stacked>
           {/* Набор DNS выбирается рядом кнопок, выбранная — зелёная. */}
           <ScrollRow>
@@ -628,7 +627,7 @@ export default function SettingsPage({
           <>
             <PageHeader title={group.title} subtitle={group.desc} />
 
-            {/* Страница пункта: кнопка возврата и одна карточка со строками
+            {/* Страница пункта: кнопка возврата и карточки со строками
                 (Figma 6799:4689). */}
             <div className="rv-settings-page__section">
               <Button variant="green" onClick={onBack}>
@@ -637,6 +636,7 @@ export default function SettingsPage({
               <section className="rv-settings-page__card rv-border rv-border--static">
                 {groupBody[section]}
               </section>
+              {section === "network" && socks5ExitSettings}
             </div>
           </>
         ) : (
