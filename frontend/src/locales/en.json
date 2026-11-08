@@ -689,7 +689,7 @@
     "title": "Buy a Server",
     "subtitle": "Get or connect an official ResultV subscription through Telegram.",
     "offerTitle": "ResultV Subscription",
-    "offerDescription": "Already subscribed? Click the green button and confirm your Telegram login to add your subscription. To get a subscription, choose a plan in the bot.",
+    "offerDescription": "If you already bought a subscription from @result_vpn_bot, click the green Telegram icon to add it automatically. If you don’t have a subscription yet, click “Buy in Telegram” to buy one from our bot.",
     "connect": "Connect a subscription through Telegram",
     "connecting": "Confirm your Telegram login in the browser.",
     "connectionErrors": {
