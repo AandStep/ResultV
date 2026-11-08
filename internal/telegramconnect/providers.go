@@ -1,10 +1,12 @@
 package telegramconnect
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -16,8 +18,16 @@ import (
 const telegramIssuer = "https://oauth.telegram.org"
 
 func TelegramVerifier(clientID int64) func(context.Context, string, string) (int64, error) {
-	ctx := oidc.ClientContext(context.Background(), &http.Client{Timeout: 8 * time.Second})
-	keys := oidc.NewRemoteKeySet(ctx, telegramIssuer+"/.well-known/jwks.json")
+	return telegramVerifier(clientID, telegramIssuer+"/.well-known/jwks.json")
+}
+
+func telegramVerifier(clientID int64, jwksURL string) func(context.Context, string, string) (int64, error) {
+	ctx := oidc.ClientContext(context.Background(), &http.Client{
+		Timeout:       8 * time.Second,
+		Transport:     telegramKeyTransport{},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	})
+	keys := oidc.NewRemoteKeySet(ctx, jwksURL)
 	verifier := oidc.NewVerifier(telegramIssuer, keys, &oidc.Config{
 		ClientID: strconv.FormatInt(clientID, 10), SupportedSigningAlgs: []string{oidc.RS256},
 	})
@@ -38,6 +48,45 @@ func TelegramVerifier(clientID int64) func(context.Context, string, string) (int
 		}
 		return id, nil
 	}
+}
+
+// Telegram publishes keys for several algorithms, including secp256k1.
+// Filter out unused keys before go-oidc parses the set and caches the RSA keys.
+type telegramKeyTransport struct{}
+
+func (telegramKeyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := http.DefaultTransport.RoundTrip(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return resp, err
+	}
+	defer resp.Body.Close()
+
+	var set struct {
+		Keys []json.RawMessage `json:"keys"`
+	}
+	if err := decodeJSON(resp.Body, &set); err != nil {
+		return nil, err
+	}
+	rsaKeys := set.Keys[:0]
+	for _, key := range set.Keys {
+		var metadata struct {
+			Type      string `json:"kty"`
+			Algorithm string `json:"alg"`
+		}
+		if json.Unmarshal(key, &metadata) == nil && metadata.Type == "RSA" &&
+			(metadata.Algorithm == "" || metadata.Algorithm == oidc.RS256) {
+			rsaKeys = append(rsaKeys, key)
+		}
+	}
+	set.Keys = rsaKeys
+	body, err := json.Marshal(set)
+	if err != nil {
+		return nil, err
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.ContentLength = int64(len(body))
+	resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
+	return resp, nil
 }
 
 // RemnawaveLookup reads only users matching the verified numeric Telegram ID.
