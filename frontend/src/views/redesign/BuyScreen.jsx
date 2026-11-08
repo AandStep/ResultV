@@ -15,73 +15,99 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-/*
- * Страница «Купить сервера», подключённая к приложению.
- *
- * Вид держит BuyPage, здесь только партнёры и три действия над ними: открыть
- * бота, открыть сайт и скопировать промокод. Ссылки уходят во внешний
- * браузер — открывать их внутри окна приложения незачем.
- */
-
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { BrowserOpenURL } from "../../../wailsjs/runtime/runtime";
+import { BrowserOpenURL, ClipboardSetText } from "../../../wailsjs/runtime/runtime";
+import { useConfigContext } from "../../context/ConfigContext";
 import { PAGE_BUY, useScrollMemory } from "../../hooks/usePageMemory";
-import implogo from "../../assets/implogo.png";
-import BuyPage from "./BuyPage";
+import wailsAPI from "../../utils/wailsAPI";
 import AppSidebar from "./AppSidebar";
+import BuyPage from "./BuyPage";
 
-/* Ссылки те же, что были на прежней странице покупки. */
-const PARTNERS = [
-  {
-    id: "imp_vpn",
-    botLink: "https://t.me/impVPNBot?start=NzQ3MDczMjUz",
-    siteLink: "https://my.impio.space/?ref=NzQ3MDczMjUz",
-    promo: "result",
-    logo: implogo,
-  },
-];
-
-/* Столько держится подпись «Скопировано!» на кнопке промокода. */
+const BOT_URL = "https://t.me/result_vpn_bot";
+const SUBSCRIPTION_ORIGINS = new Set(["https://result-service.ru", "https://cdn.result-proxy.ru:8443"]);
 const COPIED_MS = 2000;
 
-export default function BuyScreen() {
-  const { t } = useTranslation();
-  const [copiedId, setCopiedId] = useState("");
-  const copiedTimer = useRef(0);
+function isResultVSubscription(subscription) {
+  try {
+    const { origin, pathname } = new URL(subscription.url);
+    return SUBSCRIPTION_ORIGINS.has(origin) && /^\/s\/[^/]+/.test(pathname);
+  } catch {
+    return false;
+  }
+}
 
-  /* Прокрутка возвращается туда, где её оставили. */
+export default function BuyScreen() {
+  const { t, i18n } = useTranslation();
+  const { subscriptions, proxies } = useConfigContext();
+  const [copyFeedback, setCopyFeedback] = useState(null);
+  const [connectedURL, setConnectedURL] = useState("");
+  const [connecting, setConnecting] = useState(false);
+  const [connectionError, setConnectionError] = useState("");
+  const copiedTimer = useRef(0);
   const contentRef = useScrollMemory(PAGE_BUY);
 
   useEffect(() => () => clearTimeout(copiedTimer.current), []);
 
-  const copyPromo = (partner) => {
-    navigator.clipboard.writeText(partner.promo);
-    setCopiedId(partner.id);
-    clearTimeout(copiedTimer.current);
-    copiedTimer.current = setTimeout(() => setCopiedId(""), COPIED_MS);
+  const officialSubscriptions = subscriptions.filter((item) =>
+    isResultVSubscription(item) &&
+    proxies.some((entry) => entry.subscriptionUrl === item.url && entry.ip && entry.type !== "SECTION"),
+  );
+  const now = Date.now() / 1000;
+  const subscription = officialSubscriptions.find((item) => item.url === connectedURL)
+    ?? officialSubscriptions.find((item) => !item.expireUnix || item.expireUnix > now)
+    ?? officialSubscriptions[0];
+  const url = subscription?.url;
+  const copyMessage = copyFeedback && copyFeedback.url === url ? t(copyFeedback.key) : "";
+
+  const connectTelegram = async () => {
+    setConnectionError("");
+    setConnecting(true);
+    try {
+      setConnectedURL(await wailsAPI.connectTelegramSubscription(i18n.resolvedLanguage || "en"));
+    } catch (err) {
+      setConnectionError(String(err?.message || err));
+    } finally {
+      setConnecting(false);
+    }
   };
 
-  const partners = PARTNERS.map((partner) => ({
-    ...partner,
-    title: t(`buy.${partner.id}.discount`),
-    desc: t(`buy.${partner.id}.discount_desc`),
-  }));
+  const copySubscription = async () => {
+    let copied = false;
+    try {
+      copied = await ClipboardSetText(url);
+    } catch {
+      // The system clipboard can be temporarily unavailable.
+    }
+    clearTimeout(copiedTimer.current);
+    setCopyFeedback({ url, key: copied ? "buy.copied" : "buy.copyFailed" });
+    copiedTimer.current = setTimeout(() => setCopyFeedback(null), COPIED_MS);
+  };
 
   return (
     <BuyPage
-      title={t("buy.title")}
-      subtitle={t("buy.subtitle")}
-      partners={partners}
-      copiedId={copiedId}
-      onOpenBot={(partner) => BrowserOpenURL(partner.botLink)}
-      onOpenSite={(partner) => BrowserOpenURL(partner.siteLink)}
-      onCopyPromo={copyPromo}
+      subscriptionURL={url}
+      copyMessage={copyMessage}
+      connecting={connecting}
+      onConnectTelegram={connectTelegram}
+      onOpenBot={() => BrowserOpenURL(BOT_URL)}
+      onCopySubscription={copySubscription}
       text={{
-        bot: t("buy.goBot"),
-        site: t("buy.goSite"),
-        copyPromo: t("buy.copy"),
-        copied: t("buy.copied"),
+        title: t("buy.title"),
+        subtitle: t("buy.subtitle"),
+        offerTitle: t("buy.offerTitle"),
+        offerDescription: t("buy.offerDescription"),
+        connect: t("buy.connect"),
+        connecting: t("buy.connecting"),
+        connectionError: connectionError ? t(`buy.connectionErrors.${connectionError}`, {
+          defaultValue: t("buy.connectionErrors.telegram_unavailable"),
+        }) : "",
+        purchase: t("buy.purchase"),
+        subscriptionTitle: t("buy.subscriptionTitle", {
+          name: subscription?.name || "ResultV",
+        }),
+        subscriptionDescription: t("buy.subscriptionAdded"),
+        copySubscription: t("buy.copySubscription"),
       }}
       sidebar={<AppSidebar />}
       contentRef={contentRef}

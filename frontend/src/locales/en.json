@@ -686,32 +686,30 @@
     }
   },
   "buy": {
-    "title": "Buy Servers",
-    "subtitle": "Here you can get the best subscriptions from our partners with a bonus for our promo code.",
-    "imp_vpn": {
-      "discount": "20% top-up bonus from impVPN",
-      "discount_desc": "Open the Telegram bot or the website via the links below, enter the promo code result and get a bonus on your balance top-up"
+    "title": "Buy a Server",
+    "subtitle": "Get or connect an official ResultV subscription through Telegram.",
+    "offerTitle": "ResultV Subscription",
+    "offerDescription": "Already subscribed? Click the green button and confirm your Telegram login to add your subscription. To get a subscription, choose a plan in the bot.",
+    "connect": "Connect a subscription through Telegram",
+    "connecting": "Confirm your Telegram login in the browser.",
+    "connectionErrors": {
+      "telegram_cancelled": "Telegram login was canceled.",
+      "telegram_timeout": "The login timed out. Try connecting again.",
+      "telegram_auth_failed": "Telegram login could not be verified. Try again.",
+      "telegram_subscription_not_found": "No ResultV subscription was found for this Telegram account.",
+      "telegram_subscription_inactive": "This subscription is inactive. Check its status in the Telegram bot.",
+      "telegram_subscription_ambiguous": "This Telegram account has multiple subscriptions. Contact support.",
+      "telegram_subscription_unusable": "The subscription returned no available servers. Check its status and device limit in the bot.",
+      "telegram_import_failed": "Login succeeded, but the subscription could not be added. Try again.",
+      "telegram_connect_busy": "Telegram login is already open in the browser.",
+      "telegram_unavailable": "The connection service could not be reached. Try again."
     },
-    "proxy_seller": {
-      "discount": "Discount from Proxy-Seller",
-      "discount_desc": "Register on Proxy-Seller using the link below to get a discount on proxies.",
-      "promo_title": "Promo Code"
-    },
-    "proxy6": {
-      "discount": "5% discount from PROXY6.net",
-      "discount_desc": "Register on PROXY6.net using the link below to get a 5% discount on proxies.",
-      "promo_title": "5% Promo Code"
-    },
-    "proxy_market": {
-      "discount": "5% discount from proxy market",
-      "discount_desc": "Register on proxy market using the link below to get a 5% discount on proxies.",
-      "promo_title": "5% Promo Code"
-    },
+    "purchase": "Buy in Telegram",
+    "subscriptionTitle": "Your subscription: {{name}}",
+    "subscriptionAdded": "Your subscription was added successfully!",
+    "copySubscription": "Copy subscription link",
     "copied": "Copied!",
-    "go": "Go to Site",
-    "goBot": "Open Bot",
-    "goSite": "Go to Site",
-    "copy": "Copy"
+    "copyFailed": "Could not copy the link"
   },
   "common": {
     "close": "Close",

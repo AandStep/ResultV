@@ -23,6 +23,7 @@ import {
   ApplyMode,
   CancelConnect,
   Connect,
+  ConnectTelegramSubscription,
   Disconnect,
   DetectCountry,
   RedetectCountry,
@@ -67,6 +68,8 @@ import {
 } from '../../wailsjs/go/main/App';
 
 export const wailsAPI = {
+
+  connectTelegramSubscription: (language) => ConnectTelegramSubscription(language),
   
   connect: async (proxyStr, options, killSwitch) => {
     try {

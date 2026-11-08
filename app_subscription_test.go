@@ -1,8 +1,8 @@
 package main
 
 import (
-	"errors"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +10,73 @@ import (
 
 	"resultproxy-wails/internal/config"
 )
+
+func TestFetchSubscriptionCrossOriginRedirectStripsDeviceHeaders(t *testing.T) {
+	received := make(chan http.Header, 1)
+	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case received <- r.Header.Clone():
+		default:
+		}
+		_, _ = w.Write([]byte("vless://af815621-b245-4149-89da-dd184cfc4b3d@example.com:443?type=tcp&security=none#Node"))
+	}))
+	defer target.Close()
+	source := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer source.Close()
+	useSubscriptionTestTLS(t, source)
+
+	if _, err := NewApp().fetchSubscriptionFromURL(source.URL+"/s/private-fixture", false); err != nil {
+		t.Fatal(err)
+	}
+	headers := <-received
+	for _, key := range []string{"X-Hwid", "X-Device-Os", "X-Ver-Os", "X-Device-Model", "Referer"} {
+		if headers.Get(key) != "" {
+			t.Errorf("redirect forwarded %s", key)
+		}
+	}
+	if got := headers.Get("User-Agent"); got != "ResultV" {
+		t.Errorf("redirect forwarded the device-specific User-Agent: %q", got)
+	}
+}
+
+func TestFetchSubscriptionRejectsUnapprovedHTTPSDowngrade(t *testing.T) {
+	hit := make(chan struct{}, 1)
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case hit <- struct{}{}:
+		default:
+		}
+		_, _ = w.Write([]byte("vless://af815621-b245-4149-89da-dd184cfc4b3d@example.com:443?type=tcp&security=none#Node"))
+	}))
+	defer target.Close()
+	source := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer source.Close()
+	useSubscriptionTestTLS(t, source)
+
+	if _, err := NewApp().fetchSubscriptionFromURL(source.URL+"/s/private-fixture", false); !errors.Is(err, ErrInsecureSubscription) {
+		t.Fatalf("expected refusal of HTTP redirect, got %v", err)
+	}
+	select {
+	case <-hit:
+		t.Fatal("plaintext redirect destination was reached")
+	default:
+	}
+}
+
+func useSubscriptionTestTLS(t *testing.T, server *httptest.Server) {
+	t.Helper()
+	oldTransport, oldProvider := http.DefaultTransport, stableHWIDProvider
+	http.DefaultTransport = server.Client().Transport
+	stableHWIDProvider = func(string) (string, error) { return "synthetic-device-id", nil }
+	t.Cleanup(func() {
+		http.DefaultTransport = oldTransport
+		stableHWIDProvider = oldProvider
+	})
+}
 
 // HTTPS subscription must include the HWID header — that's the device-limit
 // signal providers rely on. Uses a TLS test server so the URL is https://.

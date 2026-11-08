@@ -38,6 +38,10 @@ export function Connect(arg1, arg2, arg3) {
   return window['go']['main']['App']['Connect'](arg1, arg2, arg3);
 }
 
+export function ConnectTelegramSubscription(arg1) {
+  return window['go']['main']['App']['ConnectTelegramSubscription'](arg1);
+}
+
 export function DebugFrontendLog(arg1) {
   return window['go']['main']['App']['DebugFrontendLog'](arg1);
 }

@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -675,6 +676,43 @@ func (m *Manager) SaveConfig(cfg AppConfig) error {
 	cfg.Settings.Socks5Exit = m.cache.Settings.Socks5Exit
 	cfg.Settings.LegacySocks5ExitArmed = m.cache.Settings.LegacySocks5ExitArmed
 	return m.saveConfigLocked(cfg)
+}
+
+// AddSubscriptionWithProxies installs the subscription and its servers in one write.
+// Reuse an orphaned subscription record so its settings survive reimport.
+func (m *Manager) AddSubscriptionWithProxies(sub Subscription, entries []ProxyEntry) (Subscription, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cfg := m.cache
+	cfg.Subscriptions = slices.Clone(cfg.Subscriptions)
+	for i, existing := range cfg.Subscriptions {
+		if existing.URL != sub.URL {
+			continue
+		}
+		if slices.ContainsFunc(cfg.Proxies, func(p ProxyEntry) bool {
+			return p.SubscriptionURL == sub.URL && p.IP != "" && p.Type != "SECTION"
+		}) {
+			return existing, false, nil
+		}
+		sub.ID = existing.ID
+		sub.ShowOnHome = existing.ShowOnHome
+		sub.UpdateIntervalMinutes = existing.UpdateIntervalMinutes
+		sub.RemovedRoutingListURLs = existing.RemovedRoutingListURLs
+		if existing.NameOverridden {
+			sub.Name = existing.Name
+			sub.NameOverridden = true
+		}
+		cfg.Subscriptions[i] = sub
+		cfg.Proxies = slices.DeleteFunc(slices.Clone(cfg.Proxies), func(p ProxyEntry) bool {
+			return p.SubscriptionURL == sub.URL
+		})
+		cfg.Proxies = append(cfg.Proxies, entries...)
+		return sub, true, m.saveConfigLocked(cfg)
+	}
+	cfg.Subscriptions = append(cfg.Subscriptions, sub)
+	cfg.Proxies = append(slices.Clone(cfg.Proxies), entries...)
+	return sub, true, m.saveConfigLocked(cfg)
 }
 
 func (m *Manager) saveConfigLocked(cfg AppConfig) error {

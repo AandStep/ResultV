@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="{{.Language}}">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="telegram-nonce" content="{{.Nonce}}">
+<title>ResultV · Telegram</title>
+<style nonce="{{.Nonce}}">
+  body { margin: 0; min-height: 100dvh; display: grid; place-items: center; background: #141414; color: #fff; font: 16px system-ui, sans-serif; }
+  main { box-sizing: border-box; width: min(440px, 92vw); padding: 32px; border-radius: 24px; background: #1a1a1a; }
+  h1 { margin-top: 0; font-size: 24px; }
+  p { color: #c4c4c4; }
+  button, a { color: white; font: inherit; }
+  button { border: 0; border-radius: 12px; background: #007e3a; padding: 12px 18px; cursor: pointer; }
+  button:disabled { opacity: .65; cursor: wait; }
+  a { display: inline-block; margin-top: 12px; }
+  a[hidden] { display: none; }
+</style>
+<main>
+  <h1>ResultV</h1>
+  {{if eq .Language "ru"}}
+  <p>Подтвердите вход в Telegram, чтобы добавить свою подписку в ResultV.</p>
+  <button type="button" id="login">Войти через Telegram</button>
+  <a id="return" hidden>Вернуться в ResultV</a>
+  {{else}}
+  <p>Sign in with Telegram to add your subscription to ResultV.</p>
+  <button type="button" id="login">Log in with Telegram</button>
+  <a id="return" hidden>Return to ResultV</a>
+  {{end}}
+</main>
+<script src="https://oauth.telegram.org/js/telegram-login.js?6"></script>
+<script nonce="{{.Nonce}}">
+  const login = document.getElementById("login");
+  const back = document.getElementById("return");
+  const nonce = {{.Nonce}};
+  const callback = new URL("/callback", "http://127.0.0.1:" + {{.Port}});
+  callback.searchParams.set("state", {{.State}});
+  function finish(key, value) {
+    callback.searchParams.set(key, value);
+    back.href = callback.href;
+    back.hidden = false;
+    location.assign(callback.href);
+  }
+  login.addEventListener("click", () => {
+    login.disabled = true;
+    try {
+      Telegram.Login.auth({ client_id: {{.ClientID}}, scope: ["profile"], nonce, lang: {{.Language}} }, async (result) => {
+        if (!result?.id_token) {
+          finish("error", "cancelled");
+          return;
+        }
+        try {
+          const response = await fetch("./verify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ nonce, idToken: result.id_token })
+          });
+          if (!response.ok) {
+            finish("error", response.status === 401 ? "auth_failed" : "unavailable");
+            return;
+          }
+          const { ticket } = await response.json();
+          finish("ticket", ticket);
+        } catch {
+          finish("error", "unavailable");
+        }
+      });
+    } catch {
+      finish("error", "unavailable");
+    }
+  });
+</script>
+</html>

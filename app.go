@@ -140,8 +140,9 @@ type App struct {
 	resumeProxyID string
 	resumeMode    string
 
-	deepLinkMu      sync.Mutex
-	pendingDeepLink string
+	deepLinkMu        sync.Mutex
+	pendingDeepLink   string
+	telegramConnectMu sync.Mutex
 
 	updateMu     sync.Mutex
 	updateCancel context.CancelFunc
@@ -2409,7 +2410,27 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) (subsc
 		return subscriptionFetch{}, ErrInsecureSubscription
 	}
 	jar, _ := cookiejar.New(nil)
-	client := &http.Client{Timeout: 15 * time.Second, Jar: jar}
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+		Jar:     jar,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("too many subscription redirects")
+			}
+			if req.URL.Scheme != "https" && !allowInsecure {
+				return ErrInsecureSubscription
+			}
+			original := via[0].URL
+			if req.URL.Scheme != "https" || original.Scheme != req.URL.Scheme ||
+				!strings.EqualFold(original.Host, req.URL.Host) {
+				for _, header := range []string{"X-Hwid", "X-Device-Os", "X-Ver-Os", "X-Device-Model", "Referer"} {
+					req.Header.Del(header)
+				}
+				req.Header.Set("User-Agent", "ResultV")
+			}
+			return nil
+		},
+	}
 	metadata := a.subscriptionRequestMetadata()
 
 	doFetch := func(userAgent string) (subscriptionFetch, bool, error) {
@@ -2742,6 +2763,10 @@ func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
 // warning. The consent is persisted on the Subscription record so
 // RefreshSubscription doesn't need to re-prompt.
 func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source string, disabledListURLs []string) ([]config.ProxyEntry, error) {
+	return a.addSubscription(name, subURL, allowInsecure, source, disabledListURLs, false)
+}
+
+func (a *App) addSubscription(name, subURL string, allowInsecure bool, source string, disabledListURLs []string, installProxies bool) ([]config.ProxyEntry, error) {
 	if a.config == nil {
 		return nil, fmt.Errorf("config manager not initialized")
 	}
@@ -2768,7 +2793,7 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 		staleIdx = i
 		break
 	}
-	if staleIdx >= 0 {
+	if staleIdx >= 0 && !installProxies {
 		staleSubID := cfg.Subscriptions[staleIdx].ID
 		cfg.Subscriptions = append(cfg.Subscriptions[:staleIdx], cfg.Subscriptions[staleIdx+1:]...)
 		a.removeSubscriptionRoutingLists(&cfg, staleSubID)
@@ -2782,6 +2807,9 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 		return nil, err
 	}
 	entries := res.Entries
+	if installProxies && !hasUsableSubscriptionEntries(entries, subURL) {
+		return nil, errors.New("telegram_subscription_unusable")
+	}
 
 	displayName := name
 	if res.ProfileTitle != "" {
@@ -2809,14 +2837,25 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 		entries[i].Provider = displayName
 	}
 
-	cfg.Subscriptions = append(cfg.Subscriptions, sub)
-	if err := a.config.SaveConfig(cfg); err != nil {
-		return nil, fmt.Errorf("saving subscription: %w", err)
+	if installProxies {
+		stored, added, err := a.config.AddSubscriptionWithProxies(sub, entries)
+		if err != nil {
+			return nil, fmt.Errorf("saving subscription: %w", err)
+		}
+		if !added {
+			return entries, nil
+		}
+		sub = stored
+	} else {
+		cfg.Subscriptions = append(cfg.Subscriptions, sub)
+		if err := a.config.SaveConfig(cfg); err != nil {
+			return nil, fmt.Errorf("saving subscription: %w", err)
+		}
 	}
 	// The user answered the routing question in the import dialog just now, so
 	// what they accepted takes effect immediately rather than on some later
 	// connect.
-	if err := a.syncSubscriptionRoutingProfile(sub.ID, subscriptionRoutingDeclarations(res), disabledListURLs, res.Embedded, res.Routing, true); err != nil {
+	if err := a.syncSubscriptionRoutingProfile(sub.ID, subscriptionRoutingDeclarations(res), disabledListURLs, res.Embedded, res.Routing, !installProxies); err != nil {
 		a.log.Warning(fmt.Sprintf("[ROUTING] Не удалось применить списки подписки %q: %v", displayName, err))
 	}
 

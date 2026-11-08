@@ -25,6 +25,8 @@ export function CompileRoutingProfile(arg1:string,arg2:boolean):Promise<Record<s
 
 export function Connect(arg1:proxy.ProxyConfig,arg2:config.RoutingRules,arg3:boolean):Promise<proxy.ConnectResultDTO>;
 
+export function ConnectTelegramSubscription(arg1:string):Promise<string>;
+
 export function DebugFrontendLog(arg1:string):Promise<void>;
 
 export function DecodeDeepLink(arg1:string):Promise<string>;
