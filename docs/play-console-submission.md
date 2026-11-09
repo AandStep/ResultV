@@ -30,7 +30,7 @@
 | Поле | Значение | Откуда |
 |---|---|---|
 | Package name | `com.resultv.android` | `android/app/build.gradle.kts` |
-| versionName / versionCode | `1.2.0` / `10200` | там же; в релизе переопределяются из тега `android-v*` |
+| versionName / versionCode | `1.3.1` / `10301` | там же; в релизе переопределяются из тега `android-v*` |
 | minSdk / targetSdk | 26 / 36 | там же |
 | Формат артефакта | AAB, `DIST=play bash build-android.sh release` из корня | см. ниже |
 | Путь | `android/app/build/outputs/bundle/playRelease/app-play-release.aab` | |
