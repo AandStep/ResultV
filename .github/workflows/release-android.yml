@@ -48,6 +48,36 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Prepare Gradle distribution
+        working-directory: android
+        shell: bash
+        run: |
+          properties=gradle/wrapper/gradle-wrapper.properties
+          distribution_url=$(sed -n 's/^distributionUrl=//p' "$properties" | tr -d '\\')
+          checksum=$(sed -n 's/^distributionSha256Sum=//p' "$properties")
+          archive_name=${distribution_url##*/}
+          if [[ ! "$archive_name" =~ ^gradle-[0-9.]+-bin\.zip$ || ! "$checksum" =~ ^[a-f0-9]{64}$ ]]; then
+            echo '::error::Expected a pinned Gradle binary distribution and SHA-256 in the Wrapper properties'
+            exit 1
+          fi
+          archive="$RUNNER_TEMP/$archive_name"
+
+          download_gradle() {
+            curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+              --retry 2 --retry-max-time 90 --connect-timeout 10 --max-time 90 \
+              --output "$archive" "$1" &&
+              printf '%s  %s\n' "$checksum" "$archive" | sha256sum --check
+          }
+
+          if ! download_gradle "$distribution_url"; then
+            echo '::warning::Primary Gradle download failed; trying the mirror'
+            download_gradle "https://repo.huaweicloud.com/gradle/$archive_name"
+          fi
+
+          # The Wrapper reuses the verified ZIP for the APK build on this runner.
+          sed -i "s|^distributionUrl=.*|distributionUrl=file:$archive|" "$properties"
+          ./gradlew --version
+
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
@@ -107,7 +137,6 @@ jobs:
       - name: Build release APKs
         working-directory: android
         run: |
-          chmod +x gradlew
           # На GitHub раздаётся только full; play уходит в стор отдельным AAB
           # и требует libbox-play.aar, который здесь не собирается.
           ./gradlew assembleFullRelease --no-daemon \
