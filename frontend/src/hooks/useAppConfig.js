@@ -53,6 +53,7 @@ export const useAppConfig = (addLog) => {
     const { t } = useTranslation();
     const [isConfigLoaded, setIsConfigLoaded] = useState(false);
     const [proxies, setProxies] = useState([]);
+    const loadedProxiesRef = useRef(null);
     const [routingRules, setRoutingRules] = useState({
         // Стандартный режим — умный, как и в config.DefaultConfig на бэкенде.
         // Это значение видно только до первого ответа GetConfig, но разойтись
@@ -208,9 +209,11 @@ export const useAppConfig = (addLog) => {
 
                 const config = await wailsAPI.getConfig();
                 if (config) {
-                    if (config.proxies && Array.isArray(config.proxies)) {
-                        setProxies(config.proxies.map(p => ({ ...p, port: parseInt(p.port, 10) || 0, id: String(p.id) })));
-                    }
+                    const loadedProxies = Array.isArray(config.proxies)
+                        ? config.proxies.map(p => ({ ...p, port: parseInt(p.port, 10) || 0, id: String(p.id) }))
+                        : [];
+                    loadedProxiesRef.current = loadedProxies;
+                    setProxies(loadedProxies);
                     if (config.routingRules) {
                         setRoutingRules(config.routingRules);
                     }
@@ -269,7 +272,8 @@ export const useAppConfig = (addLog) => {
     }, []);
 
     useEffect(() => {
-        if (!isConfigLoaded) return;
+        // Reading the stored list isn't an edit. Only send subsequent changes.
+        if (!isConfigLoaded || !loadedProxiesRef.current || proxies === loadedProxiesRef.current) return;
         const sanitizedProxies = proxies.map(p => ({ ...p, port: parseInt(p.port, 10) || 0, id: String(p.id) }));
         wailsAPI.syncProxies(sanitizedProxies).catch(err => console.error("SyncProxies err:", err));
     }, [proxies, isConfigLoaded]);

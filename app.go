@@ -88,13 +88,14 @@ type App struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	log        *logger.Logger
-	crypto     *config.CryptoService
-	config     *config.Manager
-	proxy      *proxy.Manager
-	tray       *system.Tray
-	killSwitch system.KillSwitch
-	netmon     *system.NetMonitor
+	log          *logger.Logger
+	crypto       *config.CryptoService
+	config       *config.Manager
+	startupReady chan struct{}
+	proxy        *proxy.Manager
+	tray         *system.Tray
+	killSwitch   system.KillSwitch
+	netmon       *system.NetMonitor
 
 	trayIcon []byte
 
@@ -170,6 +171,7 @@ type App struct {
 func NewApp() *App {
 	return &App{
 		log:            logger.New(),
+		startupReady:   make(chan struct{}),
 		autoCandidates: map[string][]config.ProxyEntry{},
 	}
 }
@@ -466,6 +468,7 @@ func (a *App) HandleDeepLink(url string) {
 }
 
 func (a *App) startup(ctx context.Context) {
+	defer close(a.startupReady)
 	a.ctx, a.cancel = context.WithCancel(ctx)
 	go a.quitOnTermination()
 
@@ -488,59 +491,25 @@ func (a *App) startup(ctx context.Context) {
 		a.log.Warning(fmt.Sprintf("[CONFIG] Ошибка миграции legacy-данных: %v", err))
 	}
 
-	userDataPath := a.getUserDataPath()
-	a.log.Info(fmt.Sprintf("[CONFIG] UserDataDir: %s", userDataPath))
+	// Recover OS networking even if the saved configuration can't be loaded.
+	proxyManager := proxy.NewManager(a.log)
+	proxyManager.Init(a.ctx)
+	killSwitch := system.NewKillSwitch()
+	a.leftoverDone = make(chan struct{})
+	go a.recoverLeftovers(proxyManager, killSwitch)
 
-	cs, err := config.NewCryptoService(userDataPath)
-	if err != nil {
-		a.log.Error(fmt.Sprintf("Ошибка инициализации шифрования: %v", err))
+	userDataPath := a.getUserDataPath()
+	if !a.loadStartupConfig(userDataPath) {
+		a.noTray.Store(true)
 		return
 	}
-	a.crypto = cs
-	if src := cs.KeySource(); src != "" {
-		a.log.Info(fmt.Sprintf("[CONFIG] Key source: %s", src))
-	}
-
-	a.config = config.NewManager(cs)
-	if err := a.config.Init(userDataPath); err != nil {
-		if errors.Is(err, config.ErrDecryptFailed) {
-			a.log.Warning(fmt.Sprintf("Конфигурация сброшена: %v", err))
-		} else {
-			a.log.Error(fmt.Sprintf("Ошибка загрузки конфигурации: %v", err))
-		}
-	} else {
-		a.log.Success("Конфигурация загружена")
-	}
-
-	// Must run right after config.Init, while WasCreatedFresh still reflects
-	// what Init found on disk.
-	a.seedChangelogVersionOnFreshInstall()
-	a.applyResumeMode()
-	a.applyConnectOnStartup()
-
-	a.proxy = proxy.NewManager(a.log)
-	a.proxy.Init(a.ctx)
+	a.proxy = proxyManager
+	a.killSwitch = killSwitch
 	if runtime.GOOS == "windows" {
 		_ = a.proxy.SetSocks5Exit(a.config.GetConfig().Settings.Socks5Exit)
 	}
-	// Encrypt the persistent server-IP pin cache with the same hardware-keyed
-	// CryptoService as the rest of the config — those hostname→backend-IP
-	// entries must never sit on disk in the clear.
-	a.proxy.SetSecretCodec(cs)
-
-	// Create the kill switch and launch leftover recovery NOW — before the
-	// network-bound, multi-second SMART list fetch in initSmartBlockedDomains
-	// below (and the rest of startup). Recovery's only dependencies are a.proxy
-	// (just initialized) and a.killSwitch; when it was deferred to the end of
-	// startup, a force-kill / crash leftover lingered for the entire startup
-	// duration (~15s in the field, dominated by the remote list fetch) before the
-	// internet was restored. Run async so the window still appears immediately;
-	// the slow route/adapter cleanup only runs when a leftover is actually
-	// detected. The frontend shows an informational notice via
-	// GetLeftoverRecoveryReport + the "leftovers:recovered" event.
-	a.killSwitch = system.NewKillSwitch()
-	a.leftoverDone = make(chan struct{})
-	go a.recoverLeftovers()
+	// The persistent server-IP pin cache uses the same key as the config.
+	a.proxy.SetSecretCodec(a.crypto)
 	go a.syncAutostartOnStartup()
 
 	// Re-evaluate a live AUTO group's pick for as long as the app runs. Started
@@ -802,11 +771,50 @@ func (a *App) BeforeClose(ctx context.Context) bool {
 	return true
 }
 
-func (a *App) GetConfig() (config.AppConfig, error) {
-	if a.config == nil {
-		return config.DefaultConfig(), nil
+func (a *App) loadStartupConfig(userDataPath string) bool {
+	a.log.Info(fmt.Sprintf("[CONFIG] UserDataDir: %s", userDataPath))
+
+	cs, err := config.NewCryptoService(userDataPath)
+	if err != nil {
+		a.log.Error(fmt.Sprintf("Ошибка инициализации шифрования: %v", err))
+		return false
 	}
-	return appConfigForUI(a.config.GetConfig()), nil
+	if src := cs.KeySource(); src != "" {
+		a.log.Info(fmt.Sprintf("[CONFIG] Key source: %s", src))
+	}
+
+	manager := config.NewManager(cs)
+	if err := manager.Init(userDataPath); err != nil {
+		a.log.Error(fmt.Sprintf("Ошибка загрузки конфигурации: %v", err))
+		return false
+	}
+	a.crypto = cs
+	a.config = manager
+	if manager.WasCreatedFresh() {
+		a.log.Info("[CONFIG] Файл конфигурации не найден, используется новый профиль")
+	} else {
+		a.log.Success(fmt.Sprintf("[CONFIG] Конфигурация загружена с диска: профилей %d", len(manager.GetConfig().Proxies)))
+	}
+
+	a.seedChangelogVersionOnFreshInstall()
+	a.applyResumeMode()
+	a.applyConnectOnStartup()
+	return true
+}
+
+func (a *App) GetConfig() (config.AppConfig, error) {
+	// Wails starts the UI and the startup callback independently.
+	if a.startupReady != nil {
+		<-a.startupReady
+	}
+	if a.config == nil {
+		return config.AppConfig{}, errors.New("конфигурация недоступна, подробности в журнале")
+	}
+	cfg := a.config.GetConfig()
+	if a.log != nil {
+		a.log.Info(fmt.Sprintf("[CONFIG] GetConfig: профилей %d", len(cfg.Proxies)))
+	}
+	return appConfigForUI(cfg), nil
 }
 
 func (a *App) SaveConfig(cfg config.AppConfig) error {
@@ -1144,7 +1152,7 @@ func (r LeftoverReport) Any() bool { return r.Proxy || r.DNS || r.Tun || r.Firew
 // they are reported with NeedsElevation=true and the frontend asks the user to
 // restart elevated (RestartAsAdmin); the elevated instance then cleans them on
 // ITS startup pass and shows the normal notice.
-func (a *App) recoverLeftovers() {
+func (a *App) recoverLeftovers(proxyManager *proxy.Manager, killSwitch system.KillSwitch) {
 	// Signal the background Smart-list refresh that OS network state (notably the
 	// DNS override) has been restored, on every return path. Closed even when
 	// nothing needed cleaning — the refresh just stops waiting and proceeds.
@@ -1154,17 +1162,14 @@ func (a *App) recoverLeftovers() {
 
 	rep := LeftoverReport{}
 
-	var scan proxy.LeftoverScan
-	if a.proxy != nil {
-		scan = a.proxy.RecoverSystemLeftovers()
-	}
+	scan := proxyManager.RecoverSystemLeftovers()
 	rep.Proxy, rep.DNS, rep.Tun = scan.Proxy, scan.DNS, scan.Tun
 	rep.NeedsElevation = scan.NeedsElevation
 
-	if a.killSwitch != nil && a.killSwitch.HasLeftoverRules() {
+	if killSwitch.HasLeftoverRules() {
 		rep.Firewall = true
 		if system.IsAdmin() {
-			if err := a.killSwitch.RemoveLeftoverRules(); err != nil {
+			if err := killSwitch.RemoveLeftoverRules(); err != nil {
 				a.log.Warning(fmt.Sprintf("[KILL SWITCH] Ошибка снятия остаточных правил фаервола: %v", err))
 			}
 		} else {
@@ -1747,13 +1752,24 @@ func (a *App) GetLANIPs() []string {
 }
 
 func (a *App) SyncProxies(proxies []config.ProxyEntry) error {
+	if a.startupReady != nil {
+		select {
+		case <-a.startupReady:
+		default:
+			return errors.New("config manager not initialized")
+		}
+	}
 	if a.config == nil {
 		return fmt.Errorf("config manager not initialized")
 	}
 	cfg := a.config.GetConfig()
+	previousCount := len(cfg.Proxies)
 	cfg.Proxies = proxies
 	if err := a.config.SaveConfig(cfg); err != nil {
 		return err
+	}
+	if a.log != nil && previousCount != len(proxies) {
+		a.log.Info(fmt.Sprintf("[CONFIG] SyncProxies: профилей %d → %d", previousCount, len(proxies)))
 	}
 	a.refreshTrayProxyList()
 	return nil
