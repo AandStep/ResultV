@@ -350,7 +350,11 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 		}
 		return out
 
-	case "SOCKS5", "SOCKS", "socks", "socks5":
+	case "SOCKS5", "SOCKS", "socks", "socks5", "SOCKS4", "socks4", "SOCKS4A", "socks4a":
+		version := strings.TrimPrefix(strings.ToLower(proxy.Type), "socks")
+		if version == "" {
+			version = "5"
+		}
 		return SBOutbound{
 			Type:       "socks",
 			Tag:        "proxy",
@@ -358,7 +362,7 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 			ServerPort: proxy.Port,
 			Username:   proxy.Username,
 			Password:   proxy.Password,
-			Version:    "5",
+			Version:    version,
 		}
 
 	case "SS", "shadowsocks", "ss":
@@ -483,7 +487,7 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 		}
 
 	default:
-		return SBOutbound{
+		out := SBOutbound{
 			Type:       "http",
 			Tag:        "proxy",
 			Server:     proxy.IP,
@@ -491,6 +495,10 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 			Username:   proxy.Username,
 			Password:   proxy.Password,
 		}
+		if strings.EqualFold(proxy.Type, "https") {
+			out.TLS = &SBOutboundTLS{Enabled: true}
+		}
+		return out
 	}
 }
 

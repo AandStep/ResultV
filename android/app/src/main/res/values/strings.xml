@@ -158,6 +158,8 @@
 
     <!-- Add screen — unified Link pane -->
     <string name="add_link_label">Paste a link</string>
+    <string name="add_proxy_address_label">Proxy link or address</string>
+    <string name="add_proxy_address_hint">%1$s://… or IP:port</string>
     <string name="add_config_label">Paste the contents of a JSON or .conf file</string>
     <string name="add_link_hint">https://example.com/sub or %1$s://...</string>
     <string name="add_link_err_empty">Link is empty</string>
@@ -284,6 +286,8 @@
     <string name="proxies_standalone_delete_message">%1$d server(s) added by hand will be removed. Subscriptions are not affected.</string>
     <string name="proxies_edit_title">Edit profile</string>
     <string name="proxies_edit_name_label">Name</string>
+    <string name="proxies_edit_config">Connection configuration (JSON)</string>
+    <string name="proxies_edit_link">Connection link</string>
     <string name="proxies_action_probe_latency">Check latency</string>
     <string name="proxies_action_rename">Rename</string>
     <string name="proxies_action_edit">Edit</string>

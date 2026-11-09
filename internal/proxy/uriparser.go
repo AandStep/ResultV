@@ -59,6 +59,10 @@ func getQueryParamCI(params url.Values, key string) string {
 
 
 func ParseProxyURI(line string) (config.ProxyEntry, error) {
+	return parseProxyLine(line, "socks5")
+}
+
+func parseProxyLine(line, defaultScheme string) (config.ProxyEntry, error) {
 	line = strings.TrimSpace(line)
 	switch {
 	case strings.HasPrefix(line, "vless://"):
@@ -82,12 +86,18 @@ func ParseProxyURI(line string) (config.ProxyEntry, error) {
 	case strings.HasPrefix(line, "naive://"):
 		return parseNaiveURI(line)
 	default:
-		return config.ProxyEntry{}, fmt.Errorf("unsupported URI scheme: %s", truncate(line, 30))
+		return parseStandardProxy(line, defaultScheme)
 	}
 }
 
 
 func ParseSubscriptionBody(body string) ([]config.ProxyEntry, error) {
+	return ParseProxyInput(body, false)
+}
+
+// ParseProxyInput accepts the same formats as a subscription body. The HTTP
+// preference only affects bare addresses whose protocol is unspecified.
+func ParseProxyInput(body string, preferHTTP bool) ([]config.ProxyEntry, error) {
 	decrypted, err := tryDecryptSubscription(body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt subscription: %w", err)
@@ -104,7 +114,11 @@ func ParseSubscriptionBody(body string) ([]config.ProxyEntry, error) {
 		return entries, nil
 	}
 
-	if entries := parseSubscriptionLines(body); len(entries) > 0 {
+	defaultScheme := "socks5"
+	if preferHTTP {
+		defaultScheme = "http"
+	}
+	if entries := parseSubscriptionLines(body, defaultScheme); len(entries) > 0 {
 		return entries, nil
 	}
 
@@ -117,7 +131,7 @@ func ParseSubscriptionBody(body string) ([]config.ProxyEntry, error) {
 			}
 			return entries, nil
 		}
-		if entries := parseSubscriptionLines(decoded); len(entries) > 0 {
+		if entries := parseSubscriptionLines(decoded, defaultScheme); len(entries) > 0 {
 			return entries, nil
 		}
 	}
@@ -131,7 +145,7 @@ func normalizeSubscriptionBody(body string) string {
 	return strings.TrimSpace(body)
 }
 
-func parseSubscriptionLines(body string) []config.ProxyEntry {
+func parseSubscriptionLines(body, defaultScheme string) []config.ProxyEntry {
 	lines := strings.Split(body, "\n")
 	var entries []config.ProxyEntry
 	for _, line := range lines {
@@ -139,7 +153,7 @@ func parseSubscriptionLines(body string) []config.ProxyEntry {
 		if line == "" {
 			continue
 		}
-		entry, err := ParseProxyURI(line)
+		entry, err := parseProxyLine(line, defaultScheme)
 		if err != nil {
 			continue
 		}

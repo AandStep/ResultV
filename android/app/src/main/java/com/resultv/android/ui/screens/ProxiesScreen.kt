@@ -90,6 +90,7 @@ import com.resultv.android.ui.components.sortProfiles
 import com.resultv.android.ui.components.subscriptionUsesImpLogo
 import com.resultv.android.ui.components.isOfficialSubscription
 import com.resultv.android.vpn.CountryRepository
+import com.resultv.android.vpn.canEditConnection
 import com.resultv.android.vpn.PingRepository
 import com.resultv.android.vpn.Profile
 import com.resultv.android.vpn.ProfileRepository
@@ -379,7 +380,7 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
             editingProfileId = null
             return@let
         }
-        val canEditFull = target.subscriptionId.isBlank() && canFullEdit(target.uri)
+        val canEditFull = target.canEditConnection()
         ProfileEditSheet(
             profile = target,
             onProbeLatency = { PingRepository.refresh(target) },

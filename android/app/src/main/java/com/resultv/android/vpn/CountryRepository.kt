@@ -1,9 +1,11 @@
 package com.resultv.android.vpn
 
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -13,6 +15,8 @@ import mobile.Mobile
 import org.json.JSONObject
 
 private const val TAG = "ResultV/Country"
+private const val MAX_ATTEMPTS = 3
+private val RETRYABLE_STATUS = Regex("country api http (408|429|5[0-9]{2})")
 
 /**
  * Resolves each proxy server's host to an ISO-3166 alpha-2 country code via
@@ -24,20 +28,32 @@ private const val TAG = "ResultV/Country"
  *
  * Entries that already carry a country (a leading flag emoji in the name,
  * surfaced as [Profile.country]) are skipped — that hint wins, same as
- * desktop. Results are keyed by profile.id and published to a StateFlow so
- * ServerRow recomposes its flag as lookups land.
+ * desktop. Lookups are shared by host and projected onto the current profile
+ * IDs so ServerRow recomposes its flag as results land.
  */
 object CountryRepository {
+    private val lookups = CountryLookups(
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+        detectCountry = { host, dataDir -> Mobile.detectCountry(host, dataDir) },
+        onFailure = { host, error -> Log.d(TAG, "detectCountry($host) failed: ${error.message}") },
+    )
 
-    private val _results = MutableStateFlow<Map<String, String>>(emptyMap())
     /** profile.id → lowercase 2-letter country code (only successful lookups). */
+    val results: StateFlow<Map<String, String>> = lookups.results
+
+    fun resolve(profiles: List<Profile>, dataDir: String) = lookups.resolve(profiles, dataDir)
+}
+
+internal class CountryLookups(
+    private val scope: CoroutineScope,
+    private val detectCountry: suspend (host: String, dataDir: String) -> String,
+    private val onFailure: (host: String, error: Exception) -> Unit = { _, _ -> },
+) {
+    private val _results = MutableStateFlow<Map<String, String>>(emptyMap())
     val results: StateFlow<Map<String, String>> = _results.asStateFlow()
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    // Profile ids with a lookup in flight — guards against re-dispatching the
-    // same host while the network call is pending (resolve() is called on
-    // every profiles change).
+    private var hostsByProfile = emptyMap<String, String>()
+    private val countriesByHost = HashMap<String, String>()
     private val inFlight = HashSet<String>()
 
     // Parsed-URI cache so we don't re-cross the JNI boundary to pull the host
@@ -46,32 +62,28 @@ object CountryRepository {
 
     /**
      * Resolve country codes for every passed profile that still needs one.
-     * Safe to call repeatedly (e.g. from a LaunchedEffect keyed on the
-     * profile list) — already-resolved and in-flight profiles are skipped.
+     * The caller supplies the current profile list. A completed lookup applies
+     * only to profiles still pointing to that host.
      */
     fun resolve(profiles: List<Profile>, dataDir: String) {
         val pending = synchronized(this) {
-            profiles.mapNotNull { p ->
-                if (!needsResolution(p)) return@mapNotNull null
-                val host = hostFor(p) ?: return@mapNotNull null
-                inFlight += p.id
-                p.id to host
-            }
+            hostsByProfile = profiles.mapNotNull { p ->
+                if (p.isSection || p.isAuto || !p.country.isNullOrBlank()) return@mapNotNull null
+                hostFor(p)?.let { p.id to it }
+            }.toMap()
+            publishResults()
+            hostsByProfile.values.filter { it !in countriesByHost && inFlight.add(it) }
         }
         if (pending.isEmpty()) return
         scope.launch {
             pending.chunked(8).forEach { chunk ->
-                chunk.map { (id, host) ->
+                chunk.map { host ->
                     launch {
+                        var country: String? = null
                         try {
-                            val cc = runCatching { Mobile.detectCountry(host, dataDir) }
-                                .getOrElse {
-                                    Log.d(TAG, "detectCountry($host) failed: ${it.message}")
-                                    ""
-                                }
-                            if (cc.length == 2) publish(id, cc.lowercase())
+                            country = lookup(host, dataDir)
                         } finally {
-                            synchronized(this@CountryRepository) { inFlight -= id }
+                            finish(host, country)
                         }
                     }
                 }.joinAll()
@@ -79,25 +91,46 @@ object CountryRepository {
         }
     }
 
+    private suspend fun lookup(host: String, dataDir: String): String? {
+        repeat(MAX_ATTEMPTS) { attempt ->
+            try {
+                return detectCountry(host, dataDir).takeIf { it.length == 2 }?.lowercase()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (attempt == MAX_ATTEMPTS - 1 || !isRetryable(error)) {
+                    onFailure(host, error)
+                    return null
+                }
+                delay(400L * (attempt + 1))
+            }
+        }
+        return null
+    }
+
     @Synchronized
-    private fun publish(id: String, cc: String) {
-        _results.value = _results.value + (id to cc)
+    private fun finish(host: String, country: String?) {
+        inFlight -= host
+        if (country != null) {
+            countriesByHost[host] = country
+            publishResults()
+        }
     }
 
     /** Caller holds the monitor. */
-    private fun needsResolution(p: Profile): Boolean {
-        if (p.isSection || p.isAuto) return false
-        if (!p.country.isNullOrBlank()) return false   // name already carries a flag
-        if (p.id in _results.value) return false        // already resolved
-        if (p.id in inFlight) return false
-        return true
+    private fun publishResults() {
+        _results.value = buildMap {
+            for ((id, host) in hostsByProfile) {
+                countriesByHost[host]?.let { put(id, it) }
+            }
+        }
     }
 
     /** Pull the server host (ip/domain) out of a profile, or null if none. */
     private fun hostFor(p: Profile): String? {
         val entry = p.cachedEntry() ?: uriEntry(p) ?: return null
         if (entry.optString("type").equals("AUTO", ignoreCase = true)) return null
-        return entry.optString("ip").takeIf { it.isNotBlank() }
+        return entry.optString("ip").trim().removeSurrounding("[", "]").lowercase().takeIf { it.isNotBlank() }
     }
 
     private fun uriEntry(p: Profile): JSONObject? {
@@ -107,4 +140,18 @@ object CountryRepository {
             JSONObject(Mobile.parseProxyURI(p.uri)).also { uriCache[p.uri] = it }
         }.getOrNull()
     }
+}
+
+/** Gomobile passes Go's error message across JNI without its concrete type. */
+private fun isRetryable(error: Exception): Boolean {
+    val message = error.message.orEmpty().lowercase()
+    return RETRYABLE_STATUS.matches(message) ||
+        message.contains("timeout") ||
+        message.contains("deadline exceeded") ||
+        message.contains("temporary failure") ||
+        message.contains("connection reset") ||
+        message.contains("connection refused") ||
+        message.contains("network is unreachable") ||
+        message.contains("no route to host") ||
+        message.endsWith("eof")
 }

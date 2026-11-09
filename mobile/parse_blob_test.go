@@ -45,6 +45,53 @@ func TestParseProxyBlob_Lines(t *testing.T) {
 	}
 }
 
+func TestParseProxyBlobWithStandardProxies(t *testing.T) {
+	entries := parseBlob(t, "192.0.2.5\nsocks5://user:pass@192.0.2.5:8000\nhttp://proxy.example:3128")
+	if len(entries) != 3 || entries[0].Type != "SOCKS5" || entries[0].Port != 1080 ||
+		entries[1].Type != "SOCKS5" || entries[1].Port != 8000 || entries[2].Type != "HTTP" {
+		t.Fatalf("unexpected entries: %+v", entries)
+	}
+}
+
+func TestParseProxyBlobWithHTTPSelected(t *testing.T) {
+	raw, err := ParseProxyBlobWithProtocol("192.0.2.5\nsocks5://user:pass@192.0.2.5:8000", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entries []blobEntry
+	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 || entries[0].Type != "HTTP" || entries[0].Port != 80 ||
+		entries[1].Type != "SOCKS5" || entries[1].Port != 8000 {
+		t.Fatalf("unexpected entries: %+v", entries)
+	}
+}
+
+func TestIsSubscriptionURL(t *testing.T) {
+	for _, tt := range []struct {
+		input      string
+		preferHTTP bool
+		want       bool
+	}{
+		{"https://example.test/subscription", false, true},
+		{"http://192.0.2.5:8000/subscription", true, true},
+		{"https://example.test/?token=x", true, true},
+		{"https://example.test/", false, true},
+		{"https://example.test/", true, false},
+		{"http://proxy.example:8000", false, false},
+		{"HTTPS://user:pass@proxy.example", false, false},
+		{"http://192.0.2.5", false, false},
+		{"http://proxy.example:", false, false},
+		{"http://proxy.example:8000\n192.0.2.5", false, false},
+		{"socks5://proxy.example:8000", false, false},
+	} {
+		if got := IsSubscriptionURL(tt.input, tt.preferHTTP); got != tt.want {
+			t.Errorf("IsSubscriptionURL(%q, %v) = %v, want %v", tt.input, tt.preferHTTP, got, tt.want)
+		}
+	}
+}
+
 // Subscription bodies are commonly base64; the same blob pasted by hand has to
 // travel the same path.
 func TestParseProxyBlob_Base64(t *testing.T) {

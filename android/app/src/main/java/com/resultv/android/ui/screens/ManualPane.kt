@@ -51,6 +51,11 @@ import com.resultv.android.ui.components.ClearFocusOnImeHide
 import com.resultv.android.ui.components.DarkSheetSystemBars
 import com.resultv.android.vpn.Profile
 import com.resultv.android.vpn.ProfileRepository
+import com.resultv.android.vpn.applyRawProxyEntryEdit
+import com.resultv.android.vpn.applyStandardProxyEdit
+import com.resultv.android.vpn.standardProxyEditUri
+import com.resultv.android.vpn.standardProxyType
+import com.resultv.android.vpn.standardProxyTypes
 import mobile.Mobile
 import org.json.JSONObject
 import java.net.URLDecoder
@@ -495,14 +500,17 @@ private val Protocols: List<ProtocolSpec> = listOf(
 
 // ───────────────────────────── Full edit ─────────────────────────────
 //
-// Long-press → "Изменить" on a standalone (non-subscription) server opens
-// the same protocol form, prefilled from the stored share-URI. Save rebuilds
-// the URI and replaces the profile in place. Subscription servers don't get
-// this — their fields are owned by the panel and overwritten on refresh.
+// Use a form for standard proxies and supported share links. Other personal
+// servers can edit their saved source without dropping protocol-specific fields.
 
-/** True when [uri]'s scheme maps to a known protocol form we can prefill. */
-internal fun canFullEdit(uri: String): Boolean =
-    uri.isNotBlank() && specForUri(uri) != null
+private val StandardProxyFields = listOf(
+    NameField,
+    Field("type", R.string.manual_choose_protocol, kind = FieldKind.Choice, options = standardProxyTypes),
+    HostField,
+    PortField,
+    Field("username", R.string.manual_field_username),
+    Field("password", R.string.manual_field_password, kind = FieldKind.Password),
+)
 
 private fun specForUri(uri: String): ProtocolSpec? {
     val scheme = uri.substringBefore("://", "").lowercase()
@@ -527,60 +535,76 @@ internal fun ProfileFullEditSheet(
     onDismiss: () -> Unit,
 ) {
     val ctx = LocalContext.current
-    val spec = remember(profile.id) { specForUri(profile.uri) }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-
-    // No matching form (unknown scheme) — show a short note instead of a
-    // broken empty form. Shouldn't normally happen: callers gate on
-    // canFullEdit, but guard anyway.
-    if (spec == null) {
-        ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = RvColor.Grey) {
-            DarkSheetSystemBars()
-            ClearFocusOnImeHide()
-            Text(
-                text = stringResource(R.string.proxies_edit_unsupported),
-                style = MaterialTheme.typography.bodyMedium,
-                color = RvColor.whiteA50,
-                modifier = Modifier.padding(RvSpace.page),
-            )
-        }
-        return
+    val storedEntry = profile.cachedEntry()
+    val standardType = profile.standardProxyType()
+    val isEntry = profile.entryJson.isNotBlank()
+    val spec = remember(profile.id) { if (isEntry) null else specForUri(profile.uri) }
+    val fields = when {
+        standardType != null -> StandardProxyFields
+        spec != null -> spec.fields
+        else -> listOf(NameField)
     }
+    val rawEdit = standardType == null && spec == null
+    var raw by remember(profile.id) {
+        mutableStateOf(storedEntry?.toString(2) ?: profile.entryJson.ifBlank { profile.uri })
+    }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     val values = remember(profile.id) {
         mutableStateMapOf<String, String>().apply {
-            putAll(decodeUriToValues(spec, profile.uri))
-            // The profile's display name is authoritative — it may have been
-            // renamed since import, diverging from the URI fragment.
+            if (standardType != null) {
+                val entry = storedEntry ?: runCatching { JSONObject(Mobile.parseProxyURI(profile.uri)) }.getOrNull()
+                put("type", standardType)
+                put("host", entry?.optString("ip").orEmpty())
+                put("port", entry?.optString("port").orEmpty())
+                put("username", entry?.optString("username").orEmpty())
+                put("password", entry?.optString("password").orEmpty())
+            } else if (spec != null) {
+                putAll(decodeUriToValues(spec, profile.uri))
+            }
             put("name", profile.name)
         }
     }
     var error by remember(profile.id) { mutableStateOf<String?>(null) }
-    val errBuild = stringResource(R.string.manual_err_build)
     val errInvalid = stringResource(R.string.manual_err_invalid)
 
     val submit = submit@{
-        val missing = spec.fields.firstOrNull {
+        val missing = fields.firstOrNull {
             it.required && values[it.key].orEmpty().isBlank()
         }
         if (missing != null) {
             error = ctx.getString(R.string.manual_err_required, ctx.getString(missing.labelRes))
             return@submit
         }
-        val uri = try {
-            spec.build(values)
-        } catch (t: Throwable) {
-            error = t.message ?: errBuild
-            return@submit
-        }
+        val name = values["name"].orEmpty().trim().ifBlank { profile.name }
         try {
-            Mobile.parseProxyURI(uri)
-        } catch (t: Throwable) {
-            error = t.message ?: errInvalid
+            when {
+                standardType != null -> {
+                    val uri = standardProxyEditUri(
+                        values.getValue("type"),
+                        values["host"].orEmpty(),
+                        values["port"].orEmpty(),
+                        values["username"].orEmpty(),
+                        values["password"].orEmpty(),
+                    )
+                    val parsed = JSONObject(Mobile.parseProxyURI(uri))
+                    val entry = applyStandardProxyEdit(storedEntry ?: JSONObject(), parsed, name)
+                    ProfileRepository.updateEntry(profile.id, name, entry.toString())
+                }
+                isEntry -> {
+                    val edited = applyRawProxyEntryEdit(storedEntry, raw, name).toString()
+                    ProfileRepository.updateEntry(profile.id, name, edited)
+                }
+                else -> {
+                    val uri = spec?.build(values) ?: raw.trim()
+                    Mobile.parseProxyURI(uri)
+                    ProfileRepository.updateUri(profile.id, name, uri)
+                }
+            }
+        } catch (_: Exception) {
+            error = errInvalid
             return@submit
         }
-        val name = values["name"].orEmpty().ifBlank { spec.title }
-        ProfileRepository.updateUri(profile.id, name, uri)
         onDismiss()
     }
 
@@ -599,17 +623,30 @@ internal fun ProfileFullEditSheet(
             verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
         ) {
             Text(
-                text = spec.title,
+                text = spec?.title ?: stringResource(R.string.proxies_edit_title),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.padding(bottom = 2.dp),
             )
 
-            spec.fields.forEach { f ->
+            fields.forEach { f ->
                 FieldRow(
                     field = f,
                     value = values[f.key].orEmpty(),
                     onValue = { values[f.key] = it; error = null },
+                )
+            }
+
+            if (rawEdit) {
+                OutlinedTextField(
+                    value = raw,
+                    onValueChange = { raw = it; error = null },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = {
+                        Text(stringResource(if (isEntry) R.string.proxies_edit_config else R.string.proxies_edit_link))
+                    },
+                    minLines = 4,
+                    maxLines = 12,
                 )
             }
 

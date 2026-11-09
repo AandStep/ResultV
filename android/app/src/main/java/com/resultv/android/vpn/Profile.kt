@@ -349,7 +349,15 @@ object ProfileRepository {
         val name = newName.trim().ifBlank { return@mutate s }
         val uri = newUri.trim().ifBlank { return@mutate s }
         val list = s.profiles.map {
-            if (it.id == id) it.copy(name = name, uri = uri, entryJson = "") else it
+            if (it.id == id && it.canEditConnection()) it.copy(name = name, uri = uri, entryJson = "") else it
+        }
+        s.copy(profiles = list)
+    }
+
+    @Synchronized
+    fun updateEntry(id: String, name: String, entryJson: String) = mutate { s ->
+        val list = s.profiles.map {
+            if (it.id == id && it.canEditConnection()) it.copy(name = name, uri = "", entryJson = entryJson) else it
         }
         s.copy(profiles = list)
     }

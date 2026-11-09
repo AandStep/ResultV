@@ -321,12 +321,8 @@ private fun LinkField(
 //
 // One textfield handles everything a user might paste:
 //   - `resultv://…`         → DeepLinkImporter (RVSUB1 ciphertext, etc.)
-//   - `http(s)://…`         → subscription fetch + selection list
-//   - `vless://`, `vmess://`, `trojan://`, `hy2://`, …  → single share-link
-//
-// The previous split between "Paste link" and "Subscription" tabs was
-// forcing users to know in advance which format they had — the unified
-// pane just dispatches by prefix.
+// A single subscription URL opens the selection list. Proxy endpoints,
+// pasted lists, and configs are imported directly.
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -339,6 +335,7 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
     var input by remember { mutableStateOf("") }
     var protocolKey by rememberSaveable { mutableStateOf(AddProtocols.first().key) }
     val protocol = AddProtocols.first { it.key == protocolKey }
+    val preferHttp = protocolKey == "http"
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
     // Non-null once an http(s):// fetch succeeds — switches the pane from
@@ -365,10 +362,6 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
         if (trimmed.isEmpty()) { error = errEmpty; return@submit }
         keyboard?.hide(); focusManager.clearFocus()
         val lower = trimmed.lowercase()
-        // A subscription URL is one line. Several lines that merely start with
-        // http:// are a pasted list of links, not a URL to fetch.
-        val singleLine = trimmed.lineSequence().count { it.isNotBlank() } == 1
-
         when {
             // resultv://… — RVSUB1 ciphertext or opaque deep-link. The
             // importer parses, fetches if needed, and emits its own toast;
@@ -379,9 +372,7 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
                 input = ""; error = null
                 onDone()
             }
-            // http(s):// — subscription URL. Fetch and surface the selection
-            // list so the user can untick anything they don't want.
-            singleLine && (lower.startsWith("http://") || lower.startsWith("https://")) -> {
+            Mobile.isSubscriptionURL(trimmed, preferHttp) -> {
                 error = null
                 doFetch(
                     scope = scope,
@@ -406,7 +397,7 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
             // does: share-links one per line, base64, an xray or sing-box
             // outbound, a whole config with an `outbounds` array.
             else -> {
-                if (importBlob(trimmed) == 0) {
+                if (importBlob(trimmed, preferHttp) == 0) {
                     error = errInvalid
                     return@submit
                 }
@@ -437,7 +428,10 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
         Column(verticalArrangement = Arrangement.spacedBy(RvSpace.nest3)) {
             Text(
                 stringResource(
-                    if (protocol.scheme == null) R.string.add_config_label else R.string.add_link_label,
+                    when (protocolKey) {
+                        "http", "socks5" -> R.string.add_proxy_address_label
+                        else -> if (protocol.scheme == null) R.string.add_config_label else R.string.add_link_label
+                    },
                 ),
                 style = FieldTextStyle,
                 color = RvColor.whiteA50,
@@ -455,8 +449,11 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
                         fetched = null; fetchedUrl = ""
                     }
                 },
-                hint = protocol.configHint
-                    ?: stringResource(R.string.add_link_hint, protocol.scheme.orEmpty()),
+                hint = when (protocolKey) {
+                    "http", "socks5" -> stringResource(R.string.add_proxy_address_hint, protocol.scheme.orEmpty())
+                    else -> protocol.configHint
+                        ?: stringResource(R.string.add_link_hint, protocol.scheme.orEmpty())
+                },
                 isError = error != null,
             )
             error?.let { Text(it, style = FieldTextStyle, color = RvColor.Errors) }
@@ -648,8 +645,8 @@ private fun importWireGuardConf(text: String, defaultName: String): String? {
  * config used to import nothing at all: the parser's JSON branch was reachable
  * only behind a network fetch.
  */
-private fun importBlob(text: String): Int {
-    val json = runCatching { Mobile.parseProxyBlob(text) }.getOrNull() ?: return 0
+private fun importBlob(text: String, preferHttp: Boolean = false): Int {
+    val json = runCatching { Mobile.parseProxyBlobWithProtocol(text, preferHttp) }.getOrNull() ?: return 0
     val arr = runCatching { JSONArray(json) }.getOrNull() ?: return 0
     var added = 0
     for (i in 0 until arr.length()) {
@@ -859,10 +856,7 @@ private fun smartClipboardImport(
         return
     }
 
-    val nonBlankLines = trimmed.lineSequence().filter { it.isNotBlank() }.toList()
-    val isSingleHttpUrl = nonBlankLines.size == 1 &&
-        (lower.startsWith("http://") || lower.startsWith("https://"))
-    if (isSingleHttpUrl) {
+    if (Mobile.isSubscriptionURL(trimmed, false)) {
         scope.launch {
             try {
                 val responseJson = withContext(Dispatchers.IO) {
@@ -931,8 +925,7 @@ private fun launchQrScan(
             }
             val lower = raw.lowercase()
             when {
-                lower.startsWith("resultv:") || lower.startsWith("http://") ||
-                    lower.startsWith("https://") -> {
+                lower.startsWith("resultv:") || Mobile.isSubscriptionURL(raw, false) -> {
                     // DeepLinkImporter handles all three: rvsub deep-link,
                     // subscription URL, and rejects garbage with its own toast.
                     DeepLinkImporter.importPlain(ctx, raw)

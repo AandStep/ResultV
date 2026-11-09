@@ -24,8 +24,8 @@ private const val TAG = "ResultV/DeepLink"
  * arrives in `resultv://import/<base64>` and friends; we just need to
  * interpret the *plaintext* it returns:
  *
- *   - a single http(s) URL → subscription, run through fetchSubscriptionV2.
- *   - a single proxy URI (vless://, vmess://, …) → one standalone profile.
+ *   - a subscription URL → fetch the subscription.
+ *   - a proxy URI or endpoint → one standalone profile.
  *   - a multi-line text body → parse each line, accumulate profiles.
  *
  * Errors surface as toasts so a bad link never silently no-ops or crashes
@@ -121,15 +121,14 @@ object DeepLinkImporter {
     }
 
     /**
-     * Shared dispatch for both the deep-link and QR paths: single http URL
-     * → subscription fetch, anything else → line-by-line share-link import.
+     * Shared dispatch for the deep-link and QR paths.
      */
     private suspend fun dispatch(ctx: Context, plain: String, sourceTag: String) {
-        val firstLine = plain.lineSequence().firstOrNull()?.trim().orEmpty()
-        val isSingleHttpUrl = isHttpUrl(firstLine) &&
-            plain.lineSequence().count { it.isNotBlank() } == 1
-        if (isSingleHttpUrl) {
-            importSubscription(ctx, firstLine, sourceTag)
+        val explicitSubscription = sourceTag == "rvsub" &&
+            !plain.contains('\n') && !plain.contains('\r') &&
+            (plain.startsWith("http://", ignoreCase = true) || plain.startsWith("https://", ignoreCase = true))
+        if (explicitSubscription || Mobile.isSubscriptionURL(plain, false)) {
+            importSubscription(ctx, plain.trim(), sourceTag)
         } else {
             importInlineUris(ctx, plain)
         }
@@ -217,8 +216,13 @@ object DeepLinkImporter {
             val trimmed = raw.trim()
             if (trimmed.isEmpty()) return@forEach
             runCatching {
-                Mobile.parseProxyURI(trimmed)
-                ProfileRepository.add(Profile.fromUri(nameFromShareUri(trimmed), trimmed))
+                val parsed = JSONObject(Mobile.parseProxyURI(trimmed))
+                val profile = when (parsed.optString("type")) {
+                    "HTTP", "HTTPS", "SOCKS4", "SOCKS4A", "SOCKS5" ->
+                        Profile.fromEntryJson(parsed.optString("name"), parsed.toString())
+                    else -> Profile.fromUri(nameFromShareUri(trimmed), trimmed)
+                }
+                ProfileRepository.add(profile)
                 added++
             }
         }
@@ -229,11 +233,6 @@ object DeepLinkImporter {
             toast(ctx, R.string.deeplink_imported_profiles, added)
             AppLog.success(R.string.log_profiles_imported, added)
         }
-    }
-
-    private fun isHttpUrl(line: String): Boolean {
-        val low = line.lowercase()
-        return low.startsWith("http://") || low.startsWith("https://")
     }
 
     /** Best-effort: pull a friendly name from the URI fragment, fall back to scheme. */

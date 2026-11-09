@@ -407,7 +407,13 @@ func ParseProxyURI(uri string) (string, error) {
 // Returns an error rather than an empty array when nothing parses, so the
 // caller can tell "this is not a config" from "this config has no servers".
 func ParseProxyBlob(text string) (string, error) {
-	entries, err := proxy.ParseSubscriptionBody(text)
+	return ParseProxyBlobWithProtocol(text, false)
+}
+
+// ParseProxyBlobWithProtocol uses HTTP for addresses without a scheme when
+// the HTTP(S) protocol was selected in the Add screen.
+func ParseProxyBlobWithProtocol(text string, preferHTTP bool) (string, error) {
+	entries, err := proxy.ParseProxyInput(text, preferHTTP)
 	if err != nil {
 		return "", err
 	}
@@ -416,6 +422,12 @@ func ParseProxyBlob(text string) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// IsSubscriptionURL reports whether a single pasted URL should be fetched
+// as a subscription instead of being imported as a proxy endpoint.
+func IsSubscriptionURL(text string, preferHTTP bool) bool {
+	return proxy.IsSubscriptionURL(text, preferHTTP)
 }
 
 // FetchSubscription downloads a subscription URL and parses its body

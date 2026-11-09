@@ -151,6 +151,8 @@
     <string name="add_msg_no_valid_uris_clipboard">В буфере нет корректных ссылок</string>
 
     <string name="add_link_label">Вставьте ссылку</string>
+    <string name="add_proxy_address_label">Ссылка или адрес прокси</string>
+    <string name="add_proxy_address_hint">%1$s://… или IP:порт</string>
     <string name="add_config_label">Вставьте данные из файла JSON или .conf</string>
     <string name="add_link_hint">https://example.com/sub или %1$s://...</string>
     <string name="add_link_err_empty">Ссылка пустая</string>
@@ -246,6 +248,8 @@
     <string name="proxies_standalone_delete_message">Будут удалены серверы, добавленные вручную: %1$d. Подписок это не касается.</string>
     <string name="proxies_edit_title">Редактировать профиль</string>
     <string name="proxies_edit_name_label">Название</string>
+    <string name="proxies_edit_config">Параметры подключения (JSON)</string>
+    <string name="proxies_edit_link">Ссылка подключения</string>
     <string name="proxies_action_probe_latency">Проверить задержку</string>
     <string name="proxies_action_rename">Переименовать</string>
     <string name="proxies_action_edit">Изменить</string>
