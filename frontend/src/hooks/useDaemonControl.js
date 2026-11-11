@@ -884,46 +884,41 @@ export const useDaemonControl = (
         ],
     );
 
+    /* Сервер, через который идёт соединение, удалили: рвём соединение и
+       снимаем его с главной. */
+    const forgetActiveProxy = useCallback(
+        async (live) => {
+            if (!live) {
+                setActiveProxy(null);
+                return;
+            }
+            bumpGen();
+            releaseConnect();
+            isSwitchingRef.current = true;
+            setIsConnecting(false);
+            setIsDisconnecting(true);
+            addLog("Активный сервер удален. Разрыв соединения...", "info");
+            try {
+                await wailsAPI.disconnect();
+                addLog("Отключено успешно.", "success");
+            } catch (e) {}
+            setIsConnected(false);
+            setActiveProxy(null);
+            setIsDisconnecting(false);
+            bumpGen();
+            isSwitchingRef.current = false;
+        },
+        [addLog, setActiveProxy, setIsConnected, setIsConnecting, setIsDisconnecting, isSwitchingRef],
+    );
+
     const deleteProxy = useCallback(
         async (id, setProxies) => {
             const isDeletingActive = activeProxy?.id === id;
             setProxies((prev) => prev.filter((p) => p.id !== id));
-
-            if (isDeletingActive) {
-                if (isConnected) {
-                    bumpGen();
-                    releaseConnect();
-                    isSwitchingRef.current = true;
-                    setIsConnecting(false);
-                    setIsDisconnecting(true);
-                    addLog("Активный сервер удален. Разрыв соединения...", "info");
-                    try {
-                        await wailsAPI.disconnect();
-                        addLog("Отключено успешно.", "success");
-                    } catch (e) {}
-                    setIsConnected(false);
-                    setActiveProxy(null);
-                    setIsDisconnecting(false);
-                    bumpGen();
-                    isSwitchingRef.current = false;
-                } else {
-                    setActiveProxy(null);
-                }
-            }
+            if (isDeletingActive) await forgetActiveProxy(isConnected);
             if (failedProxy?.id === id) setFailedProxy(null);
         },
-        [
-            activeProxy,
-            isConnected,
-            failedProxy,
-            addLog,
-            setActiveProxy,
-            setIsConnected,
-            setIsConnecting,
-            setIsDisconnecting,
-            setFailedProxy,
-            isSwitchingRef,
-        ],
+        [activeProxy, isConnected, failedProxy, forgetActiveProxy, setFailedProxy],
     );
 
     const cancelConnect = useCallback(async () => {
@@ -947,6 +942,7 @@ export const useDaemonControl = (
     }, [setIsConnecting, setIsDisconnecting, setIsConnected, setFailedProxy, isSwitchingRef]);
 
     return {
+        forgetActiveProxy,
         disconnectOnly,
         toggleConnection,
         selectAndConnect,
