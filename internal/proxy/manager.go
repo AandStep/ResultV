@@ -103,7 +103,7 @@ type PingOptions struct {
 }
 
 type Manager struct {
-	socks5Exit       *config.Socks5ExitConfig
+	socks5Exit        *config.Socks5ExitConfig
 	firstHopProbePort int
 
 	// opMu serializes the heavy connection-lifecycle operations — Connect,
@@ -140,16 +140,17 @@ type Manager struct {
 	pendingProxy *ProxyConfig
 	// wgProbes are the WireGuard handshake probes in flight; a connect to the
 	// same node cancels them (see startWireGuardProbe).
-	wgProbes     map[*wireGuardProbe]struct{}
-	pendingMode  ProxyMode
-	killSwitch   bool
-	routingMode  RoutingMode
-	whitelist    []string
-	appWhitelist []string
-	appForceVPN  []string
-	routingLists []RoutingListSpec
-	routingOrder []string
-	connectedAt  time.Time
+	wgProbes        map[*wireGuardProbe]struct{}
+	pendingMode     ProxyMode
+	killSwitch      bool
+	routingMode     RoutingMode
+	whitelist       []string
+	appWhitelist    []string
+	appForceVPN     []string
+	personalRouting PersonalRouting
+	routingLists    []RoutingListSpec
+	routingOrder    []string
+	connectedAt     time.Time
 
 	prevUp   int64
 	prevDown int64
@@ -654,8 +655,12 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
 	killSwitch bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
-	dnsLeakProtection, enableIPv6 bool) ConnectResultDTO {
+	dnsLeakProtection, enableIPv6 bool, personal ...PersonalRouting) ConnectResultDTO {
 	m.invalidateReloads()
+	var personalRules PersonalRouting
+	if len(personal) > 0 {
+		personalRules = personal[0]
+	}
 
 	dataDir := resultProxyDataDir()
 	usedCachedPin := false
@@ -668,7 +673,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 
 	res := m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist, appForceVPN,
 		killSwitch, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
-		dnsLeakProtection, enableIPv6)
+		dnsLeakProtection, enableIPv6, personalRules)
 
 	if shouldRetryWithoutPin(usedCachedPin, res.ErrorCode) {
 		clearServerPin(dataDir, m.secrets, proxy.IP)
@@ -676,7 +681,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 		proxy.ResolvedIP = ""
 		res = m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist, appForceVPN,
 			killSwitch, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
-			dnsLeakProtection, enableIPv6)
+			dnsLeakProtection, enableIPv6, personalRules)
 	}
 	return res
 }
@@ -685,7 +690,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
 	killSwitch bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
-	dnsLeakProtection, enableIPv6 bool) ConnectResultDTO {
+	dnsLeakProtection, enableIPv6 bool, personal PersonalRouting) ConnectResultDTO {
 
 	// Per-phase timing — emitted as one summary line on the success path so the
 	// connect budget is measured, not estimated.
@@ -842,11 +847,6 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		listenHost = "0.0.0.0"
 	}
 
-	// The system proxy bypass list is the Global sites list too: in Smart it
-	// would take a blocked site past the proxy altogether.
-	modeSites, _, _ := listsForMode(routingMode, whitelist, nil, nil)
-	m.warnProbeDomainOverlap(mode, proxyTypeLower, modeSites)
-
 	engineCfg := EngineConfig{
 		Socks5Exit:        exitProfile,
 		FirstHopProbePort: firstHopProbePort,
@@ -857,6 +857,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		Whitelist:         whitelist,
 		AppWhitelist:      append([]string(nil), appWhitelist...),
 		AppForceVPN:       append([]string(nil), appForceVPN...),
+		PersonalRouting:   personal,
 		KillSwitch:        killSwitch,
 		LocalPort:         actualLocalPort,
 		DNSServers:        dnsServers,
@@ -869,6 +870,9 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	}
 	engineCfg.RoutingLists = m.routingListSpecsLocked()
 	engineCfg.RoutingOrder = m.routingOrderLocked()
+	engineCfg = engineCfg.forRoutingMode()
+	modeSites := engineCfg.systemProxyBypass()
+	m.warnProbeDomainOverlap(mode, proxyTypeLower, engineCfg.directSites())
 	m.applyAdaptiveSmartLocked(&engineCfg)
 	// Smart mode needs the censored block-list in the engine config so
 	// buildRoute can tunnel those domains/ranges while everything else goes
@@ -973,6 +977,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 				m.whitelist = append([]string(nil), whitelist...)
 				m.appWhitelist = append([]string(nil), appWhitelist...)
 				m.appForceVPN = append([]string(nil), appForceVPN...)
+				m.personalRouting = personal
 				m.connectedAt = time.Now()
 				m.prevUp = 0
 				m.prevDown = 0
@@ -1128,6 +1133,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	m.whitelist = append([]string(nil), whitelist...)
 	m.appWhitelist = append([]string(nil), appWhitelist...)
 	m.appForceVPN = append([]string(nil), appForceVPN...)
+	m.personalRouting = personal
 	m.connectedAt = time.Now()
 	m.prevUp = 0
 	m.prevDown = 0
@@ -2190,12 +2196,15 @@ func (m *Manager) routingListSpecsLocked() []RoutingListSpec {
 	return cp
 }
 
-func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string) ConnectResultDTO {
+func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string, personal ...PersonalRouting) ConnectResultDTO {
 	return m.reload(ctx, func(s *reloadSession) {
 		s.routingMode = routingMode
 		s.whitelist = append([]string(nil), whitelist...)
 		s.appWhitelist = append([]string(nil), appWhitelist...)
 		s.appForceVPN = append([]string(nil), appForceVPN...)
+		if len(personal) > 0 {
+			s.personalRouting = personal[0]
+		}
 	})
 }
 
@@ -2241,7 +2250,7 @@ func (m *Manager) reload(ctx context.Context, change func(*reloadSession)) Conne
 	res := m.connectOnce(context.WithValue(ctx, reloadStaleKey{}, stale), sess.proxy, sess.mode,
 		sess.routingMode, sess.whitelist, sess.appWhitelist, sess.appForceVPN, sess.killSwitch,
 		sess.localPort, sess.listenLAN, sess.dnsServers, sess.tunIPv4, sess.tunIPv6,
-		sess.dnsLeak, sess.enableIPv6)
+		sess.dnsLeak, sess.enableIPv6, sess.personalRouting)
 	m.reloadActive.Store(false)
 
 	if stale() {
@@ -2255,38 +2264,40 @@ func (m *Manager) reload(ctx context.Context, change func(*reloadSession)) Conne
 
 func (m *Manager) sessionSnapshotLocked() *reloadSession {
 	return &reloadSession{
-		proxy:        *m.proxy,
-		mode:         m.mode,
-		routingMode:  m.routingMode,
-		whitelist:    append([]string(nil), m.whitelist...),
-		appWhitelist: append([]string(nil), m.appWhitelist...),
-		appForceVPN:  append([]string(nil), m.appForceVPN...),
-		killSwitch:   m.killSwitch,
-		localPort:    m.localPort,
-		listenLAN:    m.listenLAN,
-		dnsServers:   append([]string(nil), m.dnsServers...),
-		tunIPv4:      m.tunIPv4,
-		tunIPv6:      m.tunIPv6,
-		dnsLeak:      m.dnsLeakProtection,
-		enableIPv6:   m.enableIPv6,
+		proxy:           *m.proxy,
+		mode:            m.mode,
+		routingMode:     m.routingMode,
+		whitelist:       append([]string(nil), m.whitelist...),
+		appWhitelist:    append([]string(nil), m.appWhitelist...),
+		appForceVPN:     append([]string(nil), m.appForceVPN...),
+		personalRouting: m.personalRouting,
+		killSwitch:      m.killSwitch,
+		localPort:       m.localPort,
+		listenLAN:       m.listenLAN,
+		dnsServers:      append([]string(nil), m.dnsServers...),
+		tunIPv4:         m.tunIPv4,
+		tunIPv6:         m.tunIPv6,
+		dnsLeak:         m.dnsLeakProtection,
+		enableIPv6:      m.enableIPv6,
 	}
 }
 
 type reloadSession struct {
-	proxy        ProxyConfig
-	mode         ProxyMode
-	routingMode  RoutingMode
-	whitelist    []string
-	appWhitelist []string
-	appForceVPN  []string
-	killSwitch   bool
-	localPort    int
-	listenLAN    bool
-	dnsServers   []string
-	tunIPv4      string
-	tunIPv6      string
-	dnsLeak      bool
-	enableIPv6   bool
+	proxy           ProxyConfig
+	mode            ProxyMode
+	routingMode     RoutingMode
+	whitelist       []string
+	appWhitelist    []string
+	appForceVPN     []string
+	personalRouting PersonalRouting
+	killSwitch      bool
+	localPort       int
+	listenLAN       bool
+	dnsServers      []string
+	tunIPv4         string
+	tunIPv6         string
+	dnsLeak         bool
+	enableIPv6      bool
 }
 
 type reloadStaleKey struct{}

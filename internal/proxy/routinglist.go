@@ -38,9 +38,10 @@ type ParsedRoutingList struct {
 // RoutingListSpec is a resolved routing list ready for buildRoute: the
 // sing-box rule_set tag, the local source-format cache path, and the action.
 type RoutingListSpec struct {
-	Tag    string
-	Path   string
-	Action string // "proxy" | "direct" | "block"
+	Tag        string
+	Path       string
+	Action     string // "proxy" | "direct" | "block"
+	GlobalOnly bool   // Rules from the active routing profile.
 }
 
 // buildRoutingListRuleSets returns a local source-format rule_set per list

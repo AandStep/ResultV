@@ -42,6 +42,10 @@ type RoutingRules struct {
 	// CustomBlockedDomains are user-added "route via VPN" domains, unioned
 	// with the fetched block-lists in Smart mode.
 	CustomBlockedDomains []string `json:"customBlockedDomains"`
+	SmartDirectSites     []string `json:"smartDirectSites"`
+	SmartDirectApps      []string `json:"smartDirectApps"`
+	GlobalVPNSites       []string `json:"globalVpnSites"`
+	GlobalVPNApps        []string `json:"globalVpnApps"`
 	// RoutingLists are user-managed routing subscriptions (URL + action).
 	RoutingLists []RoutingList `json:"routingLists"`
 	// Profiles are whole routing rule sets — the shape panels and deep links
@@ -511,6 +515,10 @@ func DefaultConfig() AppConfig {
 			AppWhitelist:         []string{},
 			AppForceVPN:          []string{},
 			CustomBlockedDomains: []string{},
+			SmartDirectSites:     []string{},
+			SmartDirectApps:      []string{},
+			GlobalVPNSites:       []string{},
+			GlobalVPNApps:        []string{},
 			RoutingLists:         []RoutingList{},
 			Profiles:             []RoutingProfile{},
 		},
@@ -806,6 +814,18 @@ func ensureDefaults(cfg AppConfig) AppConfig {
 	}
 	if cfg.RoutingRules.CustomBlockedDomains == nil {
 		cfg.RoutingRules.CustomBlockedDomains = []string{}
+	}
+	if cfg.RoutingRules.SmartDirectSites == nil {
+		cfg.RoutingRules.SmartDirectSites = []string{}
+	}
+	if cfg.RoutingRules.SmartDirectApps == nil {
+		cfg.RoutingRules.SmartDirectApps = []string{}
+	}
+	if cfg.RoutingRules.GlobalVPNSites == nil {
+		cfg.RoutingRules.GlobalVPNSites = []string{}
+	}
+	if cfg.RoutingRules.GlobalVPNApps == nil {
+		cfg.RoutingRules.GlobalVPNApps = []string{}
 	}
 	if cfg.RoutingRules.Profiles == nil {
 		cfg.RoutingRules.Profiles = []RoutingProfile{}

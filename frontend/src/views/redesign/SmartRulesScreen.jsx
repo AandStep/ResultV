@@ -15,19 +15,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-/*
- * Страница «Умные правила», подключённая к настоящей конфигурации.
- *
- * Вид держит SmartRulesPage, состояние — routingRules из ConfigContext.
- *
- * Каждый режим правит СВОЮ пару полей, и это не украшение, а разная логика:
- * в Global по умолчанию всё идёт в туннель и списки его РАЗГРУЖАЮТ
- * (`whitelist` / `appWhitelist` — «напрямую»), в Smart по умолчанию всё идёт
- * напрямую и те же два блока, наоборот, ДОБАВЛЯЮТ в туннель
- * (`customBlockedDomains` / `appForceVPN` — «через ВПН»). Поэтому у блоков
- * переворачиваются подписи, а переключение режима не рушит списки соседнего.
- */
-
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useConfigContext } from "../../context/ConfigContext";
@@ -38,6 +25,21 @@ import SmartRulesPage from "./SmartRulesPage";
 import RoutingProfilesDialog from "./RoutingProfilesDialog";
 import RoutingProfileEditor from "./RoutingProfileEditor";
 import AppSidebar from "./AppSidebar";
+
+const ruleFields = {
+  smart: {
+    sites: { vpn: "customBlockedDomains", direct: "smartDirectSites" },
+    apps: { vpn: "appForceVPN", direct: "smartDirectApps" },
+  },
+  global: {
+    sites: { vpn: "globalVpnSites", direct: "whitelist" },
+    apps: { vpn: "globalVpnApps", direct: "appWhitelist" },
+  },
+};
+
+const alternate = (direction) => (direction === "vpn" ? "direct" : "vpn");
+
+const normalizeSite = (value) => value.trim().toLowerCase();
 
 export default function SmartRulesScreen() {
   const { t } = useTranslation();
@@ -53,6 +55,13 @@ export default function SmartRulesScreen() {
   const isWin =
     platform === "win32" || platform === "windows" || platform === "win64";
   const isSmart = rules.mode === "smart";
+  const mode = isSmart ? "smart" : "global";
+  const defaultDirection = isSmart ? "vpn" : "direct";
+  const [directions, setDirections] = useState({});
+  const siteDirection = directions[mode]?.sites ?? defaultDirection;
+  const appDirection = directions[mode]?.apps ?? defaultDirection;
+  const switchDirection = (kind, direction) =>
+    setDirections((prev) => ({ ...prev, [mode]: { ...prev[mode], [kind]: alternate(direction) } }));
 
   /* Прокрутка возвращается туда, где её оставили: страница длинная, и уход
      за сервером сбрасывал её в начало. Списки сайтов и приложений хранить не
@@ -190,16 +199,30 @@ export default function SmartRulesScreen() {
     }
   };
 
-  const siteField = isSmart ? "customBlockedDomains" : "whitelist";
-  const appField = isSmart ? "appForceVPN" : "appWhitelist";
+  const fields = ruleFields[mode];
+  const siteField = fields.sites[siteDirection];
+  const appField = fields.apps[appDirection];
   const sites = rules[siteField] || [];
   const apps = rules[appField] || [];
 
-  const put = (field, list) => setRules({ ...rules, [field]: list });
+  const removeFrom = (field, value) => setRules((prev) => ({
+    ...prev,
+    [field]: (prev[field] || []).filter((entry) => entry !== value),
+  }));
 
-  const addTo = (field, list, value) => {
-    if (!value || list.includes(value)) return;
-    put(field, [...list, value]);
+  const addTo = (pair, direction, raw, normalize) => {
+    const value = normalize(raw);
+    if (!value) return;
+    const field = pair[direction];
+    const opposite = pair[alternate(direction)];
+    setRules((prev) => {
+      const current = prev[field] || [];
+      const other = prev[opposite] || [];
+      const next = current.some((entry) => normalize(entry) === value) ? current : [...current, value];
+      const nextOther = other.filter((entry) => normalize(entry) !== value);
+      if (next === current && nextOther.length === other.length) return prev;
+      return { ...prev, [field]: next, [opposite]: nextOther };
+    });
   };
 
   const clear = async (field, list, message) => {
@@ -211,13 +234,14 @@ export default function SmartRulesScreen() {
       confirmText: t("common.delete"),
       cancelText: t("common.cancel"),
     });
-    if (ok) put(field, []);
+    if (ok) setRules((prev) => ({ ...prev, [field]: [] }));
   };
 
   /* Имя приложения приводится к тому виду, в котором его ждёт движок: нижний
      регистр и расширение платформы. Логика перенесена из RulesView. */
   const normalizeApp = (raw) => {
     let name = String(raw).toLowerCase().trim();
+    if (!name) return "";
     if (isWin && !name.endsWith(".exe")) name += ".exe";
     if (!isWin && !name.includes(".")) name += ".app";
     return name;
@@ -226,7 +250,7 @@ export default function SmartRulesScreen() {
   const pickApp = async () => {
     try {
       const picked = await PickAppForWhitelist();
-      if (picked) addTo(appField, apps, normalizeApp(picked));
+      if (picked) addTo(fields.apps, appDirection, picked, normalizeApp);
     } catch (err) {
       console.error("PickAppForWhitelist err:", err);
     }
@@ -237,20 +261,23 @@ export default function SmartRulesScreen() {
     subtitle: t("smartRules.subtitle"),
     smart: t("smartRules.smart"),
     global: t("smartRules.global"),
-    sitesTitle: t(isSmart ? "smartRules.sitesVpn" : "smartRules.sitesDirect"),
+    sitesTitle: t(siteDirection === "vpn" ? "smartRules.sitesVpn" : "smartRules.sitesDirect"),
+    sitesAlternateTitle: t(siteDirection === "vpn" ? "smartRules.sitesDirect" : "smartRules.sitesVpn"),
     sitesSubtitle: t(
-      isSmart ? "smartRules.sitesVpnDesc" : "smartRules.sitesDirectDesc"
+      siteDirection === "direct" ? "smartRules.sitesDirectDesc" :
+        isSmart ? "smartRules.sitesVpnDesc" : "smartRules.globalSitesVpnDesc"
     ),
     sitesPlaceholder: t("smartRules.sitesPlaceholder"),
-    appsTitle: t(isSmart ? "smartRules.appsVpn" : "smartRules.appsDirect"),
+    appsTitle: t(appDirection === "vpn" ? "smartRules.appsVpn" : "smartRules.appsDirect"),
+    appsAlternateTitle: t(appDirection === "vpn" ? "smartRules.appsDirect" : "smartRules.appsVpn"),
     appsSubtitle: t(
-      isSmart ? "smartRules.appsVpnDesc" : "smartRules.appsDirectDesc"
+      appDirection === "vpn" ? "smartRules.appsVpnDesc" : "smartRules.appsDirectDesc"
     ),
     /* Пример в подсказке в макете свой у каждого режима, и это не случайность:
        в Smart в туннель заворачивают Discord (голос идёт мимо списков), в
        Global из туннеля выносят Steam. Расширение — по платформе. */
     appsPlaceholder: t("smartRules.appsPlaceholder", {
-      example: (isSmart ? "discord" : "steam") + (isWin ? ".exe" : ".app"),
+      example: (appDirection === "vpn" ? "discord" : "steam") + (isWin ? ".exe" : ".app"),
     }),
     pickFile: t("smartRules.pickFile"),
     clear: t("smartRules.clear"),
@@ -300,23 +327,25 @@ export default function SmartRulesScreen() {
   return (
     <>
       <SmartRulesPage
-      mode={isSmart ? "smart" : "global"}
-      onModeChange={(mode) => setRules({ ...rules, mode })}
-      sites={sites}
-      /* Домен приводится к нижнему регистру: в конфиге он ключ, и «VK.com»
-         рядом с «vk.com» дал бы две записи вместо одной. */
-      onAddSite={(value) => addTo(siteField, sites, value.toLowerCase())}
-      onRemoveSite={(value) => put(siteField, sites.filter((i) => i !== value))}
-      onClearSites={() => clear(siteField, sites, t("smartRules.confirmClearSites"))}
-      apps={apps}
-      onAddApp={(value) => addTo(appField, apps, normalizeApp(value))}
-      onRemoveApp={(value) => put(appField, apps.filter((i) => i !== value))}
-      onClearApps={() => clear(appField, apps, t("smartRules.confirmClearApps"))}
-      onPickApp={pickApp}
-      onOpenProfiles={() => setProfilesOpen(true)}
-      sidebar={<AppSidebar />}
-      contentRef={contentRef}
-      text={text}
+        mode={mode}
+        onModeChange={(next) => setRules((prev) => prev.mode === next ? prev : { ...prev, mode: next })}
+        sites={sites}
+        siteListKey={siteField}
+        onSwitchSites={() => switchDirection("sites", siteDirection)}
+        onAddSite={(value) => addTo(fields.sites, siteDirection, value, normalizeSite)}
+        onRemoveSite={(value) => removeFrom(siteField, value)}
+        onClearSites={() => clear(siteField, sites, t("smartRules.confirmClearSites"))}
+        apps={apps}
+        appListKey={appField}
+        onSwitchApps={() => switchDirection("apps", appDirection)}
+        onAddApp={(value) => addTo(fields.apps, appDirection, value, normalizeApp)}
+        onRemoveApp={(value) => removeFrom(appField, value)}
+        onClearApps={() => clear(appField, apps, t("smartRules.confirmClearApps"))}
+        onPickApp={pickApp}
+        onOpenProfiles={() => setProfilesOpen(true)}
+        sidebar={<AppSidebar />}
+        contentRef={contentRef}
+        text={text}
       />
 
       {/*

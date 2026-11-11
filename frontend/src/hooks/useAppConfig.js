@@ -64,6 +64,10 @@ export const useAppConfig = (addLog) => {
         appWhitelist: [],
         appForceVPN: [],
         customBlockedDomains: [],
+        smartDirectSites: [],
+        smartDirectApps: [],
+        globalVpnSites: [],
+        globalVpnApps: [],
     });
     const [settings, setSettings] = useState(defaultSettings);
     const [showProtocolModal, setShowProtocolModal] = useState(false);

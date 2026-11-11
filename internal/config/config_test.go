@@ -556,6 +556,11 @@ func TestRoutingRulesNewFieldsDefaults(t *testing.T) {
 	if def.RoutingRules.RoutingLists == nil {
 		t.Error("DefaultConfig must initialise RoutingLists to empty slice, got nil")
 	}
+	for _, rules := range []RoutingRules{cfg.RoutingRules, def.RoutingRules} {
+		if rules.SmartDirectSites == nil || rules.SmartDirectApps == nil || rules.GlobalVPNSites == nil || rules.GlobalVPNApps == nil {
+			t.Error("the additional per-mode lists must default to empty slices")
+		}
+	}
 }
 
 func TestRoutingListsDefaults(t *testing.T) {

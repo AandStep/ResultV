@@ -849,6 +849,16 @@ func keepBackendRouting(incoming, stored config.RoutingRules) config.RoutingRule
 	return incoming
 }
 
+func personalRouting(rules config.RoutingRules) proxy.PersonalRouting {
+	return proxy.PersonalRouting{
+		SmartVPNSites:    rules.CustomBlockedDomains,
+		SmartDirectSites: rules.SmartDirectSites,
+		SmartDirectApps:  rules.SmartDirectApps,
+		GlobalVPNSites:   rules.GlobalVPNSites,
+		GlobalVPNApps:    rules.GlobalVPNApps,
+	}
+}
+
 func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
 	killSwitch bool) (proxy.ConnectResultDTO, error) {
 
@@ -885,6 +895,7 @@ func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
 		"",
 		cfg.Settings.EffectiveDNSLeakProtection(),
 		cfg.Settings.EnableIPv6,
+		personalRouting(rules),
 	)
 
 	if result.Success {
@@ -1309,6 +1320,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 			"",
 			cfg.Settings.EffectiveDNSLeakProtection(),
 			cfg.Settings.EnableIPv6,
+			personalRouting(cfg.RoutingRules),
 		)
 		if result.Success {
 			serverName := fmt.Sprintf("%s:%d", status.CurrentProxy.IP, status.CurrentProxy.Port)
@@ -1350,6 +1362,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 				"",
 				cfg.Settings.EffectiveDNSLeakProtection(),
 				cfg.Settings.EnableIPv6,
+				personalRouting(cfg.RoutingRules),
 			)
 			if rollback.Success {
 				if a.tray != nil {
@@ -1533,8 +1546,7 @@ func (a *App) UpdateRules(rules config.RoutingRules) error {
 	if r := a.proxy.GetRouter(); r != nil {
 		r.SetCustomBlockedDomains(rules.CustomBlockedDomains)
 	}
-	// Адаптивный Smart передаётся отдельно: ReconnectWithRoutingRules берёт
-	// только режим и три списка, а тумблер живёт в том же блоке конфига.
+	// Адаптивный Smart передаётся отдельно от пользовательских списков.
 	// Ставится до проверки подключения, чтобы выключенное приложение ушло в
 	// следующий Connect с тем же значением, что видит пользователь.
 	a.proxy.SetAdaptiveSmart(
@@ -1551,6 +1563,7 @@ func (a *App) UpdateRules(rules config.RoutingRules) error {
 		rules.Whitelist,
 		rules.AppWhitelist,
 		rules.AppForceVPN,
+		personalRouting(rules),
 	)
 	if result.ErrorCode == proxy.ConnectErrorSuperseded || result.Message == "not connected" {
 		return nil
