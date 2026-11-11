@@ -60,8 +60,11 @@ export default function SmartRulesScreen() {
   const [directions, setDirections] = useState({});
   const siteDirection = directions[mode]?.sites ?? defaultDirection;
   const appDirection = directions[mode]?.apps ?? defaultDirection;
-  const switchDirection = (kind, direction) =>
-    setDirections((prev) => ({ ...prev, [mode]: { ...prev[mode], [kind]: alternate(direction) } }));
+  const selectDirection = (kind, selectAlternate) =>
+    setDirections((prev) => ({
+      ...prev,
+      [mode]: { ...prev[mode], [kind]: selectAlternate ? alternate(defaultDirection) : defaultDirection },
+    }));
 
   /* Прокрутка возвращается туда, где её оставили: страница длинная, и уход
      за сервером сбрасывал её в начало. Списки сайтов и приложений хранить не
@@ -261,15 +264,15 @@ export default function SmartRulesScreen() {
     subtitle: t("smartRules.subtitle"),
     smart: t("smartRules.smart"),
     global: t("smartRules.global"),
-    sitesTitle: t(siteDirection === "vpn" ? "smartRules.sitesVpn" : "smartRules.sitesDirect"),
-    sitesAlternateTitle: t(siteDirection === "vpn" ? "smartRules.sitesDirect" : "smartRules.sitesVpn"),
+    sitesTitle: t(isSmart ? "smartRules.sitesVpn" : "smartRules.sitesDirect"),
+    sitesAlternateTitle: t(isSmart ? "smartRules.sitesDirect" : "smartRules.sitesVpn"),
     sitesSubtitle: t(
       siteDirection === "direct" ? "smartRules.sitesDirectDesc" :
         isSmart ? "smartRules.sitesVpnDesc" : "smartRules.globalSitesVpnDesc"
     ),
     sitesPlaceholder: t("smartRules.sitesPlaceholder"),
-    appsTitle: t(appDirection === "vpn" ? "smartRules.appsVpn" : "smartRules.appsDirect"),
-    appsAlternateTitle: t(appDirection === "vpn" ? "smartRules.appsDirect" : "smartRules.appsVpn"),
+    appsTitle: t(isSmart ? "smartRules.appsVpn" : "smartRules.appsDirect"),
+    appsAlternateTitle: t(isSmart ? "smartRules.appsDirect" : "smartRules.appsVpn"),
     appsSubtitle: t(
       appDirection === "vpn" ? "smartRules.appsVpnDesc" : "smartRules.appsDirectDesc"
     ),
@@ -331,13 +334,15 @@ export default function SmartRulesScreen() {
         onModeChange={(next) => setRules((prev) => prev.mode === next ? prev : { ...prev, mode: next })}
         sites={sites}
         siteListKey={siteField}
-        onSwitchSites={() => switchDirection("sites", siteDirection)}
+        siteAlternateSelected={siteDirection !== defaultDirection}
+        onSelectSiteDirection={(selectAlternate) => selectDirection("sites", selectAlternate)}
         onAddSite={(value) => addTo(fields.sites, siteDirection, value, normalizeSite)}
         onRemoveSite={(value) => removeFrom(siteField, value)}
         onClearSites={() => clear(siteField, sites, t("smartRules.confirmClearSites"))}
         apps={apps}
         appListKey={appField}
-        onSwitchApps={() => switchDirection("apps", appDirection)}
+        appAlternateSelected={appDirection !== defaultDirection}
+        onSelectAppDirection={(selectAlternate) => selectDirection("apps", selectAlternate)}
         onAddApp={(value) => addTo(fields.apps, appDirection, value, normalizeApp)}
         onRemoveApp={(value) => removeFrom(appField, value)}
         onClearApps={() => clear(appField, apps, t("smartRules.confirmClearApps"))}

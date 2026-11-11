@@ -67,24 +67,37 @@ export const SMART_RULES_TEXT = {
  * Блок списка: заголовок с подписью, корзина справа и поле-теги под ними.
  * Оба блока страницы устроены одинаково, у второго снизу добавляется кнопка.
  */
-function RuleCard({ title, alternateTitle, onSwitch, subtitle, clearLabel, onClear, children }) {
+function RuleCard({ title, alternateTitle, alternateSelected, onSelect, subtitle, clearLabel, onClear, children }) {
+  const activeTitle = alternateSelected ? alternateTitle : title;
+  const nextTitle = alternateSelected ? title : alternateTitle;
   return (
     <section className="rv-smart-rules__card">
       <div className="rv-smart-rules__card-head">
         <div className="rv-smart-rules__card-text">
-          <div className="rv-smart-rules__card-directions">
-            <h2 className="rv-smart-rules__card-title">{title}</h2>
-            <button type="button" className="rv-smart-rules__direction" onClick={onSwitch}>
+          <h2 className="rv-smart-rules__card-directions">
+            <button type="button" className="rv-smart-rules__direction" aria-pressed={!alternateSelected} onClick={() => onSelect?.(false)}>
+              {title}
+            </button>
+            <button
+              type="button"
+              className="rv-smart-rules__direction-arrow"
+              data-reversed={alternateSelected}
+              aria-label={nextTitle}
+              tabIndex={-1}
+              onClick={() => onSelect?.(!alternateSelected)}
+            >
               <img src={directionArrow} width={24} height={24} alt="" />
+            </button>
+            <button type="button" className="rv-smart-rules__direction" aria-pressed={alternateSelected} onClick={() => onSelect?.(true)}>
               {alternateTitle}
             </button>
-          </div>
+          </h2>
           <p className="rv-smart-rules__card-subtitle">{subtitle}</p>
         </div>
         <button
           type="button"
           className="rv-smart-rules__clear"
-          aria-label={`${clearLabel} · ${title}`}
+          aria-label={`${clearLabel} · ${activeTitle}`}
           title={clearLabel}
           onClick={onClear}
         >
@@ -101,13 +114,15 @@ export default function SmartRulesPage({
   onModeChange,
   sites = [],
   siteListKey,
-  onSwitchSites,
+  siteAlternateSelected = false,
+  onSelectSiteDirection,
   onAddSite,
   onRemoveSite,
   onClearSites,
   apps = [],
   appListKey,
-  onSwitchApps,
+  appAlternateSelected = false,
+  onSelectAppDirection,
   onAddApp,
   onRemoveApp,
   onClearApps,
@@ -148,7 +163,8 @@ export default function SmartRulesPage({
           <RuleCard
             title={text.sitesTitle}
             alternateTitle={text.sitesAlternateTitle}
-            onSwitch={onSwitchSites}
+            alternateSelected={siteAlternateSelected}
+            onSelect={onSelectSiteDirection}
             subtitle={text.sitesSubtitle}
             clearLabel={text.clear}
             onClear={onClearSites}
@@ -167,7 +183,8 @@ export default function SmartRulesPage({
           <RuleCard
             title={text.appsTitle}
             alternateTitle={text.appsAlternateTitle}
-            onSwitch={onSwitchApps}
+            alternateSelected={appAlternateSelected}
+            onSelect={onSelectAppDirection}
             subtitle={text.appsSubtitle}
             clearLabel={text.clear}
             onClear={onClearApps}
