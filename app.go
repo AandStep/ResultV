@@ -141,9 +141,10 @@ type App struct {
 	resumeProxyID string
 	resumeMode    string
 
-	deepLinkMu        sync.Mutex
-	pendingDeepLink   string
-	telegramConnectMu sync.Mutex
+	deepLinkMu            sync.Mutex
+	pendingDeepLink       string
+	telegramConnectMu     sync.Mutex
+	telegramConnectCancel context.CancelFunc
 
 	updateMu     sync.Mutex
 	updateCancel context.CancelFunc

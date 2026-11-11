@@ -70,6 +70,9 @@ func (s *loginServer) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Start Telegram login from ResultV.", http.StatusBadRequest)
 		return
 	}
+	if r.Method == http.MethodHead {
+		return
+	}
 	now := time.Now()
 	nonce := newCode()
 	s.mu.Lock()

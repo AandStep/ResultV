@@ -69,9 +69,19 @@ func Connect(ctx context.Context, origin, language string, openBrowser func(stri
 
 	_, port, _ := net.SplitHostPort(host)
 	query := url.Values{"port": {port}, "challenge": {state}, "lang": {language}}
-	openBrowser(origin + Prefix + "/login?" + query.Encode())
+	loginURL := origin + Prefix + "/login?" + query.Encode()
+	if err := checkLoginPage(ctx, loginURL); err != nil {
+		return "", err
+	}
+	if ctx.Err() != nil {
+		return "", ErrCancelled
+	}
+	openBrowser(loginURL)
 	select {
 	case <-ctx.Done():
+		if ctx.Err() == context.Canceled {
+			return "", ErrCancelled
+		}
 		return "", ErrTimeout
 	case answer := <-result:
 		if answer.err != nil {
@@ -79,4 +89,27 @@ func Connect(ctx context.Context, origin, language string, openBrowser func(stri
 		}
 		return exchange(ctx, origin, answer.ticket, verifier)
 	}
+}
+
+func checkLoginPage(ctx context.Context, loginURL string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, loginURL, nil)
+	if err != nil {
+		return ErrUnavailable
+	}
+	client := http.Client{
+		Timeout:       5 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		if ctx.Err() == context.Canceled {
+			return ErrCancelled
+		}
+		return ErrUnavailable
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ErrUnavailable
+	}
+	return nil
 }

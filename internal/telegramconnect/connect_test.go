@@ -3,6 +3,7 @@ package telegramconnect
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,7 +11,47 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestConnectDoesNotOpenMissingLoginPage(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+
+	_, err := Connect(t.Context(), server.URL, "en", func(string) {
+		t.Fatal("browser opened despite a 404")
+	})
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("404 returned %v", err)
+	}
+}
+
+func TestConnectCanCancelAndRetry(t *testing.T) {
+	server := httptest.NewServer(NewHandler(Origin, 123, nil, nil))
+	defer server.Close()
+
+	for range 2 {
+		ctx, cancel := context.WithCancel(t.Context())
+		var callbackHost string
+		_, err := Connect(ctx, server.URL, "en", func(loginURL string) {
+			u, err := url.Parse(loginURL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			callbackHost = "127.0.0.1:" + u.Query().Get("port")
+			cancel()
+		})
+		cancel()
+		if !errors.Is(err, ErrCancelled) || callbackHost == "" {
+			t.Fatalf("expected cancellation after opening the browser, got %v", err)
+		}
+		client := http.Client{Timeout: time.Second}
+		if response, err := client.Get("http://" + callbackHost + "/callback"); err == nil {
+			response.Body.Close()
+			t.Fatal("cancelled login still accepts browser callbacks")
+		}
+	}
+}
 
 func TestConnectReturnsSubscriptionOnlyToInitiatingClient(t *testing.T) {
 	const origin = "https://result-service.ru"

@@ -104,6 +104,25 @@
   font-weight: var(--rv-chip-weight);
 }
 
+.rv-buy-page__secondary,
+.rv-buy-page__manual-row {
+  display: flex;
+  align-items: center;
+  gap: var(--rv-space-nest-3);
+  flex-wrap: wrap;
+}
+
+.rv-buy-page__manual {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rv-space-nest-3);
+}
+
+.rv-buy-page__manual-row > .rv-input {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
 /* --- Кнопки -------------------------------------------------------------- */
 
 .rv-buy-page__actions {

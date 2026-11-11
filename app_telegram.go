@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"slices"
+	"strings"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -15,20 +17,56 @@ func (a *App) ConnectTelegramSubscription(language string) (string, error) {
 	if a.ctx == nil || a.config == nil {
 		return "", telegramconnect.ErrUnavailable
 	}
-	if !a.telegramConnectMu.TryLock() {
+	a.telegramConnectMu.Lock()
+	if a.telegramConnectCancel != nil {
+		a.telegramConnectMu.Unlock()
 		return "", errors.New("telegram_connect_busy")
 	}
-	defer a.telegramConnectMu.Unlock()
+	ctx, cancel := context.WithCancel(a.ctx)
+	a.telegramConnectCancel = cancel
+	a.telegramConnectMu.Unlock()
+	defer func() {
+		cancel()
+		a.telegramConnectMu.Lock()
+		a.telegramConnectCancel = nil
+		a.telegramConnectMu.Unlock()
+	}()
 
-	link, err := telegramconnect.Connect(a.ctx, telegramconnect.Origin, language, func(loginURL string) {
+	link, err := telegramconnect.Connect(ctx, telegramconnect.Origin, language, func(loginURL string) {
 		wailsRuntime.BrowserOpenURL(a.ctx, loginURL)
 	})
-	a.restoreMainWindow()
+	if ctx.Err() != nil {
+		return "", telegramconnect.ErrCancelled
+	}
 	if err != nil {
 		return "", err
 	}
+	a.restoreMainWindow()
+	return a.importResultVSubscription(link)
+}
 
+// CancelTelegramSubscription cancels the current browser login.
+func (a *App) CancelTelegramSubscription() {
+	a.telegramConnectMu.Lock()
+	defer a.telegramConnectMu.Unlock()
+	if a.telegramConnectCancel != nil {
+		a.telegramConnectCancel()
+	}
+}
+
+// ImportResultVSubscription installs an official subscription link copied from the bot.
+func (a *App) ImportResultVSubscription(link string) (string, error) {
+	return a.importResultVSubscription(strings.TrimSpace(link))
+}
+
+func (a *App) importResultVSubscription(link string) (string, error) {
 	key := telegramconnect.SubscriptionKey(link)
+	if key == "" {
+		return "", errors.New("telegram_invalid_subscription_link")
+	}
+	if a.ctx == nil || a.config == nil {
+		return "", telegramconnect.ErrUnavailable
+	}
 	cfg := a.config.GetConfig()
 	for _, sub := range cfg.Subscriptions {
 		if telegramconnect.SubscriptionKey(sub.URL) == key && hasUsableSubscriptionEntries(cfg.Proxies, sub.URL) {

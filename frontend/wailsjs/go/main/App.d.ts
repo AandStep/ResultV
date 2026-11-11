@@ -27,6 +27,10 @@ export function Connect(arg1:proxy.ProxyConfig,arg2:config.RoutingRules,arg3:boo
 
 export function ConnectTelegramSubscription(arg1:string):Promise<string>;
 
+export function CancelTelegramSubscription():Promise<void>;
+
+export function ImportResultVSubscription(arg1:string):Promise<string>;
+
 export function DebugFrontendLog(arg1:string):Promise<void>;
 
 export function DecodeDeepLink(arg1:string):Promise<string>;

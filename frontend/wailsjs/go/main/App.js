@@ -42,6 +42,14 @@ export function ConnectTelegramSubscription(arg1) {
   return window['go']['main']['App']['ConnectTelegramSubscription'](arg1);
 }
 
+export function CancelTelegramSubscription() {
+  return window['go']['main']['App']['CancelTelegramSubscription']();
+}
+
+export function ImportResultVSubscription(arg1) {
+  return window['go']['main']['App']['ImportResultVSubscription'](arg1);
+}
+
 export function DebugFrontendLog(arg1) {
   return window['go']['main']['App']['DebugFrontendLog'](arg1);
 }

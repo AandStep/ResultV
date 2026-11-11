@@ -20,10 +20,12 @@
   {{if eq .Language "ru"}}
   <p>Подтвердите вход в Telegram, чтобы добавить свою подписку в ResultV.</p>
   <button type="button" id="login">Войти через Telegram</button>
+  <p>Если Telegram не открывается, вернитесь в ResultV и добавьте подписку по ссылке из @result_vpn_bot.</p>
   <a id="return" hidden>Вернуться в ResultV</a>
   {{else}}
   <p>Sign in with Telegram to add your subscription to ResultV.</p>
   <button type="button" id="login">Log in with Telegram</button>
+  <p>If Telegram won’t open, return to ResultV and add the subscription using the link from @result_vpn_bot.</p>
   <a id="return" hidden>Return to ResultV</a>
   {{end}}
 </main>
@@ -34,11 +36,11 @@
   const nonce = {{.Nonce}};
   const callback = new URL("/callback", "http://127.0.0.1:" + {{.Port}});
   callback.searchParams.set("state", {{.State}});
-  function finish(key, value) {
+  function finish(key, value, redirect = true) {
     callback.searchParams.set(key, value);
     back.href = callback.href;
     back.hidden = false;
-    location.assign(callback.href);
+    if (redirect) location.assign(callback.href);
   }
   login.addEventListener("click", () => {
     login.disabled = true;
@@ -55,17 +57,18 @@
             body: JSON.stringify({ nonce, idToken: result.id_token })
           });
           if (!response.ok) {
-            finish("error", response.status === 401 ? "auth_failed" : "unavailable");
+            if (response.status === 401) finish("error", "auth_failed");
+            else finish("error", "unavailable", false);
             return;
           }
           const { ticket } = await response.json();
           finish("ticket", ticket);
         } catch {
-          finish("error", "unavailable");
+          finish("error", "unavailable", false);
         }
       });
     } catch {
-      finish("error", "unavailable");
+      finish("error", "unavailable", false);
     }
   });
 </script>

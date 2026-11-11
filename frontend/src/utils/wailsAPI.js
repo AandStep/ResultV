@@ -24,6 +24,8 @@ import {
   CancelConnect,
   Connect,
   ConnectTelegramSubscription,
+  CancelTelegramSubscription,
+  ImportResultVSubscription,
   Disconnect,
   DetectCountry,
   RedetectCountry,
@@ -70,6 +72,8 @@ import {
 export const wailsAPI = {
 
   connectTelegramSubscription: (language) => ConnectTelegramSubscription(language),
+  cancelTelegramSubscription: () => CancelTelegramSubscription(),
+  importResultVSubscription: (link) => ImportResultVSubscription(link),
   
   connect: async (proxyStr, options, killSwitch) => {
     try {
