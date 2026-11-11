@@ -19,7 +19,7 @@ import (
 const (
 	Prefix       = "/desktop/telegram"
 	Origin       = "https://result-service.ru"
-	LoginTimeout = 5 * time.Minute
+	LoginTimeout = 10 * time.Minute
 )
 
 var (

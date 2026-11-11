@@ -2,74 +2,339 @@
 <html lang="{{.Language}}">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <meta name="telegram-nonce" content="{{.Nonce}}">
 <title>ResultV · Telegram</title>
 <style nonce="{{.Nonce}}">
-  body { margin: 0; min-height: 100dvh; display: grid; place-items: center; background: #141414; color: #fff; font: 16px system-ui, sans-serif; }
-  main { box-sizing: border-box; width: min(440px, 92vw); padding: 32px; border-radius: 24px; background: #1a1a1a; }
-  h1 { margin-top: 0; font-size: 24px; }
-  p { color: #c4c4c4; }
-  button, a { color: white; font: inherit; }
-  button { border: 0; border-radius: 12px; background: #007e3a; padding: 12px 18px; cursor: pointer; }
-  button:disabled { opacity: .65; cursor: wait; }
-  a { display: inline-block; margin-top: 12px; }
-  a[hidden] { display: none; }
+  @font-face {
+    font-family: "Benzin";
+    src: url("./assets/benzin-bold.woff2") format("woff2");
+    font-weight: 700;
+    font-display: swap;
+  }
+  :root {
+    --white: #fff;
+    --black: #141414;
+    --grey: #1a1a1a;
+    --dark-grey: #171717;
+    --main: #007e3a;
+    --second: #00a819;
+    --warning: #f2cc0d;
+    --errors: #f20d46;
+    --white-a05: rgba(255, 255, 255, .05);
+    --white-a10: rgba(255, 255, 255, .1);
+    --white-a50: rgba(255, 255, 255, .5);
+    --white-a80: rgba(255, 255, 255, .8);
+    --main-a08: rgba(0, 126, 58, .08);
+    --main-a10: rgba(0, 126, 58, .1);
+    --main-a20: rgba(0, 126, 58, .2);
+    --warning-a08: rgba(242, 204, 13, .08);
+    --warning-a10: rgba(242, 204, 13, .1);
+    --warning-a20: rgba(242, 204, 13, .2);
+    --black-a20: rgba(20, 20, 20, .2);
+    --border: linear-gradient(to right, rgba(255, 255, 255, .1), rgba(255, 255, 255, .05));
+    --border-hover: linear-gradient(to right, rgba(255, 255, 255, .2), rgba(255, 255, 255, .15));
+    --transition: 300ms cubic-bezier(.4, 0, .2, 1);
+    --font: "Segoe UI", "Segoe UI Variable", system-ui, -apple-system, "Noto Sans", "Liberation Sans", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 16px;
+    background: var(--black);
+    color: var(--white);
+    font: 500 14px/1.4 var(--font);
+    -webkit-font-smoothing: antialiased;
+  }
+  main { width: 440px; max-width: 100%; display: flex; flex-direction: column; gap: 16px; }
+  .brand { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 16px; }
+  .brand span { font: 700 22px/1 "Benzin", var(--font); letter-spacing: .01em; }
+  .card { display: flex; flex-direction: column; gap: 24px; padding: 24px; border-radius: 32px; background: var(--grey); }
+  .head { display: flex; align-items: center; gap: 16px; }
+  .tile {
+    flex-shrink: 0; width: 64px; height: 64px; border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--tile-bg, var(--main-a10)); color: var(--tile-fg, var(--main));
+  }
+  .tile svg { width: 32px; height: 32px; }
+  .card--access { --tile-bg: var(--warning-a10); --tile-fg: var(--warning); }
+  .titles { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  h1 { margin: 0; font-size: 20px; font-weight: 700; line-height: 1.4; }
+  .sub { margin: 0; font-size: 14px; font-weight: 500; line-height: 1.1; color: var(--white-a50); }
+  ol { margin: 0; padding: 0; list-style: none; counter-reset: step; display: flex; flex-direction: column; gap: 12px; }
+  li { counter-increment: step; display: flex; gap: 12px; align-items: flex-start; color: var(--white-a80); }
+  li::before {
+    content: counter(step);
+    flex-shrink: 0; width: 24px; height: 24px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--white-a05); color: var(--white-a50);
+    font-size: 12px; font-weight: 700; line-height: 1;
+  }
+  .btn {
+    --bg: var(--grey); --bg-hover: var(--dark-grey); --fg: var(--white-a80); --press: var(--black-a20);
+    position: relative; width: 100%; height: 73px; padding: 0 24px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    border: 0; border-radius: 24px; background: var(--bg); color: var(--fg);
+    font: 700 16px/1.3 var(--font); cursor: pointer; user-select: none;
+    clip-path: inset(0 round 24px);
+    transition: background var(--transition), color var(--transition), box-shadow var(--transition), clip-path var(--transition), opacity var(--transition);
+  }
+  .btn svg { width: 24px; height: 24px; flex-shrink: 0; }
+  .btn::before, .btn::after {
+    content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+    border: 1px solid transparent; background-origin: border-box;
+    -webkit-mask: linear-gradient(#000 0 0) padding-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) padding-box, linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    transition: opacity var(--transition);
+  }
+  .btn::before { background-image: var(--border); }
+  .btn::after { background-image: var(--border-hover); opacity: 0; }
+  .btn:hover:not(:disabled) { background: var(--bg-hover); }
+  .btn:hover:not(:disabled)::before { opacity: 0; }
+  .btn:hover:not(:disabled)::after { opacity: 1; }
+  .btn:active:not(:disabled) {
+    clip-path: inset(1px round 23px);
+    box-shadow: inset -8px -8px 16px 0 var(--press);
+  }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .btn--green {
+    --bg: var(--main-a10); --bg-hover: var(--main-a20); --fg: var(--main); --press: var(--main-a08);
+    --border: linear-gradient(var(--main-a10), var(--main-a10));
+    --border-hover: linear-gradient(var(--main-a10), var(--main-a10));
+  }
+  .btn--yellow {
+    --bg: var(--warning-a10); --bg-hover: var(--warning-a20); --fg: var(--warning); --press: var(--warning-a08);
+    --border: linear-gradient(var(--warning-a10), var(--warning-a10));
+    --border-hover: linear-gradient(var(--warning-a10), var(--warning-a10));
+  }
+  .status { margin: -8px 0 0; color: var(--white-a50); }
+  .status[hidden] { display: none; }
+  .status[data-tone="error"] { color: var(--errors); }
+  .status[data-tone="warning"] { color: var(--warning); }
+  .status[data-tone="success"] { color: var(--second); }
+  .status a { color: inherit; }
+  .hint { margin: 8px 0 0; text-align: center; color: var(--white-a50); }
+  .hint b { color: var(--white-a80); font-weight: 700; }
 </style>
 <main>
-  <h1>ResultV</h1>
+  <div class="brand" aria-label="ResultV">
+    <svg width="24" height="30" viewBox="0 0 24 30" aria-hidden="true">
+      <defs>
+        <linearGradient id="shield" x1="12" y1="0" x2="12" y2="30" gradientUnits="userSpaceOnUse"><stop stop-color="#007E3A"/><stop offset="1" stop-color="#00A819"/></linearGradient>
+        <linearGradient id="mark" x1="12.58" y1="7.17" x2="12.58" y2="22.81" gradientUnits="userSpaceOnUse"><stop stop-color="#fff"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+      </defs>
+      <path fill="url(#shield)" d="M12 30C8.525 29.125 5.656 27.131 3.393 24.018C1.13 20.905 0 17.449 0 13.65V4.5L12 0L24 4.5V13.65C24 17.45 22.869 20.9065 20.607 24.0195C18.345 27.1325 15.476 29.126 12 30Z"/>
+      <path fill="url(#mark)" d="M10.4646 9.85327C11.888 8.36386 14.137 7.46832 17.2115 7.16667V11.0693H13.8808C12.8559 11.0693 12.0968 11.3238 11.6033 11.8329C11.1289 12.3231 10.8252 12.9264 10.6924 13.6428C10.5785 14.3592 10.5216 15.2736 10.5216 16.386V22.8056H5.96667V7.39291H9.92372L10.4646 9.85327Z"/>
+      <path fill="url(#mark)" d="M18.2217 22.0077C17.577 22.5396 16.7908 22.8056 15.8632 22.8056C15.275 22.8056 14.7094 22.6957 14.1665 22.476C13.6348 22.2448 13.1936 21.8863 12.843 21.4007C12.5036 20.9151 12.3339 20.3081 12.3339 19.5796C12.3339 18.8512 12.5036 18.2442 12.843 17.7585C13.1936 17.2729 13.6348 16.9145 14.1665 16.6832C14.7094 16.452 15.275 16.3364 15.8632 16.3364C16.7908 16.3364 17.577 16.6081 18.2217 17.1515C18.8665 17.6834 19.1889 18.4928 19.1889 19.5796C19.1889 20.6665 18.8665 21.4759 18.2217 22.0077Z"/>
+    </svg>
+    <span>ResultV</span>
+  </div>
+
+  <section class="card">
+    <div class="head">
+      <div class="tile"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM16.64 8.8C16.49 10.38 15.84 14.22 15.51 15.99C15.37 16.74 15.09 16.99 14.83 17.02C14.25 17.07 13.81 16.64 13.25 16.27C12.37 15.69 11.87 15.33 11.02 14.77C10.03 14.12 10.67 13.76 11.24 13.18C11.39 13.03 13.95 10.7 14 10.49C14.0069 10.4582 14.006 10.4252 13.9973 10.3938C13.9886 10.3624 13.9724 10.3337 13.95 10.31C13.89 10.26 13.81 10.28 13.74 10.29C13.65 10.31 12.25 11.24 9.52 13.08C9.12 13.35 8.76 13.49 8.44 13.48C8.08 13.47 7.4 13.28 6.89 13.11C6.26 12.91 5.77 12.8 5.81 12.45C5.83 12.27 6.08 12.09 6.55 11.9C9.47 10.63 11.41 9.79 12.38 9.39C15.16 8.23 15.73 8.03 16.11 8.03C16.19 8.03 16.38 8.05 16.5 8.15C16.6 8.23 16.63 8.34 16.64 8.42C16.63 8.48 16.65 8.66 16.64 8.8Z"/></svg></div>
+      <div class="titles">
+        {{if eq .Language "ru"}}
+        <h1>Вход через Telegram</h1>
+        <p class="sub">Подтвердите вход, и подписка добавится в ResultV</p>
+        {{else}}
+        <h1>Sign in with Telegram</h1>
+        <p class="sub">Confirm the sign-in to add your subscription to ResultV</p>
+        {{end}}
+      </div>
+    </div>
+    <button type="button" class="btn btn--green" id="login">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM16.64 8.8C16.49 10.38 15.84 14.22 15.51 15.99C15.37 16.74 15.09 16.99 14.83 17.02C14.25 17.07 13.81 16.64 13.25 16.27C12.37 15.69 11.87 15.33 11.02 14.77C10.03 14.12 10.67 13.76 11.24 13.18C11.39 13.03 13.95 10.7 14 10.49C14.0069 10.4582 14.006 10.4252 13.9973 10.3938C13.9886 10.3624 13.9724 10.3337 13.95 10.31C13.89 10.26 13.81 10.28 13.74 10.29C13.65 10.31 12.25 11.24 9.52 13.08C9.12 13.35 8.76 13.49 8.44 13.48C8.08 13.47 7.4 13.28 6.89 13.11C6.26 12.91 5.77 12.8 5.81 12.45C5.83 12.27 6.08 12.09 6.55 11.9C9.47 10.63 11.41 9.79 12.38 9.39C15.16 8.23 15.73 8.03 16.11 8.03C16.19 8.03 16.38 8.05 16.5 8.15C16.6 8.23 16.63 8.34 16.64 8.42C16.63 8.48 16.65 8.66 16.64 8.8Z"/></svg>
+      <span>{{if eq .Language "ru"}}Войти через Telegram{{else}}Log in with Telegram{{end}}</span>
+    </button>
+    <p class="status" id="status" role="status" hidden></p>
+  </section>
+
+  {{if .AccessURL}}
+  <section class="card card--access" id="access-card">
+    <div class="head">
+      <div class="tile"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M6,2H18V8H18V8L14,12L18,16V16H18V22H6V16H6V16L10,12L6,8V8H6V2M16,16.5L12,12.5L8,16.5V20H16V16.5M12,11.5L16,7.5V4H8V7.5L12,11.5M10,6H14V6.75L12,8.75L10,6.75V6Z"/></svg></div>
+      <div class="titles">
+        {{if eq .Language "ru"}}
+        <h1>Telegram не открывается?</h1>
+        <p class="sub">Без VPN Telegram может не загрузиться</p>
+        {{else}}
+        <h1>Telegram won’t open?</h1>
+        <p class="sub">Telegram may not load without a VPN</p>
+        {{end}}
+      </div>
+    </div>
+    {{if eq .Language "ru"}}
+    <ol>
+      <li>Добавьте в ResultV временный сервер. Он открывает только Telegram и работает {{.Minutes}} минут.</li>
+      <li>Подключитесь к нему в ResultV.</li>
+      <li>Вернитесь на эту страницу и нажмите «Войти через Telegram».</li>
+    </ol>
+    {{else}}
+    <ol>
+      <li>Add a temporary server to ResultV. It opens only Telegram and works for {{.Minutes}} minutes.</li>
+      <li>Connect to it in ResultV.</li>
+      <li>Return to this page and press “Log in with Telegram”.</li>
+    </ol>
+    {{end}}
+    <button type="button" class="btn" id="access">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z"/></svg>
+      <span>{{if eq .Language "ru"}}Добавить временный сервер{{else}}Add temporary server{{end}}</span>
+    </button>
+    <p class="status" id="access-status" role="status" hidden></p>
+  </section>
+  {{end}}
+
   {{if eq .Language "ru"}}
-  <p>Подтвердите вход в Telegram, чтобы добавить свою подписку в ResultV.</p>
-  <button type="button" id="login">Войти через Telegram</button>
-  <p>Если Telegram не открывается без VPN, вернитесь в ResultV, откройте раздел «Добавить» и вставьте ссылку на подписку из @result_vpn_bot.</p>
-  <a id="return" hidden>Вернуться в ResultV</a>
+  <p class="hint">Ссылка на подписку уже есть в <b>@result_vpn_bot</b>? Вставьте её в ResultV в разделе «Добавить».</p>
   {{else}}
-  <p>Sign in with Telegram to add your subscription to ResultV.</p>
-  <button type="button" id="login">Log in with Telegram</button>
-  <p>If Telegram won’t open without a VPN, return to ResultV, open the Add page, and paste your subscription link from @result_vpn_bot.</p>
-  <a id="return" hidden>Return to ResultV</a>
+  <p class="hint">Already have a subscription link from <b>@result_vpn_bot</b>? Paste it in ResultV on the Add page.</p>
   {{end}}
 </main>
-<script src="https://oauth.telegram.org/js/telegram-login.js?6"></script>
 <script nonce="{{.Nonce}}">
-  const login = document.getElementById("login");
-  const back = document.getElementById("return");
+  const ru = {{.Language}} === "ru";
+  const text = ru ? {
+    loading: "Загружаем Telegram…",
+    blocked: "Telegram не загрузился. Подключитесь к временному серверу ниже и нажмите кнопку ещё раз.",
+    blockedNoAccess: "Telegram не загрузился. Вставьте ссылку из @result_vpn_bot в ResultV, раздел «Добавить».",
+    waiting: "Подтвердите вход в окне Telegram.",
+    done: "Готово. Возвращаемся в ResultV…",
+    back: "Вернуться в ResultV",
+    failed: "Не удалось подтвердить вход. Попробуйте ещё раз.",
+    unavailable: "Сервис входа временно недоступен. Попробуйте ещё раз.",
+    accessOpened: "Подтвердите добавление сервера в ResultV и подключитесь к нему.",
+  } : {
+    loading: "Loading Telegram…",
+    blocked: "Telegram didn’t load. Connect to the temporary server below and press the button again.",
+    blockedNoAccess: "Telegram didn’t load. Paste the link from @result_vpn_bot in ResultV on the Add page.",
+    waiting: "Confirm the sign-in in the Telegram window.",
+    done: "Done. Returning to ResultV…",
+    back: "Return to ResultV",
+    failed: "Sign-in could not be confirmed. Try again.",
+    unavailable: "The sign-in service is temporarily unavailable. Try again.",
+    accessOpened: "Confirm adding the server in ResultV and connect to it.",
+  };
   const nonce = {{.Nonce}};
+  const accessURL = {{.AccessURL}};
+  const login = document.getElementById("login");
+  const status = document.getElementById("status");
+  const accessButton = document.getElementById("access");
+  const accessStatus = document.getElementById("access-status");
   const callback = new URL("/callback", "http://127.0.0.1:" + {{.Port}});
   callback.searchParams.set("state", {{.State}});
-  function finish(key, value, redirect = true) {
-    callback.searchParams.set(key, value);
-    back.href = callback.href;
-    back.hidden = false;
-    if (redirect) location.assign(callback.href);
+
+  function say(node, message, tone = "", link = "") {
+    if (!node) return;
+    node.textContent = message;
+    node.dataset.tone = tone;
+    node.hidden = !message;
+    if (link) {
+      const a = document.createElement("a");
+      a.href = link;
+      a.textContent = text.back;
+      node.append(" ", a);
+    }
   }
-  login.addEventListener("click", () => {
+
+  let loader = null;
+  function loadTelegram(timeout = 8000) {
+    if (window.Telegram?.Login) return Promise.resolve(true);
+    if (loader) return loader;
+    loader = new Promise((resolve) => {
+      const script = document.createElement("script");
+      script.src = "https://oauth.telegram.org/js/telegram-login.js?6";
+      script.async = true;
+      const done = (ok) => {
+        clearTimeout(timer);
+        if (!ok) script.remove();
+        loader = null;
+        resolve(ok && Boolean(window.Telegram?.Login));
+      };
+      const timer = setTimeout(() => done(false), timeout);
+      script.onload = () => done(true);
+      script.onerror = () => done(false);
+      document.head.append(script);
+    });
+    return loader;
+  }
+
+  function markBlocked(blocked) {
+    if (blocked) {
+      say(status, accessURL ? text.blocked : text.blockedNoAccess, "warning");
+      accessButton?.classList.add("btn--yellow");
+    } else if (status.dataset.tone === "warning") {
+      say(status, "");
+      accessButton?.classList.remove("btn--yellow");
+    }
+  }
+
+  let retry = 0;
+  function probe() {
+    loadTelegram().then((ok) => {
+      markBlocked(!ok);
+      clearTimeout(retry);
+      if (!ok) retry = setTimeout(probe, 5000);
+    });
+  }
+  probe();
+
+  function finish(key, value) {
+    callback.searchParams.set(key, value);
+    say(status, key === "ticket" ? text.done : "", "success", callback.href);
+    location.assign(callback.href);
+  }
+
+  login.addEventListener("click", async () => {
     login.disabled = true;
+    if (!window.Telegram?.Login) {
+      say(status, text.loading);
+      if (!(await loadTelegram(6000))) {
+        markBlocked(true);
+        login.disabled = false;
+        return;
+      }
+    }
+    say(status, text.waiting);
     try {
       Telegram.Login.auth({ client_id: {{.ClientID}}, scope: ["profile"], nonce, lang: {{.Language}} }, async (result) => {
         if (!result?.id_token) {
-          finish("error", "cancelled");
+          say(status, "");
+          login.disabled = false;
           return;
         }
         try {
           const response = await fetch("./verify", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ nonce, idToken: result.id_token })
+            body: JSON.stringify({ nonce, idToken: result.id_token }),
           });
-          if (!response.ok) {
-            if (response.status === 401) finish("error", "auth_failed");
-            else finish("error", "unavailable", false);
+          if (response.status === 401) {
+            finish("error", "auth_failed");
             return;
           }
+          if (!response.ok) throw new Error(String(response.status));
           const { ticket } = await response.json();
           finish("ticket", ticket);
         } catch {
-          finish("error", "unavailable", false);
+          say(status, text.unavailable, "error");
+          login.disabled = false;
         }
       });
     } catch {
-      finish("error", "unavailable", false);
+      say(status, text.unavailable, "error");
+      login.disabled = false;
     }
+  });
+
+  accessButton?.addEventListener("click", () => {
+    location.assign("resultv://plain/" + accessURL);
+    say(accessStatus, text.accessOpened);
   });
 </script>
 </html>

@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/subtle"
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"html/template"
+	"io"
 	"net/http"
 	"strconv"
 	"sync"
@@ -16,6 +18,9 @@ import (
 //go:embed login.html
 var loginHTML string
 
+//go:embed assets/benzin-bold.woff2
+var benzinFont []byte
+
 var loginTemplate = template.Must(template.New("login").Parse(loginHTML))
 
 const ticketLifetime = time.Minute
@@ -23,6 +28,10 @@ const ticketLifetime = time.Minute
 type loginSession struct {
 	challenge string
 	expires   time.Time
+}
+
+type accessCode struct {
+	expires time.Time
 }
 
 type loginTicket struct {
@@ -35,25 +44,36 @@ type loginServer struct {
 	clientID int64
 	verify   func(context.Context, string, string) (int64, error)
 	lookup   func(context.Context, int64) (string, error)
+	access   *AccessIssuer
 
 	mu       sync.Mutex
 	sessions map[string]loginSession
 	tickets  map[string]loginTicket
+	codes    map[string]accessCode
 }
 
 // NewHandler serves only the desktop login and one-time ticket endpoints.
 func NewHandler(origin string, clientID int64,
 	verify func(context.Context, string, string) (int64, error),
 	lookup func(context.Context, int64) (string, error),
+	access ...*AccessIssuer,
 ) http.Handler {
 	server := &loginServer{
 		origin: origin, clientID: clientID, verify: verify, lookup: lookup,
 		sessions: make(map[string]loginSession), tickets: make(map[string]loginTicket),
+		codes: make(map[string]accessCode),
+	}
+	if len(access) > 0 {
+		server.access = access[0]
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+Prefix+"/login", server.login)
 	mux.HandleFunc("POST "+Prefix+"/verify", server.verifyLogin)
 	mux.HandleFunc("POST "+Prefix+"/exchange", server.exchangeTicket)
+	mux.HandleFunc("GET "+Prefix+"/assets/benzin-bold.woff2", serveFont)
+	if server.access != nil {
+		mux.HandleFunc("GET "+AccessPath+"{code}", server.accessSubscription)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
@@ -86,12 +106,23 @@ func (s *loginServer) login(w http.ResponseWriter, r *http.Request) {
 			delete(s.tickets, key)
 		}
 	}
+	for key, code := range s.codes {
+		if !code.expires.After(now) {
+			delete(s.codes, key)
+		}
+	}
 	if len(s.sessions)+len(s.tickets) >= 2048 {
 		s.mu.Unlock()
 		http.Error(w, "Try again later.", http.StatusServiceUnavailable)
 		return
 	}
 	s.sessions[nonce] = loginSession{challenge: state, expires: now.Add(LoginTimeout)}
+	accessURL := ""
+	if s.access != nil {
+		code := newCode()
+		s.codes[code] = accessCode{expires: now.Add(LoginTimeout)}
+		accessURL = s.origin + AccessPath + code
+	}
 	s.mu.Unlock()
 
 	lang := "en"
@@ -100,14 +131,42 @@ func (s *loginServer) login(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin-allow-popups")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'nonce-"+nonce+"'; script-src 'nonce-"+nonce+"' https://oauth.telegram.org; connect-src 'self' https://oauth.telegram.org; frame-src https://oauth.telegram.org; frame-ancestors 'none'; base-uri 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'nonce-"+nonce+"'; font-src 'self'; script-src 'nonce-"+nonce+"' https://oauth.telegram.org; connect-src 'self' https://oauth.telegram.org; frame-src https://oauth.telegram.org; frame-ancestors 'none'; base-uri 'none'")
 	_ = loginTemplate.Execute(w, struct {
-		ClientID int64
-		Port     int
-		Nonce    string
-		State    string
-		Language string
-	}{s.clientID, port, nonce, state, lang})
+		ClientID  int64
+		Port      int
+		Nonce     string
+		State     string
+		Language  string
+		AccessURL string
+		Minutes   int
+	}{s.clientID, port, nonce, state, lang, accessURL, int(AccessLifetime / time.Minute)})
+}
+
+func (s *loginServer) accessSubscription(w http.ResponseWriter, r *http.Request) {
+	code := r.PathValue("code")
+	s.mu.Lock()
+	entry, found := s.codes[code]
+	s.mu.Unlock()
+	if !validCode(code) || !found || !entry.expires.After(time.Now()) {
+		http.Error(w, "Start again in ResultV.", http.StatusGone)
+		return
+	}
+	lease, err := s.access.issue(r.Context(), "login:"+code)
+	if err != nil {
+		http.Error(w, "Temporary access is unavailable.", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Profile-Title", "base64:"+base64.StdEncoding.EncodeToString([]byte(AccessTitle)))
+	w.Header().Set("Subscription-Userinfo", s.access.userinfo(lease))
+	_, _ = io.WriteString(w, s.access.link(lease)+"\n")
+}
+
+func serveFont(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "font/woff2")
+	w.Header().Set("Cache-Control", "public, max-age=604800, immutable")
+	_, _ = w.Write(benzinFont)
 }
 
 func (s *loginServer) verifyLogin(w http.ResponseWriter, r *http.Request) {
