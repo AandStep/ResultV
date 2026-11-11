@@ -43,8 +43,6 @@ export default function BuyScreen() {
   const [copyFeedback, setCopyFeedback] = useState(null);
   const [connectedURL, setConnectedURL] = useState("");
   const [connecting, setConnecting] = useState(false);
-  const [showManualImport, setShowManualImport] = useState(false);
-  const [importing, setImporting] = useState(false);
   const [connectionError, setConnectionError] = useState("");
   const copiedTimer = useRef(0);
   const contentRef = useScrollMemory(PAGE_BUY);
@@ -61,6 +59,7 @@ export default function BuyScreen() {
     ?? officialSubscriptions[0];
   const url = subscription?.url;
   const copyMessage = copyFeedback && copyFeedback.url === url ? t(copyFeedback.key) : "";
+  const canCancel = connecting || connectionError === "telegram_connect_busy";
 
   const connectTelegram = async () => {
     setConnectionError("");
@@ -69,7 +68,6 @@ export default function BuyScreen() {
       setConnectedURL(await wailsAPI.connectTelegramSubscription(i18n.resolvedLanguage || "en"));
     } catch (err) {
       setConnectionError(String(err?.message || err));
-      setShowManualImport(true);
     } finally {
       setConnecting(false);
     }
@@ -77,20 +75,7 @@ export default function BuyScreen() {
 
   const cancelTelegram = async () => {
     await wailsAPI.cancelTelegramSubscription();
-    setShowManualImport(true);
-  };
-
-  const importSubscription = async (link) => {
-    setConnectionError("");
-    setImporting(true);
-    try {
-      setConnectedURL(await wailsAPI.importResultVSubscription(link));
-      setShowManualImport(false);
-    } catch (err) {
-      setConnectionError(String(err?.message || err));
-    } finally {
-      setImporting(false);
-    }
+    setConnectionError((current) => current === "telegram_connect_busy" ? "" : current);
   };
 
   const copySubscription = async () => {
@@ -110,13 +95,9 @@ export default function BuyScreen() {
       subscriptionURL={url}
       copyMessage={copyMessage}
       connecting={connecting}
-      canCancel={connecting || connectionError === "telegram_connect_busy"}
-      importing={importing}
-      showManualImport={showManualImport}
+      canCancel={canCancel}
       onConnectTelegram={connectTelegram}
       onCancelTelegram={cancelTelegram}
-      onShowManualImport={() => setShowManualImport(true)}
-      onImportSubscription={importSubscription}
       onOpenBot={() => BrowserOpenURL(BOT_URL)}
       onCopySubscription={copySubscription}
       text={{
@@ -127,11 +108,6 @@ export default function BuyScreen() {
         connect: t("buy.connect"),
         connecting: t("buy.connecting"),
         cancel: t("buy.cancel"),
-        manualTitle: t("buy.manualTitle"),
-        manualHelp: t("buy.manualHelp"),
-        manualLink: t("buy.manualLink"),
-        manualSubmit: t("buy.manualSubmit"),
-        manualImporting: t("buy.manualImporting"),
         connectionError: connectionError ? t(`buy.connectionErrors.${connectionError}`, {
           defaultValue: t("buy.connectionErrors.telegram_unavailable"),
         }) : "",

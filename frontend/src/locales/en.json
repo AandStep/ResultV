@@ -692,13 +692,8 @@
     "offerTitle": "ResultV Subscription",
     "offerDescription": "If you already bought a subscription from @result_vpn_bot, click the green Telegram icon to add it automatically. If you don’t have a subscription yet, click “Buy in Telegram” to buy one from our bot.",
     "connect": "Connect a subscription through Telegram",
-    "connecting": "Confirm your Telegram login in the browser.",
+    "connecting": "Continue on the website.",
     "cancel": "Cancel login",
-    "manualTitle": "Add by link",
-    "manualHelp": "Copy the subscription link from the message @result_vpn_bot sent after purchase and paste it here.",
-    "manualLink": "ResultV subscription link",
-    "manualSubmit": "Add",
-    "manualImporting": "Adding…",
     "connectionErrors": {
       "telegram_cancelled": "Telegram login was canceled.",
       "telegram_timeout": "The login timed out. Try connecting again.",
@@ -708,7 +703,6 @@
       "telegram_subscription_ambiguous": "This Telegram account has multiple subscriptions. Contact support.",
       "telegram_subscription_unusable": "The subscription returned no available servers. Check its status and device limit in the bot.",
       "telegram_import_failed": "Could not load the subscription. Check your connection and try again.",
-      "telegram_invalid_subscription_link": "Paste the ResultV subscription link from the bot.",
       "telegram_connect_busy": "Telegram login is already open in the browser.",
       "telegram_unavailable": "The connection service could not be reached. Try again."
     },

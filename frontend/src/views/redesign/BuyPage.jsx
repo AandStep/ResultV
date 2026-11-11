@@ -16,7 +16,7 @@
  */
 
 import resultvBadge from "../../assets/resultv-buy-badge.svg";
-import { Button, Icon, Input } from "../../components/kit";
+import { Button, Icon } from "../../components/kit";
 import PageHeader from "./PageHeader";
 import "./BuyPage.css";
 
@@ -25,12 +25,8 @@ export default function BuyPage({
   copyMessage,
   connecting,
   canCancel,
-  importing,
-  showManualImport,
   onConnectTelegram,
   onCancelTelegram,
-  onShowManualImport,
-  onImportSubscription,
   onOpenBot,
   onCopySubscription,
   sidebar,
@@ -60,7 +56,7 @@ export default function BuyPage({
                 className="rv-buy-page__icon-btn"
                 title={text.connect}
                 aria-label={text.connect}
-                disabled={connecting || importing}
+                disabled={canCancel}
                 icon={<Icon name="tg" color="currentColor" />}
                 onClick={onConnectTelegram}
               />
@@ -72,35 +68,11 @@ export default function BuyPage({
                 {text.purchase}
               </Button>
             </div>
-            <div className="rv-buy-page__secondary">
-              {connecting && <p className="rv-buy-page__desc" role="status">{text.connecting}</p>}
-              {canCancel && <Button onClick={onCancelTelegram}>{text.cancel}</Button>}
-              {!showManualImport && <Button onClick={onShowManualImport}>{text.manualTitle}</Button>}
-            </div>
-            {showManualImport && (
-              <form className="rv-buy-page__manual" onSubmit={(event) => {
-                event.preventDefault();
-                onImportSubscription(new FormData(event.currentTarget).get("subscriptionLink"));
-              }}>
-                <h3 className="rv-buy-page__title">{text.manualTitle}</h3>
-                <p id="resultv-manual-help" className="rv-buy-page__desc">{text.manualHelp}</p>
-                <div className="rv-buy-page__manual-row">
-                  <Input
-                    name="subscriptionLink"
-                    type="url"
-                    placeholder={text.manualLink}
-                    aria-label={text.manualLink}
-                    aria-describedby="resultv-manual-help"
-                    autoComplete="off"
-                    spellCheck={false}
-                    disabled={connecting || importing}
-                    required
-                  />
-                  <Button variant="green" type="submit" disabled={connecting || importing}>
-                    {importing ? text.manualImporting : text.manualSubmit}
-                  </Button>
-                </div>
-              </form>
+            {canCancel && (
+              <div className="rv-buy-page__secondary">
+                {connecting && <p className="rv-buy-page__desc" role="status">{text.connecting}</p>}
+                <Button className="rv-buy-page__cancel" onClick={onCancelTelegram}>{text.cancel}</Button>
+              </div>
             )}
             {text.connectionError && (
               <p className="rv-buy-page__error" role="alert">{text.connectionError}</p>
