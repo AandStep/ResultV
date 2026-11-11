@@ -35,8 +35,14 @@ const (
 
 var errSocks5ExitUnavailable = errors.New("SOCKS5 exit is unavailable on this connection")
 
+// Without a saved address the session is built exactly as it was before the
+// SOCKS5 exit existed.
+func socks5ExitWired(profile *config.Socks5ExitConfig) bool {
+	return profile != nil && profile.Host != ""
+}
+
 func addSocks5Exit(sb *SingBoxConfig, cfg EngineConfig) {
-	if cfg.Socks5Exit == nil {
+	if !socks5ExitWired(cfg.Socks5Exit) {
 		return
 	}
 	p := cfg.Socks5Exit

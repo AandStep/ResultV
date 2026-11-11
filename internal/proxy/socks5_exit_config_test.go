@@ -52,16 +52,28 @@ func TestBuildTunnelSocks5Exit(t *testing.T) {
 		}
 		assertCoreAcceptsConfig(t, out)
 	}
-	cfg.Socks5Exit = &config.Socks5ExitConfig{Enabled: true}
-	pending := mustBuildTunnelModeConfig(t, cfg)
-	if selector := mustOutbound(t, pending, socks5ExitSelector); selector.Default != "proxy" {
-		t.Errorf("pending setup starts on %q, want VPN-only", selector.Default)
+	for _, profile := range []*config.Socks5ExitConfig{nil, {}, {Enabled: true}} {
+		cfg.Socks5Exit = profile
+		got := mustBuildTunnelModeConfig(t, cfg)
+		if slices.ContainsFunc(got.Outbounds, func(out SBOutbound) bool {
+			return out.Tag == socks5ExitTag || out.Tag == socks5ExitSelector
+		}) || got.Route.Final != "proxy" {
+			t.Fatalf("profile %+v without an address changed the VPN route", profile)
+		}
 	}
-	cfg.Socks5Exit = nil
-	if got := mustBuildTunnelModeConfig(t, cfg); slices.ContainsFunc(got.Outbounds, func(out SBOutbound) bool {
-		return out.Tag == "socks5-exit" || out.Tag == "socks5-exit-switch"
+}
+
+func TestSocks5ExitWithoutAddressKeepsProxyModeUnchanged(t *testing.T) {
+	cfg := EngineConfig{
+		Mode: ProxyModeProxy, RoutingMode: ModeGlobal, LocalPort: 14081,
+		Proxy:      ProxyConfig{Type: "HTTP", IP: "192.0.2.1", Port: 8000},
+		Socks5Exit: &config.Socks5ExitConfig{Enabled: true},
+	}
+	out := mustBuildProxyModeConfig(t, cfg)
+	if out.Route.Final != "proxy" || slices.ContainsFunc(out.Outbounds, func(out SBOutbound) bool {
+		return out.Tag == socks5ExitSelector
 	}) {
-		t.Fatal("unsupported mode constructed the SOCKS5 route")
+		t.Fatal("proxy mode built the SOCKS5 route without an address")
 	}
 }
 

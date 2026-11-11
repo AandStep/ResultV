@@ -35,6 +35,7 @@ func TestSocks5ExitSessionLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.connected = true
+	m.socks5ExitWired = true
 	profile := &config.Socks5ExitConfig{Enabled: true, Host: "exit.example.test", Port: 8000}
 	if err := m.SetSocks5Exit(profile); err != nil || engine.profile != profile || !engine.IsRunning() {
 		t.Fatal("editing the live profile stopped the engine or lost the profile")
@@ -45,5 +46,35 @@ func TestSocks5ExitSessionLifecycle(t *testing.T) {
 	}
 	if err := m.Disconnect(); err != nil || m.socks5Exit != profile {
 		t.Fatal("disconnect cleared the SOCKS5 preference")
+	}
+}
+
+func TestSocks5ExitUnwiredSession(t *testing.T) {
+	engine := &testSocks5SessionEngine{}
+	m := NewManager(logger.New())
+	m.engine = engine
+	if err := engine.Start(context.Background(), EngineConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	m.connected = true
+	pending := &config.Socks5ExitConfig{Enabled: true}
+	if err := m.SetSocks5Exit(pending); err != nil || m.socks5Exit != pending || engine.profile != nil {
+		t.Fatal("a profile without an address touched a session built without the SOCKS5 route")
+	}
+	addressed := &config.Socks5ExitConfig{Host: "exit.example.test", Port: 8000}
+	for _, tc := range []struct {
+		connected, wired bool
+		profile          *config.Socks5ExitConfig
+		want             bool
+	}{
+		{true, false, addressed, true},
+		{true, true, addressed, false},
+		{false, false, addressed, false},
+		{true, false, pending, false},
+		{true, false, nil, false},
+	} {
+		if got := socks5ExitNeedsReconnect(tc.connected, tc.wired, tc.profile); got != tc.want {
+			t.Errorf("connected=%t wired=%t profile=%+v: reconnect=%t, want %t", tc.connected, tc.wired, tc.profile, got, tc.want)
+		}
 	}
 }

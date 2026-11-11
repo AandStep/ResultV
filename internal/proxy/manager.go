@@ -104,6 +104,7 @@ type PingOptions struct {
 
 type Manager struct {
 	socks5Exit        *config.Socks5ExitConfig
+	socks5ExitWired   bool
 	firstHopProbePort int
 
 	// opMu serializes the heavy connection-lifecycle operations — Connect,
@@ -835,7 +836,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		actualLocalPort = getFreeLocalPort(14081)
 	}
 	firstHopProbePort := 0
-	if exitProfile != nil && mode == ProxyModeProxy {
+	if socks5ExitWired(exitProfile) && mode == ProxyModeProxy {
 		firstHopProbePort = getFreeLocalPort(0)
 		if firstHopProbePort == actualLocalPort {
 			firstHopProbePort = getFreeLocalPort(actualLocalPort%65535 + 1)
@@ -969,6 +970,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 				m.log.Info(fmt.Sprintf("[PROXY] Fallback: системный прокси → %s (sing-box недоступен)", directAddr))
 				m.mu.Lock()
 				m.connected = true
+				m.socks5ExitWired = false
 				m.firstHopProbePort = 0
 				m.mode = mode
 				m.proxy = &proxy
@@ -1125,6 +1127,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	m.captureLiveServerIP(&proxy)
 	m.clearPendingLocked()
 	m.connected = true
+	m.socks5ExitWired = socks5ExitWired(exitProfile)
 	m.firstHopProbePort = firstHopProbePort
 	m.mode = mode
 	m.proxy = &proxy
@@ -2027,6 +2030,7 @@ func (m *Manager) Disconnect() error {
 	}
 	m.connected = false
 	m.proxy = nil
+	m.socks5ExitWired = false
 	m.firstHopProbePort = 0
 	m.clearPendingLocked()
 	m.emitStatusLocked()
