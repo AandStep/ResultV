@@ -1,34 +1,40 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Eye, EyeOff } from "lucide-react";
-import { Button, Input, Tumbler } from "../../components/kit";
+import { Button, Input, TagField, Tumbler } from "../../components/kit";
+import { FlagIcon } from "../../components/ui/FlagIcon";
+import { useConfigContext } from "../../context/ConfigContext";
+import { useConnectionContext } from "../../context/ConnectionContext";
 import wailsAPI from "../../utils/wailsAPI";
+import { EventsOn } from "../../../wailsjs/runtime/runtime";
+import { addApp, addSite, buildUpdate, isDraftDirty, profileDraft } from "./socks5Draft";
 
 // A write can finish after the user navigates away from the settings page.
 let pendingWrite = Promise.resolve();
 
-function profileDraft(profile) {
-  return {
-    host: profile.host || "",
-    port: profile.port ? String(profile.port) : "",
-    username: profile.username || "",
-    password: profile.password || "",
-    passwordEdited: false,
-  };
+const capitalize = (text) => text.charAt(0).toUpperCase() + text.slice(1);
+
+export function socks5ReasonText(t, status) {
+  return t(`socks5Exit.reasons.${status.reason}`, {
+    code: status.code,
+    defaultValue: t("socks5Exit.reasons.probe_failed"),
+  });
 }
 
 export default function Socks5ExitSettings() {
   const { t } = useTranslation();
+  const { platform } = useConfigContext();
+  const { isConnected } = useConnectionContext();
+  const isWin = platform === "win32" || platform === "windows" || platform === "win64";
   const [settings, setSettings] = useState(null);
   const [draft, setDraft] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [status, setStatus] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const saved = settings && profileDraft(settings);
-  const dirty = draft && saved && (
-    draft.host !== saved.host || draft.port !== saved.port ||
-    draft.username !== saved.username || draft.password !== saved.password
-  );
+  const dirty = draft && saved && isDraftDirty(draft, saved);
 
   useEffect(() => {
     let mounted = true;
@@ -39,8 +45,23 @@ export default function Socks5ExitSettings() {
     }).catch((err) => {
       if (mounted) setError(String(err?.message || err));
     });
-    return () => { mounted = false; };
+    wailsAPI.getSocks5ExitStatus().then((next) => {
+      if (mounted && next?.checked) setStatus(next);
+    }).catch(() => {});
+    const off = EventsOn("socks5:status", (next) => {
+      if (!mounted) return;
+      setChecking(false);
+      setStatus(next?.checked ? next : null);
+    });
+    return () => {
+      mounted = false;
+      off?.();
+    };
   }, []);
+
+  useEffect(() => {
+    if (!isConnected) setStatus(null);
+  }, [isConnected]);
 
   const writeSettings = (write) => {
     setBusy(true);
@@ -61,14 +82,13 @@ export default function Socks5ExitSettings() {
 
   const save = () => {
     if (!dirty || busy || !settings.enabled) return;
-    const host = draft.host.trim();
-    const port = Number(draft.port);
-    const cleared = !host && !draft.port && !draft.username && !draft.password;
-    if (!cleared && (!host || !Number.isInteger(port) || port < 1 || port > 65535)) {
+    const update = buildUpdate(draft);
+    const cleared = !update.host && !draft.port && !draft.username && !draft.password;
+    if (!cleared && (!update.host || !Number.isInteger(update.port) || update.port < 1 || update.port > 65535)) {
       setError(t("socks5Exit.invalidAddress"));
       return;
     }
-    const addressChanged = saved.host !== host || settings.port !== port;
+    const addressChanged = saved.host !== update.host || settings.port !== update.port;
     if (addressChanged && saved.password && draft.username && !draft.passwordEdited) {
       setError(t("socks5Exit.passwordForNewAddress"));
       return;
@@ -77,13 +97,26 @@ export default function Socks5ExitSettings() {
       setError(t("socks5Exit.credentialsPair"));
       return;
     }
-    const password = draft.passwordEdited ? draft.password : null;
-    writeSettings(() => wailsAPI.saveSocks5ExitSettings({ host, port, username: draft.username, password }));
+    writeSettings(() => wailsAPI.saveSocks5ExitSettings(update));
   };
 
   const toggle = (enabled) => {
     if (!enabled) setShowPassword(false);
     writeSettings(() => wailsAPI.setSocks5ExitEnabled(enabled));
+  };
+
+  const check = () => {
+    setChecking(true);
+    wailsAPI.checkSocks5Exit().then((next) => {
+      setStatus(next?.checked ? next : null);
+    }).catch((err) => {
+      setError(String(err?.message || err));
+    }).finally(() => setChecking(false));
+  };
+
+  const editList = (key, next) => {
+    setError("");
+    setDraft((prev) => ({ ...prev, [key]: next }));
   };
 
   const field = (key, extra = {}) => (
@@ -101,6 +134,27 @@ export default function Socks5ExitSettings() {
       {...extra}
     />
   );
+
+  const statusLine = () => {
+    if (!settings?.host) return null;
+    if (!isConnected) return t("socks5Exit.statusAfterConnect");
+    if (checking) return t("socks5Exit.checking");
+    if (!status) return t("socks5Exit.statusUnchecked");
+    if (!status.ok) return capitalize(socks5ReasonText(t, status));
+    return (
+      <>
+        {t("socks5Exit.statusOk", { ip: status.ip })}
+        {status.country && (
+          <>
+            {" · "}
+            <FlagIcon code={status.country} className="rv-settings-page__socks5-flag" />
+            {" "}{status.country}
+          </>
+        )}
+        {" · "}{t(status.udp ? "socks5Exit.udpYes" : "socks5Exit.udpNo")}
+      </>
+    );
+  };
 
   return (
     <section
@@ -142,13 +196,45 @@ export default function Socks5ExitSettings() {
               </button>
             </div>
           </div>
-          <Button
-            variant="green"
-            disabled={!dirty || busy}
-            onClick={save}
-          >
-            {t("common.save")}
-          </Button>
+          <div className="rv-settings-page__socks5-list">
+            <p className="rv-settings-page__row-title">{t("socks5Exit.sites")}</p>
+            <TagField
+              aria-label={t("socks5Exit.sites")}
+              values={draft.sites}
+              onAdd={(value) => editList("sites", addSite(draft.sites, value))}
+              onRemove={(value) => editList("sites", draft.sites.filter((site) => site !== value))}
+              placeholder={t("socks5Exit.sitesPlaceholder")}
+              removeLabel={t("socks5Exit.remove")}
+              disabled={busy}
+            />
+            <p className="rv-settings-page__row-desc">{t("socks5Exit.sitesHint")}</p>
+          </div>
+          <div className="rv-settings-page__socks5-list">
+            <p className="rv-settings-page__row-title">{t("socks5Exit.apps")}</p>
+            <TagField
+              aria-label={t("socks5Exit.apps")}
+              values={draft.apps}
+              onAdd={(value) => editList("apps", addApp(draft.apps, value, isWin))}
+              onRemove={(value) => editList("apps", draft.apps.filter((app) => app !== value))}
+              placeholder={t("socks5Exit.appsPlaceholder")}
+              removeLabel={t("socks5Exit.remove")}
+              disabled={busy}
+            />
+            <p className="rv-settings-page__row-desc">{t("socks5Exit.appsHint")}</p>
+          </div>
+          <div className="rv-settings-page__socks5-actions">
+            <Button variant="green" disabled={!dirty || busy} onClick={save}>
+              {t("common.save")}
+            </Button>
+            <Button disabled={!isConnected || checking || busy || !settings.host} onClick={check}>
+              {t("socks5Exit.check")}
+            </Button>
+          </div>
+          {statusLine() && (
+            <p className="rv-settings-page__row-desc rv-settings-page__socks5-status" role="status">
+              {statusLine()}
+            </p>
+          )}
         </div>
       )}
       {error && <p className="rv-settings-page__hint" role="alert">{error}</p>}

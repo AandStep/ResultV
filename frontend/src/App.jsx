@@ -41,6 +41,7 @@ import ProtocolWarningModal from "./components/ui/ProtocolWarningModal";
 import { adminRestartDialog } from "./utils/adminDialog";
 import AppDialogModal from "./components/ui/AppDialogModal";
 import DeepLinkImportModal from "./components/ui/DeepLinkImportModal";
+import { socks5ReasonText } from "./views/redesign/Socks5ExitSettings";
 
 const AppContent = () => {
     const { t } = useTranslation();
@@ -138,6 +139,19 @@ const AppContent = () => {
         })();
         EventsOn("leftovers:recovered", showNotice);
         return () => EventsOff("leftovers:recovered");
+    }, [t, showAlertDialog]);
+
+    React.useEffect(() => {
+        const off = EventsOn("socks5:status", (status) => {
+            if (status?.trigger !== "connect" || !status.checked || status.ok) return;
+            showAlertDialog({
+                title: t("socks5Exit.failedTitle"),
+                message: t("socks5Exit.failedLead", { reason: socks5ReasonText(t, status) }),
+                variant: "warning",
+                confirmText: t("common.ok"),
+            });
+        });
+        return () => off?.();
     }, [t, showAlertDialog]);
 
     if (!isConfigLoaded) {

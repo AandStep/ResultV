@@ -1,7 +1,7 @@
 {
   "socks5Exit": {
     "title": "SOCKS5 через VPN",
-    "desc": "Направляет TCP-трафик VPN через SOCKS5.",
+    "desc": "Пускает трафик VPN через SOCKS5-сервер.",
     "enterAddress": "Укажите IP или домен и порт, затем нажмите «Сохранить».",
     "invalidAddress": "Проверьте адрес и порт SOCKS5",
     "host": "IP или домен",
@@ -11,7 +11,31 @@
     "showPassword": "Показать пароль",
     "hidePassword": "Скрыть пароль",
     "credentialsPair": "Укажите логин и пароль или оставьте оба поля пустыми.",
-    "passwordForNewAddress": "Введите пароль для нового адреса SOCKS5"
+    "passwordForNewAddress": "Введите пароль для нового адреса SOCKS5",
+    "sites": "Сайты через SOCKS5",
+    "sitesPlaceholder": "example.com или 203.0.113.0/24",
+    "sitesHint": "Если оба списка пусты, через SOCKS5 идёт весь трафик VPN.",
+    "apps": "Приложения через SOCKS5",
+    "appsPlaceholder": "Имя приложения",
+    "appsHint": "Работает в режиме «Туннель». Чтобы звонки и WebRTC браузера шли через SOCKS5, добавьте сам браузер.",
+    "remove": "Удалить",
+    "check": "Проверить",
+    "checking": "Проверяем выход…",
+    "statusOk": "Выход работает: {{ip}}",
+    "udpYes": "UDP есть",
+    "udpNo": "UDP нет",
+    "statusAfterConnect": "Выход проверяется после подключения.",
+    "statusUnchecked": "Выход ещё не проверен.",
+    "failedTitle": "SOCKS5-выход не работает",
+    "failedLead": "VPN подключён, но трафик через SOCKS5 не проходит: {{reason}}. Проверьте адрес и данные входа в разделе «Сеть».",
+    "reasons": {
+      "first_hop_down": "VPN-узел не отвечает",
+      "socks_no_response": "SOCKS5-сервер не отвечает",
+      "bad_auth": "неверный логин или пароль",
+      "auth_method": "сервер требует другой способ входа",
+      "rejected": "сервер отказал в соединении (код {{code}})",
+      "probe_failed": "сайт проверки не ответил"
+    }
   },
   "sidebar": {
     "offline": "Служба не отвечает",

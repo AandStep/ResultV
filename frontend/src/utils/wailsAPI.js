@@ -647,6 +647,8 @@ export const wailsAPI = {
   getSocks5ExitSettings: () => callApp("GetSocks5ExitSettings"),
   saveSocks5ExitSettings: (settings) => callApp("SaveSocks5ExitSettings", [settings]),
   setSocks5ExitEnabled: (enabled) => callApp("SetSocks5ExitEnabled", [enabled]),
+  checkSocks5Exit: () => callApp("CheckSocks5Exit"),
+  getSocks5ExitStatus: () => callApp("GetSocks5ExitStatus", [], {}),
 };
 
 /*

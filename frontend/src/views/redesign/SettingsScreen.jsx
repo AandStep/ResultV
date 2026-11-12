@@ -464,7 +464,7 @@ export default function SettingsScreen() {
         values={values}
         onChange={change}
         lanAddress={lanAddress}
-        socks5ExitSettings={isWindowsHost ? <Socks5ExitSettings /> : null}
+        socks5ExitSettings={<Socks5ExitSettings />}
         intervals={intervals}
         tunStacks={[
           { value: "default", label: t("settings.tun_stack.default") },

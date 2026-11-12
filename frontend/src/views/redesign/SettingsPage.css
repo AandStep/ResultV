@@ -258,6 +258,30 @@
   cursor: default;
 }
 
+.rv-settings-page__socks5-list {
+  display: grid;
+  gap: var(--rv-space-nest-3);
+}
+
+.rv-settings-page__socks5-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--rv-space-nest-3);
+}
+
+.rv-settings-page__socks5-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25em;
+}
+
+.rv-settings-page__socks5-flag {
+  width: 1.25em;
+  height: auto;
+  border-radius: 2px;
+}
+
 
 /* Ряд кнопок выносится за отступ карточки и гаснет у её края — заливка у
    растяжки та же, что у карточки. */
