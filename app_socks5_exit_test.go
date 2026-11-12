@@ -3,6 +3,8 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -102,6 +104,30 @@ func TestSocks5ExitSaveKeepsStoredSecret(t *testing.T) {
 	}
 }
 
+func TestSocks5ExitSaveRoundTripsLists(t *testing.T) {
+	m := config.NewManager(config.NewCryptoServiceWithID("socks5-exit-lists-app-test"))
+	if err := m.Init(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	a := &App{config: m}
+	if err := a.SetSocks5ExitEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SaveSocks5ExitSettings(Socks5ExitSettingsUpdate{
+		Host: "192.0.2.1", Port: 1080,
+		Sites: []string{"Example.COM", "example.com"}, Apps: []string{"tool.exe"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := a.GetSocks5ExitSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Sites, []string{"example.com"}) || !slices.Equal(got.Apps, []string{"tool.exe"}) {
+		t.Fatalf("lists = %q / %q", got.Sites, got.Apps)
+	}
+}
+
 func TestSocks5ExitClearingAllFieldsPersists(t *testing.T) {
 	dir := t.TempDir()
 	newApp := func() *App {
@@ -128,7 +154,7 @@ func TestSocks5ExitClearingAllFieldsPersists(t *testing.T) {
 	requireEmpty := func() {
 		t.Helper()
 		got, err := a.GetSocks5ExitSettings()
-		if err != nil || got != (Socks5ExitSettingsDTO{Enabled: true}) {
+		if err != nil || !reflect.DeepEqual(got, Socks5ExitSettingsDTO{Enabled: true}) {
 			t.Fatal("clearing must persist an empty profile with the toggle still on")
 		}
 	}

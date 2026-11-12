@@ -3,17 +3,20 @@ package config
 import (
 	"errors"
 	"net/netip"
+	"slices"
 	"strings"
 
 	"golang.org/x/net/idna"
 )
 
 type Socks5ExitConfig struct {
-	Enabled  bool   `json:"enabled,omitempty"`
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	Username string `json:"username,omitempty"`
-	Password string `json:"password,omitempty"`
+	Enabled  bool     `json:"enabled,omitempty"`
+	Host     string   `json:"host"`
+	Port     int      `json:"port"`
+	Username string   `json:"username,omitempty"`
+	Password string   `json:"password,omitempty"`
+	Sites    []string `json:"sites,omitempty"`
+	Apps     []string `json:"apps,omitempty"`
 }
 
 var socks5DNSName = idna.New(idna.MapForLookup(), idna.VerifyDNSLength(true))
@@ -26,7 +29,45 @@ func (cfg *Socks5ExitConfig) IsActive() bool {
 	return err == nil
 }
 
+func (cfg *Socks5ExitConfig) HasLists() bool {
+	return cfg != nil && (len(cfg.Sites) > 0 || len(cfg.Apps) > 0)
+}
+
+func SameSocks5ExitLists(a, b *Socks5ExitConfig) bool {
+	var empty Socks5ExitConfig
+	if a == nil {
+		a = &empty
+	}
+	if b == nil {
+		b = &empty
+	}
+	return slices.Equal(a.Sites, b.Sites) && slices.Equal(a.Apps, b.Apps)
+}
+
+func normalizeSocks5Sites(sites []string) []string {
+	var out []string
+	for _, site := range sites {
+		site = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(site)), ".")
+		if site != "" && !slices.Contains(out, site) {
+			out = append(out, site)
+		}
+	}
+	return out
+}
+
+func normalizeSocks5Apps(apps []string) []string {
+	var out []string
+	for _, app := range apps {
+		app = strings.TrimSpace(app)
+		if app != "" && !slices.ContainsFunc(out, func(seen string) bool { return strings.EqualFold(seen, app) }) {
+			out = append(out, app)
+		}
+	}
+	return out
+}
+
 func NormalizeSocks5ExitConfig(cfg Socks5ExitConfig) (Socks5ExitConfig, error) {
+	cfg.Sites, cfg.Apps = normalizeSocks5Sites(cfg.Sites), normalizeSocks5Apps(cfg.Apps)
 	host := strings.TrimSpace(cfg.Host)
 	address := host
 	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
@@ -76,7 +117,9 @@ func (m *Manager) SaveSocks5Exit(profile Socks5ExitConfig, password *string) err
 		profile.Password = current.Password
 	}
 	if strings.TrimSpace(profile.Host) == "" && profile.Port == 0 && profile.Username == "" && profile.Password == "" {
-		return m.saveSocks5ExitLocked(&Socks5ExitConfig{Enabled: profile.Enabled})
+		return m.saveSocks5ExitLocked(&Socks5ExitConfig{
+			Enabled: profile.Enabled, Sites: normalizeSocks5Sites(profile.Sites), Apps: normalizeSocks5Apps(profile.Apps),
+		})
 	}
 	normalized, err := NormalizeSocks5ExitConfig(profile)
 	if err != nil {

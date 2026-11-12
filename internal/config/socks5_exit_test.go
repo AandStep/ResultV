@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -40,6 +41,64 @@ func TestNormalizeSocks5ExitConfig(t *testing.T) {
 				t.Fatal("invalid profile was accepted")
 			}
 		})
+	}
+}
+
+func TestNormalizeSocks5ExitLists(t *testing.T) {
+	got, err := NormalizeSocks5ExitConfig(Socks5ExitConfig{
+		Host: "192.0.2.1", Port: 1080,
+		Sites: []string{" Example.COM. ", "example.com", "", "10.0.0.0/8"},
+		Apps:  []string{"Discord.exe", "discord.exe", " "},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Sites, []string{"example.com", "10.0.0.0/8"}) {
+		t.Fatalf("sites = %q", got.Sites)
+	}
+	if !slices.Equal(got.Apps, []string{"Discord.exe"}) {
+		t.Fatalf("apps = %q", got.Apps)
+	}
+}
+
+func TestSaveSocks5ExitKeepsListsWithoutAddress(t *testing.T) {
+	m := NewManager(NewCryptoServiceWithID("socks5-exit-lists-test"))
+	if err := m.Init(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetSocks5ExitEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SaveSocks5Exit(Socks5ExitConfig{Sites: []string{"Example.com"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	p := m.GetConfig().Settings.Socks5Exit
+	if p == nil || !p.Enabled || p.Host != "" || !slices.Equal(p.Sites, []string{"example.com"}) {
+		t.Fatalf("stored profile = %+v", p)
+	}
+	if p.IsActive() {
+		t.Fatal("a profile without an address must not be active")
+	}
+}
+
+func TestSameSocks5ExitLists(t *testing.T) {
+	a := &Socks5ExitConfig{Sites: []string{"example.com"}}
+	for _, c := range []struct {
+		name string
+		x, y *Socks5ExitConfig
+		want bool
+	}{
+		{"nil and empty", nil, &Socks5ExitConfig{}, true},
+		{"same sites", a, &Socks5ExitConfig{Sites: []string{"example.com"}}, true},
+		{"apps differ", &Socks5ExitConfig{Apps: []string{"tool.exe"}}, &Socks5ExitConfig{}, false},
+		{"sites differ", a, &Socks5ExitConfig{Sites: []string{"example.org"}}, false},
+	} {
+		if got := SameSocks5ExitLists(c.x, c.y); got != c.want {
+			t.Errorf("%s: got %t", c.name, got)
+		}
+	}
+	if (&Socks5ExitConfig{}).HasLists() || (*Socks5ExitConfig)(nil).HasLists() || !a.HasLists() {
+		t.Fatal("HasLists")
 	}
 }
 

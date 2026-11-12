@@ -7,18 +7,22 @@ import (
 )
 
 type Socks5ExitSettingsDTO struct {
-	Enabled  bool   `json:"enabled"`
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Enabled  bool     `json:"enabled"`
+	Host     string   `json:"host"`
+	Port     int      `json:"port"`
+	Username string   `json:"username"`
+	Password string   `json:"password"`
+	Sites    []string `json:"sites"`
+	Apps     []string `json:"apps"`
 }
 
 type Socks5ExitSettingsUpdate struct {
-	Host     string  `json:"host"`
-	Port     int     `json:"port"`
-	Username string  `json:"username"`
-	Password *string `json:"password"`
+	Host     string   `json:"host"`
+	Port     int      `json:"port"`
+	Username string   `json:"username"`
+	Password *string  `json:"password"`
+	Sites    []string `json:"sites"`
+	Apps     []string `json:"apps"`
 }
 
 func appConfigForUI(cfg config.AppConfig) config.AppConfig {
@@ -53,6 +57,7 @@ func (a *App) GetSocks5ExitSettings() (Socks5ExitSettingsDTO, error) {
 	}
 	return Socks5ExitSettingsDTO{
 		Enabled: p.Enabled, Host: p.Host, Port: p.Port, Username: p.Username, Password: p.Password,
+		Sites: p.Sites, Apps: p.Apps,
 	}, nil
 }
 
@@ -64,7 +69,7 @@ func (a *App) SaveSocks5ExitSettings(update Socks5ExitSettingsUpdate) error {
 	defer a.socks5ExitMu.Unlock()
 	previous := a.config.GetConfig().Settings.Socks5Exit
 	if err := a.config.SaveSocks5Exit(config.Socks5ExitConfig{
-		Host: update.Host, Port: update.Port, Username: update.Username,
+		Host: update.Host, Port: update.Port, Username: update.Username, Sites: update.Sites, Apps: update.Apps,
 	}, update.Password); err != nil {
 		return err
 	}
