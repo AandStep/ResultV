@@ -10,7 +10,6 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
-	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/protocol/group"
@@ -18,8 +17,6 @@ import (
 	"github.com/sagernet/sing-tun"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/sagernet/sing/protocol/socks"
-	"github.com/sagernet/sing/protocol/socks/socks5"
 	"github.com/sagernet/sing/service"
 
 	"resultproxy-wails/internal/config"
@@ -90,74 +87,6 @@ func routeVPNThroughSocks5Exit(sb *SingBoxConfig) {
 func registerSocks5ExitOutbounds(registry *outbound.Registry) {
 	outbound.Register[option.SelectorOutboundOptions](registry, socks5ExitSelectorType, newSocks5ExitSelector)
 	outbound.Register[option.SOCKSOutboundOptions](registry, socks5ExitOutboundType, newSocks5ExitOutbound)
-}
-
-func newSocks5ExitOutbound(ctx context.Context, _ adapter.Router, _ log.ContextLogger, tag string, options option.SOCKSOutboundOptions) (adapter.Outbound, error) {
-	o := &tcpOnlySocks5Exit{
-		Adapter: outbound.NewAdapterWithDialerOptions("socks", tag, options.Network.Build(), options.DialerOptions),
-	}
-	initial := config.Socks5ExitConfig{
-		Host: options.Server, Port: int(options.ServerPort), Username: options.Username, Password: options.Password,
-	}
-	options.Server, options.ServerPort, options.Username, options.Password = "", 0, "", ""
-	o.configure = func(profile *config.Socks5ExitConfig) (N.Dialer, error) {
-		if profile == nil || profile.Host == "" {
-			return nil, nil
-		}
-		next := options
-		next.Server, next.ServerPort = profile.Host, uint16(profile.Port)
-		upstream, err := dialer.New(ctx, next.DialerOptions, next.ServerIsDomain())
-		if err != nil {
-			return nil, err
-		}
-		method := byte(socks5.AuthTypeNotRequired)
-		if profile.Username != "" {
-			method = socks5.AuthTypeUsernamePassword
-		}
-		return socks.NewClient(socks5MethodDialer{Dialer: upstream, method: method}, next.ServerOptions.Build(),
-			socks.Version5, profile.Username, profile.Password), nil
-	}
-	err := o.setProfile(&initial)
-	return o, err
-}
-
-// Network filtering in the router can race with selecting a new exit. Reject
-// UDP again at the SOCKS5 dial boundary so it never gets an ASSOCIATE request.
-type tcpOnlySocks5Exit struct {
-	outbound.Adapter
-	mu        sync.RWMutex
-	dialer    N.Dialer
-	configure func(*config.Socks5ExitConfig) (N.Dialer, error)
-}
-
-func (o *tcpOnlySocks5Exit) setProfile(profile *config.Socks5ExitConfig) error {
-	dialer, err := o.configure(profile)
-	if err != nil {
-		return err
-	}
-	o.mu.Lock()
-	o.dialer = dialer
-	o.mu.Unlock()
-	return nil
-}
-
-func (o *tcpOnlySocks5Exit) DialContext(ctx context.Context, network string, target M.Socksaddr) (net.Conn, error) {
-	if N.NetworkName(network) != N.NetworkTCP {
-		return nil, N.ErrUnknownNetwork
-	}
-	o.mu.RLock()
-	dialer := o.dialer
-	o.mu.RUnlock()
-	if dialer == nil {
-		return nil, errSocks5ExitUnavailable
-	}
-	ctx, metadata := adapter.ExtendContext(ctx)
-	metadata.Outbound, metadata.Destination = o.Tag(), target
-	return dialer.DialContext(ctx, network, target)
-}
-
-func (o *tcpOnlySocks5Exit) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, error) {
-	return nil, N.ErrUnknownNetwork
 }
 
 func newSocks5ExitSelector(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.SelectorOutboundOptions) (adapter.Outbound, error) {
@@ -322,7 +251,7 @@ func (e *SingBoxEngine) SetSocks5Exit(profile *config.Socks5ExitConfig) error {
 			tag = socks5ExitNextTag
 		}
 		out, _ := e.instance.Outbound().Outbound(tag)
-		slot, ok := out.(*tcpOnlySocks5Exit)
+		slot, ok := out.(*socks5ExitSlot)
 		if !ok {
 			return errSocks5ExitUnavailable
 		}
