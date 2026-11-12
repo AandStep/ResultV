@@ -57,6 +57,19 @@ func addSocks5Exit(sb *SingBoxConfig, cfg EngineConfig) {
 		Type: socks5ExitSelectorType, Tag: socks5ExitSelector, Outbounds: []string{"proxy", socks5ExitTag, socks5ExitNextTag},
 		Default: socks5ExitTag, InterruptExistConnections: true,
 	})
+	if !socks5ExitListActive(cfg) {
+		routeVPNThroughSocks5Exit(sb)
+	}
+	if cfg.Mode == ProxyModeTunnel || cfg.FirstHopProbePort != 0 {
+		probe := []SBRouteRule{{Inbound: []string{probeInboundTag}, Action: "route", Outbound: "proxy"}}
+		if proxyIsEndpoint(cfg.Proxy) {
+			probe = resolveBeforeEndpoint(probe, firstDetourServerTag(sb.DNS.Servers, "proxy"))
+		}
+		sb.Route.Rules = append(probe, sb.Route.Rules...)
+	}
+}
+
+func routeVPNThroughSocks5Exit(sb *SingBoxConfig) {
 	for i := range sb.Route.Rules {
 		rule := &sb.Route.Rules[i]
 		if rule.Outbound != "proxy" || slices.Contains(rule.Inbound, updateInboundTag) || slices.Contains(rule.Inbound, probeInboundTag) {
@@ -71,13 +84,6 @@ func addSocks5Exit(sb *SingBoxConfig, cfg EngineConfig) {
 		if sb.Outbounds[i].Tag == smartOutboundTag {
 			sb.Outbounds[i].Outbounds = []string{"direct", socks5ExitSelector}
 		}
-	}
-	if cfg.Mode == ProxyModeTunnel || cfg.FirstHopProbePort != 0 {
-		probe := []SBRouteRule{{Inbound: []string{probeInboundTag}, Action: "route", Outbound: "proxy"}}
-		if proxyIsEndpoint(cfg.Proxy) {
-			probe = resolveBeforeEndpoint(probe, firstDetourServerTag(sb.DNS.Servers, "proxy"))
-		}
-		sb.Route.Rules = append(probe, sb.Route.Rules...)
 	}
 }
 

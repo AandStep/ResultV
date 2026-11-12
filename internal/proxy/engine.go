@@ -1929,6 +1929,9 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		if len(appFamilyVPNList(cfg)) > 0 && tunnelTag != "" {
 			dns.Rules = append(dns.Rules, SBDNSRule{PackageName: []string{familyTagVPN}, Server: tunnelTag})
 		}
+		if tunnelTag != "" {
+			dns.Rules = append(dns.Rules, socks5ExitDNSRules(cfg, tunnelTag)...)
+		}
 		for _, rule := range cfg.personalSiteRoutes() {
 			server := "local"
 			if rule.Outbound == "proxy" {
@@ -2105,7 +2108,7 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	cfg = cfg.forRoutingMode()
 	builtinAppRegexes := smartTunneledAppRegexes(cfg)
 	torrentRegexes := torrentAppRegexes(cfg)
-	findProcess := len(cfg.directApps()) > 0 || len(appFamilyVPNList(cfg)) > 0 ||
+	findProcess := len(cfg.directApps()) > 0 || len(appFamilyVPNList(cfg)) > 0 || len(socks5ExitApps(cfg)) > 0 ||
 		len(builtinAppRegexes) > 0 || len(torrentRegexes) > 0
 	// Smart mode inverts the default: everything goes direct and only the
 	// censored block-list is tunneled (see the blocked-domain rule below).
@@ -2184,7 +2187,8 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	})
 
 	personalSites := cfg.personalSiteRoutes()
-	rules = append(rules, cfg.personalProfileBlocks(personalSites)...)
+	rules = append(rules, cfg.personalProfileBlocks(append(slices.Clone(personalSites), socks5ExitSiteMatchers(cfg)...))...)
+	rules = append(rules, socks5ExitListRules(cfg)...)
 
 	// The app lists outrank directional site rules: naming
 	// an app is the most explicit thing they can say, and it covers every
@@ -2422,6 +2426,9 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	// rejects above stay in both cases: those are about UDP being unreliable
 	// through the node, which FakeIP does not change.
 	if cfg.RoutingMode == ModeSmart && !adaptiveSmartActive(cfg) {
+		rules = append(rules, quicRejectRule(SBRouteRule{}))
+	}
+	if cfg.Mode == ProxyModeTunnel && cfg.RoutingMode != ModeSmart && socks5ExitListActive(cfg) {
 		rules = append(rules, quicRejectRule(SBRouteRule{}))
 	}
 
