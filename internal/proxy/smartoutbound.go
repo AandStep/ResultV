@@ -54,6 +54,7 @@ var (
 	_ adapter.OutboundGroup           = (*smartOutbound)(nil)
 	_ adapter.ConnectionHandler       = (*smartOutbound)(nil)
 	_ adapter.PacketConnectionHandler = (*smartOutbound)(nil)
+	_ adapter.Lifecycle               = (*smartOutbound)(nil)
 )
 
 type smartOutbound struct {
@@ -135,7 +136,10 @@ func (s *smartOutbound) nodeCarriesUDP() bool {
 // Start resolves the two members once. Resolving them per connection would put
 // a map lookup on the hot path for a pair that cannot change while the engine
 // is up.
-func (s *smartOutbound) Start() error {
+func (s *smartOutbound) Start(stage adapter.StartStage, _ *adapter.Scope) error {
+	if stage != adapter.StartStateStart {
+		return nil
+	}
 	for _, tag := range s.tags {
 		detour, loaded := s.outbound.Outbound(tag)
 		if !loaded {

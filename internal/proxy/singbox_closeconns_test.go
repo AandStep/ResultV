@@ -29,8 +29,7 @@ type fakeConnectionManager struct {
 	closedAll bool
 }
 
-func (f *fakeConnectionManager) Start(adapter.StartStage) error { return nil }
-func (f *fakeConnectionManager) Close() error                   { return nil }
+func (f *fakeConnectionManager) Start(adapter.StartStage, *adapter.Scope) error { return nil }
 func (f *fakeConnectionManager) Count() int                     { return 0 }
 func (f *fakeConnectionManager) CloseAll()                      { f.closedAll = true }
 func (f *fakeConnectionManager) TrackConn(c net.Conn) net.Conn  { return c }

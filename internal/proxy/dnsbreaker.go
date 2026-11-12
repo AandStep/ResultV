@@ -92,9 +92,8 @@ func newDNSBreaker(tag string, primary, backup adapter.DNSTransport, now func() 
 	}
 }
 
-func (b *dnsBreaker) Start(adapter.StartStage) error { return nil }
-func (b *dnsBreaker) Close() error                   { return nil }
-func (b *dnsBreaker) Reset()                         {}
+func (b *dnsBreaker) Start(adapter.StartStage, *adapter.Scope) error { return nil }
+func (b *dnsBreaker) Reset()                                        {}
 
 func (b *dnsBreaker) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
 	if b.skipPrimary(message) {

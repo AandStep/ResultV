@@ -174,6 +174,8 @@ func newSocks5ExitSelector(ctx context.Context, router adapter.Router, logger lo
 	}, nil
 }
 
+var _ adapter.Lifecycle = (*socks5ExitSwitch)(nil)
+
 // Do not expose OutboundGroup here. TUN pre-match unwraps groups and would
 // cache a WireGuard raw flow that the selector cannot interrupt on a switch.
 type socks5ExitSwitch struct {
@@ -186,10 +188,12 @@ type socks5ExitSwitch struct {
 	revision   uint64
 }
 
-func (s *socks5ExitSwitch) Start() error {
-	firstHop, _ := s.outbounds.Outbound("proxy")
-	s.raw, _ = firstHop.(adapter.FlowOutbound)
-	return s.selector.Start()
+func (s *socks5ExitSwitch) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage == adapter.StartStateStart {
+		firstHop, _ := s.outbounds.Outbound("proxy")
+		s.raw, _ = firstHop.(adapter.FlowOutbound)
+	}
+	return s.selector.Start(stage, scope)
 }
 
 func (s *socks5ExitSwitch) Now() string { return s.selector.Now() }

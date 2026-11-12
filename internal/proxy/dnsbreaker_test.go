@@ -46,8 +46,7 @@ func (f *fakeDNSTransport) set(err error, rcode int) {
 	f.err, f.rcode = err, rcode
 }
 
-func (f *fakeDNSTransport) Start(adapter.StartStage) error { return nil }
-func (f *fakeDNSTransport) Close() error                   { return nil }
+func (f *fakeDNSTransport) Start(adapter.StartStage, *adapter.Scope) error { return nil }
 func (f *fakeDNSTransport) Reset()                         {}
 func (f *fakeDNSTransport) Exchange(_ context.Context, m *mDNS.Msg) (*mDNS.Msg, error) {
 	f.calls.Add(1)

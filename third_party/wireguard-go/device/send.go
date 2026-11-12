@@ -54,11 +54,12 @@ type QueueOutboundElement struct {
 	// is either:
 	//  a) MessageEncapsulatingTransportSize+MessageTransportHeaderSize+padding (plaintext)
 	//  b) 0 (post-encryption)
-	packet  []byte
-	nonce   uint64   // nonce for encryption
-	keypair *Keypair // keypair for encryption
-	peer    *Peer    // related peer
-	padding uint32
+	packet      []byte
+	nonce       uint64   // nonce for encryption
+	keypair     *Keypair // keypair for encryption
+	peer        *Peer    // related peer
+	padding     uint32
+	isKeepalive bool
 }
 
 type QueueOutboundElementsContainer struct {
@@ -76,6 +77,7 @@ func (device *Device) NewOutboundElement() *QueueOutboundElement {
 	elem.buffer = device.GetOutboundBuffer(MaxMessageSize)
 	elem.nonce = 0
 	elem.padding = device.paddings.transport.Load()
+	elem.isKeepalive = false
 	// keypair and peer were cleared (if necessary) by clearPointers.
 	return elem
 }
@@ -96,6 +98,7 @@ func (elem *QueueOutboundElement) clearPointers() {
 func (peer *Peer) SendKeepalive() {
 	if len(peer.queue.staged) == 0 && peer.isRunning.Load() {
 		elem := peer.device.NewOutboundElement()
+		elem.isKeepalive = true
 		elemsContainer := peer.device.GetOutboundElementsContainer()
 		elemsContainer.elems = append(elemsContainer.elems, elem)
 		select {
@@ -154,7 +157,7 @@ func (peer *Peer) SendPriorityMessage() {
 	}()
 
 	// initialize outbound element
-	const offset = MessageEncapsulatingTransportSize + MessageTransportHeaderSize
+	offset := MessageEncapsulatingTransportSize + MessageTransportHeaderSize + int(elem.padding)
 	n := copy(elem.buffer[offset:], msg)
 	elem.packet = elem.buffer[offset : offset+n]
 	elem.peer = peer
@@ -404,16 +407,20 @@ func (device *Device) RoutineReadFromTUN() {
 	}()
 
 	for {
-		padding := device.paddings.transport.Load()
-		offset := MessageEncapsulatingTransportSize + MessageTransportHeaderSize + int(padding)
+		readOffset := MessageEncapsulatingTransportSize + MessageTransportHeaderSize + int(device.paddings.transport.Load())
 
 		// read packets
-		count, readErr = device.tun.device.Read(bufs, sizes, offset)
+		count, readErr = device.tun.device.Read(bufs, sizes, readOffset)
+		padding := device.paddings.transport.Load()
+		offset := MessageEncapsulatingTransportSize + MessageTransportHeaderSize + int(padding)
 		for i := 0; i < count; i++ {
-			if sizes[i] < 1 {
+			if sizes[i] < 1 || offset+sizes[i] > len(bufs[i]) {
 				continue
 			}
 
+			if offset != readOffset {
+				copy(bufs[i][offset:], bufs[i][readOffset:readOffset+sizes[i]])
+			}
 			elem := elems[i]
 			elem.packet = bufs[i][offset : offset+sizes[i]]
 			elem.padding = padding
@@ -550,15 +557,16 @@ func (device *Device) InputPacket(destination []byte, packetSlices [][]byte) {
 		totalLength += len(packetSlice)
 	}
 	padding := device.paddings.transport.Load()
-	allocLength := MessageEncapsulatingTransportSize + MessageTransportHeaderSize + int(padding) + totalLength + PaddingMultiple + chacha20poly1305.Overhead
+	packetSize := MinMessageSize + int(padding) + totalLength
+	allocLength := MessageEncapsulatingTransportSize + packetSize + PaddingMultiple
 	if allocLength > MaxMessageSize {
 		return
 	}
-	allocLength = min(allocLength+peer.paddingHeadroom(totalLength+MinMessageSize+int(padding)), MaxMessageSize)
 	elem := device.GetOutboundElement()
-	elem.buffer = device.GetOutboundBuffer(allocLength)
+	elem.buffer = device.GetOutboundBuffer(min(allocLength+peer.randomPaddingTailroom(packetSize), MaxMessageSize))
 	elem.nonce = 0
 	elem.padding = padding
+	elem.isKeepalive = false
 	packet := elem.buffer[MessageEncapsulatingTransportSize+MessageTransportHeaderSize+elem.padding:]
 	var n int
 	for _, packetSlice := range packetSlices {
@@ -599,15 +607,16 @@ func (device *Device) InputPackets(packets []*InputPacketRef) []*InputPacketRef 
 			totalLength += len(packetSlice)
 		}
 		padding := device.paddings.transport.Load()
-		allocLength := MessageEncapsulatingTransportSize + MessageTransportHeaderSize + int(padding) + totalLength + PaddingMultiple + chacha20poly1305.Overhead
+		packetSize := MinMessageSize + int(padding) + totalLength
+		allocLength := MessageEncapsulatingTransportSize + packetSize + PaddingMultiple
 		if allocLength > MaxMessageSize {
 			continue
 		}
-		allocLength = min(allocLength+peer.paddingHeadroom(totalLength+MinMessageSize+int(padding)), MaxMessageSize)
 		elem := device.GetOutboundElement()
-		elem.buffer = device.GetOutboundBuffer(allocLength)
+		elem.buffer = device.GetOutboundBuffer(min(allocLength+peer.randomPaddingTailroom(packetSize), MaxMessageSize))
 		elem.nonce = 0
 		elem.padding = padding
+		elem.isKeepalive = false
 		packet := elem.buffer[MessageEncapsulatingTransportSize+MessageTransportHeaderSize+elem.padding:]
 		var n int
 		for _, packetSlice := range packetRef.PacketSlices {
@@ -783,15 +792,6 @@ func (peer *Peer) randomPaddingAddition(packetSize int) int {
 	return add
 }
 
-// paddingHeadroom is the most that randomPaddingAddition or randomTrailer can
-// add to a transport packet of packetSize.
-func (peer *Peer) paddingHeadroom(packetSize int) int {
-	if peer.device.contentPaddingAddition.Load().IsZero() && !peer.device.randomTrailers.Load() {
-		return 0
-	}
-	return max(int(peer.udpWindow.Load())-packetSize, 0)
-}
-
 func (device *Device) randomTrailer(packetSize int) int {
 	if !device.randomTrailers.Load() {
 		return -1
@@ -813,6 +813,18 @@ func (peer *Peer) randomTrailer(packetSize int) int {
 		return 0
 	}
 	return int(fastrandn(uint32(udpWindow - packetSize)))
+}
+
+func (peer *Peer) randomPaddingTailroom(packetSize int) int {
+	addition := peer.device.contentPaddingAddition.Load()
+	if addition.IsZero() && !peer.device.randomTrailers.Load() {
+		return 0
+	}
+	tailroom := max(int(peer.udpWindow.Load())-packetSize, 0)
+	if !addition.IsZero() {
+		tailroom = min(tailroom, int(addition.Hi()))
+	}
+	return tailroom
 }
 
 /* Encrypts the elements in the queue
@@ -861,9 +873,8 @@ func (device *Device) RoutineEncryption(id int) {
 				// pad content to multiple of 16
 				paddingSize = calculatePaddingSize(len(elem.packet), mtu)
 			}
-			room := cap(elem.buffer) - MessageEncapsulatingTransportSize - int(elem.padding) - MessageTransportHeaderSize - len(elem.packet) - chacha20poly1305.Overhead
-			paddingSize = max(min(paddingSize, room), 0)
 
+			paddingSize = min(paddingSize, cap(buf)-packetSize)
 			// append trailing zeroes
 			oldLen := len(elem.packet)
 			elem.packet = slices.Grow(elem.packet, paddingSize)
@@ -955,7 +966,7 @@ func (peer *Peer) processOutboundContainer(elemsContainer *QueueOutboundElements
 
 	dataSent := false
 	for _, elem := range elemsContainer.elems {
-		if len(elem.packet[MessageEncapsulatingTransportSize+elem.padding:]) != MessageKeepaliveSize {
+		if !elem.isKeepalive {
 			dataSent = true
 		}
 		scratch = append(scratch, elem.packet)

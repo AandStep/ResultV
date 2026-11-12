@@ -19,19 +19,18 @@ The vendored copy has been modified by ResultV. Original package comment:
 
 ## shtorm-7/wireguard-go
 
-- **Source**: https://github.com/shtorm-7/wireguard-go v0.0.6-extended-1.6.1
+- **Source**: https://github.com/shtorm-7/wireguard-go v0.0.8-extended-1.6.2
 - **Location**: `third_party/wireguard-go/` (wired in via `replace` in `go.mod`)
 - **License**: MIT (see `third_party/wireguard-go/LICENSE`)
 
-The vendored copy has been modified by ResultV (`device/send.go`):
-handshake messages are sliced to their own size before MACs are added, so
-random trailers no longer overwrite MAC1/MAC2, and transport packets injected
-through `InputPacket` get room for trailers instead of overrunning their
-buffer. Switching `random_trailers` on a running device restarts handshakes
-still in flight (`device/uapi.go`). `device/random_trailers_test.go` covers
-all three. `device/padding_test.go` was dropped and
-`device/endpoint_resolver_test.go` adjusted because they no longer compiled
-against the fork. Drop the copy once upstream ships the fix.
+The vendored copy has been modified by ResultV. A handshake retry on a bind
+without a fixed port moves to a fresh source port (`device/timers.go`), a
+rebind restarts handshakes still awaiting an answer (`device/device.go`), and
+switching `random_trailers` on a running device restarts pending handshakes
+(`device/uapi.go`). `device/rebind_handshake_test.go` and
+`device/random_trailers_test.go` cover them. `device/padding_test.go` was
+dropped and `device/endpoint_resolver_test.go` adjusted because they do not
+compile against the fork.
 
 ---
 
