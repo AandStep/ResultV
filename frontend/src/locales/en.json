@@ -34,6 +34,7 @@
       "bad_auth": "wrong username or password",
       "auth_method": "the server requires a different sign-in method",
       "rejected": "the server refused the connection (code {{code}})",
+      "rejected_ruleset": "the server denied the connection, check the username and password (code {{code}})",
       "probe_failed": "the check site did not answer"
     }
   },

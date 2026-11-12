@@ -12,7 +12,10 @@ import (
 	"resultproxy-wails/internal/proxy"
 )
 
-const socks5ExitCheckBudget = 30 * time.Second
+const (
+	socks5ExitCheckBudget = 30 * time.Second
+	socks5ReplyNotAllowed = 2
+)
 
 type Socks5ExitStatusDTO struct {
 	proxy.Socks5ExitCheck
@@ -182,6 +185,9 @@ func socks5ExitLogLine(c proxy.Socks5ExitCheck) (string, bool) {
 		reason = "сервер требует другой способ входа"
 	case proxy.Socks5CheckRejected:
 		reason = fmt.Sprintf("сервер отказал в соединении (код %d)", c.Code)
+		if c.Code == socks5ReplyNotAllowed {
+			reason = fmt.Sprintf("сервер запретил соединение, проверьте логин и пароль (код %d)", c.Code)
+		}
 	}
 	return "[SOCKS5] Выход не работает: " + reason, false
 }

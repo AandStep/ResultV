@@ -144,6 +144,7 @@ func TestSocks5ExitLogLine(t *testing.T) {
 		{proxy.Socks5ExitCheck{Reason: proxy.Socks5CheckBadAuth}, "[SOCKS5] Выход не работает: неверный логин или пароль", false},
 		{proxy.Socks5ExitCheck{Reason: proxy.Socks5CheckAuthMethod}, "[SOCKS5] Выход не работает: сервер требует другой способ входа", false},
 		{proxy.Socks5ExitCheck{Reason: proxy.Socks5CheckRejected, Code: 5}, "[SOCKS5] Выход не работает: сервер отказал в соединении (код 5)", false},
+		{proxy.Socks5ExitCheck{Reason: proxy.Socks5CheckRejected, Code: 2}, "[SOCKS5] Выход не работает: сервер запретил соединение, проверьте логин и пароль (код 2)", false},
 		{proxy.Socks5ExitCheck{Reason: proxy.Socks5CheckProbeFailed}, "[SOCKS5] Выход не работает: сайт проверки не ответил", false},
 	} {
 		line, ok := socks5ExitLogLine(tc.check)

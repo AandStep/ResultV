@@ -15,7 +15,8 @@ let pendingWrite = Promise.resolve();
 const capitalize = (text) => text.charAt(0).toUpperCase() + text.slice(1);
 
 export function socks5ReasonText(t, status) {
-  return t(`socks5Exit.reasons.${status.reason}`, {
+  const key = status.reason === "rejected" && status.code === 2 ? "rejected_ruleset" : status.reason;
+  return t(`socks5Exit.reasons.${key}`, {
     code: status.code,
     defaultValue: t("socks5Exit.reasons.probe_failed"),
   });
