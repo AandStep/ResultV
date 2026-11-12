@@ -105,6 +105,7 @@ type PingOptions struct {
 type Manager struct {
 	socks5Exit        *config.Socks5ExitConfig
 	socks5ExitWired   bool
+	socks5ExitBuilt   *config.Socks5ExitConfig
 	firstHopProbePort int
 
 	// opMu serializes the heavy connection-lifecycle operations — Connect,
@@ -971,6 +972,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 				m.mu.Lock()
 				m.connected = true
 				m.socks5ExitWired = false
+				m.socks5ExitBuilt = nil
 				m.firstHopProbePort = 0
 				m.mode = mode
 				m.proxy = &proxy
@@ -1128,6 +1130,10 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	m.clearPendingLocked()
 	m.connected = true
 	m.socks5ExitWired = socks5ExitWired(exitProfile)
+	m.socks5ExitBuilt = nil
+	if m.socks5ExitWired {
+		m.socks5ExitBuilt = exitProfile
+	}
 	m.firstHopProbePort = firstHopProbePort
 	m.mode = mode
 	m.proxy = &proxy
@@ -2031,6 +2037,7 @@ func (m *Manager) Disconnect() error {
 	m.connected = false
 	m.proxy = nil
 	m.socks5ExitWired = false
+	m.socks5ExitBuilt = nil
 	m.firstHopProbePort = 0
 	m.clearPendingLocked()
 	m.emitStatusLocked()

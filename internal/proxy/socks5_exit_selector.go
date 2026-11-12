@@ -35,10 +35,10 @@ const (
 
 var errSocks5ExitUnavailable = errors.New("SOCKS5 exit is unavailable on this connection")
 
-// Without a saved address the session is built exactly as it was before the
-// SOCKS5 exit existed.
+// A session without an active exit is built exactly as it was before the SOCKS5
+// exit existed.
 func socks5ExitWired(profile *config.Socks5ExitConfig) bool {
-	return profile != nil && profile.Host != ""
+	return profile.IsActive()
 }
 
 func addSocks5Exit(sb *SingBoxConfig, cfg EngineConfig) {
@@ -53,13 +53,9 @@ func addSocks5Exit(sb *SingBoxConfig, cfg EngineConfig) {
 	exit.DomainResolver = firstDetourServerTag(sb.DNS.Servers, "proxy")
 	next := exit
 	next.Tag, next.Server, next.ServerPort, next.Username, next.Password = socks5ExitNextTag, "", 0, "", ""
-	initial := "proxy"
-	if p.IsActive() {
-		initial = socks5ExitTag
-	}
 	sb.Outbounds = append(sb.Outbounds, exit, next, SBOutbound{
 		Type: socks5ExitSelectorType, Tag: socks5ExitSelector, Outbounds: []string{"proxy", socks5ExitTag, socks5ExitNextTag},
-		Default: initial, InterruptExistConnections: true,
+		Default: socks5ExitTag, InterruptExistConnections: true,
 	})
 	for i := range sb.Route.Rules {
 		rule := &sb.Route.Rules[i]

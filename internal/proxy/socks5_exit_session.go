@@ -24,9 +24,10 @@ func (m *Manager) SetSocks5Exit(profile *config.Socks5ExitConfig) error {
 	return nil
 }
 
-// A session built without the SOCKS5 route has no selector to switch.
-func socks5ExitNeedsReconnect(connected, wired bool, profile *config.Socks5ExitConfig) bool {
-	return connected && !wired && socks5ExitWired(profile)
+// A session built without the SOCKS5 route has no selector to switch, and the
+// lists are routing rules fixed when the session was built.
+func socks5ExitNeedsReconnect(connected, wired bool, built, next *config.Socks5ExitConfig) bool {
+	return connected && next.IsActive() && (!wired || !config.SameSocks5ExitLists(built, next))
 }
 
 func (m *Manager) applySocks5Exit(profile *config.Socks5ExitConfig) (*config.Socks5ExitConfig, bool, error) {
@@ -36,7 +37,7 @@ func (m *Manager) applySocks5Exit(profile *config.Socks5ExitConfig) (*config.Soc
 	defer m.mu.Unlock()
 
 	previous := m.socks5Exit
-	if socks5ExitNeedsReconnect(m.connected, m.socks5ExitWired, profile) {
+	if socks5ExitNeedsReconnect(m.connected, m.socks5ExitWired, m.socks5ExitBuilt, profile) {
 		m.socks5Exit = profile
 		return previous, true, nil
 	}

@@ -61,20 +61,29 @@ func TestSocks5ExitUnwiredSession(t *testing.T) {
 	if err := m.SetSocks5Exit(pending); err != nil || m.socks5Exit != pending || engine.profile != nil {
 		t.Fatal("a profile without an address touched a session built without the SOCKS5 route")
 	}
-	addressed := &config.Socks5ExitConfig{Host: "exit.example.test", Port: 8000}
+}
+
+func TestSocks5ExitNeedsReconnect(t *testing.T) {
+	active := &config.Socks5ExitConfig{Enabled: true, Host: "exit.example.test", Port: 8000}
+	listed := &config.Socks5ExitConfig{Enabled: true, Host: "exit.example.test", Port: 8000, Sites: []string{"example.test"}}
+	listedOff := &config.Socks5ExitConfig{Host: "exit.example.test", Port: 8000, Sites: []string{"example.test"}}
+	addressedOff := &config.Socks5ExitConfig{Host: "exit.example.test", Port: 8000}
 	for _, tc := range []struct {
+		name             string
 		connected, wired bool
-		profile          *config.Socks5ExitConfig
+		built, next      *config.Socks5ExitConfig
 		want             bool
 	}{
-		{true, false, addressed, true},
-		{true, true, addressed, false},
-		{false, false, addressed, false},
-		{true, false, pending, false},
-		{true, false, nil, false},
+		{"not connected", false, false, nil, active, false},
+		{"enable on a plain session", true, false, nil, active, true},
+		{"live edit, same lists", true, true, active, active, false},
+		{"lists changed", true, true, active, listed, true},
+		{"disabled with other lists", true, true, active, listedOff, false},
+		{"saved address while off", true, false, nil, addressedOff, false},
+		{"no profile", true, false, nil, nil, false},
 	} {
-		if got := socks5ExitNeedsReconnect(tc.connected, tc.wired, tc.profile); got != tc.want {
-			t.Errorf("connected=%t wired=%t profile=%+v: reconnect=%t, want %t", tc.connected, tc.wired, tc.profile, got, tc.want)
+		if got := socks5ExitNeedsReconnect(tc.connected, tc.wired, tc.built, tc.next); got != tc.want {
+			t.Errorf("%s: reconnect=%t, want %t", tc.name, got, tc.want)
 		}
 	}
 }

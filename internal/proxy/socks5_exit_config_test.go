@@ -19,8 +19,8 @@ func TestBuildTunnelSocks5Exit(t *testing.T) {
 			Host: "exit.socks.test", Port: 8000, Username: "test-user", Password: "test-password",
 		},
 	}
-	for _, enabled := range []bool{false, true} {
-		cfg.Socks5Exit.Enabled = enabled
+	{
+		cfg.Socks5Exit.Enabled = true
 		out := mustBuildTunnelModeConfig(t, cfg)
 		exit := mustOutbound(t, out, "socks5-exit")
 		if exit.Type != socks5ExitOutboundType || exit.Version != "5" || exit.Network != "tcp" || exit.Detour != "proxy" {
@@ -30,13 +30,9 @@ func TestBuildTunnelSocks5Exit(t *testing.T) {
 			t.Fatal("SOCKS5 hostname resolver does not use the first hop")
 		}
 		selector := mustOutbound(t, out, "socks5-exit-switch")
-		want := "proxy"
-		if enabled {
-			want = "socks5-exit"
-		}
-		if selector.Type != socks5ExitSelectorType || selector.Default != want || !selector.InterruptExistConnections ||
+		if selector.Type != socks5ExitSelectorType || selector.Default != "socks5-exit" || !selector.InterruptExistConnections ||
 			!reflect.DeepEqual(selector.Outbounds, []string{"proxy", "socks5-exit", "socks5-exit-next"}) {
-			t.Fatalf("invalid selector for enabled=%t", enabled)
+			t.Fatal("invalid selector for an enabled exit")
 		}
 		rules := out.Route.Rules
 		if rules[0].Outbound != "proxy" || !slices.Contains(rules[0].Inbound, probeInboundTag) {
@@ -52,7 +48,7 @@ func TestBuildTunnelSocks5Exit(t *testing.T) {
 		}
 		assertCoreAcceptsConfig(t, out)
 	}
-	for _, profile := range []*config.Socks5ExitConfig{nil, {}, {Enabled: true}} {
+	for _, profile := range []*config.Socks5ExitConfig{nil, {}, {Enabled: true}, {Host: "exit.socks.test", Port: 8000}} {
 		cfg.Socks5Exit = profile
 		got := mustBuildTunnelModeConfig(t, cfg)
 		if slices.ContainsFunc(got.Outbounds, func(out SBOutbound) bool {
