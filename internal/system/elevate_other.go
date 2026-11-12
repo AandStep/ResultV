@@ -23,8 +23,6 @@ func restartAsAdminLinux(exePath string, args []string) error {
 	return fmt.Errorf("restartAsAdminLinux: linux only")
 }
 
-func WaitForElevationParent(args []string) {}
-
 func RelaunchElevated(args []string) (bool, error) { return false, nil }
 
 func KeepInvokerOwnership() func() { return func() {} }

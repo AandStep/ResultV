@@ -19,6 +19,7 @@ import (
 	"crypto/md5"
 	"encoding/binary"
 	"fmt"
+	"runtime"
 	"testing"
 )
 
@@ -104,19 +105,23 @@ func TestIsOurTunAdapterGUID(t *testing.T) {
 	}
 }
 
-func TestTunnelModeConfigPinsInterfaceName(t *testing.T) {
+func TestTunnelModeConfigInterfaceName(t *testing.T) {
 	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
 		Proxy: ProxyConfig{Type: "vless", IP: "203.0.113.7", Port: 443, Password: "p"},
 		Mode:  ProxyModeTunnel,
 	})
+	wantName := "rvtun0"
+	if runtime.GOOS == "darwin" {
+		wantName = ""
+	}
 	var found bool
 	for _, in := range cfg.Inbounds {
 		if in.Tag != "tun-in" {
 			continue
 		}
 		found = true
-		if in.InterfaceName != tunInterfaceName {
-			t.Fatalf("tun inbound interface_name = %q, want %q", in.InterfaceName, tunInterfaceName)
+		if in.InterfaceName != wantName {
+			t.Fatalf("tun inbound interface_name = %q, want %q", in.InterfaceName, wantName)
 		}
 	}
 	if !found {

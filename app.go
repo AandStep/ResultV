@@ -726,10 +726,9 @@ func (a *App) startup(ctx context.Context) {
 func (a *App) shutdown(ctx context.Context) {
 	a.log.Info("ResultV завершает работу...")
 
-	// Free the single-instance lock first thing, so a relaunch during this
-	// (possibly slow) teardown starts a fresh, working instance instead of
-	// bouncing off us. Harmless if markQuitRequested already released it.
-	system.ReleaseSingletonLock()
+	// Native Quit can reach shutdown without passing through markQuitRequested.
+	// Block late window restores and release the singleton before teardown.
+	a.markQuitRequested()
 
 	done := make(chan struct{})
 	go func() {
@@ -3049,6 +3048,9 @@ func (a *App) restoreMainWindow() {
 		return
 	}
 	a.trayHidden.Store(0)
+	if runtime.GOOS == "darwin" {
+		wailsRuntime.Show(a.ctx)
+	}
 	wailsRuntime.WindowUnminimise(a.ctx)
 	wailsRuntime.WindowShow(a.ctx)
 
