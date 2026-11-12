@@ -137,7 +137,6 @@ export default function Socks5ExitSettings() {
   );
 
   const statusLine = () => {
-    if (!settings?.host) return null;
     if (!isConnected) return t("socks5Exit.statusAfterConnect");
     if (checking) return t("socks5Exit.checking");
     if (!status) return t("socks5Exit.statusUnchecked");
@@ -157,88 +156,119 @@ export default function Socks5ExitSettings() {
     );
   };
 
-  return (
-    <section
-      className="rv-settings-page__card rv-border rv-border--static rv-settings-page__row rv-settings-page__socks5"
-      aria-label={t("socks5Exit.title")}
-    >
-      <div className="rv-settings-page__socks5-header">
+  const row = ({ title, desc, stacked = true, children, descRole }) => (
+    <div className="rv-settings-page__row" data-stacked={stacked || undefined}>
+      {(title || desc) && (
         <div className="rv-settings-page__row-text">
-          <p className="rv-settings-page__row-title">{t("socks5Exit.title")}</p>
-          <p className="rv-settings-page__row-desc">
-            {t(settings?.enabled && !settings.host ? "socks5Exit.enterAddress" : "socks5Exit.desc")}
-          </p>
-        </div>
-        <Tumbler
-          aria-label={t("socks5Exit.title")}
-          checked={Boolean(settings?.enabled)}
-          disabled={!settings || busy}
-          onChange={toggle}
-        />
-      </div>
-      {settings?.enabled && draft && (
-        <div className="rv-settings-page__socks5-fields">
-          <div className="rv-settings-page__socks5-pair" data-address>
-            {field("host", { autoComplete: "off" })}
-            {field("port", { type: "number", min: 1, max: 65535 })}
-          </div>
-          <div className="rv-settings-page__socks5-pair">
-            {field("username", { autoComplete: "off" })}
-            <div className="rv-settings-page__socks5-password">
-              {field("password", { type: showPassword ? "text" : "password", autoComplete: "new-password" })}
-              <button
-                type="button"
-                className="rv-settings-page__socks5-eye"
-                aria-label={t(showPassword ? "socks5Exit.hidePassword" : "socks5Exit.showPassword")}
-                disabled={busy}
-                onClick={() => setShowPassword((shown) => !shown)}
-              >
-                {showPassword ? <EyeOff size={18} aria-hidden /> : <Eye size={18} aria-hidden />}
-              </button>
-            </div>
-          </div>
-          <div className="rv-settings-page__socks5-list">
-            <p className="rv-settings-page__row-title">{t("socks5Exit.sites")}</p>
-            <TagField
-              aria-label={t("socks5Exit.sites")}
-              values={draft.sites}
-              onAdd={(value) => editList("sites", addSite(draft.sites, value))}
-              onRemove={(value) => editList("sites", draft.sites.filter((site) => site !== value))}
-              placeholder={t("socks5Exit.sitesPlaceholder")}
-              removeLabel={t("socks5Exit.remove")}
-              disabled={busy}
-            />
-            <p className="rv-settings-page__row-desc">{t("socks5Exit.sitesHint")}</p>
-          </div>
-          <div className="rv-settings-page__socks5-list">
-            <p className="rv-settings-page__row-title">{t("socks5Exit.apps")}</p>
-            <TagField
-              aria-label={t("socks5Exit.apps")}
-              values={draft.apps}
-              onAdd={(value) => editList("apps", addApp(draft.apps, value, isWin))}
-              onRemove={(value) => editList("apps", draft.apps.filter((app) => app !== value))}
-              placeholder={t("socks5Exit.appsPlaceholder")}
-              removeLabel={t("socks5Exit.remove")}
-              disabled={busy}
-            />
-            <p className="rv-settings-page__row-desc">{t("socks5Exit.appsHint")}</p>
-          </div>
-          <div className="rv-settings-page__socks5-actions">
-            <Button variant="green" disabled={!dirty || busy} onClick={save}>
-              {t("common.save")}
-            </Button>
-            <Button disabled={!isConnected || checking || busy || !settings.host} onClick={check}>
-              {t("socks5Exit.check")}
-            </Button>
-          </div>
-          {statusLine() && (
-            <p className="rv-settings-page__row-desc rv-settings-page__socks5-status" role="status">
-              {statusLine()}
-            </p>
-          )}
+          {title && <p className="rv-settings-page__row-title">{title}</p>}
+          {desc && <p className="rv-settings-page__row-desc rv-settings-page__socks5-status" role={descRole}>{desc}</p>}
         </div>
       )}
-      {error && <p className="rv-settings-page__hint" role="alert">{error}</p>}
+      <div className="rv-settings-page__row-control">{children}</div>
+    </div>
+  );
+
+  const open = settings?.enabled && draft;
+
+  return (
+    <section
+      className="rv-settings-page__card rv-border rv-border--static rv-settings-page__socks5"
+      aria-label={t("socks5Exit.title")}
+    >
+      {row({
+        title: t("socks5Exit.title"),
+        desc: t(settings?.enabled && !settings.host ? "socks5Exit.enterAddress" : "socks5Exit.desc"),
+        stacked: false,
+        children: (
+          <Tumbler
+            aria-label={t("socks5Exit.title")}
+            checked={Boolean(settings?.enabled)}
+            disabled={!settings || busy}
+            onChange={toggle}
+          />
+        ),
+      })}
+      {open && row({
+        title: t("socks5Exit.addressTitle"),
+        children: (
+          <div className="rv-settings-page__socks5-fields">
+            <div className="rv-settings-page__socks5-pair" data-address>
+              {field("host", { autoComplete: "off" })}
+              {field("port", { type: "number", min: 1, max: 65535 })}
+            </div>
+            <div className="rv-settings-page__socks5-pair">
+              {field("username", { autoComplete: "off" })}
+              <div className="rv-settings-page__socks5-password">
+                {field("password", { type: showPassword ? "text" : "password", autoComplete: "new-password" })}
+                <button
+                  type="button"
+                  className="rv-settings-page__socks5-eye"
+                  aria-label={t(showPassword ? "socks5Exit.hidePassword" : "socks5Exit.showPassword")}
+                  disabled={busy}
+                  onClick={() => setShowPassword((shown) => !shown)}
+                >
+                  {showPassword ? <EyeOff size={18} aria-hidden /> : <Eye size={18} aria-hidden />}
+                </button>
+              </div>
+            </div>
+          </div>
+        ),
+      })}
+      {open && row({
+        title: t("socks5Exit.sites"),
+        desc: t("socks5Exit.sitesHint"),
+        children: (
+          <TagField
+            aria-label={t("socks5Exit.sites")}
+            values={draft.sites}
+            onAdd={(value) => editList("sites", addSite(draft.sites, value))}
+            onRemove={(value) => editList("sites", draft.sites.filter((site) => site !== value))}
+            placeholder={t("socks5Exit.sitesPlaceholder")}
+            removeLabel={t("socks5Exit.remove")}
+            disabled={busy}
+          />
+        ),
+      })}
+      {open && row({
+        title: t("socks5Exit.apps"),
+        children: (
+          <TagField
+            aria-label={t("socks5Exit.apps")}
+            values={draft.apps}
+            onAdd={(value) => editList("apps", addApp(draft.apps, value, isWin))}
+            onRemove={(value) => editList("apps", draft.apps.filter((app) => app !== value))}
+            placeholder={t("socks5Exit.appsPlaceholder")}
+            removeLabel={t("socks5Exit.remove")}
+            disabled={busy}
+          />
+        ),
+      })}
+      {open && row({
+        children: (
+          <>
+            <div className="rv-settings-page__socks5-actions">
+              <Button variant="green" disabled={!dirty || busy} onClick={save}>
+                {t("common.save")}
+              </Button>
+            </div>
+            {error && <p className="rv-settings-page__hint" role="alert">{error}</p>}
+          </>
+        ),
+      })}
+      {open && settings.host && row({
+        title: t("socks5Exit.checkTitle"),
+        desc: statusLine(),
+        descRole: "status",
+        stacked: false,
+        children: (
+          <Button disabled={!isConnected || checking || busy} onClick={check}>
+            {t("socks5Exit.check")}
+          </Button>
+        ),
+      })}
+      {!open && error && row({
+        children: <p className="rv-settings-page__hint" role="alert">{error}</p>,
+      })}
     </section>
   );
 }
