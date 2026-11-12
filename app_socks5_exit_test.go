@@ -10,6 +10,7 @@ import (
 
 	"resultproxy-wails/internal/config"
 	"resultproxy-wails/internal/logger"
+	"resultproxy-wails/internal/proxy"
 )
 
 func TestSocks5ExitSaveKeepsStoredSecret(t *testing.T) {
@@ -125,6 +126,43 @@ func TestSocks5ExitSaveRoundTripsLists(t *testing.T) {
 	}
 	if !slices.Equal(got.Sites, []string{"example.com"}) || !slices.Equal(got.Apps, []string{"tool.exe"}) {
 		t.Fatalf("lists = %q / %q", got.Sites, got.Apps)
+	}
+}
+
+func TestSocks5ExitLogLine(t *testing.T) {
+	for _, tc := range []struct {
+		check proxy.Socks5ExitCheck
+		line  string
+		ok    bool
+	}{
+		{proxy.Socks5ExitCheck{OK: true, IP: "203.0.113.7", Country: "NL", UDP: true, LatencyMs: 412},
+			"[SOCKS5] Выход работает: 203.0.113.7 (NL), UDP: есть, 412 мс", true},
+		{proxy.Socks5ExitCheck{OK: true, IP: "203.0.113.7", Country: "NL", LatencyMs: 90},
+			"[SOCKS5] Выход работает: 203.0.113.7 (NL), UDP: нет, 90 мс", true},
+		{proxy.Socks5ExitCheck{Reason: proxy.Socks5CheckFirstHopDown}, "[SOCKS5] Выход не работает: VPN-узел не отвечает", false},
+		{proxy.Socks5ExitCheck{Reason: proxy.Socks5CheckNoResponse}, "[SOCKS5] Выход не работает: SOCKS5-сервер не отвечает", false},
+		{proxy.Socks5ExitCheck{Reason: proxy.Socks5CheckBadAuth}, "[SOCKS5] Выход не работает: неверный логин или пароль", false},
+		{proxy.Socks5ExitCheck{Reason: proxy.Socks5CheckAuthMethod}, "[SOCKS5] Выход не работает: сервер требует другой способ входа", false},
+		{proxy.Socks5ExitCheck{Reason: proxy.Socks5CheckRejected, Code: 5}, "[SOCKS5] Выход не работает: сервер отказал в соединении (код 5)", false},
+		{proxy.Socks5ExitCheck{Reason: proxy.Socks5CheckProbeFailed}, "[SOCKS5] Выход не работает: сайт проверки не ответил", false},
+	} {
+		line, ok := socks5ExitLogLine(tc.check)
+		if line != tc.line || ok != tc.ok {
+			t.Errorf("got %q/%t, want %q/%t", line, ok, tc.line, tc.ok)
+		}
+	}
+}
+
+func TestSocks5ExitStatusIsPerSession(t *testing.T) {
+	stored := Socks5ExitStatusDTO{Socks5ExitCheck: proxy.Socks5ExitCheck{OK: true}, Checked: true}
+	if got := statusForSession(1, 1, stored); !got.Checked {
+		t.Fatal("status of the current session was dropped")
+	}
+	if got := statusForSession(1, 2, stored); got.Checked {
+		t.Fatal("status of a previous session leaked into the new one")
+	}
+	if got := statusForSession(0, 0, stored); got.Checked {
+		t.Fatal("status shown while disconnected")
 	}
 }
 

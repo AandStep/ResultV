@@ -1,10 +1,29 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"time"
+
+	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"resultproxy-wails/internal/config"
+	"resultproxy-wails/internal/proxy"
 )
+
+const socks5ExitCheckBudget = 30 * time.Second
+
+type Socks5ExitStatusDTO struct {
+	proxy.Socks5ExitCheck
+	Trigger string `json:"trigger"`
+	Checked bool   `json:"checked"`
+}
+
+type socks5ExitStatus struct {
+	session proxy.SessionRef
+	dto     Socks5ExitStatusDTO
+}
 
 type Socks5ExitSettingsDTO struct {
 	Enabled  bool     `json:"enabled"`
@@ -81,6 +100,88 @@ func (a *App) applySocks5Exit(previous *config.Socks5ExitConfig) error {
 		if err := a.proxy.SetSocks5Exit(a.config.GetConfig().Settings.Socks5Exit); err != nil {
 			return errors.Join(err, a.config.RestoreSocks5Exit(previous))
 		}
+		if a.proxy.Socks5ExitActive() {
+			go a.runSocks5ExitCheck("change")
+		}
 	}
 	return nil
+}
+
+func (a *App) CheckSocks5Exit() Socks5ExitStatusDTO {
+	return a.runSocks5ExitCheck("manual")
+}
+
+func (a *App) GetSocks5ExitStatus() Socks5ExitStatusDTO {
+	if a.proxy == nil {
+		return Socks5ExitStatusDTO{}
+	}
+	a.socks5StatusMu.Lock()
+	stored := a.socks5Status
+	a.socks5StatusMu.Unlock()
+	return statusForSession(stored.session, a.proxy.CurrentSession(), stored.dto)
+}
+
+func (a *App) runSocks5ExitCheck(trigger string) Socks5ExitStatusDTO {
+	if a.proxy == nil {
+		return Socks5ExitStatusDTO{}
+	}
+	parent := a.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	session := a.proxy.CurrentSession()
+	ctx, cancel := context.WithTimeout(parent, socks5ExitCheckBudget)
+	check := a.proxy.CheckSocks5Exit(ctx)
+	cancel()
+	dto := Socks5ExitStatusDTO{Socks5ExitCheck: check, Trigger: trigger, Checked: check.Reason != proxy.Socks5CheckInactive}
+	if dto.Checked {
+		a.socks5StatusMu.Lock()
+		a.socks5Status = socks5ExitStatus{session: session, dto: dto}
+		a.socks5StatusMu.Unlock()
+		if line, ok := socks5ExitLogLine(check); a.log != nil && ok {
+			a.log.Info(line)
+		} else if a.log != nil {
+			a.log.Warning(line)
+		}
+	}
+	if a.ctx != nil {
+		wailsRuntime.EventsEmit(a.ctx, "socks5:status", dto)
+	}
+	return dto
+}
+
+func statusForSession[K comparable](stored, current K, dto Socks5ExitStatusDTO) Socks5ExitStatusDTO {
+	var none K
+	if current == none || stored != current {
+		return Socks5ExitStatusDTO{}
+	}
+	return dto
+}
+
+func socks5ExitLogLine(c proxy.Socks5ExitCheck) (string, bool) {
+	if c.OK {
+		udp := "нет"
+		if c.UDP {
+			udp = "есть"
+		}
+		where := c.IP
+		if c.Country != "" {
+			where += " (" + c.Country + ")"
+		}
+		return fmt.Sprintf("[SOCKS5] Выход работает: %s, UDP: %s, %d мс", where, udp, c.LatencyMs), true
+	}
+	reason := "сайт проверки не ответил"
+	switch c.Reason {
+	case proxy.Socks5CheckFirstHopDown:
+		reason = "VPN-узел не отвечает"
+	case proxy.Socks5CheckNoResponse:
+		reason = "SOCKS5-сервер не отвечает"
+	case proxy.Socks5CheckBadAuth:
+		reason = "неверный логин или пароль"
+	case proxy.Socks5CheckAuthMethod:
+		reason = "сервер требует другой способ входа"
+	case proxy.Socks5CheckRejected:
+		reason = fmt.Sprintf("сервер отказал в соединении (код %d)", c.Code)
+	}
+	return "[SOCKS5] Выход не работает: " + reason, false
 }

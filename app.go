@@ -103,6 +103,9 @@ type App struct {
 	quitRequested bool
 	socks5ExitMu  sync.Mutex
 
+	socks5StatusMu sync.Mutex
+	socks5Status   socks5ExitStatus
+
 	trayHidden    atomic.Uint32
 	noTray        atomic.Bool
 	taskbarUnhook func()
@@ -506,9 +509,7 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.proxy = proxyManager
 	a.killSwitch = killSwitch
-	if runtime.GOOS == "windows" {
-		_ = a.proxy.SetSocks5Exit(a.config.GetConfig().Settings.Socks5Exit)
-	}
+	_ = a.proxy.SetSocks5Exit(a.config.GetConfig().Settings.Socks5Exit)
 	// The persistent server-IP pin cache uses the same key as the config.
 	a.proxy.SetSecretCodec(a.crypto)
 	go a.syncAutostartOnStartup()
@@ -912,6 +913,9 @@ func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
 		wailsRuntime.EventsEmit(a.ctx, "proxy:connected", proxyDTO)
 		a.startUDPRelayProbe(proxyDTO, mode)
 		a.startThroughputProbe(proxyDTO)
+		if a.proxy.Socks5ExitActive() {
+			go a.runSocks5ExitCheck("connect")
+		}
 	}
 
 	return result, nil
@@ -967,7 +971,9 @@ func (a *App) startUDPRelayProbe(proxyDTO proxy.ProxyConfig, mode proxy.ProxyMod
 		proxy.RecordUDPRelayOutcome(proxy.AutoNodeKeyOf(proxyDTO), res.OK)
 
 		if a.log != nil {
-			if res.OK {
+			if res.OK && a.proxy.Socks5ExitCoversAllVPN() {
+				a.log.Info(fmt.Sprintf("[UDP] %s: UDP проходит через узел (%s, %d мс); трафик VPN идёт через SOCKS5, звонки зависят от UDP выхода", label, res.Target, res.LatencyMs))
+			} else if res.OK {
 				a.log.Info(fmt.Sprintf("[UDP] %s: UDP проходит через узел (%s, %d мс) — голос Discord будет работать", label, res.Target, res.LatencyMs))
 			} else {
 				a.log.Warning(fmt.Sprintf("[UDP] %s: узел не пропускает UDP (%s). Звонки и демонстрации Discord на этом сервере работать не будут — выберите другой узел", label, res.Reason))
