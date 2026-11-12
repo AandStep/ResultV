@@ -27,6 +27,8 @@
     "udpNo": "no UDP",
     "statusAfterConnect": "The exit is checked once you connect.",
     "statusUnchecked": "The exit has not been checked yet.",
+    "statusNoAddress": "Enter the server address and save.",
+    "unsaved": "You have unsaved changes.",
     "failedTitle": "SOCKS5 exit is not working",
     "failedLead": "The VPN is connected, but traffic does not pass through SOCKS5: {{reason}}. Check the address and sign-in details under Network.",
     "reasons": {

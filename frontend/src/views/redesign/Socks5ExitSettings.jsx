@@ -156,6 +156,13 @@ export default function Socks5ExitSettings() {
     );
   };
 
+  const footerLine = () => {
+    if (error) return error;
+    if (dirty) return t("socks5Exit.unsaved");
+    if (!settings.host) return t("socks5Exit.statusNoAddress");
+    return statusLine();
+  };
+
   const row = ({ title, desc, stacked = true, children, descRole }) => (
     <div className="rv-settings-page__row" data-stacked={stacked || undefined}>
       {(title || desc) && (
@@ -244,26 +251,19 @@ export default function Socks5ExitSettings() {
         ),
       })}
       {open && row({
-        children: (
-          <>
-            <div className="rv-settings-page__socks5-actions">
-              <Button variant="green" disabled={!dirty || busy} onClick={save}>
-                {t("common.save")}
-              </Button>
-            </div>
-            {error && <p className="rv-settings-page__hint" role="alert">{error}</p>}
-          </>
-        ),
-      })}
-      {open && settings.host && row({
         title: t("socks5Exit.checkTitle"),
-        desc: statusLine(),
-        descRole: "status",
+        desc: footerLine(),
+        descRole: error ? "alert" : "status",
         stacked: false,
         children: (
-          <Button disabled={!isConnected || checking || busy} onClick={check}>
-            {t("socks5Exit.check")}
-          </Button>
+          <div className="rv-settings-page__socks5-actions">
+            <Button disabled={!isConnected || checking || busy || dirty || !settings.host} onClick={check}>
+              {t("socks5Exit.check")}
+            </Button>
+            <Button variant="green" disabled={!dirty || busy} onClick={save}>
+              {t("common.save")}
+            </Button>
+          </div>
         ),
       })}
       {!open && error && row({
