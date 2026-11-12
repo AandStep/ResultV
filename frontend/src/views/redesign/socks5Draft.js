@@ -27,7 +27,8 @@ export function addApp(list, value, isWin) {
   let name = value.trim();
   if (!name) return list;
   if (isWin && !name.toLowerCase().endsWith(".exe")) name += ".exe";
-  if (!isWin && !name.includes(".")) name += ".app";
+  if (!isWin && name.toLowerCase().endsWith(".app")) name = name.slice(0, -4);
+  if (!name) return list;
   return list.some((app) => app.toLowerCase() === name.toLowerCase()) ? list : [...list, name];
 }
 

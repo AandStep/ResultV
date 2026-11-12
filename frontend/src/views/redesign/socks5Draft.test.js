@@ -8,10 +8,11 @@ test("sites are lower-cased, trimmed and not repeated", () => {
   assert.deepEqual(addSite([], "   "), []);
 });
 
-test("apps get the platform extension like the Smart rules", () => {
+test("apps match the executable name on every platform", () => {
   assert.deepEqual(addApp([], "tool", true), ["tool.exe"]);
-  assert.deepEqual(addApp([], "tool", false), ["tool.app"]);
   assert.deepEqual(addApp(["Tool.exe"], "tool.exe", true), ["Tool.exe"]);
+  assert.deepEqual(addApp([], "firefox", false), ["firefox"]);
+  assert.deepEqual(addApp([], "Google Chrome.app", false), ["Google Chrome"]);
 });
 
 test("a change of the lists alone makes the draft dirty", () => {
