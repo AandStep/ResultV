@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 )
 
@@ -64,7 +65,7 @@ func RestartAsAdmin(exePath string, args ...string) error {
 }
 
 func restartAsAdminDarwin(exePath string, args []string) error {
-	parts := []string{shellQuote(exePath)}
+	parts := []string{shellQuote(exePath), ElevatedFromFlag + strconv.Itoa(os.Getpid())}
 	for _, a := range args {
 		parts = append(parts, shellQuote(a))
 	}

@@ -1008,8 +1008,10 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	dnsDone := make(chan struct{})
 	go func() {
 		defer close(dnsDone)
-		m.applySystemDNSOverride(isEndpointProtocol, dnsServers)
-		m.applyTunnelAdapterDNS(mode, tunIPv4)
+		if runtime.GOOS != "darwin" {
+			m.applySystemDNSOverride(isEndpointProtocol, dnsServers)
+			_ = m.applyTunnelAdapterDNS(mode, tunIPv4)
+		}
 	}()
 
 	tProbe := time.Now()
@@ -1062,7 +1064,28 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		}
 	}
 	m.setConnectCancel(nil)
-
+	if runtime.GOOS == "darwin" && mode == ProxyModeTunnel {
+		// Register at commit so a failed probe never leaves a resolver
+		// pointing at a closed adapter.
+		dnsErr := m.applyTunnelAdapterDNS(mode, tunIPv4)
+		cancelled := connectCtx.Err() != nil
+		if dnsErr != nil || cancelled {
+			m.revertDNSOverride()
+			_ = m.engine.Stop()
+			m.clearPendingLocked()
+			m.emitStatusLocked()
+			m.mu.Unlock()
+			if cancelled {
+				return ConnectResultDTO{Message: "Подключение отменено", ErrorCode: "cancelled"}
+			}
+			return ConnectResultDTO{
+				Message:      "Не удалось направить системный DNS в туннель",
+				Reason:       dnsErr.Error(),
+				ErrorCode:    "tunnel_dns_setup_failed",
+				TunnelFailed: true,
+			}
+		}
+	}
 	var gpoConflict bool
 	if mode == ProxyModeProxy && m.sysProxy != nil {
 		proxyAddr := fmt.Sprintf("127.0.0.1:%d", actualLocalPort)
@@ -1211,33 +1234,30 @@ func tunAdapterDNSAddrs(tunIPv4CIDR string) (adapterIP, dnsIP string) {
 	return ip4.String(), next.String()
 }
 
-// applyTunnelAdapterDNS points the TUN adapter's resolver at an address inside
-// the TUN subnet so the Windows resolver keeps working through the tunnel.
-// applySystemDNSOverride pins the *physical* adapters to neutral public
-// resolvers — right against leaks, but plain UDP/53 to them is unreachable
-// outside the tunnel (ISP blackholing; strict_route WFP drops off-TUN
-// packets), so after the override the OS resolver survived only on cache and
-// app-level DoH. Routing queries into the TUN (hijack-dns → sing-box DNS,
-// detour=proxy) makes the system resolver actually work mid-session. The
-// adapter vanishes on disconnect, so there is nothing to restore.
-func (m *Manager) applyTunnelAdapterDNS(mode ProxyMode, tunIPv4 string) {
+// applyTunnelAdapterDNS registers a resolver inside the TUN subnet. sing-box
+// intercepts its queries and resolves them through the VPN outbound.
+func (m *Manager) applyTunnelAdapterDNS(mode ProxyMode, tunIPv4 string) error {
 	if mode != ProxyModeTunnel || m.sysDNS == nil {
-		return
+		return nil
 	}
 	if !isAdminCheck() {
 		// Tunnel mode is admin-gated upstream; without admin the adapter DNS
 		// call would only fail noisily.
-		return
+		return nil
 	}
 	adapterIP, dnsIP := tunAdapterDNSAddrs(tunIPv4)
 	if dnsIP == "" {
-		return
+		if runtime.GOOS == "darwin" {
+			return fmt.Errorf("no DNS address inside the tunnel subnet %q", tunIPv4)
+		}
+		return nil
 	}
 	if err := m.sysDNS.OverrideTunnelAdapter(adapterIP, dnsIP); err != nil {
 		m.log.Warning(fmt.Sprintf("[СИСТЕМА] Не удалось направить системный DNS в туннель: %v", err))
-		return
+		return err
 	}
 	m.log.Success("[СИСТЕМА] Системный DNS направлен в туннель (резолв через VPN)")
+	return nil
 }
 
 // revertDNSOverride undoes applySystemDNSOverride/applyTunnelAdapterDNS after a

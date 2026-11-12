@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -710,6 +711,7 @@ type SBRouteRule struct {
 	// port-unreachable, "drop" black-holes silently. Only "default" produces the
 	// fast client-side fallback quicRejectRule relies on.
 	Method string `json:"method,omitempty"`
+	NoDrop bool   `json:"no_drop,omitempty"`
 	// Server is the DNS server of Action="resolve".
 	Server string `json:"server,omitempty"`
 }
@@ -1264,6 +1266,10 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 		StrictRoute:         strictRoute,
 		RouteExcludeAddress: routeExclude,
 		DNSMode:             "hijack",
+	}
+	if runtime.GOOS == "darwin" {
+		// Let sing-box choose an available utun<N> interface.
+		tun.InterfaceName = ""
 	}
 	if pt != "WIREGUARD" && pt != "AMNEZIAWG" {
 		tun.UDPTimeout = "30s"
@@ -2145,6 +2151,16 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		}
 	}
 
+	if runtime.GOOS == "darwin" && cfg.Mode == ProxyModeTunnel && !cfg.EnableIPv6 {
+		// Keep public IPv6 captured by utun. Reject it before the TUN stack
+		// acknowledges the TCP handshake so clients can fall back to IPv4.
+		rules = append(rules, SBRouteRule{
+			Inbound: []string{"tun-in"},
+			IPCidr:  []string{"2000::/3"},
+			Action:  "reject",
+			NoDrop:  true,
+		})
+	}
 	rules = append(rules, SBRouteRule{
 		Action: "sniff",
 	})

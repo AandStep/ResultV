@@ -69,6 +69,10 @@ withParentMenuId: (int)theParentMenuId
 @synthesize window = _window;
 
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification {
+  [self installStatusItem];
+}
+
+- (void)installStatusItem {
   self->statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
   self->menu = [[NSMenu alloc] init];
   [self->menu setAutoenablesItems: FALSE];
@@ -223,6 +227,11 @@ NSMenuItem *find_menu_item(NSMenu *ourMenu, NSNumber *menuId) {
   [NSApp terminate:self];
 }
 
+- (void) removeStatusItem {
+  [[NSStatusBar systemStatusBar] removeStatusItem:statusItem];
+  statusItem = nil;
+}
+
 - (void) statusOnClick:(NSButton *)btn {
     NSEvent *event = [NSApp currentEvent];
     if(event.type == NSEventTypeLeftMouseUp){
@@ -239,6 +248,7 @@ NSMenuItem *find_menu_item(NSMenu *ourMenu, NSNumber *menuId) {
 }
 
 - (void) enable_on_click {
+  [statusItem.button setTarget:self];
   [statusItem.button setAction:@selector(statusOnClick:)];
   [statusItem.button sendActionOn:(NSEventMaskLeftMouseUp|NSEventMaskRightMouseUp)];
 }
@@ -268,7 +278,7 @@ void registerSystray(void) {
 }
 
 void nativeEnd(void) {
-  systray_on_exit();
+  // RunWithExternalLoop calls Quit after nativeEnd.
 }
 
 int nativeLoop(void) {
@@ -279,12 +289,11 @@ int nativeLoop(void) {
 }
 
 void nativeStart(void) {
-  owner = [[SystrayAppDelegate alloc] init];
-  NSNotification *launched = [NSNotification
-                                  notificationWithName: NSApplicationDidFinishLaunchingNotification
-                                                object: [NSApplication sharedApplication]];
-  [[NSApplication sharedApplication] setDelegate:owner];
-  [owner applicationDidFinishLaunching:launched];
+  // Wails owns NSApplication and its delegate. Install only the status item.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    owner = [[SystrayAppDelegate alloc] init];
+    [owner installStatusItem];
+  });
 }
 
 void runInMainThread(SEL method, id object) {
@@ -368,5 +377,13 @@ void enable_on_click(void) {
 }
 
 void quit() {
-  runInMainThread(@selector(quit), nil);
+  if (internalLoop) {
+    runInMainThread(@selector(quit), nil);
+    return;
+  }
+  // Wails may already have stopped its main loop by the time Go shuts down.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [owner removeStatusItem];
+  });
+  systray_on_exit();
 }

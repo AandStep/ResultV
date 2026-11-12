@@ -88,7 +88,6 @@ func main() {
 		},
 		BackgroundColour: &options.RGBA{R: 24, G: 24, B: 27, A: 1},
 		OnStartup:        app.startup,
-		OnBeforeClose:    app.BeforeClose,
 		OnShutdown:       app.shutdown,
 		Windows: &windows.Options{
 			WebviewIsTransparent:              false,
@@ -110,6 +109,13 @@ func main() {
 		Bind: []interface{}{
 			app,
 		},
+	}
+	if runtime.GOOS == "darwin" {
+		// Wails routes both the window close button and the native Quit
+		// command through OnBeforeClose unless Cocoa handles window hiding.
+		opts.HideWindowOnClose = true
+	} else {
+		opts.OnBeforeClose = app.BeforeClose
 	}
 	if runtime.GOOS != "windows" {
 		opts.SingleInstanceLock = &options.SingleInstanceLock{
