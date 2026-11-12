@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -58,6 +59,35 @@ func (m *Manager) applySocks5Exit(profile *config.Socks5ExitConfig) (*config.Soc
 	}
 	m.socks5Exit = profile
 	return previous, false, nil
+}
+
+func (m *Manager) socks5ExitActiveLocked() bool {
+	return m.connected && m.socks5ExitWired && m.socks5Exit.IsActive()
+}
+
+func (m *Manager) Socks5ExitActive() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.socks5ExitActiveLocked()
+}
+
+func (m *Manager) Socks5ExitCoversAllVPN() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.socks5ExitActiveLocked() && !m.socks5ExitBuilt.HasLists()
+}
+
+func (m *Manager) CheckSocks5Exit(ctx context.Context) Socks5ExitCheck {
+	m.mu.Lock()
+	engine, active := m.engine, m.socks5ExitActiveLocked()
+	m.mu.Unlock()
+	checker, ok := engine.(interface {
+		CheckSocks5Exit(context.Context) Socks5ExitCheck
+	})
+	if !active || !ok {
+		return Socks5ExitCheck{Reason: Socks5CheckInactive}
+	}
+	return checker.CheckSocks5Exit(ctx)
 }
 
 func probePortForSession(localPort, firstHopProbePort int) int {
