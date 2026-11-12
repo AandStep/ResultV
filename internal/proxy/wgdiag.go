@@ -22,10 +22,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/sagernet/gvisor/pkg/tcpip"
 	"github.com/sagernet/gvisor/pkg/tcpip/stack"
+	"github.com/sagernet/sing-box/adapter"
 	wgprotocol "github.com/sagernet/sing-box/protocol/wireguard"
+	"github.com/sagernet/sing/service"
 
 	"resultproxy-wails/internal/logger"
 )
@@ -64,10 +67,20 @@ var wgStatsFields = []string{
 	"protocol_version",
 }
 
-// ipcGetter is the read half of the device's UAPI.
+// ipcGetter and ipcSetter are the two halves of the device's UAPI.
 type ipcGetter interface {
 	IpcGet() (string, error)
 }
+
+type ipcSetter interface {
+	IpcSet(string) error
+}
+
+// wgDeviceError means the path from the endpoint to its device did not look
+// the way it does in the engine version this was written against.
+type wgDeviceError struct{ what string }
+
+func (e *wgDeviceError) Error() string { return e.what }
 
 // startWGStatsSampler logs the WireGuard device counters every few seconds for
 // as long as ctx lives. No-op unless there is somewhere to write and a
@@ -136,35 +149,37 @@ func filterWGStats(dump string) string {
 func wgEndpointFrom(boxCtx context.Context) (*wgprotocol.Endpoint, error) {
 	manager := endpointManagerFrom(boxCtx)
 	if manager == nil {
-		return nil, &awg31Error{"ядро не отдало менеджер эндпоинтов"}
+		return nil, &wgDeviceError{"ядро не отдало менеджер эндпоинтов"}
 	}
 	ep, loaded := manager.Get(wireguardEndpointTag)
 	if !loaded {
-		return nil, &awg31Error{"эндпоинт " + wireguardEndpointTag + " не найден"}
+		return nil, &wgDeviceError{"эндпоинт " + wireguardEndpointTag + " не найден"}
 	}
 	wgEndpoint, ok := ep.(*wgprotocol.Endpoint)
 	if !ok {
-		return nil, &awg31Error{"узел не WireGuard"}
+		return nil, &wgDeviceError{"узел не WireGuard"}
 	}
 	return wgEndpoint, nil
 }
 
-// awg31DeviceValue exposes the device as an untyped value so both the 3.1
-// writer and the stats reader can ask it for their own interface.
-func awg31DeviceInterface(wgEndpoint *wgprotocol.Endpoint) (any, error) {
+// wgDeviceFrom walks the endpoint down to the wireguard-go device. The core
+// exposes neither the device nor a hook, so the path is the object graph:
+// protocol/wireguard.Endpoint.endpoint → transport/wireguard.Endpoint.device.
+// TestWGDeviceFieldsStillExist fails on the engine bump that moves them.
+func wgDeviceFrom(wgEndpoint *wgprotocol.Endpoint) (any, error) {
 	transportEndpoint, err := unexportedField(reflect.ValueOf(wgEndpoint), "endpoint")
 	if err != nil {
-		return nil, &awg31Error{"protocol/wireguard.Endpoint: " + err.Error()}
+		return nil, &wgDeviceError{"protocol/wireguard.Endpoint: " + err.Error()}
 	}
 	if transportEndpoint.Kind() == reflect.Pointer && transportEndpoint.IsNil() {
-		return nil, &awg31Error{"устройство WireGuard ещё не создано"}
+		return nil, &wgDeviceError{"устройство WireGuard ещё не создано"}
 	}
 	deviceValue, err := unexportedField(transportEndpoint, "device")
 	if err != nil {
-		return nil, &awg31Error{"transport/wireguard.Endpoint: " + err.Error()}
+		return nil, &wgDeviceError{"transport/wireguard.Endpoint: " + err.Error()}
 	}
 	if !deviceValue.IsValid() || deviceValue.IsZero() {
-		return nil, &awg31Error{"устройство WireGuard ещё не создано"}
+		return nil, &wgDeviceError{"устройство WireGuard ещё не создано"}
 	}
 	return deviceValue.Interface(), nil
 }
@@ -237,7 +252,7 @@ func wgStackFrom(wgEndpoint *wgprotocol.Endpoint) (statsProvider, error) {
 	}
 	provider, ok := value.(statsProvider)
 	if !ok {
-		return nil, &awg31Error{"стек не отдаёт статистику"}
+		return nil, &wgDeviceError{"стек не отдаёт статистику"}
 	}
 	return provider, nil
 }
@@ -260,24 +275,24 @@ func wgGVisorStack(boxCtx context.Context) *stack.Stack {
 func wgStackValue(wgEndpoint *wgprotocol.Endpoint) (any, error) {
 	transportEndpoint, err := unexportedField(reflect.ValueOf(wgEndpoint), "endpoint")
 	if err != nil {
-		return nil, &awg31Error{"protocol/wireguard.Endpoint: " + err.Error()}
+		return nil, &wgDeviceError{"protocol/wireguard.Endpoint: " + err.Error()}
 	}
 	if transportEndpoint.Kind() == reflect.Pointer && transportEndpoint.IsNil() {
-		return nil, &awg31Error{"устройство WireGuard ещё не создано"}
+		return nil, &wgDeviceError{"устройство WireGuard ещё не создано"}
 	}
 	tunDevice, err := unexportedField(transportEndpoint, "tunDevice")
 	if err != nil {
-		return nil, &awg31Error{"transport/wireguard.Endpoint: " + err.Error()}
+		return nil, &wgDeviceError{"transport/wireguard.Endpoint: " + err.Error()}
 	}
 	if !tunDevice.IsValid() || tunDevice.IsZero() {
-		return nil, &awg31Error{"устройство WireGuard ещё не создано"}
+		return nil, &wgDeviceError{"устройство WireGuard ещё не создано"}
 	}
 	// tunDevice is an interface holding *stackDevice for a gVisor endpoint, and
 	// something else entirely for a system one — where there is no stack to read
 	// and nothing to report.
 	stackField, err := unexportedField(reflect.ValueOf(tunDevice.Interface()), "stack")
 	if err != nil {
-		return nil, &awg31Error{"устройство без gVisor-стека: " + err.Error()}
+		return nil, &wgDeviceError{"устройство без gVisor-стека: " + err.Error()}
 	}
 	return stackField.Interface(), nil
 }
@@ -329,17 +344,17 @@ func wgDeviceDump(boxCtx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	deviceValue, err := awg31Device(endpoint)
+	deviceValue, err := wgDeviceFrom(endpoint)
 	if err != nil {
 		return "", err
 	}
 	getter, ok := deviceValue.(ipcGetter)
 	if !ok {
-		return "", &awg31Error{"устройство не отдаёт UAPI"}
+		return "", &wgDeviceError{"устройство не отдаёт UAPI"}
 	}
 	dump, err := getter.IpcGet()
 	if err != nil {
-		return "", &awg31Error{"UAPI не прочитан: " + err.Error()}
+		return "", &wgDeviceError{"UAPI не прочитан: " + err.Error()}
 	}
 	return dump, nil
 }
@@ -393,4 +408,38 @@ func wgTraceLine(elapsed time.Duration, dump string, now time.Time, st wgTraceSt
 			st.retransmits, st.timeouts, st.failed)
 	}
 	return line
+}
+
+// endpointManagerFrom pulls the core's endpoint manager out of the box context.
+func endpointManagerFrom(boxCtx context.Context) adapter.EndpointManager {
+	if boxCtx == nil {
+		return nil
+	}
+	return service.FromContext[adapter.EndpointManager](boxCtx)
+}
+
+// unexportedField reads an unexported struct field by name, re-created at its
+// own address because reflect refuses to hand unexported values through
+// Interface().
+func unexportedField(v reflect.Value, name string) (reflect.Value, error) {
+	if !v.IsValid() {
+		return reflect.Value{}, fmt.Errorf("нет значения для поля %s", name)
+	}
+	if v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return reflect.Value{}, fmt.Errorf("нулевой указатель вместо структуры с полем %s", name)
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return reflect.Value{}, fmt.Errorf("%s: ожидалась структура, получено %s", name, v.Kind())
+	}
+	field := v.FieldByName(name)
+	if !field.IsValid() {
+		return reflect.Value{}, fmt.Errorf("поле %s исчезло из ядра", name)
+	}
+	if !field.CanAddr() {
+		return reflect.Value{}, fmt.Errorf("поле %s недоступно по адресу", name)
+	}
+	return reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem(), nil
 }

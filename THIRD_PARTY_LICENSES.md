@@ -24,11 +24,9 @@ The vendored copy has been modified by ResultV. Original package comment:
 - **License**: MIT (see `third_party/wireguard-go/LICENSE`)
 
 The vendored copy has been modified by ResultV. A handshake retry on a bind
-without a fixed port moves to a fresh source port (`device/timers.go`), a
-rebind restarts handshakes still awaiting an answer (`device/device.go`), and
-switching `random_trailers` on a running device restarts pending handshakes
-(`device/uapi.go`). `device/rebind_handshake_test.go` and
-`device/random_trailers_test.go` cover them. `device/padding_test.go` was
+without a fixed port moves to a fresh source port (`device/timers.go`), and a
+rebind restarts handshakes still awaiting an answer (`device/device.go`).
+`device/rebind_handshake_test.go` covers both. `device/padding_test.go` was
 dropped and `device/endpoint_resolver_test.go` adjusted because they do not
 compile against the fork.
 

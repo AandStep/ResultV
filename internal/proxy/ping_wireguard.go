@@ -53,7 +53,7 @@ func pingWireGuardHandshake(ctx context.Context, proxy ProxyConfig, bindIPv4 str
 	if err != nil {
 		return 0, false, "engine_start_failed"
 	}
-	deviceValue, err := awg31DeviceInterface(endpoint)
+	deviceValue, err := wgDeviceFrom(endpoint)
 	if err != nil {
 		return 0, false, "engine_start_failed"
 	}

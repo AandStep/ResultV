@@ -595,6 +595,10 @@ type SBWireGuardAmnezia struct {
 	RejectAfterTime        string `json:"reject_after_time,omitempty"`
 	KeepaliveTimeout       string `json:"keepalive_timeout,omitempty"`
 	MaxHandshakeAttempts   string `json:"max_handshake_attempts,omitempty"`
+
+	// AmneziaWG 3.1, available since sing-box-extended v1.14.3-extended-2.7.3.
+	RandomTrailers bool `json:"random_trailers,omitempty"`
+	DisableCookies bool `json:"disable_cookies,omitempty"`
 }
 
 type SBUTLS struct {

@@ -542,9 +542,7 @@ func (device *Device) handleDeviceLine(ipcDev *ipcSetDevice, key, value string) 
 			return ipcErrorf(ipc.IpcErrorInvalid, "failed to parse random trailers: %w", err)
 		}
 		device.log.Verbosef("UAPI: Updating random trailers")
-		if device.randomTrailers.Swap(val) != val {
-			device.restartPendingHandshakes()
-		}
+		device.randomTrailers.Store(val)
 
 	case "disable_cookies":
 		val, err := strconv.ParseBool(value)
@@ -870,51 +868,3 @@ func (d *ipcSetDevice) mergeWithDevice(device *Device) error {
 
 	return nil
 }
-
-// restartPendingHandshakes sends a fresh initiation for every running peer
-// that has no session yet. Changing the trailer setting voids a handshake in
-// flight: its answer is framed for the other setting and gets dropped, and
-// the peer would otherwise sit out the whole retry timeout.
-func (device *Device) restartPendingHandshakes() {
-	device.restartHandshakes(false)
-}
-
-// restartHandshakesInFlight does the same only for peers whose initiation is
-// still awaiting an answer. A rebind closes the socket that answer would
-// arrive on.
-func (device *Device) restartHandshakesInFlight() {
-	device.restartHandshakes(true)
-}
-
-func (device *Device) restartHandshakes(inFlightOnly bool) {
-	device.peers.RLock()
-	defer device.peers.RUnlock()
-	for _, peer := range device.peers.keyMap {
-		if !peer.isRunning.Load() {
-			continue
-		}
-		peer.keypairs.RLock()
-		established := peer.keypairs.current != nil
-		peer.keypairs.RUnlock()
-		if established {
-			continue
-		}
-		peer.handshake.mutex.Lock()
-		sinceLast := time.Since(peer.handshake.lastSentHandshake)
-		if inFlightOnly && sinceLast >= device.rekeyMinTimeout() {
-			peer.handshake.mutex.Unlock()
-			continue
-		}
-		peer.handshake.lastSentHandshake = time.Now().Add(-(device.rekeyMinTimeout() + time.Second))
-		peer.handshake.mutex.Unlock()
-		go func(wait time.Duration) {
-			time.Sleep(wait)
-			peer.SendHandshakeInitiation(false)
-		}(max(handshakeRestartGap-sinceLast, 0))
-	}
-}
-
-// handshakeRestartGap keeps a restarted initiation clear of the one before
-// it: the server drops an initiation whose timestamp does not advance (TAI64N
-// here ticks every ~16.8 ms) or that arrives within HandshakeInitationRate.
-const handshakeRestartGap = 50 * time.Millisecond

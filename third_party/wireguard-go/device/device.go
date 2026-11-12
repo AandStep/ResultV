@@ -879,3 +879,39 @@ func (device *Device) BindClose() error {
 	device.net.Unlock()
 	return err
 }
+
+// restartHandshakesInFlight sends a fresh initiation for every running peer
+// whose initiation is still awaiting an answer. A rebind closes the socket
+// that answer would arrive on.
+func (device *Device) restartHandshakesInFlight() {
+	device.peers.RLock()
+	defer device.peers.RUnlock()
+	for _, peer := range device.peers.keyMap {
+		if !peer.isRunning.Load() {
+			continue
+		}
+		peer.keypairs.RLock()
+		established := peer.keypairs.current != nil
+		peer.keypairs.RUnlock()
+		if established {
+			continue
+		}
+		peer.handshake.mutex.Lock()
+		sinceLast := time.Since(peer.handshake.lastSentHandshake)
+		if sinceLast >= device.rekeyMinTimeout() {
+			peer.handshake.mutex.Unlock()
+			continue
+		}
+		peer.handshake.lastSentHandshake = time.Now().Add(-(device.rekeyMinTimeout() + time.Second))
+		peer.handshake.mutex.Unlock()
+		go func(wait time.Duration) {
+			time.Sleep(wait)
+			peer.SendHandshakeInitiation(false)
+		}(max(handshakeRestartGap-sinceLast, 0))
+	}
+}
+
+// handshakeRestartGap keeps a restarted initiation clear of the one before
+// it: the server drops an initiation whose timestamp does not advance (TAI64N
+// here ticks every ~16.8 ms) or that arrives within HandshakeInitationRate.
+const handshakeRestartGap = 50 * time.Millisecond
