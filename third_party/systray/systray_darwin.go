@@ -84,8 +84,8 @@ var (
 )
 
 func setOnClick(fn func(menu IMenu)) {
-	enableOnClick()
 	onClick = fn
+	enableOnClick()
 }
 
 func setOnDClick(fn func(menu IMenu)) {
@@ -230,7 +230,7 @@ func systray_on_click() {
 		}
 	}
 	if onClick != nil {
-		onClick(st)
+		go onClick(st)
 	}
 }
 

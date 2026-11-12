@@ -173,8 +173,8 @@ type SystemDNS interface {
 	// OverrideTunnelAdapter points the tunnel adapter's resolver at dnsIP — an
 	// address inside the TUN subnet, answered by sing-box's hijack-dns rule
 	// through the tunnel. The adapter is located by its interface address
-	// (adapterIP). Deliberately NOT snapshotted: the adapter is destroyed on
-	// disconnect, so there is nothing to restore.
+	// (adapterIP). The override is scoped to the lifetime of the tunnel
+	// adapter or the platform DNS session.
 	OverrideTunnelAdapter(adapterIP, dnsIP string) error
 
 	// SnapshotExists reports whether a DNS snapshot is present on disk — i.e.
@@ -189,9 +189,7 @@ type SystemDNS interface {
 	DeleteSnapshot() error
 }
 
-// NewSystemDNS returns the platform implementation. On non-Windows it's
-// a no-op (we only ship Windows Proxy-mode; macOS/Linux use Tunnel-mode
-// where sing-box already covers DNS).
+// NewSystemDNS returns the platform DNS implementation.
 func NewSystemDNS() SystemDNS {
 	return newSystemDNS()
 }
