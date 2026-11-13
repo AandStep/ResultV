@@ -770,6 +770,14 @@
     "elevLead": "The app exited uncleanly last time (for example, via Task Manager) and left system settings behind:",
     "elevTail": "Administrator rights are required to clean them up. Restart the app as administrator — cleanup will run automatically."
   },
+  "configNotice": {
+    "restoredTitle": "Settings restored from a backup",
+    "restoredMessage": "The settings file could not be read. ResultV restored the settings from the backup made at the previous start — changes from the last session may be missing.\n\nThe unreadable file is kept in the app data folder.",
+    "resetTitle": "Settings were reset",
+    "resetMessage": "The settings file could not be read and there is no backup. ResultV started with default settings — servers and subscriptions need to be added again.\n\nThe unreadable file is kept in the app data folder.",
+    "unavailableTitle": "Settings are unavailable",
+    "unavailableMessage": "ResultV could not open its settings storage. Changes made in this session will not be saved.\n\nRestart the app. The reason is recorded in the log."
+  },
   "app": {
     "loading": "Loading system..."
   },

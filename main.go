@@ -136,11 +136,10 @@ func alwaysRunAsAdminSetting() bool {
 	if err != nil {
 		return false
 	}
-	m := config.NewManager(cs)
-	if err := m.Init(dir); err != nil {
-		return false
-	}
-	return m.GetConfig().Settings.AlwaysRunAsAdmin
+	// Read-only: repairing the config here would hide it from the instance
+	// that shows the window.
+	settings, _ := config.ReadStoredSettings(cs, dir)
+	return settings.AlwaysRunAsAdmin
 }
 
 // Светлая тема отложена до доработки. Чтобы включить: читать настройки один

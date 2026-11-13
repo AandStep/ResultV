@@ -394,6 +394,17 @@ export const wailsAPI = {
     }
   },
 
+  takeConfigStartupNotice: async () => {
+    try {
+      const take = window?.go?.main?.App?.TakeConfigStartupNotice;
+      if (!take) return "";
+      return (await take()) || "";
+    } catch (e) {
+      console.error("wailsAPI.takeConfigStartupNotice error:", e);
+      return "";
+    }
+  },
+
   isAutostartEnabled: async () => {
     try {
       return await IsAutostartEnabled();

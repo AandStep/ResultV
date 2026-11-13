@@ -18,7 +18,6 @@ package config
 import (
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -167,24 +166,6 @@ func TestManagerMissingFile(t *testing.T) {
 	cfg := mgr.GetConfig()
 	if cfg.RoutingRules.Mode != "smart" {
 		t.Errorf("expected default mode when file missing, got %q", cfg.RoutingRules.Mode)
-	}
-}
-
-func TestManagerCorruptedFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "proxy_config.json")
-	os.WriteFile(configPath, []byte("not json at all {{{{"), 0o600)
-
-	cs := newTestCrypto()
-	mgr := NewManager(cs)
-
-	if err := mgr.Init(tmpDir); err == nil || !errors.Is(err, ErrDecryptFailed) {
-		t.Fatalf("Init with corrupted file should return ErrDecryptFailed: %v", err)
-	}
-
-	cfg := mgr.GetConfig()
-	if cfg.RoutingRules.Mode != "smart" {
-		t.Errorf("expected default mode for corrupted file, got %q", cfg.RoutingRules.Mode)
 	}
 }
 

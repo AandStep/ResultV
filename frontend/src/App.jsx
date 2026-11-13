@@ -103,10 +103,44 @@ const AppContent = () => {
     // before mount) and pushed via the "leftovers:recovered" event (recovery
     // finished after mount); a ref guard shows the notice exactly once.
     const leftoverNoticeShownRef = React.useRef(false);
+    // Окно сообщений одно: уведомление о настройках важнее, остатки ждут за ним.
+    const configNoticeRef = React.useRef("pending");
+    const heldLeftoverRef = React.useRef(null);
+    const showLeftoverRef = React.useRef(null);
+    const releaseLeftoverNotice = React.useCallback(() => {
+        configNoticeRef.current = "done";
+        const held = heldLeftoverRef.current;
+        heldLeftoverRef.current = null;
+        if (held) showLeftoverRef.current?.(held);
+    }, []);
+    React.useEffect(() => {
+        (async () => {
+            const notice = await wailsAPI.takeConfigStartupNotice();
+            if (!["restored", "reset", "unavailable"].includes(notice)) {
+                releaseLeftoverNotice();
+                return;
+            }
+            configNoticeRef.current = "open";
+            showAlertDialog({
+                title: t(`configNotice.${notice}Title`),
+                message: t(`configNotice.${notice}Message`),
+                variant: notice === "restored" ? "warning" : "danger",
+                confirmText: t("common.ok"),
+            });
+        })();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    React.useEffect(() => {
+        if (configNoticeRef.current === "open" && !appDialog?.isOpen) releaseLeftoverNotice();
+    }, [appDialog?.isOpen, releaseLeftoverNotice]);
     React.useEffect(() => {
         const showNotice = (rep) => {
             if (leftoverNoticeShownRef.current) return;
             if (!rep || (!rep.proxy && !rep.dns && !rep.tun && !rep.firewall)) return;
+            if (configNoticeRef.current !== "done") {
+                heldLeftoverRef.current = rep;
+                return;
+            }
             leftoverNoticeShownRef.current = true;
             wailsAPI.resetLeftoverReport();
             const items = [];
@@ -134,6 +168,7 @@ const AppContent = () => {
                 confirmText: t("common.ok"),
             });
         };
+        showLeftoverRef.current = showNotice;
         (async () => {
             showNotice(await wailsAPI.getLeftoverRecoveryReport());
         })();

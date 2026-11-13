@@ -92,6 +92,9 @@ type App struct {
 	crypto       *config.CryptoService
 	config       *config.Manager
 	startupReady chan struct{}
+	// configNotice is what the UI must tell the user about the stored config
+	// after this start: "restored", "reset" or "unavailable".
+	configNotice atomic.Pointer[string]
 	proxy        *proxy.Manager
 	tray         *system.Tray
 	killSwitch   system.KillSwitch
@@ -775,10 +778,12 @@ func (a *App) BeforeClose(ctx context.Context) bool {
 
 func (a *App) loadStartupConfig(userDataPath string) bool {
 	a.log.Info(fmt.Sprintf("[CONFIG] UserDataDir: %s", userDataPath))
+	unavailable := "unavailable"
 
 	cs, err := config.NewCryptoService(userDataPath)
 	if err != nil {
 		a.log.Error(fmt.Sprintf("Ошибка инициализации шифрования: %v", err))
+		a.configNotice.Store(&unavailable)
 		return false
 	}
 	if src := cs.KeySource(); src != "" {
@@ -788,20 +793,42 @@ func (a *App) loadStartupConfig(userDataPath string) bool {
 	manager := config.NewManager(cs)
 	if err := manager.Init(userDataPath); err != nil {
 		a.log.Error(fmt.Sprintf("Ошибка загрузки конфигурации: %v", err))
+		a.configNotice.Store(&unavailable)
 		return false
 	}
 	a.crypto = cs
 	a.config = manager
-	if manager.WasCreatedFresh() {
+	profiles := len(manager.GetConfig().Proxies)
+	switch recovery := manager.Recovery(); {
+	case recovery == config.RecoveryRestored:
+		a.log.Warning(fmt.Sprintf("[CONFIG] Файл настроек не прочитался: восстановлена копия прошлого запуска, профилей %d. Нечитаемый файл сохранён рядом", profiles))
+	case recovery == config.RecoveryReset:
+		a.log.Warning("[CONFIG] Файл настроек не прочитался, резервной копии нет: запуск с настройками по умолчанию. Нечитаемый файл сохранён рядом")
+	case manager.WasCreatedFresh():
 		a.log.Info("[CONFIG] Файл конфигурации не найден, используется новый профиль")
-	} else {
-		a.log.Success(fmt.Sprintf("[CONFIG] Конфигурация загружена с диска: профилей %d", len(manager.GetConfig().Proxies)))
+	default:
+		a.log.Success(fmt.Sprintf("[CONFIG] Конфигурация загружена с диска: профилей %d", profiles))
+	}
+	if recovery := string(manager.Recovery()); recovery != "" {
+		a.configNotice.Store(&recovery)
 	}
 
 	a.seedChangelogVersionOnFreshInstall()
 	a.applyResumeMode()
 	a.applyConnectOnStartup()
 	return true
+}
+
+// TakeConfigStartupNotice hands the UI, once, what happened to the stored
+// config on this start; empty when it loaded normally.
+func (a *App) TakeConfigStartupNotice() string {
+	if a.startupReady != nil {
+		<-a.startupReady
+	}
+	if notice := a.configNotice.Swap(nil); notice != nil {
+		return *notice
+	}
+	return ""
 }
 
 func (a *App) GetConfig() (config.AppConfig, error) {

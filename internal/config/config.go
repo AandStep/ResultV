@@ -548,6 +548,7 @@ type Manager struct {
 	// existing one. A config that exists but fails to decrypt does NOT count as
 	// fresh — the user had the app before, we just cannot read their settings.
 	createdFresh bool
+	recovery     Recovery
 }
 
 func NewManager(crypto *CryptoService) *Manager {
@@ -561,8 +562,8 @@ func (m *Manager) Init(userDataPath string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.configPath = filepath.Join(userDataPath, "proxy_config.json")
-	legacyConfigPath := filepath.Join(legacyUserDataDir(userDataPath), "proxy_config.json")
+	m.configPath = filepath.Join(userDataPath, configFileName)
+	legacyConfigPath := filepath.Join(legacyUserDataDir(userDataPath), configFileName)
 	if err := migrateLegacyConfigFile(m.configPath, legacyConfigPath); err != nil {
 		return fmt.Errorf("migrating legacy config: %w", err)
 	}
@@ -740,7 +741,7 @@ func (m *Manager) saveConfigLocked(cfg AppConfig) error {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
 
-	if err := os.WriteFile(m.configPath, []byte(encrypted), 0o600); err != nil {
+	if err := writeFileAtomic(m.configPath, []byte(encrypted), 0o600); err != nil {
 		return fmt.Errorf("writing config: %w", err)
 	}
 
@@ -785,14 +786,18 @@ func (m *Manager) loadLocked() error {
 	}
 
 	var cfg AppConfig
-	if err := m.crypto.DecryptInto(string(data), &cfg); err != nil {
-		m.cache = DefaultConfig()
+	if decryptErr := m.crypto.DecryptInto(string(data), &cfg); decryptErr != nil {
+		if err := m.recoverUnreadableLocked(data); err != nil {
+			return fmt.Errorf("%w: %v; recovery failed: %v", ErrDecryptFailed, decryptErr, err)
+		}
 		m.loaded = true
-		return fmt.Errorf("%w: %v", ErrDecryptFailed, err)
+		return nil
 	}
 
 	m.cache = ensureDefaults(cfg)
 	m.loaded = true
+	// The backup is the config as it stood at the last successful start.
+	_ = writeFileAtomic(m.configPath+backupSuffix, data, 0o600)
 	return nil
 }
 

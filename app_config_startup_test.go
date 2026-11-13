@@ -63,7 +63,7 @@ func TestGetConfigWaitsForStartupLoad(t *testing.T) {
 	}
 }
 
-func TestGetConfigReportsUnavailableConfig(t *testing.T) {
+func TestStartupResetsUnreadableConfigAndKeepsCopy(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "proxy_config.json")
 	foreignKey := config.NewCryptoServiceWithID("unrelated-test-key")
@@ -75,22 +75,52 @@ func TestGetConfigReportsUnavailableConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := NewApp()
-	if a.loadStartupConfig(dir) {
-		t.Fatal("startup accepted an unreadable config")
+	if !a.loadStartupConfig(dir) {
+		t.Fatal("an unreadable config left the app without storage")
 	}
 	close(a.startupReady)
-	if _, err := a.GetConfig(); err == nil {
-		t.Fatal("GetConfig reported an unavailable config as successfully loaded")
+
+	if notice := a.TakeConfigStartupNotice(); notice != "reset" {
+		t.Fatalf("startup notice: %q", notice)
 	}
-	if err := a.SyncProxies(nil); err == nil {
-		t.Fatal("SyncProxies accepted a write after a failed startup load")
+	if notice := a.TakeConfigStartupNotice(); notice != "" {
+		t.Fatalf("startup notice repeated: %q", notice)
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
+	copies, _ := filepath.Glob(path + ".unreadable-*")
+	if len(copies) != 1 {
+		t.Fatalf("unreadable copies: %v", copies)
+	}
+	if data, _ := os.ReadFile(copies[0]); string(data) != original {
+		t.Fatal("the unreadable config was not kept as it was")
+	}
+	if err := a.SyncProxies([]config.ProxyEntry{{ID: "new", IP: "192.0.2.1", Port: 443}}); err != nil {
+		t.Fatalf("saving after a reset: %v", err)
+	}
+	cfg, err := a.GetConfig()
+	if err != nil || len(cfg.Proxies) != 1 {
+		t.Fatalf("config after a reset: profiles %d, err %v", len(cfg.Proxies), err)
+	}
+}
+
+func TestStartupReportsUnavailableStorage(t *testing.T) {
+	notADir := filepath.Join(t.TempDir(), "occupied")
+	if err := os.WriteFile(notADir, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != original {
-		t.Fatal("unreadable config was overwritten")
+	a := NewApp()
+	if a.loadStartupConfig(notADir) {
+		t.Fatal("startup accepted storage it cannot use")
+	}
+	close(a.startupReady)
+
+	if notice := a.TakeConfigStartupNotice(); notice != "unavailable" {
+		t.Fatalf("startup notice: %q", notice)
+	}
+	if _, err := a.GetConfig(); err == nil {
+		t.Fatal("GetConfig reported unavailable storage as loaded")
+	}
+	if err := a.SyncProxies(nil); err == nil {
+		t.Fatal("SyncProxies accepted a write without storage")
 	}
 }
 
