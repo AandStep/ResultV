@@ -394,6 +394,15 @@ export const wailsAPI = {
     }
   },
 
+  saveSettings: async (settings) => {
+    try {
+      return await window.go.main.App.SaveSettings(settings);
+    } catch (e) {
+      console.error("wailsAPI.saveSettings error:", e);
+      throw e;
+    }
+  },
+
   takeConfigStartupNotice: async () => {
     try {
       const take = window?.go?.main?.App?.TakeConfigStartupNotice;

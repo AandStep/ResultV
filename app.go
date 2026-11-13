@@ -867,6 +867,21 @@ func (a *App) SaveConfig(cfg config.AppConfig) error {
 	return nil
 }
 
+// SaveSettings stores the settings alone: the UI's copy of the profiles and
+// rules may be stale and must not replace the stored ones.
+func (a *App) SaveSettings(settings config.AppSettings) error {
+	if a.config == nil {
+		return fmt.Errorf("config manager not initialized")
+	}
+	settings.LastChangelogVersion = a.config.GetConfig().Settings.LastChangelogVersion
+	if err := a.config.UpdateSettings(settings); err != nil {
+		a.log.Error(fmt.Sprintf("Ошибка сохранения конфигурации: %v", err))
+		return err
+	}
+	a.log.Success("Конфигурация сохранена")
+	return nil
+}
+
 // keepBackendRouting puts back what only the backend changes. The UI sends the
 // routing rules it loaded at startup with every change of its own, and by then
 // its copy of profiles and lists is stale: a deleted profile would come back.

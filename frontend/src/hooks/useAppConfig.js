@@ -197,13 +197,8 @@ export const useAppConfig = (addLog) => {
     }, []);
 
     const persistSettings = useCallback(async (nextSettings) => {
-        await wailsAPI.saveConfig({
-            proxies: proxies.map(p => ({ ...p, port: parseInt(p.port, 10) || 0, id: String(p.id) })),
-            routingRules,
-            settings: nextSettings,
-            subscriptions,
-        });
-    }, [proxies, routingRules, subscriptions]);
+        await wailsAPI.saveSettings(nextSettings);
+    }, []);
 
     useEffect(() => {
         const loadInitialConfig = async () => {

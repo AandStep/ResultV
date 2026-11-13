@@ -140,3 +140,43 @@ func TestSyncProxiesRejectsWriteBeforeStartupLoad(t *testing.T) {
 		t.Fatal("SyncProxies queued a write to run after startup load")
 	}
 }
+
+func TestSaveSettingsLeavesProfilesAndRulesAlone(t *testing.T) {
+	dir := t.TempDir()
+	a := NewApp()
+	if !a.loadStartupConfig(dir) {
+		t.Fatal("startup failed")
+	}
+	close(a.startupReady)
+	stored := a.config.GetConfig()
+	stored.Proxies = []config.ProxyEntry{{ID: "kept", IP: "192.0.2.1", Port: 443}}
+	stored.Subscriptions = []config.Subscription{{ID: "sub", URL: "https://example.com/sub"}}
+	stored.RoutingRules.Whitelist = []string{"example.com"}
+	stored.Settings.LastChangelogVersion = "9.9.9"
+	if err := a.config.SaveConfig(stored); err != nil {
+		t.Fatal(err)
+	}
+
+	fromUI := config.DefaultConfig().Settings
+	fromUI.Mode = "tunnel"
+	fromUI.AlwaysRunAsAdmin = true
+	if err := a.SaveSettings(fromUI); err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded := config.NewManager(a.crypto)
+	if err := reloaded.Init(dir); err != nil {
+		t.Fatal(err)
+	}
+	got := reloaded.GetConfig()
+	if got.Settings.Mode != "tunnel" || !got.Settings.AlwaysRunAsAdmin {
+		t.Fatalf("settings were not stored: mode %q, alwaysRunAsAdmin %v", got.Settings.Mode, got.Settings.AlwaysRunAsAdmin)
+	}
+	if got.Settings.LastChangelogVersion != "9.9.9" {
+		t.Fatalf("changelog version went back to %q", got.Settings.LastChangelogVersion)
+	}
+	if len(got.Proxies) != 1 || len(got.Subscriptions) != 1 ||
+		len(got.RoutingRules.Whitelist) != 1 || got.RoutingRules.Whitelist[0] != "example.com" {
+		t.Fatalf("profiles %d, subscriptions %d, whitelist %v", len(got.Proxies), len(got.Subscriptions), got.RoutingRules.Whitelist)
+	}
+}
