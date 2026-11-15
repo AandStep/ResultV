@@ -45,6 +45,7 @@ import "./SettingsPage.css";
  */
 export const SETTINGS_GROUPS = [
   { key: "advanced", icon: "adsettings" },
+  { key: "appearance", icon: "palette" },
   { key: "subscriptions", icon: "subscriptions" },
   { key: "security", icon: "security" },
   { key: "network", icon: "network" },
@@ -152,7 +153,12 @@ export const SETTINGS_PAGE_TEXT = {
     advanced: {
       title: "Дополнительные настройки",
       items: "• Режим TUN  • Запуск при старте системы",
-      desc: "Параметры запуска, TUN, язык приложения",
+      desc: "Параметры запуска и сетевого стека TUN.",
+    },
+    appearance: {
+      title: "Оформление",
+      items: "• Язык интерфейса  • Тема оформления",
+      desc: "Язык и цветовая тема приложения.",
     },
     subscriptions: {
       title: "Подписки",
@@ -383,6 +389,11 @@ export default function SettingsPage({
             <Tumbler checked={!!values.alwaysAdmin} onChange={set("alwaysAdmin")} />
           </Row>
         )}
+      </>
+    ),
+
+    appearance: (
+      <>
         <Row title={rows.language.title} description={rows.language.desc}>
           <Select
             options={languages}

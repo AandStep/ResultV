@@ -492,6 +492,7 @@ export default function SettingsScreen() {
           back: t("settings.back"),
           groups: {
             advanced: group("advanced"),
+            appearance: group("appearance"),
             subscriptions: group("subscriptions"),
             security: group("security"),
             network: group("network"),

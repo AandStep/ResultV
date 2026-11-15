@@ -236,6 +236,11 @@
         "desc": "Startup, TUN, and traffic filtering options.",
         "items": "• TUN mode  • Launch at system startup"
       },
+      "appearance": {
+        "title": "Appearance",
+        "desc": "App language and color theme.",
+        "items": "• Interface language  • Theme"
+      },
       "subscriptions": {
         "title": "Subscriptions",
         "desc": "Refresh schedule and data sent to providers.",
