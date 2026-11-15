@@ -171,6 +171,10 @@
   }
 }
 
+.rv-smart-rules__card-title {
+  color: var(--rv-white);
+}
+
 .rv-smart-rules__card-subtitle {
   margin: 0;
   font-size: var(--rv-chip-size);

@@ -38,6 +38,7 @@ import wailsAPI from "../../utils/wailsAPI";
 import AppSidebar from "./AppSidebar";
 import ConfigPasswordDialog from "./ConfigPasswordDialog";
 import Socks5ExitSettings from "./Socks5ExitSettings";
+import AdaptiveVerdicts from "./AdaptiveVerdicts";
 import { isWindowsHost } from "../../utils/adminDialog";
 import { applyTheme } from "../../lib/theme";
 import SettingsPage, {
@@ -465,6 +466,7 @@ export default function SettingsScreen() {
         onChange={change}
         lanAddress={lanAddress}
         socks5ExitSettings={<Socks5ExitSettings />}
+        adaptiveVerdicts={<AdaptiveVerdicts />}
         intervals={intervals}
         tunStacks={[
           { value: "default", label: t("settings.tun_stack.default") },

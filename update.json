@@ -1,18 +1,49 @@
 {
-  "version": "",
+  "version": "3.6.0",
   "releaseTitle": {
-    "ru": "Общие улучшения и фиксы",
-    "en": "General improvements and fixes"
+    "ru": "Гибкая маршрутизация и обновлённая светлая тема",
+    "en": "More flexible routing and a refreshed light theme"
   },
   "releaseNotes": [
     {
+      "type": "feature",
+      "ru": "Добавили выход через SOCKS5 после VPN на Windows, macOS и Linux. Можно направить через него весь VPN-трафик или только выбранные сайты и приложения, а встроенная проверка покажет IP, страну и поддержку UDP.",
+      "en": "Added a SOCKS5 exit after the VPN on Windows, macOS and Linux. Route all VPN traffic or selected sites and apps through it, and check its IP address, country and UDP support in the app."
+    },
+    {
+      "type": "feature",
+      "ru": "У режимов Smart и Global теперь отдельные списки сайтов и приложений. В каждом режиме можно задать правила как для трафика через VPN, так и для прямых подключений.",
+      "en": "Smart and Global now have separate site and app lists. Both modes support rules for VPN traffic and direct connections."
+    },
+    {
       "type": "improve",
-      "ru": "Улучшено определение флагов, а также их отображение в трее",
-      "en": "Improved flag detection and their display in the system tray"
-    },{
+      "ru": "Адаптивный Smart проверяет доступность сайта перед тем, как надолго запомнить маршрут через VPN. В экспериментальных настройках можно удалить отдельные сайты или очистить весь список изученных маршрутов.",
+      "en": "Adaptive Smart checks site reachability before remembering a VPN route long term. In Experimental settings, you can remove individual learned sites or clear the entire list."
+    },
+    {
       "type": "improve",
-      "ru": "Расширена поддержка правил маршрутизации",
-      "en": "Extended support for routing rules"
+      "ru": "Обновили светлую тему и списки серверов, улучшили отзывчивость при наведении. Тема и язык теперь находятся в разделе «Внешний вид».",
+      "en": "Refreshed the light theme and server lists, and made hover interactions more responsive. Theme and language are now in Appearance settings."
+    },
+    {
+      "type": "fix",
+      "ru": "Исправили потерю профилей при запуске. ResultV безопаснее сохраняет конфигурацию и восстанавливает её из резервной копии, если основной файл не читается.",
+      "en": "Fixed a startup issue that could lose saved profiles. ResultV saves the configuration more safely and can restore it from a backup if the main file becomes unreadable."
+    },
+    {
+      "type": "fix",
+      "ru": "Улучшили импорт подписок Xray с автоматическим выбором сервера. Обновление подписки различает похожие серверы, а удалённый сервер больше не остаётся выбранным на главном экране.",
+      "en": "Improved Xray subscription imports with automatic server selection. Refreshing a subscription keeps similar servers distinct, and deleted servers no longer remain selected on the home screen."
+    },
+    {
+      "type": "fix",
+      "ru": "Исправили зависания в режиме «Туннель», когда DNS через VPN долго не отвечал. Медленный запрос больше не задерживает обработку следующих пакетов.",
+      "en": "Fixed a Tunnel-mode stall caused by slow DNS responses over the VPN. A slow lookup no longer holds up subsequent packets."
+    },
+    {
+      "type": "improve",
+      "ru": "Обновили ядро sing-box, улучшили обработку настроек AmneziaWG 3.1 и добавили импорт смены портов Hysteria2 из подписок Xray.",
+      "en": "Updated the sing-box core, improved handling of AmneziaWG 3.1 settings, and added support for importing Hysteria2 port hopping from Xray subscriptions."
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",

@@ -301,6 +301,7 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 
 	switch proxy.Type {
 	case "HYSTERIA2", "hysteria2":
+		hopInterval, hopIntervalMax := hysteria2HopIntervalsFromExtra(extra)
 		out := SBOutbound{
 			Type:       "hysteria2",
 			Tag:        "proxy",
@@ -313,10 +314,11 @@ func buildProxyOutboundRaw(proxy ProxyConfig) SBOutbound {
 				getStringField(extra, "userpass", ""),
 				proxy.Password,
 			),
-			UpMbps:      intFromExtra(extra, "up_mbps", "upMbps"),
-			DownMbps:    intFromExtra(extra, "down_mbps", "downMbps"),
-			ServerPorts: hysteriaServerPortsFromExtra(extra),
-			HopInterval: hysteria2HopIntervalFromExtra(extra),
+			UpMbps:         intFromExtra(extra, "up_mbps", "upMbps"),
+			DownMbps:       intFromExtra(extra, "down_mbps", "downMbps"),
+			ServerPorts:    hysteriaServerPortsFromExtra(extra),
+			HopInterval:    hopInterval,
+			HopIntervalMax: hopIntervalMax,
 		}
 		if sni := getStringField(extra, "sni", getStringField(extra, "server_name", "")); sni != "" || getBoolField(extra, "insecure") {
 			out.TLS = &SBOutboundTLS{
@@ -584,30 +586,35 @@ func hysteriaPortSpecs(extra map[string]interface{}) []string {
 	return strings.Split(raw, ",")
 }
 
-// hysteria2HopIntervalFromExtra canonicalizes hop_interval into the string
-// shape the core's badoption.Duration (option/hysteria2.go) accepts. Hy2 links
-// historically spell the value as a bare number of seconds
-// ("hop-interval=30"); badoption.Duration's UnmarshalJSON requires a Go
-// duration string with a unit and errors "missing unit in duration" on a bare
-// number, which aborts the engine start for every node, not just this one.
-// A value that is neither a valid duration nor a positive bare number is
-// dropped so the core falls back to its own default instead of refusing to
-// start.
-func hysteria2HopIntervalFromExtra(extra map[string]interface{}) string {
-	raw := strings.TrimSpace(firstNonEmpty(
+// Xray expresses a random interval as a range in seconds, while sing-box
+// expects separate minimum and maximum durations.
+func hysteria2HopIntervalsFromExtra(extra map[string]interface{}) (string, string) {
+	raw := firstNonEmpty(
 		getStringField(extra, "hop_interval", ""),
 		getStringField(extra, "hopInterval", ""),
-	))
-	if raw == "" {
-		return ""
+	)
+	lo, hi, ranged := strings.Cut(raw, "-")
+	interval, min := normalizeHopDuration(lo)
+	if !ranged {
+		return interval, ""
 	}
-	if _, err := time.ParseDuration(raw); err == nil {
-		return raw
+	maxInterval, max := normalizeHopDuration(hi)
+	if min <= 0 || max < min {
+		return "", ""
 	}
-	if n, err := strconv.Atoi(raw); err == nil && n > 0 {
-		return strconv.Itoa(n) + "s"
+	return interval, maxInterval
+}
+
+func normalizeHopDuration(raw string) (string, time.Duration) {
+	raw = strings.TrimSpace(raw)
+	if _, err := strconv.ParseUint(raw, 10, 64); err == nil {
+		raw += "s"
 	}
-	return ""
+	duration, err := time.ParseDuration(raw)
+	if err != nil || duration <= 0 {
+		return "", 0
+	}
+	return raw, duration
 }
 
 func parsePortRangeSpec(s string) (int, int, bool) {

@@ -22,7 +22,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/option"
 	singjson "github.com/sagernet/sing/common/json"
 )
@@ -109,7 +108,7 @@ func TestDumpLinks(t *testing.T) {
 			continue
 		}
 		var opts option.Options
-		if err := singjson.UnmarshalContext(include.Context(context.Background()), full, &opts); err != nil {
+		if err := singjson.UnmarshalContext(extendedBoxContext(context.Background()), full, &opts); err != nil {
 			t.Errorf("[%d] CORE: REJECTED — this link alone would stop the engine from starting: %v", i+1, err)
 			continue
 		}

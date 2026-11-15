@@ -472,10 +472,11 @@ type SBOutbound struct {
 	// ServerPorts/HopInterval drive Hysteria2 port hopping. sing-quic parses only
 	// "start:end" ranges, so the URI's "10000-20000" spelling is converted before
 	// it gets here — a range it cannot parse aborts outbound creation.
-	ServerPorts []string         `json:"server_ports,omitempty"`
-	HopInterval string           `json:"hop_interval,omitempty"`
-	Obfs        *SBHysteria2Obfs `json:"obfs,omitempty"`
-	Multiplex   *SBMultiplex     `json:"multiplex,omitempty"`
+	ServerPorts    []string         `json:"server_ports,omitempty"`
+	HopInterval    string           `json:"hop_interval,omitempty"`
+	HopIntervalMax string           `json:"hop_interval_max,omitempty"`
+	Obfs           *SBHysteria2Obfs `json:"obfs,omitempty"`
+	Multiplex      *SBMultiplex     `json:"multiplex,omitempty"`
 
 	TLS       *SBOutboundTLS       `json:"tls,omitempty"`
 	Transport *SBOutboundTransport `json:"transport,omitempty"`
@@ -1716,9 +1717,14 @@ type tunnelResolver struct {
 func tunnelDNSResolvers(resolvers, backups []tunnelResolver, detour string) []SBDNSServer {
 	servers := tunnelDNSLegs(resolvers, detour)
 	if len(backups) == 0 {
-		servers = tunnelDNSGroup(servers, resolvers, resolvers[0].tag, tunnelDNSTimeout)
-		servers[len(servers)-1].throughDetour = detour
-		return servers
+		group := resolvers[0].tag + "-group"
+		servers = tunnelDNSGroup(servers, resolvers, group, tunnelDNSTimeout)
+		return append(servers, SBDNSServer{
+			Type:          dnsAsyncType,
+			Tag:           resolvers[0].tag,
+			Servers:       []string{group},
+			throughDetour: detour,
+		})
 	}
 	servers = append(servers, tunnelDNSLegs(backups, detour)...)
 	servers = tunnelDNSGroup(servers, resolvers, configuredDNSGroupTag(resolvers), configuredDNSTimeout)

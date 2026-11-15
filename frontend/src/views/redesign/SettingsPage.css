@@ -100,6 +100,7 @@
   gap: var(--rv-space-nest-2);
 }
 
+.rv-settings-page__section > .rv-smart-rules__card,
 .rv-settings-page__section > .rv-settings-page__card {
   align-self: stretch;
 }

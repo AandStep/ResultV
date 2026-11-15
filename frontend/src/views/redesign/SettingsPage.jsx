@@ -337,6 +337,7 @@ export default function SettingsPage({
      приложение: своих IP страница не знает. */
   lanAddress = "",
   socks5ExitSettings,
+  adaptiveVerdicts,
   onExport,
   onImport,
   sidebar,
@@ -646,6 +647,7 @@ export default function SettingsPage({
                 {groupBody[section]}
               </section>
               {section === "network" && socks5ExitSettings}
+              {section === "experimental" && values.adaptiveSmart && adaptiveVerdicts}
             </div>
           </>
         ) : (

@@ -42,7 +42,7 @@ type Store struct {
 
 	// children counts, per namespace, which hashed child keys were learned
 	// under which hashed parent key and with what answer. Promotion reads it.
-	children map[string]map[string]map[string]Decision
+	children map[string]map[string]map[string]vote
 }
 
 func New(salt []byte, now func() time.Time) *Store {
@@ -55,7 +55,7 @@ func New(salt []byte, now func() time.Time) *Store {
 		ns:       "default",
 		spaces:   make(map[string]map[string]Record),
 		plain:    make(map[string]string),
-		children: make(map[string]map[string]map[string]Decision),
+		children: make(map[string]map[string]map[string]vote),
 	}
 }
 
@@ -95,6 +95,70 @@ func (s *Store) Learn(host string, d Decision) {
 	s.put(NormalizeHost(host), rec)
 }
 
+// LearnUnverified records a proxy verdict that rests on lost races alone.
+func (s *Store) LearnUnverified(host string) {
+	s.put(NormalizeHost(host), s.unverifiedRecord())
+}
+
+func (s *Store) unverifiedRecord() Record {
+	now := s.now()
+	return Record{Decision: Proxy, Source: SourceLearned, Observed: now, ExpiresAt: now.Add(TTLUnverified), Unverified: true}
+}
+
+// Forget drops what was learned about one name on the active network.
+func (s *Store) Forget(host string) {
+	key := NormalizeHost(host)
+	if key == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	h := s.hash(key)
+	if rec, ok := s.spaces[s.ns][h]; ok && rec.Source == SourceLearned {
+		delete(s.spaces[s.ns], h)
+	}
+	if parent := promotionParent(key); parent != "" {
+		delete(s.children[s.ns][s.hash(parent)], h)
+	}
+}
+
+// ClearLearned drops every learned verdict on every network and reports how
+// many there were.
+func (s *Store) ClearLearned() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dropped := 0
+	for _, space := range s.spaces {
+		for h, rec := range space {
+			if rec.Source == SourceLearned {
+				delete(space, h)
+				dropped++
+			}
+		}
+	}
+	s.children = make(map[string]map[string]map[string]vote)
+	return dropped
+}
+
+// LearnedCount is how many live learned verdicts with this answer the active
+// network holds, including names this session never saw in plaintext.
+func (s *Store) LearnedCount(d Decision) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	now := s.now()
+	n := 0
+	for _, rec := range s.spaces[s.ns] {
+		if rec.Source != SourceLearned || rec.Decision != d {
+			continue
+		}
+		if !rec.ExpiresAt.IsZero() && !rec.ExpiresAt.After(now) {
+			continue
+		}
+		n++
+	}
+	return n
+}
+
 func ttlFor(d Decision) time.Duration {
 	if d == Proxy {
 		return TTLProxy
@@ -125,7 +189,7 @@ func (s *Store) putLocked(key string, rec Record) {
 	}
 	space[h] = rec
 	s.plain[h] = key
-	if rec.Source == SourceLearned {
+	if rec.Source == SourceLearned && !rec.Unverified {
 		s.notePromotionLocked(key, rec.Decision)
 	}
 }

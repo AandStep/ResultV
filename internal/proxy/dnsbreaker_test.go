@@ -34,6 +34,7 @@ type fakeDNSTransport struct {
 	mu    sync.Mutex
 	err   error
 	rcode int
+	gate  chan struct{}
 }
 
 func newFakeDNSTransport(tag string) *fakeDNSTransport {
@@ -50,6 +51,9 @@ func (f *fakeDNSTransport) Start(adapter.StartStage, *adapter.Scope) error { ret
 func (f *fakeDNSTransport) Reset()                         {}
 func (f *fakeDNSTransport) Exchange(_ context.Context, m *mDNS.Msg) (*mDNS.Msg, error) {
 	f.calls.Add(1)
+	if f.gate != nil {
+		<-f.gate
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
@@ -142,4 +146,46 @@ func TestDNSBreakerDoesNotBlamePrimaryForACancelledLookup(t *testing.T) {
 	if backup.calls.Load() != before {
 		t.Fatal("отменённые вызывающим запросы засчитаны резолверу как провалы")
 	}
+}
+
+func assertExchangeAsyncReturnsBeforeTheAnswer(t *testing.T, transport adapter.DNSTransport, slow *fakeDNSTransport) {
+	t.Helper()
+	slow.gate = make(chan struct{})
+	answered := make(chan error, 1)
+	returned := make(chan struct{})
+	go func() {
+		transport.ExchangeAsync(context.Background(), dnsQuery(), func(_ *mDNS.Msg, err error) { answered <- err })
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(2 * time.Second):
+		close(slow.gate)
+		t.Fatal("ExchangeAsync держит вызывающего, пока резолвер молчит: поток TUN стоит вместе с ним")
+	}
+	select {
+	case <-answered:
+		t.Fatal("ответ пришёл раньше, чем резолвер ответил")
+	default:
+	}
+	close(slow.gate)
+	select {
+	case err := <-answered:
+		if err != nil {
+			t.Fatalf("ответ потерян: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ответ так и не доставлен")
+	}
+}
+
+func TestDNSBreakerExchangeAsyncDoesNotHoldTheCaller(t *testing.T) {
+	primary, backup := newFakeDNSTransport("cfg"), newFakeDNSTransport("backup")
+	breaker := newDNSBreaker("custom-1", primary, backup, time.Now)
+	assertExchangeAsyncReturnsBeforeTheAnswer(t, breaker, primary)
+}
+
+func TestDNSAsyncFrontDoesNotHoldTheCaller(t *testing.T) {
+	group := newFakeDNSTransport("google-group")
+	assertExchangeAsyncReturnsBeforeTheAnswer(t, newDNSAsync("google", group), group)
 }

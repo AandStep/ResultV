@@ -110,9 +110,8 @@ func TestLoadOfCorruptFileStartsClean(t *testing.T) {
 	}
 }
 
-// Version 1 was written by a prober that read a site's own 403 as a region
-// wall; those proxy verdicts would otherwise outlive the fix by a week.
-func TestLoadDropsVersionOneCache(t *testing.T) {
+// Older caches hold proxy verdicts written by rules since found to be wrong.
+func TestLoadDropsOlderCache(t *testing.T) {
 	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
 	clock := func() time.Time { return now }
 	path := filepath.Join(t.TempDir(), "verdicts.cache.json")
@@ -127,9 +126,9 @@ func TestLoadDropsVersionOneCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	old := strings.Replace(string(raw), `"version":2`, `"version":1`, 1)
+	old := strings.Replace(string(raw), `"version":3`, `"version":2`, 1)
 	if old == string(raw) {
-		t.Fatal("saved cache is not version 2")
+		t.Fatal("saved cache is not version 3")
 	}
 	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
 		t.Fatal(err)
@@ -138,7 +137,7 @@ func TestLoadDropsVersionOneCache(t *testing.T) {
 	back, _ := Load(path, clock)
 	back.SetNamespace("home")
 	if _, ok := back.Lookup("walled.example"); ok {
-		t.Fatal("a verdict from a version 1 cache survived the load")
+		t.Fatal("a verdict from an older cache survived the load")
 	}
 }
 

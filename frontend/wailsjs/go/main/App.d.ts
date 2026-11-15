@@ -19,15 +19,19 @@ export function ApplyMode(arg1:string):Promise<proxy.ConnectResultDTO>;
 
 export function CancelConnect():Promise<void>;
 
+export function CancelTelegramSubscription():Promise<void>;
+
 export function CancelUpdate():Promise<void>;
+
+export function CheckSocks5Exit():Promise<main.Socks5ExitStatusDTO>;
+
+export function ClearLearnedVerdicts():Promise<proxy.LearnedVerdictsDTO>;
 
 export function CompileRoutingProfile(arg1:string,arg2:boolean):Promise<Record<string, any>>;
 
 export function Connect(arg1:proxy.ProxyConfig,arg2:config.RoutingRules,arg3:boolean):Promise<proxy.ConnectResultDTO>;
 
 export function ConnectTelegramSubscription(arg1:string):Promise<string>;
-
-export function CancelTelegramSubscription():Promise<void>;
 
 export function DebugFrontendLog(arg1:string):Promise<void>;
 
@@ -49,6 +53,8 @@ export function ExportConfig(arg1:string):Promise<string>;
 
 export function FetchSubscription(arg1:string,arg2:boolean):Promise<main.SubscriptionPreview>;
 
+export function ForgetLearnedVerdict(arg1:string):Promise<proxy.LearnedVerdictsDTO>;
+
 export function GetAutoGroupStatus(arg1:string):Promise<main.AutoGroupStatus>;
 
 export function GetChangelog(arg1:string):Promise<main.Changelog>;
@@ -56,6 +62,8 @@ export function GetChangelog(arg1:string):Promise<main.Changelog>;
 export function GetConfig():Promise<config.AppConfig>;
 
 export function GetLANIPs():Promise<Array<string>>;
+
+export function GetLearnedVerdicts():Promise<proxy.LearnedVerdictsDTO>;
 
 export function GetLeftoverRecoveryReport():Promise<Record<string, boolean>>;
 
@@ -71,6 +79,10 @@ export function GetPlatform():Promise<string>;
 
 export function GetRoutingProfiles():Promise<Record<string, any>>;
 
+export function GetSocks5ExitSettings():Promise<main.Socks5ExitSettingsDTO>;
+
+export function GetSocks5ExitStatus():Promise<main.Socks5ExitStatusDTO>;
+
 export function GetStatus():Promise<proxy.StatusDTO>;
 
 export function GetUpdateManifest():Promise<updater.Manifest>;
@@ -78,6 +90,8 @@ export function GetUpdateManifest():Promise<updater.Manifest>;
 export function GetVersion():Promise<string>;
 
 export function HandleDeepLink(arg1:string):Promise<void>;
+
+export function HasPendingConnect():Promise<boolean>;
 
 export function ImportConfig(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
@@ -115,6 +129,10 @@ export function SaveConfig(arg1:config.AppConfig):Promise<void>;
 
 export function SaveRoutingProfile(arg1:config.RoutingProfile):Promise<config.RoutingProfile>;
 
+export function SaveSettings(arg1:config.AppSettings):Promise<void>;
+
+export function SaveSocks5ExitSettings(arg1:main.Socks5ExitSettingsUpdate):Promise<void>;
+
 export function SetActiveRoutingProfile(arg1:string):Promise<void>;
 
 export function SetAlwaysRunAsAdmin(arg1:boolean):Promise<void>;
@@ -125,6 +143,8 @@ export function SetMode(arg1:string):Promise<void>;
 
 export function SetResumeAfterElevation(arg1:string,arg2:string):Promise<void>;
 
+export function SetSocks5ExitEnabled(arg1:boolean):Promise<void>;
+
 export function SetStartInTray(arg1:boolean):Promise<void>;
 
 export function SetTrayIcon(arg1:Array<number>):Promise<void>;
@@ -134,6 +154,8 @@ export function ShouldShowChangelog():Promise<boolean>;
 export function StartUpdate():Promise<void>;
 
 export function SyncProxies(arg1:Array<config.ProxyEntry>):Promise<void>;
+
+export function TakeConfigStartupNotice():Promise<string>;
 
 export function TakePendingConnect():Promise<string>;
 

@@ -42,6 +42,30 @@ export namespace config {
 	        this.updateIntervalMinutes = source["updateIntervalMinutes"];
 	    }
 	}
+	export class Socks5ExitConfig {
+	    enabled?: boolean;
+	    host: string;
+	    port: number;
+	    username?: string;
+	    password?: string;
+	    sites?: string[];
+	    apps?: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Socks5ExitConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.username = source["username"];
+	        this.password = source["password"];
+	        this.sites = source["sites"];
+	        this.apps = source["apps"];
+	    }
+	}
 	export class AppSettings {
 	    autostart: boolean;
 	    connectOnStartup?: boolean;
@@ -71,6 +95,8 @@ export namespace config {
 	    pingType?: string;
 	    pingTestUrl?: string;
 	    pingTimeoutSec?: number;
+	    socks5Exit?: Socks5ExitConfig;
+	    socks5ExitArmed?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppSettings(source);
@@ -106,7 +132,27 @@ export namespace config {
 	        this.pingType = source["pingType"];
 	        this.pingTestUrl = source["pingTestUrl"];
 	        this.pingTimeoutSec = source["pingTimeoutSec"];
+	        this.socks5Exit = this.convertValues(source["socks5Exit"], Socks5ExitConfig);
+	        this.socks5ExitArmed = source["socks5ExitArmed"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class ProxyEntry {
 	    id: string;
@@ -230,6 +276,10 @@ export namespace config {
 	    appWhitelist: string[];
 	    appForceVPN: string[];
 	    customBlockedDomains: string[];
+	    smartDirectSites: string[];
+	    smartDirectApps: string[];
+	    globalVpnSites: string[];
+	    globalVpnApps: string[];
 	    routingLists: RoutingList[];
 	    routingProfiles: RoutingProfile[];
 	    activeRoutingProfileId: string;
@@ -248,6 +298,10 @@ export namespace config {
 	        this.appWhitelist = source["appWhitelist"];
 	        this.appForceVPN = source["appForceVPN"];
 	        this.customBlockedDomains = source["customBlockedDomains"];
+	        this.smartDirectSites = source["smartDirectSites"];
+	        this.smartDirectApps = source["smartDirectApps"];
+	        this.globalVpnSites = source["globalVpnSites"];
+	        this.globalVpnApps = source["globalVpnApps"];
 	        this.routingLists = this.convertValues(source["routingLists"], RoutingList);
 	        this.routingProfiles = this.convertValues(source["routingProfiles"], RoutingProfile);
 	        this.activeRoutingProfileId = source["activeRoutingProfileId"];
@@ -310,6 +364,7 @@ export namespace config {
 		    return a;
 		}
 	}
+	
 	
 	
 	
@@ -454,6 +509,80 @@ export namespace main {
 		}
 	}
 	
+	export class Socks5ExitSettingsDTO {
+	    enabled: boolean;
+	    host: string;
+	    port: number;
+	    username: string;
+	    password: string;
+	    sites: string[];
+	    apps: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Socks5ExitSettingsDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.username = source["username"];
+	        this.password = source["password"];
+	        this.sites = source["sites"];
+	        this.apps = source["apps"];
+	    }
+	}
+	export class Socks5ExitSettingsUpdate {
+	    host: string;
+	    port: number;
+	    username: string;
+	    password?: string;
+	    sites: string[];
+	    apps: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Socks5ExitSettingsUpdate(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.username = source["username"];
+	        this.password = source["password"];
+	        this.sites = source["sites"];
+	        this.apps = source["apps"];
+	    }
+	}
+	export class Socks5ExitStatusDTO {
+	    ok: boolean;
+	    ip?: string;
+	    country?: string;
+	    udp: boolean;
+	    reason?: string;
+	    code?: number;
+	    latencyMs?: number;
+	    trigger: string;
+	    checked: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Socks5ExitStatusDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.ip = source["ip"];
+	        this.country = source["country"];
+	        this.udp = source["udp"];
+	        this.reason = source["reason"];
+	        this.code = source["code"];
+	        this.latencyMs = source["latencyMs"];
+	        this.trigger = source["trigger"];
+	        this.checked = source["checked"];
+	    }
+	}
 	export class SubscriptionPreview {
 	    proxies: config.ProxyEntry[];
 	    routingLists: config.RoutingList[];
@@ -514,6 +643,54 @@ export namespace proxy {
 	        this.fallbackUsed = source["fallbackUsed"];
 	        this.errorCode = source["errorCode"];
 	    }
+	}
+	export class LearnedVerdictDTO {
+	    host: string;
+	    unverified: boolean;
+	    expiresAt: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new LearnedVerdictDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.host = source["host"];
+	        this.unverified = source["unverified"];
+	        this.expiresAt = source["expiresAt"];
+	    }
+	}
+	export class LearnedVerdictsDTO {
+	    items: LearnedVerdictDTO[];
+	    hidden: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new LearnedVerdictsDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.items = this.convertValues(source["items"], LearnedVerdictDTO);
+	        this.hidden = source["hidden"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class PingResultDTO {
 	    reachable: boolean;

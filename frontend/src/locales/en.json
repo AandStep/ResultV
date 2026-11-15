@@ -1,4 +1,12 @@
 {
+  "adaptiveVerdicts": {
+    "title": "Found by adaptive mode",
+    "desc": "Adaptive mode routed these sites through the VPN on its own. Remove a site if it ended up here by mistake.",
+    "empty": "Nothing found yet",
+    "clear": "Clear list",
+    "hidden_one": "Plus {{count}} site from earlier sessions: its name is not stored, so it can only be removed by a reset.",
+    "hidden_other": "Plus {{count}} sites from earlier sessions: their names are not stored, so they can only be removed by a reset."
+  },
   "socks5Exit": {
     "title": "SOCKS5 over VPN",
     "desc": "Sends VPN traffic through a SOCKS5 server.",
@@ -326,7 +334,7 @@
     "subscription_user_agent": {
       "title": "User agent",
       "desc": "Empty — the default ResultV header.",
-      "placeholder": "ResultV/3.5.7/Windows/11_10.0.26200"
+      "placeholder": "ResultV/3.6.0/Windows/11_10.0.26200"
     },
     "dns": {
       "title": "DNS Servers",

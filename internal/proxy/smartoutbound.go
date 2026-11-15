@@ -85,6 +85,9 @@ type smartOutbound struct {
 	// them would start its own probe and one page would spend the whole
 	// twenty-per-minute budget the gate exists to enforce.
 	inflight sync.Map
+
+	now    func() time.Time
+	losses raceLosses
 }
 
 // nodeUDPCheck reports whether the node currently in use has been measured
@@ -332,16 +335,9 @@ func (s *smartOutbound) raceConnection(ctx context.Context, conn net.Conn, metad
 		return
 	}
 
-	if raceTeaches(res) {
-		s.learn(metadata, res.ViaProxy)
-	}
+	s.noteRace(metadata, res)
 	if res.ViaProxy {
 		conn = s.attributeProxy(conn, metadata)
-	} else if raceTeaches(res) {
-		// Direct won on bytes. Whether those bytes were the site or a wall is a
-		// different question, and only a probe can answer it. A handover has no
-		// bytes to be suspicious of, so there is nothing to recheck.
-		s.recheckAsync(smartHost(&metadata))
 	}
 	// The server's first bytes are already off the socket, so they are handed
 	// back in front of it; from here this is an ordinary relayed pair and the
@@ -354,29 +350,60 @@ func (s *smartOutbound) raceConnection(ctx context.Context, conn net.Conn, metad
 	s.connection.NewConnection(ctx, constantDialer{conn: server}, conn, metadata, onClose)
 }
 
-// learn writes down what the race proved. A name is worth remembering; a bare
-// address is remembered under the address, which is all Telegram's MTProto and
-// Discord's voice media ever give us.
-func (s *smartOutbound) learn(metadata adapter.InboundContext, viaProxy bool) {
-	if s.store == nil {
+// noteRace turns one finished race into knowledge.
+//
+// A direct win is a measurement and is written down. A node win is not: the
+// direct leg loses to a dropped SYN or a slow resolver as readily as to a
+// censor, so it only asks the probe, which compares the two paths without a
+// stopwatch. Losses that keep coming with no probe verdict become a
+// short-lived proxy record.
+func (s *smartOutbound) noteRace(metadata adapter.InboundContext, res raceResult) {
+	if s.store == nil || !raceTeaches(res) || !s.health.healthy() {
 		return
 	}
-	if !s.health.healthy() {
-		// The link itself is down. Anything written here would be a guess with a
-		// seven-day lifetime.
+	host := smartHost(&metadata)
+	key := verdict.NormalizeHost(host)
+	if key == "" {
+		key = verdict.IPKey(metadata.Destination.Addr)
+	}
+	if key == "" {
 		return
 	}
-	d := verdict.Direct
-	if viaProxy {
-		d = verdict.Proxy
-	}
-	if host := smartHost(&metadata); host != "" {
-		s.store.Learn(host, d)
+	if !res.ViaProxy {
+		s.losses.reset(key)
+		if host != "" {
+			s.store.Learn(host, verdict.Direct)
+		} else {
+			s.store.LearnIP(metadata.Destination.Addr, verdict.Direct)
+		}
+		// Whether direct's bytes were the site or a wall only a probe can tell.
+		s.recheckAsync(host)
 		return
 	}
-	if metadata.Destination.Addr.IsValid() {
-		s.store.LearnIP(metadata.Destination.Addr, d)
+	if s.losses.add(key, s.clock()) >= raceLossesToLearn {
+		s.losses.reset(key)
+		if host != "" {
+			s.store.LearnUnverified(host)
+		} else {
+			s.store.LearnIPUnverified(metadata.Destination.Addr)
+		}
+		s.logVerdict(key, "узел (прямой путь раз за разом проигрывает, проверка не удалась)")
 	}
+	s.recheckAsync(host)
+}
+
+func (s *smartOutbound) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
+
+func (s *smartOutbound) logVerdict(name, where string) {
+	if s.traffic == nil || s.traffic.log == nil {
+		return
+	}
+	s.traffic.log.Info("[SMART] " + name + " → " + where)
 }
 
 // recheckAsync re-examines a name the race decided in favour of the direct
@@ -392,8 +419,15 @@ func (s *smartOutbound) recheckAsync(host string) {
 	}
 	go func() {
 		defer s.inflight.Delete(host)
-		if d := s.probe(context.Background(), host, s.probes); d != verdict.Unknown {
-			s.store.Learn(host, d)
+		d := s.probe(context.Background(), host, s.probes)
+		if d == verdict.Unknown {
+			return
+		}
+		before, known := s.store.Lookup(host)
+		s.store.Learn(host, d)
+		s.losses.reset(verdict.NormalizeHost(host))
+		if d == verdict.Proxy && !(known && before.Decision == verdict.Proxy && !before.Unverified) {
+			s.logVerdict(host, "узел (проверка: напрямую недоступен или закрыт)")
 		}
 	}()
 }
@@ -529,6 +563,7 @@ func extendedBoxContext(ctx context.Context) context.Context {
 	registerSocks5ExitOutbounds(outbounds)
 	dnsTransports := include.DNSTransportRegistry()
 	registerDNSBreaker(dnsTransports)
+	registerDNSAsync(dnsTransports)
 	return box.Context(
 		ctx,
 		include.InboundRegistry(),

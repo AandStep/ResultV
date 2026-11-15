@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -3298,6 +3299,63 @@ func (m *Manager) saveVerdictsLocked() {
 	if err := m.verdicts.Save(m.verdictPath); err != nil {
 		m.log.Info("[SMART] Не удалось сохранить кэш вердиктов")
 	}
+}
+
+// LearnedVerdictDTO is one name the adaptive engine sends through the node.
+type LearnedVerdictDTO struct {
+	Host       string `json:"host"`
+	Unverified bool   `json:"unverified"`
+	ExpiresAt  int64  `json:"expiresAt"`
+}
+
+// LearnedVerdictsDTO is the list behind "why is this site in the tunnel".
+// Hidden counts names learned in an earlier session: only their hashes are
+// kept, so they can be dropped but not shown.
+type LearnedVerdictsDTO struct {
+	Items  []LearnedVerdictDTO `json:"items"`
+	Hidden int                 `json:"hidden"`
+}
+
+func (m *Manager) LearnedVerdicts() LearnedVerdictsDTO {
+	out := LearnedVerdictsDTO{Items: []LearnedVerdictDTO{}}
+	if m.verdicts == nil {
+		return out
+	}
+	for name, rec := range m.verdicts.Names() {
+		if rec.Source != verdict.SourceLearned || rec.Decision != verdict.Proxy {
+			continue
+		}
+		out.Items = append(out.Items, LearnedVerdictDTO{
+			Host:       name,
+			Unverified: rec.Unverified,
+			ExpiresAt:  rec.ExpiresAt.UnixMilli(),
+		})
+	}
+	sort.Slice(out.Items, func(i, j int) bool { return out.Items[i].Host < out.Items[j].Host })
+	if hidden := m.verdicts.LearnedCount(verdict.Proxy) - len(out.Items); hidden > 0 {
+		out.Hidden = hidden
+	}
+	return out
+}
+
+func (m *Manager) ForgetLearnedVerdict(host string) {
+	if m.verdicts == nil {
+		return
+	}
+	m.verdicts.Forget(host)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.saveVerdictsLocked()
+}
+
+func (m *Manager) ClearLearnedVerdicts() {
+	if m.verdicts == nil {
+		return
+	}
+	m.verdicts.ClearLearned()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.saveVerdictsLocked()
 }
 
 // NotifyNetworkChanged switches the verdict store to the set belonging to the

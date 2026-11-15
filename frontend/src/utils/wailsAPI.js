@@ -664,6 +664,9 @@ export const wailsAPI = {
   previewRoutingDeepLink: (url) => callApp("PreviewRoutingDeepLink", [url]),
   importRoutingDeepLink: (url, makeActive) =>
     callApp("ImportRoutingDeepLink", [url, !!makeActive]),
+  getLearnedVerdicts: () => callApp("GetLearnedVerdicts"),
+  forgetLearnedVerdict: (host) => callApp("ForgetLearnedVerdict", [host]),
+  clearLearnedVerdicts: () => callApp("ClearLearnedVerdicts"),
   getSocks5ExitSettings: () => callApp("GetSocks5ExitSettings"),
   saveSocks5ExitSettings: (settings) => callApp("SaveSocks5ExitSettings", [settings]),
   setSocks5ExitEnabled: (enabled) => callApp("SetSocks5ExitEnabled", [enabled]),

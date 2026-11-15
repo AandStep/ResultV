@@ -21,7 +21,6 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/option"
 	singjson "github.com/sagernet/sing/common/json"
 )
@@ -195,7 +194,7 @@ func TestXHTTPPaddingObfs_EndToEndFromURI(t *testing.T) {
 		t.Fatal(err)
 	}
 	var opts option.Options
-	if err := singjson.UnmarshalContext(include.Context(context.Background()), j, &opts); err != nil {
+	if err := singjson.UnmarshalContext(extendedBoxContext(context.Background()), j, &opts); err != nil {
 		t.Fatalf("pinned core rejected the config: %v", err)
 	}
 }
