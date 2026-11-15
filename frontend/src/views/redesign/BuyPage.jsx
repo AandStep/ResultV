@@ -15,7 +15,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import resultvBadge from "../../assets/resultv-buy-badge.svg";
 import { Button, Icon } from "../../components/kit";
 import PageHeader from "./PageHeader";
 import "./BuyPage.css";
@@ -43,7 +42,7 @@ export default function BuyPage({
         <div className="rv-buy-page__list">
           <section className="rv-buy-page__card">
             <div className="rv-buy-page__head">
-              <img src={resultvBadge} alt="" className="rv-buy-page__logo" width="96" height="96" />
+              <span className="rv-buy-page__logo" aria-hidden="true" />
               <div className="rv-buy-page__text">
                 <h2 className="rv-buy-page__title">{text.offerTitle}</h2>
                 <p className="rv-buy-page__desc">{text.offerDescription}</p>

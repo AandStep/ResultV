@@ -31,7 +31,6 @@
  */
 
 import { BigBtn, Button, Icon, SettingsItem, TagField } from "../../components/kit";
-import directionArrow from "../../assets/rule-direction-arrow.svg";
 import PageHeader from "./PageHeader";
 import "./SmartRulesPage.css";
 
@@ -85,9 +84,7 @@ function RuleCard({ title, alternateTitle, alternateSelected, onSelect, subtitle
               aria-label={nextTitle}
               tabIndex={-1}
               onClick={() => onSelect?.(!alternateSelected)}
-            >
-              <img src={directionArrow} width={24} height={24} alt="" />
-            </button>
+            />
             <button type="button" className="rv-smart-rules__direction" aria-pressed={alternateSelected} onClick={() => onSelect?.(true)}>
               {alternateTitle}
             </button>

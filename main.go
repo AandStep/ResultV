@@ -33,6 +33,8 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+const lightWindowChannel = 0xe6
+
 func main() {
 	system.WaitForElevationParent(os.Args)
 	releaseOwnership := system.KeepInvokerOwnership()
@@ -72,6 +74,7 @@ func main() {
 		}
 	}
 
+	lightChrome := windows.RGB(lightWindowChannel, lightWindowChannel, lightWindowChannel)
 	opts := &options.App{
 		Title: "ResultV",
 		// Размер из макета: страницы нарисованы под клиентскую область
@@ -107,10 +110,10 @@ func main() {
 				DarkModeTitleText:         windows.RGB(24, 24, 27),
 				DarkModeTitleTextInactive: windows.RGB(24, 24, 27),
 
-				LightModeTitleBar:         windows.RGB(236, 238, 237),
-				LightModeTitleBarInactive: windows.RGB(236, 238, 237),
-				LightModeBorder:           windows.RGB(236, 238, 237),
-				LightModeBorderInactive:   windows.RGB(236, 238, 237),
+				LightModeTitleBar:         lightChrome,
+				LightModeTitleBarInactive: lightChrome,
+				LightModeBorder:           lightChrome,
+				LightModeBorderInactive:   lightChrome,
 			},
 		},
 		Bind: []interface{}{
@@ -150,7 +153,7 @@ func readStartupSettings() config.AppSettings {
 
 func windowBackground(theme string) *options.RGBA {
 	if theme == "light" {
-		return &options.RGBA{R: 236, G: 238, B: 237, A: 255}
+		return &options.RGBA{R: lightWindowChannel, G: lightWindowChannel, B: lightWindowChannel, A: 255}
 	}
 	return &options.RGBA{R: 24, G: 24, B: 27, A: 255}
 }

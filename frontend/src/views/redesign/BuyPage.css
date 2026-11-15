@@ -68,6 +68,13 @@
 .rv-buy-page__logo {
   display: block;
   flex-shrink: 0;
+  width: 96px;
+  height: 96px;
+  background: url("../../assets/resultv-buy-badge.svg") center no-repeat;
+}
+
+:root[data-theme="light"] .rv-buy-page__logo {
+  background-image: url("../../assets/resultv-buy-badge-light.svg");
 }
 
 .rv-buy-page__text {
@@ -93,7 +100,7 @@
   font-size: var(--rv-chip-size);
   font-weight: var(--rv-chip-weight);
   line-height: var(--rv-chip-leading);
-  color: var(--rv-white-a50);
+  color: var(--rv-description-color);
   overflow-wrap: break-word;
 }
 

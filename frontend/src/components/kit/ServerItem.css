@@ -74,13 +74,13 @@
 
 .rv-server-item[data-variant="autoserver"]:hover:not([data-mode]),
 .rv-server-item[data-variant="autoserver"][data-mode="hover"] {
-  background: var(--rv-dark-grey);
+  background: var(--server-row-highlight, var(--rv-dark-grey));
   opacity: 1;
 }
 
 .rv-server-item[data-variant="row"]:hover:not([data-mode]),
 .rv-server-item[data-variant="row"][data-mode="hover"] {
-  background: var(--rv-dark-grey);
+  background: var(--server-row-highlight, var(--rv-dark-grey));
   opacity: 1;
 }
 
@@ -91,8 +91,27 @@
  */
 .rv-server-item[data-variant="row"][data-active="true"],
 .rv-server-item[data-variant="autoserver"][data-active="true"] {
-  background: var(--rv-dark-grey);
+  background: var(--server-row-highlight, var(--rv-dark-grey));
   opacity: 1;
+}
+
+:root[data-theme="light"] .rv-server-item {
+  --server-row-highlight: #f2f2f2;
+}
+
+:root[data-theme="light"] .rv-server-item:is([data-variant="row"], [data-variant="autoserver"])
+  .rv-badge[data-color="default"][data-variant="first"] {
+  --badge-bg: var(--rv-grey);
+}
+
+:root[data-theme="light"] .rv-server-item:is([data-variant="row"], [data-variant="autoserver"])
+  .rv-badge[data-color="default"][data-variant="second"] {
+  --badge-bg: var(--rv-light-gray);
+}
+
+:root[data-theme="light"] .rv-server-item:is([data-variant="row"], [data-variant="autoserver"]):is(:hover, [data-mode="hover"], [data-active="true"])
+  :is(.rv-flag, .rv-server-item__badge)[data-status="default"] {
+  background: var(--rv-grey);
 }
 
 /* --- Левая часть -------------------------------------------------------- */
@@ -243,6 +262,10 @@
   text-align: center;
   white-space: nowrap;
   color: var(--rv-white-a20);
+}
+
+:root[data-theme="light"] :is(.rv-server-item__subtitle, .rv-server-item__count) {
+  color: var(--rv-description-color);
 }
 
 /* --- Правая часть ------------------------------------------------------- */

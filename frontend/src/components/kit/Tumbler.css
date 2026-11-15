@@ -60,6 +60,14 @@
   background: var(--rv-main-color);
 }
 
+:root[data-theme="light"] .rv-tumbler[data-state="active"] {
+  background: var(--rv-dark-grey);
+}
+
+:root[data-theme="light"] .rv-tumbler:not([data-state="active"]) .rv-tumbler__knob {
+  background: var(--rv-white-a50);
+}
+
 /* Неактивный тумблер гасится так же, как неактивные кнопка и выбор. */
 .rv-tumbler:disabled {
   opacity: 0.5;

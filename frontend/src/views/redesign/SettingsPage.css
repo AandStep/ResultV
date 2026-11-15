@@ -164,7 +164,7 @@
   font-size: var(--rv-chip-size);
   font-weight: var(--rv-chip-weight);
   line-height: var(--rv-chip-leading);
-  color: var(--rv-white-a50);
+  color: var(--rv-description-color);
 }
 
 .rv-settings-page__row-control {
@@ -327,7 +327,7 @@
   font-size: var(--rv-chip-size);
   font-weight: var(--rv-chip-weight);
   line-height: var(--rv-chip-leading);
-  color: var(--rv-white-a50);
+  color: var(--rv-description-color);
 }
 
 /* Кнопки делят ширину панели поровну — в макете обе по 398 при зазоре 16. */

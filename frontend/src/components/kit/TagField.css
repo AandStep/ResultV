@@ -133,3 +133,7 @@
 .rv-tag-field__input::placeholder {
   color: var(--rv-white-a20);
 }
+
+:root[data-theme="light"] .rv-tag-field__input::placeholder {
+  color: var(--rv-description-color);
+}
