@@ -9,6 +9,60 @@ import (
 	"testing"
 )
 
+func TestFetchSubscriptionUsesDefaultRouteToIdentifyAutoGroups(t *testing.T) {
+	node := func(tag, host string) string {
+		return `{"tag":"` + tag + `","protocol":"vless","settings":{"vnext":[{"address":"` + host +
+			`","port":443,"users":[{"id":"af815621-b245-4149-89da-dd184cfc4b3d"}]}]}}`
+	}
+	body := `[{"remarks":"Авто","routing":{
+		"balancers":[
+			{"tag":"service","selector":["service-proxy"]},
+			{"tag":"auto","selector":["primary"]}
+		],
+		"rules":[
+			{"type":"field","domain":["domain:service.example"],"balancerTag":"service"},
+			{"type":"field","network":"tcp,udp","balancerTag":"auto"}
+		]},"outbounds":[` + strings.Join([]string{
+		node("service-proxy", "service.example"), node("primary-1", "n1.example"), node("primary-2", "n2.example"),
+	}, ",") + `]},
+	{"remarks":"🇩🇪 Германия | №2","routing":{
+		"balancers":[{"tag":"service","selector":["proxy"],"fallbackTag":"direct"}],
+		"rules":[
+			{"type":"field","network":"tcp,udp","port":"53","outboundTag":"dns-out"},
+			{"type":"field","domain":["domain:service.example"],"balancerTag":"service"},
+			{"type":"field","network":"tcp,udp","outboundTag":"proxy"}
+		]},"outbounds":[` + node("proxy", "de.example") + `]}]`
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer ts.Close()
+
+	res, err := NewApp().fetchSubscriptionFromURL(ts.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var heads, members, servers []string
+	for _, entry := range res.Entries {
+		switch {
+		case entry.Type == "AUTO":
+			heads = append(heads, entry.Name)
+		case entry.AutoGroup != "":
+			members = append(members, entry.IP)
+		default:
+			servers = append(servers, entry.Type+" "+entry.Name)
+		}
+	}
+	if got := strings.Join(heads, ","); got != "Авто" {
+		t.Errorf("AUTO heads = %q, want %q", got, "Авто")
+	}
+	if got := strings.Join(members, ","); got != "n1.example,n2.example" {
+		t.Errorf("AUTO members = %q, want n1.example,n2.example", got)
+	}
+	if got := strings.Join(servers, ","); got != "VLESS 🇩🇪 Германия | №2" {
+		t.Errorf("ordinary servers = %q, want VLESS 🇩🇪 Германия | №2", got)
+	}
+}
+
 // End-to-end: a subscription with two balancer configs must produce two AUTO
 // heads, each owning only its own members, with the rest of the servers
 // visible as ordinary entries.

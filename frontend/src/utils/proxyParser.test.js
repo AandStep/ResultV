@@ -1,6 +1,32 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseProxies } from "./proxyParser.js";
+import { mergeImportedProxies, parseProxies } from "./proxyParser.js";
+
+test("importing or reimporting a subscription keeps other subscriptions and their AUTO members", () => {
+    const ownURL = "https://own.example/sub";
+    const newURL = "https://other.example/sub";
+    const member = { ip: "192.0.2.10", port: 443, type: "VLESS" };
+    const own = [
+        { id: "own-auto", ip: "", port: 0, type: "AUTO", extra: { members: ["own-member"] }, subscriptionUrl: ownURL },
+        { id: "own-member", ...member, subscriptionUrl: ownURL },
+    ];
+    const manual = { id: "manual", ...member };
+    const imported = [
+        { id: "new-auto", ip: "", port: 0, type: "AUTO", extra: { members: ["new-member"] }, subscriptionUrl: newURL },
+        { id: "new-member", ...member, subscriptionUrl: newURL },
+    ];
+    const stale = { id: "old-server", ip: "192.0.2.11", port: 443, type: "VLESS", subscriptionUrl: newURL };
+
+    assert.deepEqual(mergeImportedProxies([...own, manual], imported), [...own, manual, ...imported]);
+    assert.deepEqual(mergeImportedProxies([...own, manual, stale], imported), [...own, manual, ...imported]);
+});
+
+test("importing a manual VPN server preserves matching subscription entries", () => {
+    const manual = { id: "manual", ip: "192.0.2.10", port: 443, type: "VLESS" };
+    const subscriber = { ...manual, id: "subscriber", subscriptionUrl: "https://own.example/sub" };
+    const replacement = { ...manual, id: "replacement" };
+    assert.deepEqual(mergeImportedProxies([manual, subscriber], [replacement]), [subscriber, replacement]);
+});
 
 test("imports an authenticated SOCKS5 URL alongside a bare proxy address", () => {
     const proxies = parseProxies("socks5://test%40user:p%3Aa%25ss@192.0.2.10:8000\n192.0.2.11:3128");

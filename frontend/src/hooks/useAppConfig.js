@@ -20,7 +20,7 @@ import { useTranslation } from "react-i18next";
 import wailsAPI from "../utils/wailsAPI";
 import { adminRestartDialog } from "../utils/adminDialog";
 import { applyCountries, detectCountry, redetectCountries } from "../utils/network";
-import { flagEmojiCountry, mergeSubscriptionRefreshCountries } from "../utils/proxyParser";
+import { flagEmojiCountry, mergeImportedProxies, mergeSubscriptionRefreshCountries } from "../utils/proxyParser";
 import { applyTheme } from "../lib/theme";
 
 const RULES_PUSH_DEBOUNCE_MS = 400;
@@ -570,29 +570,7 @@ export const useAppConfig = (addLog) => {
                 })
             );
 
-            setProxies((prev) => {
-                const VPN_SET = new Set([
-                    "SS",
-                    "VMESS",
-                    "VLESS",
-                    "TROJAN",
-                    "WIREGUARD",
-                    "AMNEZIAWG",
-                    "HYSTERIA2",
-                    "AUTO",
-                    "SECTION",
-                ]);
-                const newKeys = new Set(
-                    finalProxies
-                        .filter((p) => VPN_SET.has(p.type))
-                        .map((p) => `${p.ip}:${p.port}:${p.type}`)
-                );
-                const filtered = prev.filter((p) => {
-                    if (!VPN_SET.has(p.type)) return true;
-                    return !newKeys.has(`${p.ip}:${p.port}:${p.type}`);
-                });
-                return [...filtered, ...finalProxies];
-            });
+            setProxies((prev) => mergeImportedProxies(prev, finalProxies));
             addLog(`Добавлено ${finalProxies.length} новых прокси.`, "success");
             setActiveTab("list");
         },

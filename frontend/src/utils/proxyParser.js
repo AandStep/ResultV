@@ -903,6 +903,21 @@ export const formatProxyDisplayName = (name, countryCode) => {
 };
 
 
+export const mergeImportedProxies = (previous, imported) => {
+    const vpnTypes = new Set([
+        "SS", "VMESS", "VLESS", "TROJAN", "WIREGUARD", "AMNEZIAWG", "HYSTERIA2", "AUTO", "SECTION",
+    ]);
+    const keyOf = (p) => `${p.ip}:${p.port}:${p.type}`;
+    const replacedURLs = new Set(imported.map((p) => p.subscriptionUrl).filter(Boolean));
+    const newKeys = new Set(imported.filter((p) => !p.subscriptionUrl && vpnTypes.has(p.type)).map(keyOf));
+    return [
+        ...previous.filter((p) => p.subscriptionUrl
+            ? !replacedURLs.has(p.subscriptionUrl)
+            : !vpnTypes.has(p.type) || !newKeys.has(keyOf(p))),
+        ...imported,
+    ];
+};
+
 export const mergeSubscriptionRefreshCountries = (
     prevProxies,
     updatedProxies,

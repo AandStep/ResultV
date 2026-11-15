@@ -28,10 +28,9 @@ import (
 // load balancer, and returns the group's display name plus the outbound-tag
 // prefixes that make up its pool.
 //
-// A config is an auto group iff routing.balancers is non-empty. That is the
-// provider's own declaration and it survives renames — impio moved from
-// "🚀 impVPN Auto" to a Cyrillic "⚡ Авто | ✅ Когда не глушат интернет" and
-// split one group into per-tier sections without touching this structure.
+// When routing rules are present, only balancers used for default TCP or UDP
+// traffic describe the server pool. A domain-specific rule can reference an
+// auxiliary balancer even in a config for a single, fixed server.
 //
 // Membership follows xray's rule: selector entries are matched against
 // outbound tags with strings.HasPrefix, so "basic-proxy" covers
@@ -51,6 +50,8 @@ func parseBalancerGroup(obj map[string]interface{}) (name string, prefixes []str
 		return "", nil, false
 	}
 
+	rules, _ := asSlice(routing["rules"])
+	defaultBalancers := defaultRouteBalancers(rules)
 	seen := make(map[string]struct{})
 	add := func(s string) {
 		s = strings.TrimSpace(s)
@@ -70,8 +71,12 @@ func parseBalancerGroup(obj map[string]interface{}) (name string, prefixes []str
 		if !ok {
 			continue
 		}
+		tag := strings.TrimSpace(asString(bm["tag"]))
+		if len(rules) > 0 && !defaultBalancers[tag] {
+			continue
+		}
 		if firstTag == "" {
-			firstTag = strings.TrimSpace(asString(bm["tag"]))
+			firstTag = tag
 		}
 		if sel, ok := asSlice(bm["selector"]); ok {
 			for _, s := range sel {
@@ -105,6 +110,48 @@ func parseBalancerGroup(obj map[string]interface{}) (name string, prefixes []str
 		name = firstTag + "|" + strings.Join(sortedPrefixes, ",")
 	}
 	return name, prefixes, true
+}
+
+// Xray uses the first matching rule for each connection. Look for a rule
+// that covers the remaining traffic on each network after narrower rules.
+func defaultRouteBalancers(rules []interface{}) map[string]bool {
+	tags := make(map[string]bool)
+	for _, network := range []string{"tcp", "udp"} {
+		for _, value := range rules {
+			rule, ok := asMap(value)
+			if !ok || !isDefaultRoute(rule, network) {
+				continue
+			}
+			if asString(rule["outboundTag"]) != "" {
+				break
+			}
+			if tag := strings.TrimSpace(asString(rule["balancerTag"])); tag != "" {
+				tags[tag] = true
+				break
+			}
+		}
+	}
+	return tags
+}
+
+func isDefaultRoute(rule map[string]interface{}, network string) bool {
+	for key := range rule {
+		switch key {
+		case "type", "ruleTag", "outboundTag", "balancerTag", "webhook", "network":
+		default:
+			return false
+		}
+	}
+	networks := asString(rule["network"])
+	if networks == "" {
+		return true
+	}
+	for _, candidate := range strings.Split(networks, ",") {
+		if strings.EqualFold(strings.TrimSpace(candidate), network) {
+			return true
+		}
+	}
+	return false
 }
 
 // tagMatchesSelector reports whether an outbound tag belongs to a balancer
