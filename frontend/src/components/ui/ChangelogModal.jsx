@@ -74,7 +74,7 @@ export default function ChangelogModal({ changelog, onClose }) {
                 </Button>
             }
         >
-            <div className="rv-changelog__body">
+            <div className="rv-changelog__body rv-scroll-dialog">
                 {changelog.title && (
                     <p className="rv-changelog__release">{changelog.title}</p>
                 )}

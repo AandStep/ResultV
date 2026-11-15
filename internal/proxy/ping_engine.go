@@ -217,10 +217,6 @@ func startPingProbeEngine(ctx context.Context, proxy ProxyConfig, port int, bind
 		stop()
 		return nil, nil, "engine_start_failed"
 	}
-	if err := applyAWG31(boxCtx, awg31KnobsFor(proxy), nil); err != nil {
-		stop()
-		return nil, nil, "engine_start_failed"
-	}
 	return boxCtx, stop, ""
 }
 

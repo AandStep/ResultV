@@ -45,7 +45,6 @@ type Peer struct {
 		sync.Mutex
 		val            conn.Endpoint
 		candidates     []conn.Endpoint
-		resolver       func() ([]conn.Endpoint, error)
 		clearSrcOnTx   bool // signal to val.ClearSrc() prior to next packet transmission
 		disableRoaming bool
 	}
@@ -412,26 +411,12 @@ func (peer *Peer) SetEndpointFromPacket(endpoint conn.Endpoint) {
 	peer.endpoint.val = endpoint
 }
 
-// SetEndpointResolver sets a function providing the candidate endpoints for
-// this peer. It is invoked on every handshake initiation, and the initiation
-// is sent to the current endpoint and every candidate; the source of the
-// first valid reply becomes the current endpoint via roaming. When the
-// resolver fails, the candidates from its last successful invocation are
-// reused.
-func (peer *Peer) SetEndpointResolver(resolver func() ([]conn.Endpoint, error)) {
-	peer.endpoint.Lock()
-	defer peer.endpoint.Unlock()
-	peer.endpoint.resolver = resolver
-}
-
 func (peer *Peer) resolveEndpoints() []conn.Endpoint {
-	peer.endpoint.Lock()
-	resolver := peer.endpoint.resolver
-	peer.endpoint.Unlock()
+	resolver := peer.device.endpointResolverFn.Load()
 	if resolver == nil {
 		return nil
 	}
-	resolved, err := resolver()
+	resolved, err := (*resolver)(peer.handshake.remoteStatic)
 	peer.endpoint.Lock()
 	defer peer.endpoint.Unlock()
 	if err != nil {

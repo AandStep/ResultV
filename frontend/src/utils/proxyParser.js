@@ -188,6 +188,7 @@ const parseLine = (line) => {
     if (line.startsWith("naive+https://") || line.startsWith("naive://")) return parseNaiveURI(line);
     if (line.startsWith("hy2://")) return parseHysteria2(line);
     if (line.startsWith("hysteria2://")) return parseHysteria2(line);
+    if (/^socks5:\/\//i.test(line)) return parseSocks5URI(line);
 
     // A scheme this parser does not know (awg://, wg://, anything added later)
     // must not reach the bare host:port branches below: they would split
@@ -227,6 +228,25 @@ const parseLine = (line) => {
     }
 
     return null;
+};
+
+const parseSocks5URI = (line) => {
+    try {
+        const url = new URL(line);
+        const port = Number(url.port);
+        if (!url.hostname || port === 0) return null;
+
+        return {
+            ip: url.hostname.replace(/^\[(.*)\]$/, "$1"),
+            port,
+            username: decodeURIComponent(url.username),
+            password: decodeURIComponent(url.password),
+            type: "SOCKS5",
+            name: url.host,
+        };
+    } catch {
+        return null;
+    }
 };
 
 const safeB64Decode = (str) => {
@@ -883,6 +903,21 @@ export const formatProxyDisplayName = (name, countryCode) => {
 };
 
 
+export const mergeImportedProxies = (previous, imported) => {
+    const vpnTypes = new Set([
+        "SS", "VMESS", "VLESS", "TROJAN", "WIREGUARD", "AMNEZIAWG", "HYSTERIA2", "AUTO", "SECTION",
+    ]);
+    const keyOf = (p) => `${p.ip}:${p.port}:${p.type}`;
+    const replacedURLs = new Set(imported.map((p) => p.subscriptionUrl).filter(Boolean));
+    const newKeys = new Set(imported.filter((p) => !p.subscriptionUrl && vpnTypes.has(p.type)).map(keyOf));
+    return [
+        ...previous.filter((p) => p.subscriptionUrl
+            ? !replacedURLs.has(p.subscriptionUrl)
+            : !vpnTypes.has(p.type) || !newKeys.has(keyOf(p))),
+        ...imported,
+    ];
+};
+
 export const mergeSubscriptionRefreshCountries = (
     prevProxies,
     updatedProxies,
@@ -940,7 +975,8 @@ export const mergeSubscriptionRefreshCountries = (
     const oldBy = new Map();
     oldSub.forEach((p, idx) => {
         const key = oldMemberIds.has(String(p.id)) ? memberKey(p) : rowKey(oldSub, p, idx);
-        oldBy.set(key, p);
+        if (!oldBy.has(key)) oldBy.set(key, []);
+        oldBy.get(key).push(p);
     });
 
     const freshMemberIds = new Set();
@@ -951,10 +987,17 @@ export const mergeSubscriptionRefreshCountries = (
         }
     });
 
-    // First pass: build merged array with country/id continuity
+    // Reuse each old ID once. Servers on the same endpoint can have different
+    // names, and older refreshes may have saved the same ID for several rows.
+    const reusedIds = new Set();
     const merged = updatedProxies.map((p, idx) => {
         const key = freshMemberIds.has(String(p.id)) ? memberKey(p) : rowKey(updatedProxies, p, idx);
-        const old = oldBy.get(key);
+        const candidates = oldBy.get(key) || [];
+        const match = candidates.length === 1 ? candidates[0] : candidates.find((row) =>
+            row.name === p.name && !reusedIds.has(String(row.id)),
+        );
+        const old = match && !reusedIds.has(String(match.id)) ? match : undefined;
+        if (old) reusedIds.add(String(old.id));
         const port = parseInt(p.port, 10) || 0;
         const base = {
             ...p,

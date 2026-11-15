@@ -324,10 +324,6 @@ func (a *App) buildRoutingProfileSpecs() []proxy.RoutingListSpec {
 	if a == nil || a.config == nil {
 		return nil
 	}
-	rr := a.config.GetConfig().RoutingRules
-	if rr.Mode == "smart" {
-		return nil
-	}
 	profile, ok := a.ActiveRoutingProfile()
 	if !ok {
 		return nil
@@ -343,9 +339,10 @@ func (a *App) buildRoutingProfileSpecs() []proxy.RoutingListSpec {
 			continue
 		}
 		out = append(out, proxy.RoutingListSpec{
-			Tag:    proxy.RoutingListRuleSetTag(id),
-			Path:   path,
-			Action: action,
+			Tag:        proxy.RoutingListRuleSetTag(id),
+			Path:       path,
+			Action:     action,
+			GlobalOnly: true,
 		})
 	}
 	return out
@@ -355,9 +352,6 @@ func (a *App) buildRoutingProfileSpecs() []proxy.RoutingListSpec {
 // profile's, when there is one and it asked for a particular order.
 func (a *App) activeRoutingOrder() []string {
 	if a == nil || a.config == nil {
-		return nil
-	}
-	if a.config.GetConfig().RoutingRules.Mode == "smart" {
 		return nil
 	}
 	profile, ok := a.ActiveRoutingProfile()

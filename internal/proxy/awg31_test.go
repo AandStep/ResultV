@@ -16,37 +16,9 @@
 package proxy
 
 import (
-	"context"
 	"encoding/json"
-	"reflect"
-	"strings"
 	"testing"
-
-	wgprotocol "github.com/sagernet/sing-box/protocol/wireguard"
 )
-
-// The path applyAWG31 walks is made of unexported fields, so it cannot be
-// checked by the compiler. This test is the guard: it fails on the next engine
-// bump that renames or retypes any step, which is the moment to re-check the
-// route — not months later, in a user's log, as "3.1 not applied".
-func TestAWG31DeviceFieldsStillExist(t *testing.T) {
-	protocolEndpoint := reflect.TypeOf(wgprotocol.Endpoint{})
-	field, found := protocolEndpoint.FieldByName("endpoint")
-	if !found {
-		t.Fatal("protocol/wireguard.Endpoint потерял поле endpoint — путь к устройству надо искать заново")
-	}
-	transportEndpoint := field.Type
-	if transportEndpoint.Kind() != reflect.Pointer {
-		t.Fatalf("ожидался указатель на transport-эндпоинт, получено %s", transportEndpoint)
-	}
-	deviceField, found := transportEndpoint.Elem().FieldByName("device")
-	if !found {
-		t.Fatal("transport/wireguard.Endpoint потерял поле device")
-	}
-	if !deviceField.Type.Implements(reflect.TypeOf((*ipcSetter)(nil)).Elem()) {
-		t.Fatalf("устройство %s больше не принимает IpcSet", deviceField.Type)
-	}
-}
 
 // AmneziaWG writes these as on/off in its config files, JSON subscriptions send
 // booleans, and some providers send 1/0. All three mean the same switch.
@@ -90,25 +62,7 @@ func TestAWG31IgnoresUnreadableValues(t *testing.T) {
 	}
 }
 
-// The UAPI parses with strconv.ParseBool, which does not know on/off — so what
-// reaches the device must be true/false, one key per line.
-func TestAWG31IpcLinesAreUAPIShaped(t *testing.T) {
-	knobs := awg31Knobs{RandomTrailers: boolPtr(true), DisableCookies: boolPtr(false)}
-	got := knobs.ipcLines()
-	for _, want := range []string{"random_trailers=true\n", "disable_cookies=false\n"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("нет строки %q в %q", want, got)
-		}
-	}
-	for _, line := range strings.Split(strings.TrimSpace(got), "\n") {
-		if strings.Count(line, "=") != 1 {
-			t.Errorf("строка UAPI должна быть ровно key=value, получено %q", line)
-		}
-	}
-}
-
-// Only WireGuard-shaped nodes carry these switches; reading them off a VLESS
-// node would apply them to an endpoint that does not exist.
+// Only WireGuard-shaped nodes carry these switches.
 func TestAWG31OnlyForWireGuardNodes(t *testing.T) {
 	extra := json.RawMessage(`{"amnezia":{"random_trailers":"on"}}`)
 	if got := awg31KnobsFor(ProxyConfig{Type: "vless", Extra: extra}); !got.empty() {
@@ -120,36 +74,97 @@ func TestAWG31OnlyForWireGuardNodes(t *testing.T) {
 	}
 }
 
-// Nothing stated means nothing sent: a node that says nothing about 3.1 must
-// not have its device touched at all.
-func TestAWG31EmptyKnobsDoNothing(t *testing.T) {
-	if err := applyAWG31(nil, awg31Knobs{}, nil); err != nil {
-		t.Errorf("пустой набор не должен быть ошибкой: %v", err)
+func awg31TestNode(t *testing.T, amnezia map[string]interface{}) ProxyConfig {
+	t.Helper()
+	extra, err := json.Marshal(map[string]interface{}{
+		"private_key": randomWGKey(t),
+		"public_key":  randomWGKey(t),
+		"address":     []string{"10.0.0.2/32"},
+		"allowed_ips": []string{"0.0.0.0/0"},
+		"amnezia":     amnezia,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ProxyConfig{Type: "AMNEZIAWG", IP: "203.0.113.7", Port: 51820, Extra: extra}
+}
+
+func onlyEndpoint(t *testing.T, cfg SingBoxConfig) SBEndpoint {
+	t.Helper()
+	if len(cfg.Endpoints) != 1 {
+		t.Fatalf("ожидался один эндпоинт, получено %d", len(cfg.Endpoints))
+	}
+	return cfg.Endpoints[0]
+}
+
+// The switches travel in the endpoint's amnezia block, and the pinned core has
+// to accept them there: it decodes strictly, and a key it does not know fails
+// the whole start.
+func TestAWG31SwitchesReachTheEngineConfig(t *testing.T) {
+	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
+		Proxy: awg31TestNode(t, map[string]interface{}{"jc": 4, "random_trailers": "on", "disable_cookies": "on"}),
+		Mode:  ProxyModeTunnel,
+	})
+	am := onlyEndpoint(t, cfg).Amnezia
+	if am == nil || !am.RandomTrailers || !am.DisableCookies {
+		t.Fatalf("переключатели 3.1 не попали в эндпоинт: %+v", am)
+	}
+	assertCoreAcceptsConfig(t, cfg)
+}
+
+// A plain WireGuard node that only turns trailers on still needs the block.
+func TestAWG31AloneStillEmitsTheBlock(t *testing.T) {
+	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
+		Proxy: awg31TestNode(t, map[string]interface{}{"random_trailers": true}),
+		Mode:  ProxyModeTunnel,
+	})
+	am := onlyEndpoint(t, cfg).Amnezia
+	if am == nil || !am.RandomTrailers {
+		t.Fatalf("random_trailers без остальных параметров AWG потерялся: %+v", am)
+	}
+	assertCoreAcceptsConfig(t, cfg)
+}
+
+// Off is the device default, so a node that only says "off" changes nothing.
+func TestAWG31StatedOffAddsNothing(t *testing.T) {
+	cfg := mustBuildTunnelModeConfig(t, EngineConfig{
+		Proxy: awg31TestNode(t, map[string]interface{}{"random_trailers": "off", "disable_cookies": "off"}),
+		Mode:  ProxyModeTunnel,
+	})
+	if am := onlyEndpoint(t, cfg).Amnezia; am != nil {
+		t.Fatalf("выключенные переключатели не должны создавать блок amnezia: %+v", am)
 	}
 }
 
-// Every failure on the way to the device is reported, never panicked: a session
-// with 3.0 behaviour is worth more than a crash on connect.
-func TestAWG31ReportsMissingCore(t *testing.T) {
-	knobs := awg31Knobs{RandomTrailers: boolPtr(true)}
-	if err := applyAWG31(nil, knobs, nil); err == nil {
-		t.Error("отсутствие контекста должно быть ошибкой")
+// The ping probe runs its own engine from its own config builder, and a node
+// with trailers on cannot complete a handshake without them.
+func TestAWG31PingProbeCarriesTheSwitches(t *testing.T) {
+	cfg, err := BuildPingProbeConfig(awg31TestNode(t, map[string]interface{}{"random_trailers": "on"}), getFreeLocalPort(0), "")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := applyAWG31(context.Background(), knobs, nil); err == nil {
-		t.Error("контекст без менеджера эндпоинтов должен быть ошибкой")
+	am := onlyEndpoint(t, cfg).Amnezia
+	if am == nil || !am.RandomTrailers {
+		t.Fatalf("проба пинга идёт без random_trailers: %+v", am)
 	}
 }
 
-// A zero-value endpoint has no device yet — the state a domain-addressed peer
-// is in until the post-start stage. It must read as "not ready", not as a
-// broken engine.
-func TestAWG31DeviceNotReady(t *testing.T) {
-	_, err := awg31Device(&wgprotocol.Endpoint{})
-	if err == nil {
-		t.Fatal("ожидалась ошибка для эндпоинта без устройства")
+// The core writes the switches in the same IpcSet as the peers, so the device
+// has them before its first initiation leaves.
+func TestAWG31DeviceStartsWithTheSwitches(t *testing.T) {
+	boxCtx := startEndpointCore(t, mustBuildTunnelModeConfig(t, EngineConfig{
+		Proxy:   awg31TestNode(t, map[string]interface{}{"random_trailers": "on", "disable_cookies": "on"}),
+		Mode:    ProxyModeTunnel,
+		DataDir: t.TempDir(),
+	}))
+	dump, err := wgDeviceDump(boxCtx)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "ещё не создано") {
-		t.Errorf("ошибка должна называть состояние, получено: %v", err)
+	for _, key := range awg31Keys {
+		if got := uapiValue(dump, key); got != "1" {
+			t.Errorf("устройство стартовало с %s=%q", key, got)
+		}
 	}
 }
 

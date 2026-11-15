@@ -17,10 +17,50 @@ package proxy
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	wgprotocol "github.com/sagernet/sing-box/protocol/wireguard"
 )
+
+// The path wgDeviceFrom walks is made of unexported fields, so the compiler
+// cannot check it. This test fails on the engine bump that renames or retypes
+// a step, instead of in a user's log as a dead ping or a silent diagnostic.
+func TestWGDeviceFieldsStillExist(t *testing.T) {
+	field, found := reflect.TypeOf(wgprotocol.Endpoint{}).FieldByName("endpoint")
+	if !found {
+		t.Fatal("protocol/wireguard.Endpoint потерял поле endpoint — путь к устройству надо искать заново")
+	}
+	if field.Type.Kind() != reflect.Pointer {
+		t.Fatalf("ожидался указатель на transport-эндпоинт, получено %s", field.Type)
+	}
+	deviceField, found := field.Type.Elem().FieldByName("device")
+	if !found {
+		t.Fatal("transport/wireguard.Endpoint потерял поле device")
+	}
+	for _, need := range []reflect.Type{
+		reflect.TypeOf((*ipcGetter)(nil)).Elem(),
+		reflect.TypeOf((*ipcSetter)(nil)).Elem(),
+	} {
+		if !deviceField.Type.Implements(need) {
+			t.Fatalf("устройство %s больше не реализует %s", deviceField.Type, need)
+		}
+	}
+}
+
+// A zero-value endpoint has no device yet — the state a domain-addressed peer
+// is in until the post-start stage. It must read as "not ready".
+func TestWGDeviceNotReady(t *testing.T) {
+	_, err := wgDeviceFrom(&wgprotocol.Endpoint{})
+	if err == nil {
+		t.Fatal("ожидалась ошибка для эндпоинта без устройства")
+	}
+	if !strings.Contains(err.Error(), "ещё не создано") {
+		t.Errorf("ошибка должна называть состояние, получено: %v", err)
+	}
+}
 
 // The UAPI dump carries the private key and the preshared key. This file is
 // opened to be handed to someone, so the filter is a whitelist and the test

@@ -23,7 +23,7 @@ import (
 	"time"
 )
 
-const fileVersion = 2
+const fileVersion = 3
 
 type cacheFile struct {
 	Version int                          `json:"version"`

@@ -13,7 +13,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/option"
 	singjson "github.com/sagernet/sing/common/json"
 )
@@ -78,7 +77,7 @@ func TestAWG2HeaderRangeEndToEnd(t *testing.T) {
 	// exact path SingBoxEngine.Start uses (singbox.go:268). If H1's range
 	// string fails to deserialize into *Xbadoption.Range, the engine would
 	// fail to start with the user's config.
-	ctx := include.Context(context.Background())
+	ctx := extendedBoxContext(context.Background())
 	var opts option.Options
 	if err := singjson.UnmarshalContext(ctx, full, &opts); err != nil {
 		t.Fatalf("upstream sing-box-extended rejected H-range config: %v\nJSON: %s", err, string(full))

@@ -92,9 +92,8 @@ func newDNSBreaker(tag string, primary, backup adapter.DNSTransport, now func() 
 	}
 }
 
-func (b *dnsBreaker) Start(adapter.StartStage) error { return nil }
-func (b *dnsBreaker) Close() error                   { return nil }
-func (b *dnsBreaker) Reset()                         {}
+func (b *dnsBreaker) Start(adapter.StartStage, *adapter.Scope) error { return nil }
+func (b *dnsBreaker) Reset()                                         {}
 
 func (b *dnsBreaker) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
 	if b.skipPrimary(message) {
@@ -112,8 +111,12 @@ func (b *dnsBreaker) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg
 	return b.backup.Exchange(ctx, message)
 }
 
+// The core calls this from the TUN read loop: answering on the caller's
+// goroutine stalls every packet until the resolver replies.
 func (b *dnsBreaker) ExchangeAsync(ctx context.Context, message *mDNS.Msg, callback func(response *mDNS.Msg, err error)) {
-	callback(b.Exchange(ctx, message))
+	go func() {
+		callback(b.Exchange(ctx, message))
+	}()
 }
 
 func (b *dnsBreaker) skipPrimary(message *mDNS.Msg) bool {

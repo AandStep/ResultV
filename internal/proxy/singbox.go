@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -635,7 +636,14 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 
 	tmpDir := os.TempDir()
 	configPath := filepath.Join(tmpDir, "resultproxy-singbox.json")
-	if err := os.WriteFile(configPath, configJSON, 0o600); err != nil {
+	diagnosticJSON := configJSON
+	if cfg.Socks5Exit != nil {
+		diagnosticJSON, err = marshalDiagnosticConfig(sbConfig)
+		if err != nil {
+			return fmt.Errorf("marshaling diagnostic config: %w", err)
+		}
+	}
+	if err := os.WriteFile(configPath, diagnosticJSON, 0o600); err != nil {
 		return fmt.Errorf("writing sing-box config: %w", err)
 	}
 
@@ -669,7 +677,7 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 	boxCtx = service.ContextWith[nodeUDPCheck](boxCtx, nodeUDPCheckFor(cfg.Proxy))
 	// The app lists reach the core through the process lookup: see
 	// familyPlatform for why that is a platform interface.
-	if lists := newAppLists(cfg.forRoutingMode().AppWhitelist, appFamilyVPNList(cfg)); !lists.empty() {
+	if lists := newAppLists(cfg.forRoutingMode().directApps(), appFamilyVPNList(cfg)).withSocks(socks5ExitApps(cfg)); !lists.empty() {
 		resolver := newFamilyResolver(lists, processtree.Default())
 		boxCtx = service.ContextWith[adapter.PlatformInterface](boxCtx, newFamilyPlatform(resolver))
 	}
@@ -725,15 +733,8 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 		return fmt.Errorf("starting sing-box: %w", err)
 	}
 
-	// AmneziaWG 3.1 switches, which the core cannot carry in its config (see
-	// applyAWG31). Done here, right after Start, because the device only
-	// exists once the endpoint has started and because random_trailers has to
-	// match the peer before the first handshake is answered. A failure is not
-	// fatal: the session still runs, with 3.0 behaviour.
 	if knobs := awg31KnobsFor(cfg.Proxy); !knobs.empty() {
-		if err := applyAWG31(boxCtx, knobs, e.log); err != nil {
-			e.log.Warning(fmt.Sprintf("[PROXY] Параметры AmneziaWG 3.1 не применены: %v", err))
-		}
+		e.log.Info("[PROXY] AmneziaWG 3.1: " + knobs.describe())
 	}
 
 	// While the diagnostic log is open, sample the WireGuard device counters:
@@ -1342,6 +1343,18 @@ func (t *trafficTracker) logConnection(metadata adapter.InboundContext, outbound
 	return host, dest, true
 }
 
+
+func marshalDiagnosticConfig(cfg SingBoxConfig) ([]byte, error) {
+	for i, out := range cfg.Outbounds {
+		if out.Tag == socks5ExitTag {
+			cfg.Outbounds = slices.Clone(cfg.Outbounds)
+			cfg.Outbounds[i].Username = ""
+			cfg.Outbounds[i].Password = ""
+			break
+		}
+	}
+	return json.MarshalIndent(cfg, "", "  ")
+}
 
 func (e *SingBoxEngine) GetConfigJSON() (string, error) {
 	if e.configPath == "" {

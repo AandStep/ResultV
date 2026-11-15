@@ -15,20 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-/*
- * BuyPage — Figma "ResultV" -> App Design, фрейм BuyServers (6613:3136).
- *
- * Раскладка:
- *
- *   Header    862x61   название, под ним строка о том, что здесь покупают
- *   карточка  862x243  знак 96, название с описанием, ряд из трёх кнопок
- *
- * Отступ страницы 32, между шапкой и телом 32, внутри карточки 24. Заливка
- * карточки Grey без обводки — проверено по рендеру макета попиксельно
- * (верхняя грань идёт ровно #1a1a1a, светлой линии на ней нет).
- *
- * Здесь только раскладка карточки: кнопки — компонент кита Button.
- */
+/* BuyServers (6613:3136). Кнопки использует общий UI-кит. */
 
 .rv-buy-page {
   display: flex;
@@ -57,15 +44,11 @@
   flex-shrink: 0;
 }
 
-/* Партнёр в макете один; шаг между карточками — обычный шаг между блоками
-   страницы. */
 .rv-buy-page__list {
   display: flex;
   flex-direction: column;
   gap: var(--rv-space-nest-1);
 }
-
-/* --- Карточка партнёра --------------------------------------------------- */
 
 .rv-buy-page__card {
   display: flex;
@@ -82,29 +65,16 @@
   gap: var(--rv-space-nest-2);
 }
 
-/*
- * Подложка под знак партнёра. В макете слой зовётся `Flag`, но это не
- * компонент кита: у того 68 и скругление 14, здесь 96 и 24.
- */
 .rv-buy-page__logo {
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: block;
   flex-shrink: 0;
   width: 96px;
   height: 96px;
-  padding: var(--rv-space-24);
-  border-radius: var(--rv-radius-24);
-  background: var(--rv-light-gray);
-  overflow: hidden;
+  background: url("../../assets/resultv-buy-badge.svg") center no-repeat;
 }
 
-.rv-buy-page__logo-img {
-  display: block;
-  width: 48px;
-  height: 48px;
-  object-fit: contain;
+:root[data-theme="light"] .rv-buy-page__logo {
+  background-image: url("../../assets/resultv-buy-badge-light.svg");
 }
 
 .rv-buy-page__text {
@@ -130,8 +100,26 @@
   font-size: var(--rv-chip-size);
   font-weight: var(--rv-chip-weight);
   line-height: var(--rv-chip-leading);
-  color: var(--rv-white-a50);
+  color: var(--rv-description-color);
   overflow-wrap: break-word;
+}
+
+.rv-buy-page__error {
+  margin: 0;
+  color: var(--rv-white-a80);
+  font-size: var(--rv-chip-size);
+  font-weight: var(--rv-chip-weight);
+}
+
+.rv-buy-page__secondary {
+  display: flex;
+  align-items: center;
+  gap: var(--rv-space-nest-3);
+  flex-wrap: wrap;
+}
+
+.rv-btn.rv-buy-page__cancel {
+  margin-inline-start: auto;
 }
 
 /* --- Кнопки -------------------------------------------------------------- */
@@ -141,17 +129,21 @@
   gap: var(--rv-space-nest-3);
 }
 
-/*
- * Кнопка без подписи: в макете она 74 в ширину, то есть иконка 24 плюс по 25
- * с каждой стороны. Отступ 49 из кита раздул бы её вдвое.
- */
+.rv-buy-page__actions > .rv-btn {
+  height: 75px;
+}
+
 .rv-btn.rv-buy-page__icon-btn {
   flex-shrink: 0;
   padding: 0 25px;
 }
 
-/* Кнопка промокода занимает остаток ряда (в макете 650 из 814). */
-.rv-btn.rv-buy-page__promo {
+.rv-btn.rv-buy-page__purchase {
   flex: 1;
   min-width: 0;
+}
+
+.rv-btn.rv-buy-page__subscription-url {
+  width: 100%;
+  height: 72px;
 }

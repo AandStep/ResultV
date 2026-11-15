@@ -100,6 +100,7 @@
   gap: var(--rv-space-nest-2);
 }
 
+.rv-settings-page__section > .rv-smart-rules__card,
 .rv-settings-page__section > .rv-settings-page__card {
   align-self: stretch;
 }
@@ -164,7 +165,7 @@
   font-size: var(--rv-chip-size);
   font-weight: var(--rv-chip-weight);
   line-height: var(--rv-chip-leading);
-  color: var(--rv-white-a50);
+  color: var(--rv-description-color);
 }
 
 .rv-settings-page__row-control {
@@ -176,6 +177,90 @@
   flex-direction: column;
   gap: var(--rv-space-nest-2);
 }
+
+.rv-settings-page__socks5-fields {
+  display: grid;
+  gap: var(--rv-space-nest-3);
+}
+
+.rv-settings-page__socks5-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--rv-space-nest-3);
+}
+
+.rv-settings-page__socks5-pair[data-address] {
+  grid-template-columns: minmax(0, 1fr) clamp(7rem, 24%, 11rem);
+}
+
+.rv-settings-page__socks5-fields .rv-input {
+  width: 100%;
+  min-width: 0;
+  height: 48px;
+}
+
+.rv-settings-page__socks5-fields .rv-input::placeholder {
+  color: var(--rv-white-a50);
+}
+
+.rv-settings-page__socks5-password {
+  position: relative;
+  min-width: 0;
+}
+
+.rv-settings-page__socks5-password .rv-input {
+  padding-inline-end: 48px;
+}
+
+.rv-settings-page__socks5-password .rv-input::-ms-reveal {
+  display: none;
+}
+
+.rv-settings-page__socks5-eye {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-end: 6px;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--rv-white-a50);
+  cursor: pointer;
+}
+
+.rv-settings-page__socks5-eye:hover,
+.rv-settings-page__socks5-eye:focus-visible {
+  color: white;
+}
+
+.rv-settings-page__socks5-eye:disabled {
+  cursor: default;
+}
+
+.rv-settings-page__socks5-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--rv-space-nest-3);
+}
+
+.rv-settings-page__socks5-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25em;
+}
+
+.rv-settings-page__socks5-flag {
+  width: 1.25em;
+  height: auto;
+  border-radius: 2px;
+}
+
 
 /* Ряд кнопок выносится за отступ карточки и гаснет у её края — заливка у
    растяжки та же, что у карточки. */
@@ -243,7 +328,7 @@
   font-size: var(--rv-chip-size);
   font-weight: var(--rv-chip-weight);
   line-height: var(--rv-chip-leading);
-  color: var(--rv-white-a50);
+  color: var(--rv-description-color);
 }
 
 /* Кнопки делят ширину панели поровну — в макете обе по 398 при зазоре 16. */

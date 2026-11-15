@@ -96,7 +96,12 @@
   font-size: var(--rv-regular-size);
   font-weight: var(--rv-regular-weight);
   line-height: var(--rv-regular-leading);
-  color: var(--rv-white-a50);
+  color: var(--rv-description-color);
+}
+
+:root[data-theme="light"] .rv-add-page .rv-btn[aria-pressed="true"] {
+  --btn-bg-idle: var(--rv-main-color);
+  --btn-text: var(--rv-on-accent);
 }
 
 /* --- Ряд протоколов ----------------------------------------------------- */

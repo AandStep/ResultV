@@ -108,9 +108,8 @@ func (a *App) syncRoutingListSpecs() {
 	if a.proxy == nil {
 		return
 	}
-	// The active profile's rule-sets ride the same channel as user lists: the
-	// engine treats both identically, so there is one path to keep correct
-	// instead of two. buildRoutingProfileSpecs returns nothing in Smart mode.
+	// Keep the active profile ready for a mode change. The engine only uses
+	// its rule-sets and action order outside Smart mode.
 	specs := append(a.buildRoutingListSpecs(), a.buildRoutingProfileSpecs()...)
 	a.proxy.SetRoutingLists(specs)
 	a.proxy.SetRoutingOrder(a.activeRoutingOrder())
@@ -500,7 +499,7 @@ func (a *App) applyRoutingRulesAndReconnect(rr config.RoutingRules) error {
 		return nil
 	}
 	result := a.proxy.ReconnectWithRoutingRules(
-		a.ctx, proxy.RoutingMode(rr.Mode), rr.Whitelist, rr.AppWhitelist, rr.AppForceVPN,
+		a.ctx, proxy.RoutingMode(rr.Mode), rr.Whitelist, rr.AppWhitelist, rr.AppForceVPN, personalRouting(rr),
 	)
 	if result.ErrorCode == proxy.ConnectErrorSuperseded {
 		return nil

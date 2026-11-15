@@ -18,11 +18,11 @@
 import React, { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";
-// import { initTheme } from "./lib/theme";
+import { initTheme } from "./lib/theme";
 import "./lib/i18n";
 import App from "./App.jsx";
 
-// initTheme();
+initTheme();
 
 class ErrorBoundary extends React.Component {
   constructor(props) {

@@ -87,3 +87,14 @@
   color: var(--rv-on-accent);
   cursor: default;
 }
+
+:root[data-theme="light"] .rv-mode-tumbler {
+  --rv-border: none;
+}
+
+:root[data-theme="light"] .rv-mode-tumbler__segment {
+  padding-block: 12px;
+  font-size: var(--rv-regular-up-size);
+  line-height: normal;
+  text-transform: uppercase;
+}

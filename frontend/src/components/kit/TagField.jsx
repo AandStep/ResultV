@@ -38,6 +38,7 @@ export default function TagField({
   onRemove,
   placeholder,
   disabled = false,
+  readOnly = false,
   removeLabel,
   className = "",
   ...rest
@@ -96,6 +97,7 @@ export default function TagField({
         placeholder={values.length === 0 ? placeholder : undefined}
         value={draft}
         disabled={disabled}
+        readOnly={readOnly}
         onChange={(event) => setDraft(event.target.value)}
         onKeyDown={onKeyDown}
         /* Уход из поля не теряет набранное: в макете нарисован только Enter,

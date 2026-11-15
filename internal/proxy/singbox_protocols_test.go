@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/option"
 	singjson "github.com/sagernet/sing/common/json"
 )
@@ -49,7 +48,7 @@ func TestWireGuardEndpointConfigParses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := include.Context(context.Background())
+	ctx := extendedBoxContext(context.Background())
 	var opt option.Options
 	if err := singjson.UnmarshalContext(ctx, j, &opt); err != nil {
 		t.Fatalf("parsing options: %v", err)
@@ -137,7 +136,7 @@ func TestHysteria2OutboundConfigParses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := include.Context(context.Background())
+	ctx := extendedBoxContext(context.Background())
 	var opt option.Options
 	if err := singjson.UnmarshalContext(ctx, j, &opt); err != nil {
 		t.Fatalf("parsing options: %v", err)
@@ -184,7 +183,7 @@ func TestNaiveOutboundConfigParses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := include.Context(context.Background())
+	ctx := extendedBoxContext(context.Background())
 	var opt option.Options
 	if err := singjson.UnmarshalContext(ctx, j, &opt); err != nil {
 		t.Fatalf("parsing options: %v", err)
@@ -214,7 +213,7 @@ func TestSSTunnelConfigParsesWithDNS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := include.Context(context.Background())
+	ctx := extendedBoxContext(context.Background())
 	var opt option.Options
 	if err := singjson.UnmarshalContext(ctx, j, &opt); err != nil {
 		t.Fatalf("parsing options: %v", err)

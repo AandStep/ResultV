@@ -75,10 +75,8 @@ func TestAWG31SurvivesJSONLink(t *testing.T) {
 	}
 }
 
-// AWG 3.1 knobs must not leak into the sing-box config: the core parses it
-// strictly and an unknown key under "amnezia" fails the entire start. They
-// travel to the device by a second IpcSet instead (see applyAWG31).
-func TestAWG31NeverReachesEngineConfig(t *testing.T) {
+// A link that turns both switches on must hand them to the core.
+func TestAWG31LinkReachesEngineConfig(t *testing.T) {
 	q := url.Values{}
 	q.Set("address", "10.0.0.2/32")
 	q.Set("private_key", "PRIV")
@@ -95,13 +93,8 @@ func TestAWG31NeverReachesEngineConfig(t *testing.T) {
 		Proxy: ProxyConfig{IP: entry.IP, Port: entry.Port, Type: entry.Type, Extra: entry.Extra},
 		Mode:  ProxyModeTunnel,
 	})
-	rendered, err := json.Marshal(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, key := range awg31Keys {
-		if strings.Contains(string(rendered), key) {
-			t.Errorf("%s попал в конфиг ядра — ядро отвергнет неизвестный ключ целиком:\n%s", key, rendered)
-		}
+	am := onlyEndpoint(t, cfg).Amnezia
+	if am == nil || !am.RandomTrailers || !am.DisableCookies {
+		t.Fatalf("переключатели 3.1 из ссылки не дошли до ядра: %+v", am)
 	}
 }

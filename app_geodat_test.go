@@ -75,7 +75,7 @@ func TestCompileRoutingProfileReportsCounts(t *testing.T) {
 	}
 }
 
-func TestActiveProfileSpecsAreEmptyInSmartMode(t *testing.T) {
+func TestActiveProfileSpecsAreScopedToGlobalMode(t *testing.T) {
 	dir := t.TempDir()
 	a := newTestApp(t, dir)
 
@@ -96,18 +96,21 @@ func TestActiveProfileSpecsAreEmptyInSmartMode(t *testing.T) {
 		t.Fatalf("global mode: %d specs, want 2 (direct + block)", got)
 	}
 
-	// Smart works its own routing out; a profile there would pull against it.
-	// The engine must enforce that, not just the UI hiding the button.
+	// Keep the profile ready while in Smart and mark its specs so the
+	// engine can exclude them when building the active rules.
 	rr = a.config.GetConfig().RoutingRules
 	rr.Mode = "smart"
 	if err := a.config.UpdateRoutingRules(rr); err != nil {
 		t.Fatal(err)
 	}
-	if got := a.buildRoutingProfileSpecs(); len(got) != 0 {
-		t.Fatalf("smart mode: %d specs, want none", len(got))
+	got := a.buildRoutingProfileSpecs()
+	if len(got) != 2 {
+		t.Fatalf("smart mode: %d staged profile specs, want 2", len(got))
 	}
-	if got := a.activeRoutingOrder(); got != nil {
-		t.Fatalf("smart mode: order = %v, want none", got)
+	for _, spec := range got {
+		if !spec.GlobalOnly {
+			t.Fatalf("profile spec must only affect global routing: %+v", spec)
+		}
 	}
 }
 

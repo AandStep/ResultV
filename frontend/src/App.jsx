@@ -22,7 +22,6 @@ import HomeScreen from "./views/redesign/HomeScreen";
 import SmartRulesScreen from "./views/redesign/SmartRulesScreen";
 import AddScreen from "./views/redesign/AddScreen";
 import ServersScreen from "./views/redesign/ServersScreen";
-import BuyScreen from "./views/redesign/BuyScreen";
 import LogsScreen from "./views/redesign/LogsScreen";
 import SettingsScreen from "./views/redesign/SettingsScreen";
 import { formatBytes, formatSpeed } from "./utils/formatters";
@@ -41,6 +40,7 @@ import ProtocolWarningModal from "./components/ui/ProtocolWarningModal";
 import { adminRestartDialog } from "./utils/adminDialog";
 import AppDialogModal from "./components/ui/AppDialogModal";
 import DeepLinkImportModal from "./components/ui/DeepLinkImportModal";
+import { socks5ReasonText } from "./views/redesign/Socks5ExitSettings";
 
 const AppContent = () => {
     const { t } = useTranslation();
@@ -102,10 +102,44 @@ const AppContent = () => {
     // before mount) and pushed via the "leftovers:recovered" event (recovery
     // finished after mount); a ref guard shows the notice exactly once.
     const leftoverNoticeShownRef = React.useRef(false);
+    // Окно сообщений одно: уведомление о настройках важнее, остатки ждут за ним.
+    const configNoticeRef = React.useRef("pending");
+    const heldLeftoverRef = React.useRef(null);
+    const showLeftoverRef = React.useRef(null);
+    const releaseLeftoverNotice = React.useCallback(() => {
+        configNoticeRef.current = "done";
+        const held = heldLeftoverRef.current;
+        heldLeftoverRef.current = null;
+        if (held) showLeftoverRef.current?.(held);
+    }, []);
+    React.useEffect(() => {
+        (async () => {
+            const notice = await wailsAPI.takeConfigStartupNotice();
+            if (!["restored", "reset", "unavailable"].includes(notice)) {
+                releaseLeftoverNotice();
+                return;
+            }
+            configNoticeRef.current = "open";
+            showAlertDialog({
+                title: t(`configNotice.${notice}Title`),
+                message: t(`configNotice.${notice}Message`),
+                variant: notice === "restored" ? "warning" : "danger",
+                confirmText: t("common.ok"),
+            });
+        })();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    React.useEffect(() => {
+        if (configNoticeRef.current === "open" && !appDialog?.isOpen) releaseLeftoverNotice();
+    }, [appDialog?.isOpen, releaseLeftoverNotice]);
     React.useEffect(() => {
         const showNotice = (rep) => {
             if (leftoverNoticeShownRef.current) return;
             if (!rep || (!rep.proxy && !rep.dns && !rep.tun && !rep.firewall)) return;
+            if (configNoticeRef.current !== "done") {
+                heldLeftoverRef.current = rep;
+                return;
+            }
             leftoverNoticeShownRef.current = true;
             wailsAPI.resetLeftoverReport();
             const items = [];
@@ -133,11 +167,25 @@ const AppContent = () => {
                 confirmText: t("common.ok"),
             });
         };
+        showLeftoverRef.current = showNotice;
         (async () => {
             showNotice(await wailsAPI.getLeftoverRecoveryReport());
         })();
         EventsOn("leftovers:recovered", showNotice);
         return () => EventsOff("leftovers:recovered");
+    }, [t, showAlertDialog]);
+
+    React.useEffect(() => {
+        const off = EventsOn("socks5:status", (status) => {
+            if (status?.trigger !== "connect" || !status.checked || status.ok) return;
+            showAlertDialog({
+                title: t("socks5Exit.failedTitle"),
+                message: t("socks5Exit.failedLead", { reason: socks5ReasonText(t, status) }),
+                variant: "warning",
+                confirmText: t("common.ok"),
+            });
+        });
+        return () => off?.();
     }, [t, showAlertDialog]);
 
     if (!isConfigLoaded) {
@@ -164,7 +212,6 @@ const AppContent = () => {
             {activeTab === "list" && <ServersScreen />}
             {activeTab === "rules" && <SmartRulesScreen />}
             {activeTab === "add" && <AddScreen />}
-            {activeTab === "buy" && <BuyScreen />}
             {activeTab === "logs" && <LogsScreen />}
             {activeTab === "settings" && <SettingsScreen />}
 

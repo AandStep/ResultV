@@ -24,11 +24,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"resultproxy-wails/internal/config"
 	"resultproxy-wails/internal/verdict"
 )
 
@@ -76,6 +78,9 @@ type ProxyConfig struct {
 }
 
 type EngineConfig struct {
+	Socks5Exit        *config.Socks5ExitConfig
+	FirstHopProbePort int
+
 	Proxy        ProxyConfig
 	Mode         ProxyMode
 	ListenAddr   string
@@ -87,7 +92,8 @@ type EngineConfig struct {
 	// reliable equivalent of "cascade by domain": Discord voice and Speedtest
 	// talk UDP to bare IPs that no domain/SNI rule can catch, but the owning
 	// process is always known to sing-box's find_process. Tunnel mode only.
-	AppForceVPN []string
+	AppForceVPN     []string
+	PersonalRouting PersonalRouting
 	// BlockedDomains is the censored/blocked block-list (already normalized
 	// suffixes from Router.GetBlockedDomains). Consumed only in Smart mode:
 	// buildRoute routes these through the proxy while everything else goes
@@ -466,10 +472,11 @@ type SBOutbound struct {
 	// ServerPorts/HopInterval drive Hysteria2 port hopping. sing-quic parses only
 	// "start:end" ranges, so the URI's "10000-20000" spelling is converted before
 	// it gets here — a range it cannot parse aborts outbound creation.
-	ServerPorts []string         `json:"server_ports,omitempty"`
-	HopInterval string           `json:"hop_interval,omitempty"`
-	Obfs        *SBHysteria2Obfs `json:"obfs,omitempty"`
-	Multiplex   *SBMultiplex     `json:"multiplex,omitempty"`
+	ServerPorts    []string         `json:"server_ports,omitempty"`
+	HopInterval    string           `json:"hop_interval,omitempty"`
+	HopIntervalMax string           `json:"hop_interval_max,omitempty"`
+	Obfs           *SBHysteria2Obfs `json:"obfs,omitempty"`
+	Multiplex      *SBMultiplex     `json:"multiplex,omitempty"`
 
 	TLS       *SBOutboundTLS       `json:"tls,omitempty"`
 	Transport *SBOutboundTransport `json:"transport,omitempty"`
@@ -479,7 +486,11 @@ type SBOutbound struct {
 	// Outbounds names the members of a group outbound. Only a group reads
 	// it — for us that is the "smart" type, whose two members are the plain
 	// direct and proxy outbounds it chooses between.
-	Outbounds []string `json:"outbounds,omitempty"`
+	Outbounds                 []string `json:"outbounds,omitempty"`
+	Default                   string   `json:"default,omitempty"`
+	InterruptExistConnections bool     `json:"interrupt_exist_connections,omitempty"`
+	Detour                    string   `json:"detour,omitempty"`
+	Network                   string   `json:"network,omitempty"`
 	// ProxyResolver is the "smart" group's DNS server for names it sends to
 	// an endpoint member, which cannot take a name (see proxyIsEndpoint).
 	ProxyResolver string `json:"proxy_resolver,omitempty"`
@@ -585,6 +596,10 @@ type SBWireGuardAmnezia struct {
 	RejectAfterTime        string `json:"reject_after_time,omitempty"`
 	KeepaliveTimeout       string `json:"keepalive_timeout,omitempty"`
 	MaxHandshakeAttempts   string `json:"max_handshake_attempts,omitempty"`
+
+	// AmneziaWG 3.1, available since sing-box-extended v1.14.3-extended-2.7.3.
+	RandomTrailers bool `json:"random_trailers,omitempty"`
+	DisableCookies bool `json:"disable_cookies,omitempty"`
 }
 
 type SBUTLS struct {
@@ -690,6 +705,9 @@ type SBRoute struct {
 }
 
 type SBRouteRule struct {
+	Type  string        `json:"type,omitempty"`
+	Mode  string        `json:"mode,omitempty"`
+	Rules []SBRouteRule `json:"rules,omitempty"`
 	// Inbound scopes a rule to specific listeners by tag. Used to keep probe
 	// traffic ("probe-in", loopback-only in tunnel mode) on a path of its own
 	// without touching what the user's apps do with the same destination.
@@ -1037,6 +1055,12 @@ func BuildProxyModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
 	}
+	if cfg.FirstHopProbePort != 0 {
+		sbCfg.Inbounds = append(sbCfg.Inbounds, SBInbound{
+			Type: "mixed", Tag: probeInboundTag, Listen: "127.0.0.1", ListenPort: cfg.FirstHopProbePort,
+		})
+	}
+	addSocks5Exit(&sbCfg, cfg)
 
 	return sbCfg, nil
 }
@@ -1309,6 +1333,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 		Route:        buildRoute(cfg),
 		Experimental: buildExperimentalCache(dd),
 	}
+	addSocks5Exit(&sbCfg, cfg)
 	// A fakeip server without a persistent mapping is a time bomb: see the
 	// comment on SBCacheFile.StoreFakeIP. buildExperimentalCache already emits
 	// that same file for every other reason the core caches things, so this
@@ -1692,9 +1717,14 @@ type tunnelResolver struct {
 func tunnelDNSResolvers(resolvers, backups []tunnelResolver, detour string) []SBDNSServer {
 	servers := tunnelDNSLegs(resolvers, detour)
 	if len(backups) == 0 {
-		servers = tunnelDNSGroup(servers, resolvers, resolvers[0].tag, tunnelDNSTimeout)
-		servers[len(servers)-1].throughDetour = detour
-		return servers
+		group := resolvers[0].tag + "-group"
+		servers = tunnelDNSGroup(servers, resolvers, group, tunnelDNSTimeout)
+		return append(servers, SBDNSServer{
+			Type:          dnsAsyncType,
+			Tag:           resolvers[0].tag,
+			Servers:       []string{group},
+			throughDetour: detour,
+		})
 	}
 	servers = append(servers, tunnelDNSLegs(backups, detour)...)
 	servers = tunnelDNSGroup(servers, resolvers, configuredDNSGroupTag(resolvers), configuredDNSTimeout)
@@ -1893,7 +1923,7 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		// only an app that sends its own queries: Windows asks on behalf of
 		// everyone else from the DNS Client service, which carries no family.
 		// Those connections are put right afterwards by app-direct.
-		if len(cfg.AppWhitelist) > 0 {
+		if len(cfg.directApps()) > 0 {
 			dns.Rules = append(dns.Rules, SBDNSRule{
 				PackageName: []string{familyTagDirect},
 				Server:      "local",
@@ -1901,13 +1931,20 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 			dns.ReverseMapping = appDirectActive(cfg)
 		}
 
-		// Excluded domains leave direct, so they resolve via the system resolver.
-		if cfg.RoutingMode != ModeSmart {
-			if suffixes := whitelistSuffixes(cfg.Whitelist); len(suffixes) > 0 {
-				dns.Rules = append(dns.Rules, SBDNSRule{
-					DomainSuffix: suffixes,
-					Server:       "local",
-				})
+		tunnelTag := firstDetourServerTag(dns.Servers, detour)
+		if len(appFamilyVPNList(cfg)) > 0 && tunnelTag != "" {
+			dns.Rules = append(dns.Rules, SBDNSRule{PackageName: []string{familyTagVPN}, Server: tunnelTag})
+		}
+		if tunnelTag != "" {
+			dns.Rules = append(dns.Rules, socks5ExitDNSRules(cfg, tunnelTag)...)
+		}
+		for _, rule := range cfg.personalSiteRoutes() {
+			server := "local"
+			if rule.Outbound == "proxy" {
+				server = tunnelTag
+			}
+			if server != "" && len(rule.DomainSuffix) > 0 {
+				dns.Rules = append(dns.Rules, SBDNSRule{DomainSuffix: rule.DomainSuffix, Server: server})
 			}
 		}
 
@@ -1924,13 +1961,7 @@ func buildDNS(cfg EngineConfig) *SBDNS {
 		// their whole reason for being on that list is that the local answer is
 		// unusable.
 		if smartRuleSetActive(cfg) {
-			if tunnelTag := firstDetourServerTag(dns.Servers, detour); tunnelTag != "" {
-				if len(cfg.AppForceVPN) > 0 {
-					dns.Rules = append(dns.Rules, SBDNSRule{
-						PackageName: []string{familyTagVPN},
-						Server:      tunnelTag,
-					})
-				}
+			if tunnelTag != "" {
 				dns.Rules = append(dns.Rules, SBDNSRule{
 					RuleSet: []string{smartRuleSetTag},
 					Server:  tunnelTag,
@@ -2083,8 +2114,7 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	cfg = cfg.forRoutingMode()
 	builtinAppRegexes := smartTunneledAppRegexes(cfg)
 	torrentRegexes := torrentAppRegexes(cfg)
-	findProcess := len(cfg.AppWhitelist) > 0 ||
-		(cfg.Mode == ProxyModeTunnel && len(cfg.AppForceVPN) > 0) ||
+	findProcess := len(cfg.directApps()) > 0 || len(appFamilyVPNList(cfg)) > 0 || len(socks5ExitApps(cfg)) > 0 ||
 		len(builtinAppRegexes) > 0 || len(torrentRegexes) > 0
 	// Smart mode inverts the default: everything goes direct and only the
 	// censored block-list is tunneled (see the blocked-domain rule below).
@@ -2162,7 +2192,11 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		Outbound: "proxy",
 	})
 
-	// The app lists outrank everything the user configures by address: naming
+	personalSites := cfg.personalSiteRoutes()
+	rules = append(rules, cfg.personalProfileBlocks(append(slices.Clone(personalSites), socks5ExitSiteMatchers(cfg)...))...)
+	rules = append(rules, socks5ExitListRules(cfg)...)
+
+	// The app lists outrank directional site rules: naming
 	// an app is the most explicit thing they can say, and it covers every
 	// process the app starts (appfamily.go).
 	rules = append(rules, appFamilyRouteRules(cfg)...)
@@ -2176,10 +2210,6 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 			Outbound: "direct",
 		})
 	}
-
-	// User routing lists win over the built-in Smart/whitelist/ad-block rules:
-	// inserted here, after the DNS/server infra rules but before every built-in.
-	rules = appendRoutingListRouteRules(cfg.RoutingLists, rules, cfg.RoutingOrder)
 
 	if cfg.Mode == ProxyModeTunnel {
 		// Probe domains must go through the proxy/endpoint outbound, even when
@@ -2250,9 +2280,16 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		}
 	}
 
+	for _, rule := range personalSites {
+		if cfg.RoutingMode == ModeSmart && rule.Outbound == "proxy" && len(rule.DomainSuffix) > 0 {
+			rules = append(rules, quicRejectRule(rule))
+		}
+		rules = append(rules, rule)
+	}
+	rules = appendRoutingListRouteRules(cfg.RoutingLists, rules, cfg.RoutingOrder)
+
 	// Built-in Smart coverage for apps the block-lists structurally cannot
-	// reach (see smartTunneledApps). Smart has no exclusions list, so nothing
-	// above takes Discord out of the tunnel.
+	// reach (see smartTunneledApps).
 	// Placed BEFORE the blocked-domain/CIDR rules so the process decision is
 	// taken once for the whole app instead of being split between a tunnelled
 	// signalling half and a direct media half — that split is the bug.
@@ -2341,14 +2378,6 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		})
 	}
 
-	if suffixes := whitelistSuffixes(cfg.Whitelist); len(suffixes) > 0 {
-		rules = append(rules, SBRouteRule{
-			Action:       "route",
-			DomainSuffix: suffixes,
-			Outbound:     "direct",
-		})
-	}
-
 	// After the user's lists and the block-list, so a tracker or web seed listed
 	// for the node still reaches it; what is left is peers, which must not.
 	if len(torrentRegexes) > 0 {
@@ -2405,6 +2434,9 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 	if cfg.RoutingMode == ModeSmart && !adaptiveSmartActive(cfg) {
 		rules = append(rules, quicRejectRule(SBRouteRule{}))
 	}
+	if cfg.Mode == ProxyModeTunnel && cfg.RoutingMode != ModeSmart && socks5ExitListActive(cfg) {
+		rules = append(rules, quicRejectRule(SBRouteRule{}))
+	}
 
 	if adaptiveSmartActive(cfg) && proxyIsEndpoint(cfg.Proxy) {
 		rules = resolveBeforeEndpoint(rules, firstDetourServerTag(buildDNS(cfg).Servers, "proxy"))
@@ -2429,6 +2461,13 @@ func listsForMode(mode RoutingMode, sitesDirect, appsDirect, appsVPN []string) (
 // builder starts here, so no path can see the other mode's entries.
 func (cfg EngineConfig) forRoutingMode() EngineConfig {
 	cfg.Whitelist, cfg.AppWhitelist, cfg.AppForceVPN = listsForMode(cfg.RoutingMode, cfg.Whitelist, cfg.AppWhitelist, cfg.AppForceVPN)
+	cfg.PersonalRouting = cfg.PersonalRouting.forMode(cfg.RoutingMode)
+	if cfg.RoutingMode == ModeSmart {
+		cfg.RoutingOrder = nil
+		if slices.ContainsFunc(cfg.RoutingLists, func(list RoutingListSpec) bool { return list.GlobalOnly }) {
+			cfg.RoutingLists = slices.DeleteFunc(slices.Clone(cfg.RoutingLists), func(list RoutingListSpec) bool { return list.GlobalOnly })
+		}
+	}
 	return cfg
 }
 
@@ -2439,7 +2478,11 @@ func appFamilyVPNList(cfg EngineConfig) []string {
 	if cfg.Mode != ProxyModeTunnel {
 		return nil
 	}
-	return cfg.forRoutingMode().AppForceVPN
+	cfg = cfg.forRoutingMode()
+	if cfg.RoutingMode != ModeSmart {
+		return cfg.PersonalRouting.GlobalVPNApps
+	}
+	return cfg.AppForceVPN
 }
 
 // appFamilyRouteRules routes the app families. An explicit "via VPN" comes
@@ -2457,7 +2500,7 @@ func appFamilyRouteRules(cfg EngineConfig) []SBRouteRule {
 		vpn.Outbound = "proxy"
 		rules = append(rules, vpn)
 	}
-	if len(cfg.AppWhitelist) > 0 {
+	if len(cfg.directApps()) > 0 {
 		outbound := "direct"
 		if appDirectActive(cfg) {
 			outbound = appDirectTag
@@ -2472,11 +2515,9 @@ func appFamilyRouteRules(cfg EngineConfig) []SBRouteRule {
 }
 
 // appDirectActive reports whether excluded apps need their addresses taken
-// from the system resolver. Only Global tunnel mode answers their lookups
-// through the node: Smart already resolves them locally, and in proxy mode
-// apps hand over names.
+// from the system resolver. In proxy mode apps hand over names.
 func appDirectActive(cfg EngineConfig) bool {
-	return cfg.Mode == ProxyModeTunnel && cfg.RoutingMode != ModeSmart && len(cfg.AppWhitelist) > 0
+	return cfg.Mode == ProxyModeTunnel && len(cfg.directApps()) > 0
 }
 
 func appDirectOutbounds(cfg EngineConfig) []SBOutbound {
@@ -2505,26 +2546,6 @@ func resolveBeforeEndpoint(rules []SBRouteRule, server string) []SBRouteRule {
 			out = append(out, resolve)
 		}
 		out = append(out, r)
-	}
-	return out
-}
-
-// whitelistSuffixes normalizes the site exclusion list into domain suffixes.
-// Every entry means "direct", a nested one included: "www.example.com" next to
-// "example.com" used to cancel it out.
-func whitelistSuffixes(whitelist []string) []string {
-	seen := make(map[string]struct{}, len(whitelist))
-	var out []string
-	for _, w := range whitelist {
-		n := normalizeRule(w)
-		if n == "" {
-			continue
-		}
-		if _, ok := seen[n]; ok {
-			continue
-		}
-		seen[n] = struct{}{}
-		out = append(out, n)
 	}
 	return out
 }

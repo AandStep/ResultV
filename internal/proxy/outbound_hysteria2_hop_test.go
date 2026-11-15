@@ -16,9 +16,63 @@
 package proxy
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 )
+
+func TestHysteria2Hop_FromXraySubscription(t *testing.T) {
+	for _, tc := range []struct {
+		name, maskKey, interval, wantInterval, wantMax string
+	}{
+		{"fixed", "finalmask", "10", "10s", ""},
+		{"range", "finalMask", `"5-10"`, "5s", "10s"},
+		{"invalid range uses default", "finalmask", `"10-5"`, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			outbound := fmt.Sprintf(`{
+				"tag":"proxy-de", "protocol":"hysteria",
+				"settings":{"address":"203.0.113.7","port":443,"version":2},
+				"streamSettings":{
+					"network":"hysteria","security":"tls",
+					"hysteriaSettings":{"version":2,"auth":"test-password"},
+					"tlsSettings":{"serverName":"example.com","alpn":["h3"]},
+					%q:{"quicParams":{"udpHop":{"ports":"24000-24031,25000","interval":%s}}}
+				}
+			}`, tc.maskKey, tc.interval)
+			body := fmt.Sprintf(`[
+				{"remarks":"Auto","routing":{"balancers":[{"selector":["proxy"]}]},"outbounds":[%s]},
+				{"remarks":"Germany","outbounds":[%s]},
+				{"remarks":"Plain","outbounds":[{"protocol":"hysteria","settings":{"address":"203.0.113.8","port":443}}]}
+			]`, outbound, outbound)
+			entries, err := ParseSubscriptionBody(body)
+			if err != nil || len(entries) != 3 {
+				t.Fatalf("ParseSubscriptionBody: got %d entries, err %v", len(entries), err)
+			}
+			if entries[0].AutoGroup != "Auto" || entries[1].AutoGroup != "" {
+				t.Fatal("expected an Auto member and a standalone entry")
+			}
+			for _, entry := range entries[:2] {
+				cfg := ProxyConfig{Type: entry.Type, IP: entry.IP, Port: entry.Port, Extra: entry.Extra}
+				out := buildProxyOutbound(cfg)
+				if want := []string{"24000:24031", "25000:25000"}; !reflect.DeepEqual(out.ServerPorts, want) {
+					t.Fatalf("%s: server_ports = %v, want %v", entry.Name, out.ServerPorts, want)
+				}
+				if out.HopInterval != tc.wantInterval {
+					t.Fatalf("%s: hop_interval = %q, want %q", entry.Name, out.HopInterval, tc.wantInterval)
+				}
+				if out.HopIntervalMax != tc.wantMax {
+					t.Fatalf("%s: hop_interval_max = %q, want %q", entry.Name, out.HopIntervalMax, tc.wantMax)
+				}
+			}
+			plain := entries[2]
+			out := buildProxyOutbound(ProxyConfig{Type: plain.Type, IP: plain.IP, Port: plain.Port, Extra: plain.Extra})
+			if len(out.ServerPorts) != 0 || out.HopInterval != "" {
+				t.Fatal("plain Hysteria2 entry gained port hopping")
+			}
+		})
+	}
+}
 
 // TestHysteria2Hop_FromURI: hy2 links spell ranges with a dash, sing-quic parses
 // only colons ("bad port range" otherwise, which aborts outbound creation).

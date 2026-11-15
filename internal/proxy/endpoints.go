@@ -245,7 +245,7 @@ func wireguardMTU(configured int) int {
 }
 
 // wireguardEndpointTag is the tag a WireGuard/AmneziaWG node is given in the
-// engine config. Named because applyAWG31 looks the endpoint up by it after
+// engine config. Named because wgEndpointFrom looks the endpoint up by it after
 // start — the two must never drift apart.
 const wireguardEndpointTag = "proxy"
 
@@ -364,11 +364,13 @@ func amneziaFromExtra(extra map[string]interface{}) *SBWireGuardAmnezia {
 		I5:   stringFromExtraValue(m["i5"]),
 	}
 	knobs := awg3FromExtra(m)
-	if *am == (SBWireGuardAmnezia{}) && len(knobs) == 0 {
+	switches := awg31FromExtra(m)
+	if *am == (SBWireGuardAmnezia{}) && len(knobs) == 0 && !switches.anyOn() {
 		return nil
 	}
 	normalizeAmnezia(am)
 	applyAWG3Knobs(am, knobs)
+	switches.applyTo(am)
 	return am
 }
 

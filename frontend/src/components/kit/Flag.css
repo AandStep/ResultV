@@ -81,3 +81,8 @@
   width: 26px !important;
   height: 20px !important;
 }
+
+:root[data-theme="light"] .rv-flag :is(img.rv-flag__img, .rv-flag__inner) {
+  box-sizing: border-box;
+  border: 1px solid var(--rv-white-a20);
+}

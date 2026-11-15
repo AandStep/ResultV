@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -103,6 +104,11 @@ type PingOptions struct {
 }
 
 type Manager struct {
+	socks5Exit        *config.Socks5ExitConfig
+	socks5ExitWired   bool
+	socks5ExitBuilt   *config.Socks5ExitConfig
+	firstHopProbePort int
+
 	// opMu serializes the heavy connection-lifecycle operations — Connect,
 	// Disconnect, SetMode and ReconnectWithRoutingRules — so only one of them
 	// ever drives the single sing-box engine at a time. Without it the two
@@ -137,16 +143,17 @@ type Manager struct {
 	pendingProxy *ProxyConfig
 	// wgProbes are the WireGuard handshake probes in flight; a connect to the
 	// same node cancels them (see startWireGuardProbe).
-	wgProbes     map[*wireGuardProbe]struct{}
-	pendingMode  ProxyMode
-	killSwitch   bool
-	routingMode  RoutingMode
-	whitelist    []string
-	appWhitelist []string
-	appForceVPN  []string
-	routingLists []RoutingListSpec
-	routingOrder []string
-	connectedAt  time.Time
+	wgProbes        map[*wireGuardProbe]struct{}
+	pendingMode     ProxyMode
+	killSwitch      bool
+	routingMode     RoutingMode
+	whitelist       []string
+	appWhitelist    []string
+	appForceVPN     []string
+	personalRouting PersonalRouting
+	routingLists    []RoutingListSpec
+	routingOrder    []string
+	connectedAt     time.Time
 
 	prevUp   int64
 	prevDown int64
@@ -651,9 +658,12 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
 	killSwitch bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
-	dnsLeakProtection, enableIPv6 bool) ConnectResultDTO {
-
+	dnsLeakProtection, enableIPv6 bool, personal ...PersonalRouting) ConnectResultDTO {
 	m.invalidateReloads()
+	var personalRules PersonalRouting
+	if len(personal) > 0 {
+		personalRules = personal[0]
+	}
 
 	dataDir := resultProxyDataDir()
 	usedCachedPin := false
@@ -666,7 +676,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 
 	res := m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist, appForceVPN,
 		killSwitch, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
-		dnsLeakProtection, enableIPv6)
+		dnsLeakProtection, enableIPv6, personalRules)
 
 	if shouldRetryWithoutPin(usedCachedPin, res.ErrorCode) {
 		clearServerPin(dataDir, m.secrets, proxy.IP)
@@ -674,7 +684,7 @@ func (m *Manager) Connect(ctx context.Context, proxy ProxyConfig, mode ProxyMode
 		proxy.ResolvedIP = ""
 		res = m.connectOnce(ctx, proxy, mode, routingMode, whitelist, appWhitelist, appForceVPN,
 			killSwitch, localPort, listenLAN, dnsServers, tunIPv4, tunIPv6,
-			dnsLeakProtection, enableIPv6)
+			dnsLeakProtection, enableIPv6, personalRules)
 	}
 	return res
 }
@@ -683,7 +693,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string,
 	killSwitch bool,
 	localPort int, listenLAN bool, dnsServers []string, tunIPv4, tunIPv6 string,
-	dnsLeakProtection, enableIPv6 bool) ConnectResultDTO {
+	dnsLeakProtection, enableIPv6 bool, personal PersonalRouting) ConnectResultDTO {
 
 	// Per-phase timing — emitted as one summary line on the success path so the
 	// connect budget is measured, not estimated.
@@ -702,6 +712,9 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 
 	// ── Phase 1: quick setup under lock ──────────────────────────────────────
 	m.mu.Lock()
+
+	exitProfile := m.socks5Exit
+	exitEnabled := exitProfile.IsActive()
 
 	if m.connected {
 		m.disconnectLocked()
@@ -824,18 +837,22 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	if actualLocalPort == 0 {
 		actualLocalPort = getFreeLocalPort(14081)
 	}
+	firstHopProbePort := 0
+	if socks5ExitWired(exitProfile) && mode == ProxyModeProxy {
+		firstHopProbePort = getFreeLocalPort(0)
+		if firstHopProbePort == actualLocalPort {
+			firstHopProbePort = getFreeLocalPort(actualLocalPort%65535 + 1)
+		}
+	}
 
 	listenHost := "127.0.0.1"
 	if listenLAN {
 		listenHost = "0.0.0.0"
 	}
 
-	// The system proxy bypass list is the Global sites list too: in Smart it
-	// would take a blocked site past the proxy altogether.
-	modeSites, _, _ := listsForMode(routingMode, whitelist, nil, nil)
-	m.warnProbeDomainOverlap(mode, proxyTypeLower, modeSites)
-
 	engineCfg := EngineConfig{
+		Socks5Exit:        exitProfile,
+		FirstHopProbePort: firstHopProbePort,
 		Proxy:             proxy,
 		Mode:              mode,
 		ListenAddr:        fmt.Sprintf("%s:%d", listenHost, actualLocalPort),
@@ -843,6 +860,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		Whitelist:         whitelist,
 		AppWhitelist:      append([]string(nil), appWhitelist...),
 		AppForceVPN:       append([]string(nil), appForceVPN...),
+		PersonalRouting:   personal,
 		KillSwitch:        killSwitch,
 		LocalPort:         actualLocalPort,
 		DNSServers:        dnsServers,
@@ -855,6 +873,9 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	}
 	engineCfg.RoutingLists = m.routingListSpecsLocked()
 	engineCfg.RoutingOrder = m.routingOrderLocked()
+	engineCfg = engineCfg.forRoutingMode()
+	modeSites := engineCfg.systemProxyBypass()
+	m.warnProbeDomainOverlap(mode, proxyTypeLower, engineCfg.directSites())
 	m.applyAdaptiveSmartLocked(&engineCfg)
 	// Smart mode needs the censored block-list in the engine config so
 	// buildRoute can tunnel those domains/ranges while everything else goes
@@ -945,12 +966,15 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 		m.log.Warning(fmt.Sprintf("[PROXY] sing-box не запустился: %v", startErr))
 
 		proxyType := strings.ToLower(proxy.Type)
-		if (proxyType == "http" || proxyType == "https" || proxyType == "socks5" || proxyType == "socks") && m.sysProxy != nil {
+		if !exitEnabled && (proxyType == "http" || proxyType == "https" || proxyType == "socks5" || proxyType == "socks") && m.sysProxy != nil {
 			directAddr := fmt.Sprintf("%s:%d", proxy.IP, proxy.Port)
 			if setErr := m.sysProxy.Set(directAddr, modeSites); setErr == nil {
 				m.log.Info(fmt.Sprintf("[PROXY] Fallback: системный прокси → %s (sing-box недоступен)", directAddr))
 				m.mu.Lock()
 				m.connected = true
+				m.socks5ExitWired = false
+				m.socks5ExitBuilt = nil
+				m.firstHopProbePort = 0
 				m.mode = mode
 				m.proxy = &proxy
 				m.killSwitch = killSwitch
@@ -958,6 +982,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 				m.whitelist = append([]string(nil), whitelist...)
 				m.appWhitelist = append([]string(nil), appWhitelist...)
 				m.appForceVPN = append([]string(nil), appForceVPN...)
+				m.personalRouting = personal
 				m.connectedAt = time.Now()
 				m.prevUp = 0
 				m.prevDown = 0
@@ -1014,7 +1039,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 
 	tProbe := time.Now()
 	proxyExtra := parseExtra(proxy)
-	if code, reason := runPostStartProbe(connectCtx, proxyTypeLower, proxy.IP, proxy.Port, actualLocalPort, mode, proxyExtra); code != "" {
+	if code, reason := runPostStartProbe(connectCtx, proxyTypeLower, proxy.IP, proxy.Port, probePortForSession(actualLocalPort, firstHopProbePort), mode, proxyExtra); code != "" {
 		// The override is already in flight — let it finish, then undo it.
 		// Without this an aborted connect leaves the machine pointing at our
 		// resolvers with no session behind them.
@@ -1105,6 +1130,12 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	m.captureLiveServerIP(&proxy)
 	m.clearPendingLocked()
 	m.connected = true
+	m.socks5ExitWired = socks5ExitWired(exitProfile)
+	m.socks5ExitBuilt = nil
+	if m.socks5ExitWired {
+		m.socks5ExitBuilt = exitProfile
+	}
+	m.firstHopProbePort = firstHopProbePort
 	m.mode = mode
 	m.proxy = &proxy
 	m.killSwitch = killSwitch
@@ -1112,6 +1143,7 @@ func (m *Manager) connectOnce(ctx context.Context, proxy ProxyConfig, mode Proxy
 	m.whitelist = append([]string(nil), whitelist...)
 	m.appWhitelist = append([]string(nil), appWhitelist...)
 	m.appForceVPN = append([]string(nil), appForceVPN...)
+	m.personalRouting = personal
 	m.connectedAt = time.Now()
 	m.prevUp = 0
 	m.prevDown = 0
@@ -2005,6 +2037,9 @@ func (m *Manager) Disconnect() error {
 	}
 	m.connected = false
 	m.proxy = nil
+	m.socks5ExitWired = false
+	m.socks5ExitBuilt = nil
+	m.firstHopProbePort = 0
 	m.clearPendingLocked()
 	m.emitStatusLocked()
 	m.log.Info(fmt.Sprintf("[PROXY] Тайминг отключения: total=%dms", time.Since(disconnectStart).Milliseconds()))
@@ -2173,12 +2208,15 @@ func (m *Manager) routingListSpecsLocked() []RoutingListSpec {
 	return cp
 }
 
-func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string) ConnectResultDTO {
+func (m *Manager) ReconnectWithRoutingRules(ctx context.Context, routingMode RoutingMode, whitelist, appWhitelist, appForceVPN []string, personal ...PersonalRouting) ConnectResultDTO {
 	return m.reload(ctx, func(s *reloadSession) {
 		s.routingMode = routingMode
 		s.whitelist = append([]string(nil), whitelist...)
 		s.appWhitelist = append([]string(nil), appWhitelist...)
 		s.appForceVPN = append([]string(nil), appForceVPN...)
+		if len(personal) > 0 {
+			s.personalRouting = personal[0]
+		}
 	})
 }
 
@@ -2224,7 +2262,7 @@ func (m *Manager) reload(ctx context.Context, change func(*reloadSession)) Conne
 	res := m.connectOnce(context.WithValue(ctx, reloadStaleKey{}, stale), sess.proxy, sess.mode,
 		sess.routingMode, sess.whitelist, sess.appWhitelist, sess.appForceVPN, sess.killSwitch,
 		sess.localPort, sess.listenLAN, sess.dnsServers, sess.tunIPv4, sess.tunIPv6,
-		sess.dnsLeak, sess.enableIPv6)
+		sess.dnsLeak, sess.enableIPv6, sess.personalRouting)
 	m.reloadActive.Store(false)
 
 	if stale() {
@@ -2238,38 +2276,40 @@ func (m *Manager) reload(ctx context.Context, change func(*reloadSession)) Conne
 
 func (m *Manager) sessionSnapshotLocked() *reloadSession {
 	return &reloadSession{
-		proxy:        *m.proxy,
-		mode:         m.mode,
-		routingMode:  m.routingMode,
-		whitelist:    append([]string(nil), m.whitelist...),
-		appWhitelist: append([]string(nil), m.appWhitelist...),
-		appForceVPN:  append([]string(nil), m.appForceVPN...),
-		killSwitch:   m.killSwitch,
-		localPort:    m.localPort,
-		listenLAN:    m.listenLAN,
-		dnsServers:   append([]string(nil), m.dnsServers...),
-		tunIPv4:      m.tunIPv4,
-		tunIPv6:      m.tunIPv6,
-		dnsLeak:      m.dnsLeakProtection,
-		enableIPv6:   m.enableIPv6,
+		proxy:           *m.proxy,
+		mode:            m.mode,
+		routingMode:     m.routingMode,
+		whitelist:       append([]string(nil), m.whitelist...),
+		appWhitelist:    append([]string(nil), m.appWhitelist...),
+		appForceVPN:     append([]string(nil), m.appForceVPN...),
+		personalRouting: m.personalRouting,
+		killSwitch:      m.killSwitch,
+		localPort:       m.localPort,
+		listenLAN:       m.listenLAN,
+		dnsServers:      append([]string(nil), m.dnsServers...),
+		tunIPv4:         m.tunIPv4,
+		tunIPv6:         m.tunIPv6,
+		dnsLeak:         m.dnsLeakProtection,
+		enableIPv6:      m.enableIPv6,
 	}
 }
 
 type reloadSession struct {
-	proxy        ProxyConfig
-	mode         ProxyMode
-	routingMode  RoutingMode
-	whitelist    []string
-	appWhitelist []string
-	appForceVPN  []string
-	killSwitch   bool
-	localPort    int
-	listenLAN    bool
-	dnsServers   []string
-	tunIPv4      string
-	tunIPv6      string
-	dnsLeak      bool
-	enableIPv6   bool
+	proxy           ProxyConfig
+	mode            ProxyMode
+	routingMode     RoutingMode
+	whitelist       []string
+	appWhitelist    []string
+	appForceVPN     []string
+	personalRouting PersonalRouting
+	killSwitch      bool
+	localPort       int
+	listenLAN       bool
+	dnsServers      []string
+	tunIPv4         string
+	tunIPv6         string
+	dnsLeak         bool
+	enableIPv6      bool
 }
 
 type reloadStaleKey struct{}
@@ -2390,7 +2430,7 @@ func (m *Manager) ProbeUDPRelayNow(ctx context.Context, session SessionRef) UDPR
 func (m *Manager) ProbeThroughputNow(ctx context.Context, session SessionRef) ThroughputResult {
 	m.mu.Lock()
 	current := m.isSessionLocked(session)
-	port := m.localPort
+	port := probePortForSession(m.localPort, m.firstHopProbePort)
 	m.mu.Unlock()
 
 	if !current {
@@ -2980,7 +3020,7 @@ func (m *Manager) runHealthWatchdog(ctx context.Context, gen uint64, proxy Proxy
 			return
 		}
 		ks := m.killSwitch
-		localPort := m.localPort
+		localPort := probePortForSession(m.localPort, m.firstHopProbePort)
 		engineRunning := m.engine != nil && m.engine.IsRunning()
 		var proxyUp, proxyDown int64
 		if engineRunning {
@@ -3259,6 +3299,63 @@ func (m *Manager) saveVerdictsLocked() {
 	if err := m.verdicts.Save(m.verdictPath); err != nil {
 		m.log.Info("[SMART] Не удалось сохранить кэш вердиктов")
 	}
+}
+
+// LearnedVerdictDTO is one name the adaptive engine sends through the node.
+type LearnedVerdictDTO struct {
+	Host       string `json:"host"`
+	Unverified bool   `json:"unverified"`
+	ExpiresAt  int64  `json:"expiresAt"`
+}
+
+// LearnedVerdictsDTO is the list behind "why is this site in the tunnel".
+// Hidden counts names learned in an earlier session: only their hashes are
+// kept, so they can be dropped but not shown.
+type LearnedVerdictsDTO struct {
+	Items  []LearnedVerdictDTO `json:"items"`
+	Hidden int                 `json:"hidden"`
+}
+
+func (m *Manager) LearnedVerdicts() LearnedVerdictsDTO {
+	out := LearnedVerdictsDTO{Items: []LearnedVerdictDTO{}}
+	if m.verdicts == nil {
+		return out
+	}
+	for name, rec := range m.verdicts.Names() {
+		if rec.Source != verdict.SourceLearned || rec.Decision != verdict.Proxy {
+			continue
+		}
+		out.Items = append(out.Items, LearnedVerdictDTO{
+			Host:       name,
+			Unverified: rec.Unverified,
+			ExpiresAt:  rec.ExpiresAt.UnixMilli(),
+		})
+	}
+	sort.Slice(out.Items, func(i, j int) bool { return out.Items[i].Host < out.Items[j].Host })
+	if hidden := m.verdicts.LearnedCount(verdict.Proxy) - len(out.Items); hidden > 0 {
+		out.Hidden = hidden
+	}
+	return out
+}
+
+func (m *Manager) ForgetLearnedVerdict(host string) {
+	if m.verdicts == nil {
+		return
+	}
+	m.verdicts.Forget(host)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.saveVerdictsLocked()
+}
+
+func (m *Manager) ClearLearnedVerdicts() {
+	if m.verdicts == nil {
+		return
+	}
+	m.verdicts.ClearLearned()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.saveVerdictsLocked()
 }
 
 // NotifyNetworkChanged switches the verdict store to the set belonging to the

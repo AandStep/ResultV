@@ -88,18 +88,26 @@ type App struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	log        *logger.Logger
-	crypto     *config.CryptoService
-	config     *config.Manager
-	proxy      *proxy.Manager
-	tray       *system.Tray
-	killSwitch system.KillSwitch
-	netmon     *system.NetMonitor
+	log          *logger.Logger
+	crypto       *config.CryptoService
+	config       *config.Manager
+	startupReady chan struct{}
+	// configNotice is what the UI must tell the user about the stored config
+	// after this start: "restored", "reset" or "unavailable".
+	configNotice atomic.Pointer[string]
+	proxy        *proxy.Manager
+	tray         *system.Tray
+	killSwitch   system.KillSwitch
+	netmon       *system.NetMonitor
 
 	trayIcon []byte
 
 	stateMu       sync.Mutex
 	quitRequested bool
+	socks5ExitMu  sync.Mutex
+
+	socks5StatusMu sync.Mutex
+	socks5Status   socks5ExitStatus
 
 	trayHidden    atomic.Uint32
 	noTray        atomic.Bool
@@ -139,8 +147,10 @@ type App struct {
 	resumeProxyID string
 	resumeMode    string
 
-	deepLinkMu      sync.Mutex
-	pendingDeepLink string
+	deepLinkMu            sync.Mutex
+	pendingDeepLink       string
+	telegramConnectMu     sync.Mutex
+	telegramConnectCancel context.CancelFunc
 
 	updateMu     sync.Mutex
 	updateCancel context.CancelFunc
@@ -168,6 +178,7 @@ type App struct {
 func NewApp() *App {
 	return &App{
 		log:            logger.New(),
+		startupReady:   make(chan struct{}),
 		autoCandidates: map[string][]config.ProxyEntry{},
 	}
 }
@@ -464,6 +475,7 @@ func (a *App) HandleDeepLink(url string) {
 }
 
 func (a *App) startup(ctx context.Context) {
+	defer close(a.startupReady)
 	a.ctx, a.cancel = context.WithCancel(ctx)
 	go a.quitOnTermination()
 
@@ -486,56 +498,23 @@ func (a *App) startup(ctx context.Context) {
 		a.log.Warning(fmt.Sprintf("[CONFIG] Ошибка миграции legacy-данных: %v", err))
 	}
 
-	userDataPath := a.getUserDataPath()
-	a.log.Info(fmt.Sprintf("[CONFIG] UserDataDir: %s", userDataPath))
+	// Recover OS networking even if the saved configuration can't be loaded.
+	proxyManager := proxy.NewManager(a.log)
+	proxyManager.Init(a.ctx)
+	killSwitch := system.NewKillSwitch()
+	a.leftoverDone = make(chan struct{})
+	go a.recoverLeftovers(proxyManager, killSwitch)
 
-	cs, err := config.NewCryptoService(userDataPath)
-	if err != nil {
-		a.log.Error(fmt.Sprintf("Ошибка инициализации шифрования: %v", err))
+	userDataPath := a.getUserDataPath()
+	if !a.loadStartupConfig(userDataPath) {
+		a.noTray.Store(true)
 		return
 	}
-	a.crypto = cs
-	if src := cs.KeySource(); src != "" {
-		a.log.Info(fmt.Sprintf("[CONFIG] Key source: %s", src))
-	}
-
-	a.config = config.NewManager(cs)
-	if err := a.config.Init(userDataPath); err != nil {
-		if errors.Is(err, config.ErrDecryptFailed) {
-			a.log.Warning(fmt.Sprintf("Конфигурация сброшена: %v", err))
-		} else {
-			a.log.Error(fmt.Sprintf("Ошибка загрузки конфигурации: %v", err))
-		}
-	} else {
-		a.log.Success("Конфигурация загружена")
-	}
-
-	// Must run right after config.Init, while WasCreatedFresh still reflects
-	// what Init found on disk.
-	a.seedChangelogVersionOnFreshInstall()
-	a.applyResumeMode()
-	a.applyConnectOnStartup()
-
-	a.proxy = proxy.NewManager(a.log)
-	a.proxy.Init(a.ctx)
-	// Encrypt the persistent server-IP pin cache with the same hardware-keyed
-	// CryptoService as the rest of the config — those hostname→backend-IP
-	// entries must never sit on disk in the clear.
-	a.proxy.SetSecretCodec(cs)
-
-	// Create the kill switch and launch leftover recovery NOW — before the
-	// network-bound, multi-second SMART list fetch in initSmartBlockedDomains
-	// below (and the rest of startup). Recovery's only dependencies are a.proxy
-	// (just initialized) and a.killSwitch; when it was deferred to the end of
-	// startup, a force-kill / crash leftover lingered for the entire startup
-	// duration (~15s in the field, dominated by the remote list fetch) before the
-	// internet was restored. Run async so the window still appears immediately;
-	// the slow route/adapter cleanup only runs when a leftover is actually
-	// detected. The frontend shows an informational notice via
-	// GetLeftoverRecoveryReport + the "leftovers:recovered" event.
-	a.killSwitch = system.NewKillSwitch()
-	a.leftoverDone = make(chan struct{})
-	go a.recoverLeftovers()
+	a.proxy = proxyManager
+	a.killSwitch = killSwitch
+	_ = a.proxy.SetSocks5Exit(a.config.GetConfig().Settings.Socks5Exit)
+	// The persistent server-IP pin cache uses the same key as the config.
+	a.proxy.SetSecretCodec(a.crypto)
 	go a.syncAutostartOnStartup()
 
 	// Re-evaluate a live AUTO group's pick for as long as the app runs. Started
@@ -797,11 +776,74 @@ func (a *App) BeforeClose(ctx context.Context) bool {
 	return true
 }
 
-func (a *App) GetConfig() (config.AppConfig, error) {
-	if a.config == nil {
-		return config.DefaultConfig(), nil
+func (a *App) loadStartupConfig(userDataPath string) bool {
+	a.log.Info(fmt.Sprintf("[CONFIG] UserDataDir: %s", userDataPath))
+	unavailable := "unavailable"
+
+	cs, err := config.NewCryptoService(userDataPath)
+	if err != nil {
+		a.log.Error(fmt.Sprintf("Ошибка инициализации шифрования: %v", err))
+		a.configNotice.Store(&unavailable)
+		return false
 	}
-	return a.config.GetConfig(), nil
+	if src := cs.KeySource(); src != "" {
+		a.log.Info(fmt.Sprintf("[CONFIG] Key source: %s", src))
+	}
+
+	manager := config.NewManager(cs)
+	if err := manager.Init(userDataPath); err != nil {
+		a.log.Error(fmt.Sprintf("Ошибка загрузки конфигурации: %v", err))
+		a.configNotice.Store(&unavailable)
+		return false
+	}
+	a.crypto = cs
+	a.config = manager
+	profiles := len(manager.GetConfig().Proxies)
+	switch recovery := manager.Recovery(); {
+	case recovery == config.RecoveryRestored:
+		a.log.Warning(fmt.Sprintf("[CONFIG] Файл настроек не прочитался: восстановлена копия прошлого запуска, профилей %d. Нечитаемый файл сохранён рядом", profiles))
+	case recovery == config.RecoveryReset:
+		a.log.Warning("[CONFIG] Файл настроек не прочитался, резервной копии нет: запуск с настройками по умолчанию. Нечитаемый файл сохранён рядом")
+	case manager.WasCreatedFresh():
+		a.log.Info("[CONFIG] Файл конфигурации не найден, используется новый профиль")
+	default:
+		a.log.Success(fmt.Sprintf("[CONFIG] Конфигурация загружена с диска: профилей %d", profiles))
+	}
+	if recovery := string(manager.Recovery()); recovery != "" {
+		a.configNotice.Store(&recovery)
+	}
+
+	a.seedChangelogVersionOnFreshInstall()
+	a.applyResumeMode()
+	a.applyConnectOnStartup()
+	return true
+}
+
+// TakeConfigStartupNotice hands the UI, once, what happened to the stored
+// config on this start; empty when it loaded normally.
+func (a *App) TakeConfigStartupNotice() string {
+	if a.startupReady != nil {
+		<-a.startupReady
+	}
+	if notice := a.configNotice.Swap(nil); notice != nil {
+		return *notice
+	}
+	return ""
+}
+
+func (a *App) GetConfig() (config.AppConfig, error) {
+	// Wails starts the UI and the startup callback independently.
+	if a.startupReady != nil {
+		<-a.startupReady
+	}
+	if a.config == nil {
+		return config.AppConfig{}, errors.New("конфигурация недоступна, подробности в журнале")
+	}
+	cfg := a.config.GetConfig()
+	if a.log != nil {
+		a.log.Info(fmt.Sprintf("[CONFIG] GetConfig: профилей %d", len(cfg.Proxies)))
+	}
+	return appConfigForUI(cfg), nil
 }
 
 func (a *App) SaveConfig(cfg config.AppConfig) error {
@@ -825,6 +867,21 @@ func (a *App) SaveConfig(cfg config.AppConfig) error {
 	return nil
 }
 
+// SaveSettings stores the settings alone: the UI's copy of the profiles and
+// rules may be stale and must not replace the stored ones.
+func (a *App) SaveSettings(settings config.AppSettings) error {
+	if a.config == nil {
+		return fmt.Errorf("config manager not initialized")
+	}
+	settings.LastChangelogVersion = a.config.GetConfig().Settings.LastChangelogVersion
+	if err := a.config.UpdateSettings(settings); err != nil {
+		a.log.Error(fmt.Sprintf("Ошибка сохранения конфигурации: %v", err))
+		return err
+	}
+	a.log.Success("Конфигурация сохранена")
+	return nil
+}
+
 // keepBackendRouting puts back what only the backend changes. The UI sends the
 // routing rules it loaded at startup with every change of its own, and by then
 // its copy of profiles and lists is stale: a deleted profile would come back.
@@ -833,6 +890,16 @@ func keepBackendRouting(incoming, stored config.RoutingRules) config.RoutingRule
 	incoming.ActiveProfileID = stored.ActiveProfileID
 	incoming.RoutingLists = stored.RoutingLists
 	return incoming
+}
+
+func personalRouting(rules config.RoutingRules) proxy.PersonalRouting {
+	return proxy.PersonalRouting{
+		SmartVPNSites:    rules.CustomBlockedDomains,
+		SmartDirectSites: rules.SmartDirectSites,
+		SmartDirectApps:  rules.SmartDirectApps,
+		GlobalVPNSites:   rules.GlobalVPNSites,
+		GlobalVPNApps:    rules.GlobalVPNApps,
+	}
 }
 
 func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
@@ -871,9 +938,15 @@ func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
 		"",
 		cfg.Settings.EffectiveDNSLeakProtection(),
 		cfg.Settings.EnableIPv6,
+		personalRouting(rules),
 	)
 
 	if result.Success {
+		if cfg.Settings.LegacySocks5ExitArmed {
+			if err := a.config.ClearSocks5ExitPreviewGuard(); err != nil {
+				a.log.Warning("Не удалось сохранить подтверждение нового режима SOCKS5")
+			}
+		}
 		serverName := fmt.Sprintf("%s:%d", proxyDTO.IP, proxyDTO.Port)
 		if a.tray != nil {
 			a.tray.SetConnectedProxy(a.resolveProxyID(proxyDTO), serverName)
@@ -882,6 +955,9 @@ func (a *App) Connect(proxyDTO proxy.ProxyConfig, rules config.RoutingRules,
 		wailsRuntime.EventsEmit(a.ctx, "proxy:connected", proxyDTO)
 		a.startUDPRelayProbe(proxyDTO, mode)
 		a.startThroughputProbe(proxyDTO)
+		if a.proxy.Socks5ExitActive() {
+			go a.runSocks5ExitCheck("connect")
+		}
 	}
 
 	return result, nil
@@ -937,7 +1013,9 @@ func (a *App) startUDPRelayProbe(proxyDTO proxy.ProxyConfig, mode proxy.ProxyMod
 		proxy.RecordUDPRelayOutcome(proxy.AutoNodeKeyOf(proxyDTO), res.OK)
 
 		if a.log != nil {
-			if res.OK {
+			if res.OK && a.proxy.Socks5ExitCoversAllVPN() {
+				a.log.Info(fmt.Sprintf("[UDP] %s: UDP проходит через узел (%s, %d мс); трафик VPN идёт через SOCKS5, звонки зависят от UDP выхода", label, res.Target, res.LatencyMs))
+			} else if res.OK {
 				a.log.Info(fmt.Sprintf("[UDP] %s: UDP проходит через узел (%s, %d мс) — голос Discord будет работать", label, res.Target, res.LatencyMs))
 			} else {
 				a.log.Warning(fmt.Sprintf("[UDP] %s: узел не пропускает UDP (%s). Звонки и демонстрации Discord на этом сервере работать не будут — выберите другой узел", label, res.Reason))
@@ -1134,7 +1212,7 @@ func (r LeftoverReport) Any() bool { return r.Proxy || r.DNS || r.Tun || r.Firew
 // they are reported with NeedsElevation=true and the frontend asks the user to
 // restart elevated (RestartAsAdmin); the elevated instance then cleans them on
 // ITS startup pass and shows the normal notice.
-func (a *App) recoverLeftovers() {
+func (a *App) recoverLeftovers(proxyManager *proxy.Manager, killSwitch system.KillSwitch) {
 	// Signal the background Smart-list refresh that OS network state (notably the
 	// DNS override) has been restored, on every return path. Closed even when
 	// nothing needed cleaning — the refresh just stops waiting and proceeds.
@@ -1144,17 +1222,14 @@ func (a *App) recoverLeftovers() {
 
 	rep := LeftoverReport{}
 
-	var scan proxy.LeftoverScan
-	if a.proxy != nil {
-		scan = a.proxy.RecoverSystemLeftovers()
-	}
+	scan := proxyManager.RecoverSystemLeftovers()
 	rep.Proxy, rep.DNS, rep.Tun = scan.Proxy, scan.DNS, scan.Tun
 	rep.NeedsElevation = scan.NeedsElevation
 
-	if a.killSwitch != nil && a.killSwitch.HasLeftoverRules() {
+	if killSwitch.HasLeftoverRules() {
 		rep.Firewall = true
 		if system.IsAdmin() {
-			if err := a.killSwitch.RemoveLeftoverRules(); err != nil {
+			if err := killSwitch.RemoveLeftoverRules(); err != nil {
 				a.log.Warning(fmt.Sprintf("[KILL SWITCH] Ошибка снятия остаточных правил фаервола: %v", err))
 			}
 		} else {
@@ -1252,7 +1327,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 	// from disk, which reflects any rollback that happened above.
 	defer func() {
 		if a.ctx != nil {
-			wailsRuntime.EventsEmit(a.ctx, "config:updated", a.config.GetConfig())
+			wailsRuntime.EventsEmit(a.ctx, "config:updated", appConfigForUI(a.config.GetConfig()))
 		}
 	}()
 
@@ -1293,6 +1368,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 			"",
 			cfg.Settings.EffectiveDNSLeakProtection(),
 			cfg.Settings.EnableIPv6,
+			personalRouting(cfg.RoutingRules),
 		)
 		if result.Success {
 			serverName := fmt.Sprintf("%s:%d", status.CurrentProxy.IP, status.CurrentProxy.Port)
@@ -1334,6 +1410,7 @@ func (a *App) ApplyMode(mode string) (proxy.ConnectResultDTO, error) {
 				"",
 				cfg.Settings.EffectiveDNSLeakProtection(),
 				cfg.Settings.EnableIPv6,
+				personalRouting(cfg.RoutingRules),
 			)
 			if rollback.Success {
 				if a.tray != nil {
@@ -1517,8 +1594,7 @@ func (a *App) UpdateRules(rules config.RoutingRules) error {
 	if r := a.proxy.GetRouter(); r != nil {
 		r.SetCustomBlockedDomains(rules.CustomBlockedDomains)
 	}
-	// Адаптивный Smart передаётся отдельно: ReconnectWithRoutingRules берёт
-	// только режим и три списка, а тумблер живёт в том же блоке конфига.
+	// Адаптивный Smart передаётся отдельно от пользовательских списков.
 	// Ставится до проверки подключения, чтобы выключенное приложение ушло в
 	// следующий Connect с тем же значением, что видит пользователь.
 	a.proxy.SetAdaptiveSmart(
@@ -1535,6 +1611,7 @@ func (a *App) UpdateRules(rules config.RoutingRules) error {
 		rules.Whitelist,
 		rules.AppWhitelist,
 		rules.AppForceVPN,
+		personalRouting(rules),
 	)
 	if result.ErrorCode == proxy.ConnectErrorSuperseded || result.Message == "not connected" {
 		return nil
@@ -1611,7 +1688,7 @@ func (a *App) ImportConfig(data, password string, allowLegacy bool) error {
 		return err
 	}
 	a.log.Success(fmt.Sprintf("Импортировано %d прокси", len(imported.Proxies)))
-	wailsRuntime.EventsEmit(a.ctx, "config:updated", merged)
+	wailsRuntime.EventsEmit(a.ctx, "config:updated", appConfigForUI(merged))
 	return nil
 }
 
@@ -1737,13 +1814,24 @@ func (a *App) GetLANIPs() []string {
 }
 
 func (a *App) SyncProxies(proxies []config.ProxyEntry) error {
+	if a.startupReady != nil {
+		select {
+		case <-a.startupReady:
+		default:
+			return errors.New("config manager not initialized")
+		}
+	}
 	if a.config == nil {
 		return fmt.Errorf("config manager not initialized")
 	}
 	cfg := a.config.GetConfig()
+	previousCount := len(cfg.Proxies)
 	cfg.Proxies = proxies
 	if err := a.config.SaveConfig(cfg); err != nil {
 		return err
+	}
+	if a.log != nil && previousCount != len(proxies) {
+		a.log.Info(fmt.Sprintf("[CONFIG] SyncProxies: профилей %d → %d", previousCount, len(proxies)))
 	}
 	a.refreshTrayProxyList()
 	return nil
@@ -2400,7 +2488,27 @@ func (a *App) fetchSubscriptionFromURL(subURL string, allowInsecure bool) (subsc
 		return subscriptionFetch{}, ErrInsecureSubscription
 	}
 	jar, _ := cookiejar.New(nil)
-	client := &http.Client{Timeout: 15 * time.Second, Jar: jar}
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+		Jar:     jar,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("too many subscription redirects")
+			}
+			if req.URL.Scheme != "https" && !allowInsecure {
+				return ErrInsecureSubscription
+			}
+			original := via[0].URL
+			if req.URL.Scheme != "https" || original.Scheme != req.URL.Scheme ||
+				!strings.EqualFold(original.Host, req.URL.Host) {
+				for _, header := range []string{"X-Hwid", "X-Device-Os", "X-Ver-Os", "X-Device-Model", "Referer"} {
+					req.Header.Del(header)
+				}
+				req.Header.Set("User-Agent", "ResultV")
+			}
+			return nil
+		},
+	}
 	metadata := a.subscriptionRequestMetadata()
 
 	doFetch := func(userAgent string) (subscriptionFetch, bool, error) {
@@ -2733,6 +2841,10 @@ func (a *App) RefreshSubscription(subID string) ([]config.ProxyEntry, error) {
 // warning. The consent is persisted on the Subscription record so
 // RefreshSubscription doesn't need to re-prompt.
 func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source string, disabledListURLs []string) ([]config.ProxyEntry, error) {
+	return a.addSubscription(name, subURL, allowInsecure, source, disabledListURLs, false)
+}
+
+func (a *App) addSubscription(name, subURL string, allowInsecure bool, source string, disabledListURLs []string, installProxies bool) ([]config.ProxyEntry, error) {
 	if a.config == nil {
 		return nil, fmt.Errorf("config manager not initialized")
 	}
@@ -2759,7 +2871,7 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 		staleIdx = i
 		break
 	}
-	if staleIdx >= 0 {
+	if staleIdx >= 0 && !installProxies {
 		staleSubID := cfg.Subscriptions[staleIdx].ID
 		cfg.Subscriptions = append(cfg.Subscriptions[:staleIdx], cfg.Subscriptions[staleIdx+1:]...)
 		a.removeSubscriptionRoutingLists(&cfg, staleSubID)
@@ -2773,6 +2885,9 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 		return nil, err
 	}
 	entries := res.Entries
+	if installProxies && !hasUsableSubscriptionEntries(entries, subURL) {
+		return nil, errors.New("telegram_subscription_unusable")
+	}
 
 	displayName := name
 	if res.ProfileTitle != "" {
@@ -2800,14 +2915,25 @@ func (a *App) AddSubscription(name, subURL string, allowInsecure bool, source st
 		entries[i].Provider = displayName
 	}
 
-	cfg.Subscriptions = append(cfg.Subscriptions, sub)
-	if err := a.config.SaveConfig(cfg); err != nil {
-		return nil, fmt.Errorf("saving subscription: %w", err)
+	if installProxies {
+		stored, added, err := a.config.AddSubscriptionWithProxies(sub, entries)
+		if err != nil {
+			return nil, fmt.Errorf("saving subscription: %w", err)
+		}
+		if !added {
+			return entries, nil
+		}
+		sub = stored
+	} else {
+		cfg.Subscriptions = append(cfg.Subscriptions, sub)
+		if err := a.config.SaveConfig(cfg); err != nil {
+			return nil, fmt.Errorf("saving subscription: %w", err)
+		}
 	}
 	// The user answered the routing question in the import dialog just now, so
 	// what they accepted takes effect immediately rather than on some later
 	// connect.
-	if err := a.syncSubscriptionRoutingProfile(sub.ID, subscriptionRoutingDeclarations(res), disabledListURLs, res.Embedded, res.Routing, true); err != nil {
+	if err := a.syncSubscriptionRoutingProfile(sub.ID, subscriptionRoutingDeclarations(res), disabledListURLs, res.Embedded, res.Routing, !installProxies); err != nil {
 		a.log.Warning(fmt.Sprintf("[ROUTING] Не удалось применить списки подписки %q: %v", displayName, err))
 	}
 

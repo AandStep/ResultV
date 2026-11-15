@@ -45,6 +45,7 @@ import "./SettingsPage.css";
  */
 export const SETTINGS_GROUPS = [
   { key: "advanced", icon: "adsettings" },
+  { key: "appearance", icon: "palette" },
   { key: "subscriptions", icon: "subscriptions" },
   { key: "security", icon: "security" },
   { key: "network", icon: "network" },
@@ -152,7 +153,12 @@ export const SETTINGS_PAGE_TEXT = {
     advanced: {
       title: "Дополнительные настройки",
       items: "• Режим TUN  • Запуск при старте системы",
-      desc: "Параметры запуска, TUN, язык приложения",
+      desc: "Параметры запуска и сетевого стека TUN.",
+    },
+    appearance: {
+      title: "Оформление",
+      items: "• Язык интерфейса  • Тема оформления",
+      desc: "Язык и цветовая тема приложения.",
     },
     subscriptions: {
       title: "Подписки",
@@ -330,6 +336,8 @@ export default function SettingsPage({
   /* Адреса, по которым прокси доступен в локальной сети. Строку собирает
      приложение: своих IP страница не знает. */
   lanAddress = "",
+  socks5ExitSettings,
+  adaptiveVerdicts,
   onExport,
   onImport,
   sidebar,
@@ -382,6 +390,11 @@ export default function SettingsPage({
             <Tumbler checked={!!values.alwaysAdmin} onChange={set("alwaysAdmin")} />
           </Row>
         )}
+      </>
+    ),
+
+    appearance: (
+      <>
         <Row title={rows.language.title} description={rows.language.desc}>
           <Select
             options={languages}
@@ -390,7 +403,6 @@ export default function SettingsPage({
             aria-label={rows.language.title}
           />
         </Row>
-        {/* Светлая тема отложена до доработки.
         <Row title={rows.theme.title} description={rows.theme.desc}>
           <Select
             options={themes}
@@ -399,7 +411,6 @@ export default function SettingsPage({
             aria-label={rows.theme.title}
           />
         </Row>
-        */}
       </>
     ),
 
@@ -626,7 +637,7 @@ export default function SettingsPage({
           <>
             <PageHeader title={group.title} subtitle={group.desc} />
 
-            {/* Страница пункта: кнопка возврата и одна карточка со строками
+            {/* Страница пункта: кнопка возврата и карточки со строками
                 (Figma 6799:4689). */}
             <div className="rv-settings-page__section">
               <Button variant="green" onClick={onBack}>
@@ -635,6 +646,8 @@ export default function SettingsPage({
               <section className="rv-settings-page__card rv-border rv-border--static">
                 {groupBody[section]}
               </section>
+              {section === "network" && socks5ExitSettings}
+              {section === "experimental" && values.adaptiveSmart && adaptiveVerdicts}
             </div>
           </>
         ) : (

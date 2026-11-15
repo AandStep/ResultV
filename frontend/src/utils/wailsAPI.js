@@ -23,6 +23,8 @@ import {
   ApplyMode,
   CancelConnect,
   Connect,
+  ConnectTelegramSubscription,
+  CancelTelegramSubscription,
   Disconnect,
   DetectCountry,
   RedetectCountry,
@@ -67,6 +69,9 @@ import {
 } from '../../wailsjs/go/main/App';
 
 export const wailsAPI = {
+
+  connectTelegramSubscription: (language) => ConnectTelegramSubscription(language),
+  cancelTelegramSubscription: () => CancelTelegramSubscription(),
   
   connect: async (proxyStr, options, killSwitch) => {
     try {
@@ -389,6 +394,26 @@ export const wailsAPI = {
     }
   },
 
+  saveSettings: async (settings) => {
+    try {
+      return await window.go.main.App.SaveSettings(settings);
+    } catch (e) {
+      console.error("wailsAPI.saveSettings error:", e);
+      throw e;
+    }
+  },
+
+  takeConfigStartupNotice: async () => {
+    try {
+      const take = window?.go?.main?.App?.TakeConfigStartupNotice;
+      if (!take) return "";
+      return (await take()) || "";
+    } catch (e) {
+      console.error("wailsAPI.takeConfigStartupNotice error:", e);
+      return "";
+    }
+  },
+
   isAutostartEnabled: async () => {
     try {
       return await IsAutostartEnabled();
@@ -639,6 +664,14 @@ export const wailsAPI = {
   previewRoutingDeepLink: (url) => callApp("PreviewRoutingDeepLink", [url]),
   importRoutingDeepLink: (url, makeActive) =>
     callApp("ImportRoutingDeepLink", [url, !!makeActive]),
+  getLearnedVerdicts: () => callApp("GetLearnedVerdicts"),
+  forgetLearnedVerdict: (host) => callApp("ForgetLearnedVerdict", [host]),
+  clearLearnedVerdicts: () => callApp("ClearLearnedVerdicts"),
+  getSocks5ExitSettings: () => callApp("GetSocks5ExitSettings"),
+  saveSocks5ExitSettings: (settings) => callApp("SaveSocks5ExitSettings", [settings]),
+  setSocks5ExitEnabled: (enabled) => callApp("SetSocks5ExitEnabled", [enabled]),
+  checkSocks5Exit: () => callApp("CheckSocks5Exit"),
+  getSocks5ExitStatus: () => callApp("GetSocks5ExitStatus", [], {}),
 };
 
 /*

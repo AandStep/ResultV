@@ -9,6 +9,7 @@ package conn
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"sync"
@@ -305,6 +306,9 @@ func (s *StdNetBind) makeReceiveMsgX(conn *net.UDPConn, isV6 bool) (ReceiveFunc,
 				return 0, fmt.Errorf("%w: %w", ErrRebindRequired, errno)
 			}
 			return 0, errno
+		}
+		if n == 0 {
+			return 0, fmt.Errorf("%w: %w", ErrRebindRequired, io.EOF)
 		}
 		numMsgs := int(n)
 		for i := 0; i < numMsgs; i++ {

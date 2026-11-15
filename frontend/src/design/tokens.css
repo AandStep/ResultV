@@ -148,6 +148,8 @@
   /* Бренд-цвет Telegram, вне палитры проекта. См. GAPS.md V-3. */
   --rv-icon-tg-hover: #0088cc;
 
+  --rv-description-color: var(--rv-white-a50);
+
   /* Подложка под окном поверх страницы: чистый чёрный 50 % и размытие 6.
      Заданы прямо на слое Frame 359 (6721:3874), переменных в Figma нет. */
   --rv-overlay: rgba(0, 0, 0, 0.5);
@@ -312,21 +314,21 @@
 }
 
 /*
- * Светлая тема. В Figma её нет — палитра собрана из тёмной по смыслу ступеней,
- * а не зеркалом: страница светло-серая, карточки белые, поля и кнопка питания
- * чуть утоплены. «Белые» ступени становятся чернилами, жёлтый затемнён до
- * читаемого на белом, остальные фирменные цвета прежние.
+ * Светлая тема из App Design (Figma 7018:5169, 7018:5140, 7018:5123).
+ * Подписи и пиктограммы используют разные ступени цвета текста.
  */
 :root[data-theme="light"] {
   --rv-white: #161a17;
-  --rv-black: #eceeed;
-  --rv-dark-grey: #f5f6f5;
+  --rv-black: #e6e6e6;
+  --rv-dark-grey: var(--rv-light-gray);
   --rv-grey: #ffffff;
   --rv-light-gray: #eef0ef;
+  --rv-server-list-bg: #f2f2f2;
 
   --rv-warning: #b58900;
 
   --rv-icon-default: var(--rv-white-a50);
+  --rv-description-color: var(--rv-white-a80);
   --rv-overlay: rgba(22, 26, 23, 0.3);
 
   --rv-white-a05: rgba(22, 26, 23, 0.045);
@@ -349,11 +351,7 @@
   --rv-drop-a40: rgba(22, 26, 23, 0.08);
   --rv-float-filter: drop-shadow(0 8px 20px rgba(22, 26, 23, 0.12));
 
-  --rv-border: linear-gradient(
-    to right,
-    rgba(22, 26, 23, 0.1),
-    rgba(22, 26, 23, 0.06)
-  );
+  --rv-border: linear-gradient(rgba(22, 26, 23, 0.1), rgba(22, 26, 23, 0.1));
   --rv-border-hover: linear-gradient(
     to right,
     rgba(22, 26, 23, 0.18),

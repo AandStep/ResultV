@@ -33,6 +33,8 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+const lightWindowChannel = 0xe6
+
 func main() {
 	system.WaitForElevationParent(os.Args)
 	releaseOwnership := system.KeepInvokerOwnership()
@@ -61,7 +63,8 @@ func main() {
 	})
 	defer cleanupMessenger()
 
-	if runtime.GOOS == "windows" && !system.IsAdmin() && !system.ArgsElevatedFrom(os.Args) && alwaysRunAsAdminSetting() {
+	savedSettings := readStartupSettings()
+	if runtime.GOOS == "windows" && !system.IsAdmin() && !system.ArgsElevatedFrom(os.Args) && savedSettings.AlwaysRunAsAdmin {
 		if ok, err := system.RelaunchElevated(os.Args); ok {
 			cleanupMessenger()
 			system.ReleaseSingletonLock()
@@ -71,6 +74,7 @@ func main() {
 		}
 	}
 
+	lightChrome := windows.RGB(lightWindowChannel, lightWindowChannel, lightWindowChannel)
 	opts := &options.App{
 		Title: "ResultV",
 		// Размер из макета: страницы нарисованы под клиентскую область
@@ -86,7 +90,7 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		BackgroundColour: &options.RGBA{R: 24, G: 24, B: 27, A: 1},
+		BackgroundColour: windowBackground(savedSettings.Theme),
 		OnStartup:        app.startup,
 		OnBeforeClose:    app.BeforeClose,
 		OnShutdown:       app.shutdown,
@@ -96,7 +100,7 @@ func main() {
 			DisableFramelessWindowDecorations: false,
 			WebviewUserDataPath:               system.WebviewUserDataPath(),
 			WindowClassName:                   system.WailsWindowClassResultV,
-			Theme:                             windows.Dark,
+			Theme:                             windowsTheme(savedSettings.Theme),
 			CustomTheme: &windows.ThemeSettings{
 				DarkModeTitleBar:         windows.RGB(24, 24, 27),
 				DarkModeTitleBarInactive: windows.RGB(24, 24, 27),
@@ -105,6 +109,11 @@ func main() {
 
 				DarkModeTitleText:         windows.RGB(24, 24, 27),
 				DarkModeTitleTextInactive: windows.RGB(24, 24, 27),
+
+				LightModeTitleBar:         lightChrome,
+				LightModeTitleBarInactive: lightChrome,
+				LightModeBorder:           lightChrome,
+				LightModeBorderInactive:   lightChrome,
 			},
 		},
 		Bind: []interface{}{
@@ -130,37 +139,32 @@ func main() {
 	}
 }
 
-func alwaysRunAsAdminSetting() bool {
+func readStartupSettings() config.AppSettings {
 	dir := system.UserDataDir()
 	cs, err := config.NewCryptoService(dir)
 	if err != nil {
-		return false
+		return config.AppSettings{}
 	}
-	m := config.NewManager(cs)
-	if err := m.Init(dir); err != nil {
-		return false
-	}
-	return m.GetConfig().Settings.AlwaysRunAsAdmin
+	// Read-only: repairing the config here would hide it from the instance
+	// that shows the window.
+	settings, _ := config.ReadStoredSettings(cs, dir)
+	return settings
 }
 
-// Светлая тема отложена до доработки. Чтобы включить: читать настройки один
-// раз (AppSettings вместо alwaysRunAsAdminSetting), BackgroundColour =
-// windowBackground(saved.Theme), Theme = windowsTheme(saved.Theme), а в
-// CustomTheme добавить LightMode* = windows.RGB(236, 238, 237).
-//
-// func windowBackground(theme string) *options.RGBA {
-// 	if theme == "light" {
-// 		return &options.RGBA{R: 236, G: 238, B: 237, A: 1}
-// 	}
-// 	return &options.RGBA{R: 24, G: 24, B: 27, A: 1}
-// }
-//
-// func windowsTheme(theme string) windows.Theme {
-// 	switch theme {
-// 	case "light":
-// 		return windows.Light
-// 	case "system":
-// 		return windows.SystemDefault
-// 	}
-// 	return windows.Dark
-// }
+func windowBackground(theme string) *options.RGBA {
+	if theme == "light" {
+		return &options.RGBA{R: lightWindowChannel, G: lightWindowChannel, B: lightWindowChannel, A: 255}
+	}
+	return &options.RGBA{R: 24, G: 24, B: 27, A: 255}
+}
+
+func windowsTheme(theme string) windows.Theme {
+	switch theme {
+	case "light":
+		return windows.Light
+	case "system":
+		return windows.SystemDefault
+	default:
+		return windows.Dark
+	}
+}

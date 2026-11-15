@@ -14,7 +14,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/option"
 	singjson "github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/common/json/badoption"
@@ -121,7 +120,7 @@ func TestAWG3KnobsReachEngine(t *testing.T) {
 
 	// The upstream parse is the real gate: header_protection_key must decode
 	// as base64 and every timing must land in a *badoption.Range.
-	ctx := include.Context(context.Background())
+	ctx := extendedBoxContext(context.Background())
 	var opts option.Options
 	if err := singjson.UnmarshalContext(ctx, full, &opts); err != nil {
 		t.Fatalf("upstream sing-box-extended rejected AWG3 config: %v\nJSON: %s", err, string(full))

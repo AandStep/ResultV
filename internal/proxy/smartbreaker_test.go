@@ -84,7 +84,7 @@ func TestOpenBreakerStillStopsLearning(t *testing.T) {
 
 	store := choiceStore(t)
 	s := &smartOutbound{store: store, health: h}
-	s.learn(adapter.InboundContext{Domain: "example.com"}, true)
+	s.noteRace(adapter.InboundContext{Domain: "example.com"}, raceResult{})
 	if _, ok := store.Lookup("example.com"); ok {
 		t.Fatal("вердикт записан при взведённом предохранителе — именно этого он должен не допускать")
 	}

@@ -18,6 +18,9 @@ package verdict
 import (
 	"net/netip"
 	"strings"
+	"time"
+
+	"golang.org/x/net/publicsuffix"
 )
 
 // PromoteThreshold is how many distinct children must give the same answer
@@ -26,6 +29,15 @@ import (
 // Three, not two: two is one unlucky pair of timeouts on a flaky Wi-Fi, and
 // the cost of a wrong promotion is a whole domain routed the wrong way.
 const PromoteThreshold = 3
+
+// PromoteWindow is how long one child's answer keeps counting towards its
+// parent.
+const PromoteWindow = 24 * time.Hour
+
+type vote struct {
+	d  Decision
+	at time.Time
+}
 
 // notePromotionLocked records one learned child and lifts a proxy answer onto
 // the parent once enough distinct children agree. Caller must hold s.mu.
@@ -36,20 +48,25 @@ func (s *Store) notePromotionLocked(key string, d Decision) {
 	}
 	byNS := s.children[s.ns]
 	if byNS == nil {
-		byNS = make(map[string]map[string]Decision)
+		byNS = make(map[string]map[string]vote)
 		s.children[s.ns] = byNS
 	}
 	parentHash := s.hash(parent)
 	kids := byNS[parentHash]
 	if kids == nil {
-		kids = make(map[string]Decision)
+		kids = make(map[string]vote)
 		byNS[parentHash] = kids
 	}
-	kids[s.hash(key)] = d
+	now := s.now()
+	kids[s.hash(key)] = vote{d: d, at: now}
 
 	agree := 0
-	for _, kd := range kids {
-		if kd == d {
+	for h, v := range kids {
+		if now.Sub(v.at) > PromoteWindow {
+			delete(kids, h)
+			continue
+		}
+		if v.d == d {
 			agree++
 		}
 	}
@@ -66,7 +83,6 @@ func (s *Store) notePromotionLocked(key string, d Decision) {
 	if d != Proxy {
 		return
 	}
-	now := s.now()
 	s.putLocked(parent, Record{
 		Decision:  d,
 		Source:    SourceLearned,
@@ -88,7 +104,20 @@ func promotionParent(key string) string {
 	if addr, err := netip.ParseAddr(key); err == nil {
 		return IPParent(addr)
 	}
-	return ParentDomain(key)
+	parent := ParentDomain(key)
+	if parent == "" {
+		return ""
+	}
+	// A public suffix (co.uk, cloudfront.net) is shared by unrelated sites.
+	if _, err := publicsuffix.EffectiveTLDPlusOne(parent); err != nil {
+		return ""
+	}
+	return parent
+}
+
+// LearnIPUnverified is LearnUnverified for a destination without a name.
+func (s *Store) LearnIPUnverified(addr netip.Addr) {
+	s.put(IPKey(addr), s.unverifiedRecord())
 }
 
 // LearnIP records what the engine measured for a destination that never

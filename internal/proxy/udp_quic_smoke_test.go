@@ -18,7 +18,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/option"
 	singjson "github.com/sagernet/sing/common/json"
 )
@@ -47,7 +46,7 @@ func TestVLESSXUDPOutboundShapeSmoke(t *testing.T) {
 	if !strings.Contains(string(j), `"packet_encoding":"xudp"`) {
 		t.Fatalf("expected packet_encoding=xudp in config: %s", j)
 	}
-	ctx := include.Context(context.Background())
+	ctx := extendedBoxContext(context.Background())
 	var opt option.Options
 	if err := singjson.UnmarshalContext(ctx, j, &opt); err != nil {
 		t.Fatalf("strict decode of VLESS config failed: %v", err)
@@ -80,7 +79,7 @@ func TestHysteria2QUICShapeSmoke(t *testing.T) {
 			t.Fatalf("missing %q: %s", want, js)
 		}
 	}
-	ctx := include.Context(context.Background())
+	ctx := extendedBoxContext(context.Background())
 	var opt option.Options
 	if err := singjson.UnmarshalContext(ctx, j, &opt); err != nil {
 		t.Fatalf("strict decode of Hysteria2 config failed: %v", err)
@@ -127,7 +126,7 @@ func TestTunInboundUDPTimeoutShapeSmoke(t *testing.T) {
 			t.Fatalf("missing %q in tunnel-mode config: %s", want, js)
 		}
 	}
-	ctx := include.Context(context.Background())
+	ctx := extendedBoxContext(context.Background())
 	var opt option.Options
 	if err := singjson.UnmarshalContext(ctx, j, &opt); err != nil {
 		t.Fatalf("strict decode of tunnel-mode config rejected new TUN fields: %v", err)
@@ -221,7 +220,7 @@ func TestServerPinHostsDNSShapeSmoke(t *testing.T) {
 	if !strings.Contains(js, `"server":"k.example.com"`) {
 		t.Fatalf("outbound must keep the server domain for failover: %s", js)
 	}
-	ctx := include.Context(context.Background())
+	ctx := extendedBoxContext(context.Background())
 	var opt option.Options
 	if err := singjson.UnmarshalContext(ctx, j, &opt); err != nil {
 		t.Fatalf("strict decode rejected the hosts server-pin DNS shape: %v", err)
@@ -255,7 +254,7 @@ func TestVMessUDPShapeSmoke(t *testing.T) {
 			t.Fatalf("missing %q: %s", want, js)
 		}
 	}
-	ctx := include.Context(context.Background())
+	ctx := extendedBoxContext(context.Background())
 	var opt option.Options
 	if err := singjson.UnmarshalContext(ctx, j, &opt); err != nil {
 		t.Fatalf("strict decode of VMess config failed: %v", err)
@@ -285,7 +284,7 @@ func TestSmartQUICRejectParsesStrictly(t *testing.T) {
 		t.Fatalf("expected a reject/default rule in the smart config: %s", j)
 	}
 
-	ctx := include.Context(context.Background())
+	ctx := extendedBoxContext(context.Background())
 	var opt option.Options
 	if err := singjson.UnmarshalContext(ctx, j, &opt); err != nil {
 		t.Fatalf("strict decode of the smart QUIC-reject config failed: %v", err)

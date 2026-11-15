@@ -16,6 +16,7 @@
  */
 
 import React, { createContext, useContext, useState, useRef, useEffect, useCallback } from "react";
+import { isProxyListed } from "../utils/proxyPresence";
 import { useConfigContext } from "./ConfigContext";
 import { useLogContext } from "./LogContext";
 import { useDaemonPing } from "../hooks/useDaemonPing";
@@ -95,7 +96,7 @@ export const ConnectionProvider = ({ children }) => {
         showAlertDialog,
     );
 
-    const { disconnectOnly, toggleConnection, selectAndConnect, deleteProxy, cancelConnect, isResolving } = useDaemonControl(
+    const { forgetActiveProxy, disconnectOnly, toggleConnection, selectAndConnect, deleteProxy, cancelConnect, isResolving } = useDaemonControl(
         isConnected,
         setIsConnected,
         setIsConnecting,
@@ -118,6 +119,20 @@ export const ConnectionProvider = ({ children }) => {
            переподключение ведут настройки, а не этот хук. */
         isApplyingMode,
     );
+
+    /* Сервер удалили вместе с подпиской или другим путём, а не кнопкой у
+       самого сервера: главная не должна держать его ни подключённым, ни
+       выбранным. До загрузки конфигурации список пуст — сверять рано. */
+    const forgettingRef = useRef(false);
+    useEffect(() => {
+        if (!isConfigLoaded) return;
+        if (failedProxy && !isProxyListed(proxies, failedProxy)) setFailedProxy(null);
+        if (!activeProxy || forgettingRef.current || isProxyListed(proxies, activeProxy)) return;
+        forgettingRef.current = true;
+        forgetActiveProxy(isConnected || isConnecting).finally(() => {
+            forgettingRef.current = false;
+        });
+    }, [isConfigLoaded, proxies, activeProxy, failedProxy, isConnected, isConnecting, forgetActiveProxy]);
 
     // A dead node in an AUTO group is a reason to move, not to stop — the group
     // still has other members. The dead node was just penalised in node stats,

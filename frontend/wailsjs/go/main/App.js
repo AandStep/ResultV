@@ -26,8 +26,20 @@ export function CancelConnect() {
   return window['go']['main']['App']['CancelConnect']();
 }
 
+export function CancelTelegramSubscription() {
+  return window['go']['main']['App']['CancelTelegramSubscription']();
+}
+
 export function CancelUpdate() {
   return window['go']['main']['App']['CancelUpdate']();
+}
+
+export function CheckSocks5Exit() {
+  return window['go']['main']['App']['CheckSocks5Exit']();
+}
+
+export function ClearLearnedVerdicts() {
+  return window['go']['main']['App']['ClearLearnedVerdicts']();
 }
 
 export function CompileRoutingProfile(arg1, arg2) {
@@ -36,6 +48,10 @@ export function CompileRoutingProfile(arg1, arg2) {
 
 export function Connect(arg1, arg2, arg3) {
   return window['go']['main']['App']['Connect'](arg1, arg2, arg3);
+}
+
+export function ConnectTelegramSubscription(arg1) {
+  return window['go']['main']['App']['ConnectTelegramSubscription'](arg1);
 }
 
 export function DebugFrontendLog(arg1) {
@@ -78,6 +94,10 @@ export function FetchSubscription(arg1, arg2) {
   return window['go']['main']['App']['FetchSubscription'](arg1, arg2);
 }
 
+export function ForgetLearnedVerdict(arg1) {
+  return window['go']['main']['App']['ForgetLearnedVerdict'](arg1);
+}
+
 export function GetAutoGroupStatus(arg1) {
   return window['go']['main']['App']['GetAutoGroupStatus'](arg1);
 }
@@ -92,6 +112,10 @@ export function GetConfig() {
 
 export function GetLANIPs() {
   return window['go']['main']['App']['GetLANIPs']();
+}
+
+export function GetLearnedVerdicts() {
+  return window['go']['main']['App']['GetLearnedVerdicts']();
 }
 
 export function GetLeftoverRecoveryReport() {
@@ -122,6 +146,14 @@ export function GetRoutingProfiles() {
   return window['go']['main']['App']['GetRoutingProfiles']();
 }
 
+export function GetSocks5ExitSettings() {
+  return window['go']['main']['App']['GetSocks5ExitSettings']();
+}
+
+export function GetSocks5ExitStatus() {
+  return window['go']['main']['App']['GetSocks5ExitStatus']();
+}
+
 export function GetStatus() {
   return window['go']['main']['App']['GetStatus']();
 }
@@ -136,6 +168,10 @@ export function GetVersion() {
 
 export function HandleDeepLink(arg1) {
   return window['go']['main']['App']['HandleDeepLink'](arg1);
+}
+
+export function HasPendingConnect() {
+  return window['go']['main']['App']['HasPendingConnect']();
 }
 
 export function ImportConfig(arg1, arg2, arg3) {
@@ -210,6 +246,14 @@ export function SaveRoutingProfile(arg1) {
   return window['go']['main']['App']['SaveRoutingProfile'](arg1);
 }
 
+export function SaveSettings(arg1) {
+  return window['go']['main']['App']['SaveSettings'](arg1);
+}
+
+export function SaveSocks5ExitSettings(arg1) {
+  return window['go']['main']['App']['SaveSocks5ExitSettings'](arg1);
+}
+
 export function SetActiveRoutingProfile(arg1) {
   return window['go']['main']['App']['SetActiveRoutingProfile'](arg1);
 }
@@ -230,6 +274,10 @@ export function SetResumeAfterElevation(arg1, arg2) {
   return window['go']['main']['App']['SetResumeAfterElevation'](arg1, arg2);
 }
 
+export function SetSocks5ExitEnabled(arg1) {
+  return window['go']['main']['App']['SetSocks5ExitEnabled'](arg1);
+}
+
 export function SetStartInTray(arg1) {
   return window['go']['main']['App']['SetStartInTray'](arg1);
 }
@@ -248,6 +296,10 @@ export function StartUpdate() {
 
 export function SyncProxies(arg1) {
   return window['go']['main']['App']['SyncProxies'](arg1);
+}
+
+export function TakeConfigStartupNotice() {
+  return window['go']['main']['App']['TakeConfigStartupNotice']();
 }
 
 export function TakePendingConnect() {

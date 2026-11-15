@@ -46,6 +46,7 @@ type appDirectOptions struct{}
 var (
 	_ adapter.ConnectionHandler       = (*appDirectOutbound)(nil)
 	_ adapter.PacketConnectionHandler = (*appDirectOutbound)(nil)
+	_ adapter.Lifecycle               = (*appDirectOutbound)(nil)
 )
 
 type appDirectOutbound struct {
@@ -70,7 +71,10 @@ func newAppDirectOutbound(ctx context.Context, _ adapter.Router, logger log.Cont
 	}, nil
 }
 
-func (a *appDirectOutbound) Start() error {
+func (a *appDirectOutbound) Start(stage adapter.StartStage, _ *adapter.Scope) error {
+	if stage != adapter.StartStateStart {
+		return nil
+	}
 	direct, loaded := a.outbounds.Outbound("direct")
 	if !loaded {
 		return E.New("app-direct: outbound not found: direct")

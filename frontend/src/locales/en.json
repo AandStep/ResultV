@@ -1,4 +1,54 @@
 {
+  "adaptiveVerdicts": {
+    "title": "Found by adaptive mode",
+    "desc": "Adaptive mode routed these sites through the VPN on its own. Remove a site if it ended up here by mistake.",
+    "empty": "Nothing found yet",
+    "clear": "Clear list",
+    "hidden_one": "Plus {{count}} site from earlier sessions: its name is not stored, so it can only be removed by a reset.",
+    "hidden_other": "Plus {{count}} sites from earlier sessions: their names are not stored, so they can only be removed by a reset."
+  },
+  "socks5Exit": {
+    "title": "SOCKS5 over VPN",
+    "desc": "Sends VPN traffic through a SOCKS5 server.",
+    "enterAddress": "Enter the SOCKS5 address and port, then click Save.",
+    "invalidAddress": "Check the SOCKS5 address and port",
+    "host": "IP address or hostname",
+    "port": "Port",
+    "username": "Username (optional)",
+    "password": "Password",
+    "showPassword": "Show password",
+    "hidePassword": "Hide password",
+    "credentialsPair": "Enter both the username and password, or leave both blank.",
+    "passwordForNewAddress": "Enter the password for the new SOCKS5 address",
+    "addressTitle": "Server address",
+    "checkTitle": "Exit check",
+    "sites": "Sites through SOCKS5",
+    "sitesPlaceholder": "example.com or 203.0.113.0/24",
+    "sitesHint": "With both lists empty, all VPN traffic goes through SOCKS5.",
+    "apps": "Apps through SOCKS5",
+    "appsPlaceholder": "App name",
+    "remove": "Remove",
+    "check": "Check",
+    "checking": "Checking the exit…",
+    "statusOk": "Exit works: {{ip}}",
+    "udpYes": "UDP available",
+    "udpNo": "no UDP",
+    "statusAfterConnect": "The exit is checked once you connect.",
+    "statusUnchecked": "The exit has not been checked yet.",
+    "statusNoAddress": "Enter the server address and save.",
+    "unsaved": "You have unsaved changes.",
+    "failedTitle": "SOCKS5 exit is not working",
+    "failedLead": "The VPN is connected, but traffic does not pass through SOCKS5: {{reason}}. Check the address and sign-in details under Network.",
+    "reasons": {
+      "first_hop_down": "the VPN node does not respond",
+      "socks_no_response": "the SOCKS5 server does not respond",
+      "bad_auth": "wrong username or password",
+      "auth_method": "the server requires a different sign-in method",
+      "rejected": "the server refused the connection (code {{code}})",
+      "rejected_ruleset": "the server denied the connection, check the username and password (code {{code}})",
+      "probe_failed": "the check site did not answer"
+    }
+  },
   "sidebar": {
     "offline": "Daemon Offline",
     "home": "Home",
@@ -194,6 +244,11 @@
         "desc": "Startup, TUN, and traffic filtering options.",
         "items": "• TUN mode  • Launch at system startup"
       },
+      "appearance": {
+        "title": "Appearance",
+        "desc": "App language and color theme.",
+        "items": "• Interface language  • Theme"
+      },
       "subscriptions": {
         "title": "Subscriptions",
         "desc": "Refresh schedule and data sent to providers.",
@@ -279,7 +334,7 @@
     "subscription_user_agent": {
       "title": "User agent",
       "desc": "Empty — the default ResultV header.",
-      "placeholder": "ResultV/3.5.7/Windows/11_10.0.26200"
+      "placeholder": "ResultV/3.6.0/Windows/11_10.0.26200"
     },
     "dns": {
       "title": "DNS Servers",
@@ -410,6 +465,7 @@
     "global": "Global mode",
     "sitesVpn": "Sites through the VPN",
     "sitesVpnDesc": "If a site turned out not to be on the smart-mode list, you can add it yourself.",
+    "globalSitesVpnDesc": "Sites on this list use the VPN even when the routing profile sends them direct.",
     "sitesDirect": "Sites direct",
     "sitesDirectDesc": "Sites added to this list will not go through the VPN.",
     "sitesPlaceholder": "Enter an IP or host and press Enter to add",
@@ -672,32 +728,31 @@
     }
   },
   "buy": {
-    "title": "Buy Servers",
-    "subtitle": "Here you can get the best subscriptions from our partners with a bonus for our promo code.",
-    "imp_vpn": {
-      "discount": "20% top-up bonus from impVPN",
-      "discount_desc": "Open the Telegram bot or the website via the links below, enter the promo code result and get a bonus on your balance top-up"
+    "title": "Buy a Server",
+    "subtitle": "Get or connect an official ResultV subscription through Telegram.",
+    "offerTitle": "ResultV Subscription",
+    "offerDescription": "If you already bought a subscription from @result_vpn_bot, click the green Telegram icon to add it automatically. If you don’t have a subscription yet, click “Buy in Telegram” to buy one from our bot.",
+    "connect": "Connect a subscription through Telegram",
+    "connecting": "Continue on the website.",
+    "cancel": "Cancel login",
+    "connectionErrors": {
+      "telegram_cancelled": "Telegram login was canceled.",
+      "telegram_timeout": "The login timed out. Try connecting again.",
+      "telegram_auth_failed": "Telegram login could not be verified. Try again.",
+      "telegram_subscription_not_found": "No ResultV subscription was found for this Telegram account.",
+      "telegram_subscription_inactive": "This subscription is inactive. Check its status in the Telegram bot.",
+      "telegram_subscription_ambiguous": "This Telegram account has multiple subscriptions. Contact support.",
+      "telegram_subscription_unusable": "The subscription returned no available servers. Check its status and device limit in the bot.",
+      "telegram_import_failed": "Could not load the subscription. Check your connection and try again.",
+      "telegram_connect_busy": "Telegram login is already open in the browser.",
+      "telegram_unavailable": "The connection service could not be reached. Try again."
     },
-    "proxy_seller": {
-      "discount": "Discount from Proxy-Seller",
-      "discount_desc": "Register on Proxy-Seller using the link below to get a discount on proxies.",
-      "promo_title": "Promo Code"
-    },
-    "proxy6": {
-      "discount": "5% discount from PROXY6.net",
-      "discount_desc": "Register on PROXY6.net using the link below to get a 5% discount on proxies.",
-      "promo_title": "5% Promo Code"
-    },
-    "proxy_market": {
-      "discount": "5% discount from proxy market",
-      "discount_desc": "Register on proxy market using the link below to get a 5% discount on proxies.",
-      "promo_title": "5% Promo Code"
-    },
+    "purchase": "Buy in Telegram",
+    "subscriptionTitle": "Your subscription: {{name}}",
+    "subscriptionAdded": "Your subscription was added successfully!",
+    "copySubscription": "Copy subscription link",
     "copied": "Copied!",
-    "go": "Go to Site",
-    "goBot": "Open Bot",
-    "goSite": "Go to Site",
-    "copy": "Copy"
+    "copyFailed": "Could not copy the link"
   },
   "common": {
     "close": "Close",
@@ -727,6 +782,14 @@
     "elevTitle": "Leftovers from the previous session detected",
     "elevLead": "The app exited uncleanly last time (for example, via Task Manager) and left system settings behind:",
     "elevTail": "Administrator rights are required to clean them up. Restart the app as administrator — cleanup will run automatically."
+  },
+  "configNotice": {
+    "restoredTitle": "Settings restored from a backup",
+    "restoredMessage": "The settings file could not be read. ResultV restored the settings from the backup made at the previous start — changes from the last session may be missing.\n\nThe unreadable file is kept in the app data folder.",
+    "resetTitle": "Settings were reset",
+    "resetMessage": "The settings file could not be read and there is no backup. ResultV started with default settings — servers and subscriptions need to be added again.\n\nThe unreadable file is kept in the app data folder.",
+    "unavailableTitle": "Settings are unavailable",
+    "unavailableMessage": "ResultV could not open its settings storage. Changes made in this session will not be saved.\n\nRestart the app. The reason is recorded in the log."
   },
   "app": {
     "loading": "Loading system..."

@@ -68,6 +68,7 @@ import {
   mdiMenuDown,
   mdiMenuUp,
   mdiOpenInNew,
+  mdiPalette,
   mdiPageLayoutSidebarRight,
   mdiPlus,
   mdiPower,
@@ -208,6 +209,11 @@ export const ICONS = {
   },
   adsettings: {
     path: mdiTune,
+    size: 36,
+    states: ['default'],
+  },
+  palette: {
+    path: mdiPalette,
     size: 36,
     states: ['default'],
   },

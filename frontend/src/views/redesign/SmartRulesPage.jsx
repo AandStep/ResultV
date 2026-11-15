@@ -27,10 +27,7 @@
  *
  * Всю эту стадийность держит TagField из кита, здесь остаётся раскладка.
  *
- * Режим выбирается двумя плитками BigBtn, а не тумблером: у Global подписи
- * обоих блоков переворачиваются («через ВПН» -> «напрямую»), потому что и
- * поля конфига за ними стоят разные. Смысловая пара для каждого режима
- * приходит пропом `text`.
+ * У каждого блока свой переключатель между направлениями маршрутизации.
  */
 
 import { BigBtn, Button, Icon, SettingsItem, TagField } from "../../components/kit";
@@ -49,10 +46,12 @@ export const SMART_RULES_TEXT = {
   smart: "Умный режим",
   global: "Глобальный режим",
   sitesTitle: "Сайты через ВПН",
+  sitesAlternateTitle: "Сайты напрямую",
   sitesSubtitle:
     "Если сайт оказался не в списке умного режима его можно добавить самостоятельно.",
   sitesPlaceholder: "Введите IP или хост и нажмите Enter чтобы добавить",
   appsTitle: "Приложения через ВПН",
+  appsAlternateTitle: "Приложения напрямую",
   appsSubtitle: "Весь трафик этих приложений пойдет в туннель.",
   appsPlaceholder: "Например discord.exe",
   pickFile: "Выбрать файл на компьютере",
@@ -67,18 +66,35 @@ export const SMART_RULES_TEXT = {
  * Блок списка: заголовок с подписью, корзина справа и поле-теги под ними.
  * Оба блока страницы устроены одинаково, у второго снизу добавляется кнопка.
  */
-function RuleCard({ title, subtitle, clearLabel, onClear, children }) {
+function RuleCard({ title, alternateTitle, alternateSelected, onSelect, subtitle, clearLabel, onClear, children }) {
+  const activeTitle = alternateSelected ? alternateTitle : title;
+  const nextTitle = alternateSelected ? title : alternateTitle;
   return (
     <section className="rv-smart-rules__card">
       <div className="rv-smart-rules__card-head">
         <div className="rv-smart-rules__card-text">
-          <h2 className="rv-smart-rules__card-title">{title}</h2>
+          <h2 className="rv-smart-rules__card-directions">
+            <button type="button" className="rv-smart-rules__direction" aria-pressed={!alternateSelected} onClick={() => onSelect?.(false)}>
+              {title}
+            </button>
+            <button
+              type="button"
+              className="rv-smart-rules__direction-arrow"
+              data-reversed={alternateSelected}
+              aria-label={nextTitle}
+              tabIndex={-1}
+              onClick={() => onSelect?.(!alternateSelected)}
+            />
+            <button type="button" className="rv-smart-rules__direction" aria-pressed={alternateSelected} onClick={() => onSelect?.(true)}>
+              {alternateTitle}
+            </button>
+          </h2>
           <p className="rv-smart-rules__card-subtitle">{subtitle}</p>
         </div>
         <button
           type="button"
           className="rv-smart-rules__clear"
-          aria-label={clearLabel}
+          aria-label={`${clearLabel} · ${activeTitle}`}
           title={clearLabel}
           onClick={onClear}
         >
@@ -94,10 +110,16 @@ export default function SmartRulesPage({
   mode = "smart",
   onModeChange,
   sites = [],
+  siteListKey,
+  siteAlternateSelected = false,
+  onSelectSiteDirection,
   onAddSite,
   onRemoveSite,
   onClearSites,
   apps = [],
+  appListKey,
+  appAlternateSelected = false,
+  onSelectAppDirection,
   onAddApp,
   onRemoveApp,
   onClearApps,
@@ -137,11 +159,16 @@ export default function SmartRulesPage({
 
           <RuleCard
             title={text.sitesTitle}
+            alternateTitle={text.sitesAlternateTitle}
+            alternateSelected={siteAlternateSelected}
+            onSelect={onSelectSiteDirection}
             subtitle={text.sitesSubtitle}
             clearLabel={text.clear}
             onClear={onClearSites}
           >
             <TagField
+              key={siteListKey}
+              className="rv-smart-rules__list"
               values={sites}
               onAdd={onAddSite}
               onRemove={onRemoveSite}
@@ -152,11 +179,16 @@ export default function SmartRulesPage({
 
           <RuleCard
             title={text.appsTitle}
+            alternateTitle={text.appsAlternateTitle}
+            alternateSelected={appAlternateSelected}
+            onSelect={onSelectAppDirection}
             subtitle={text.appsSubtitle}
             clearLabel={text.clear}
             onClear={onClearApps}
           >
             <TagField
+              key={appListKey}
+              className="rv-smart-rules__list"
               values={apps}
               onAdd={onAddApp}
               onRemove={onRemoveApp}

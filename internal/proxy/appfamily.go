@@ -33,6 +33,7 @@ const (
 	familyNone appFamily = iota
 	familyDirect
 	familyVPN
+	familySocks
 )
 
 // The family reaches the rules as a package name, matched by package_name.
@@ -41,6 +42,7 @@ const (
 const (
 	familyTagDirect = "resultv.direct"
 	familyTagVPN    = "resultv.vpn"
+	familyTagSocks  = "resultv.socks"
 )
 
 func (f appFamily) tag() string {
@@ -49,6 +51,8 @@ func (f appFamily) tag() string {
 		return familyTagDirect
 	case familyVPN:
 		return familyTagVPN
+	case familySocks:
+		return familyTagSocks
 	}
 	return ""
 }
@@ -88,6 +92,7 @@ var familyCompanions = map[string]struct{}{
 type appLists struct {
 	direct []*regexp.Regexp
 	vpn    []*regexp.Regexp
+	socks  []*regexp.Regexp
 }
 
 func newAppLists(direct, vpn []string) appLists {
@@ -104,13 +109,23 @@ func compileAppList(entries []string) []*regexp.Regexp {
 	return out
 }
 
-func (l appLists) empty() bool { return len(l.direct) == 0 && len(l.vpn) == 0 }
+func (l appLists) withSocks(entries []string) appLists {
+	l.socks = compileAppList(entries)
+	return l
+}
+
+func (l appLists) empty() bool { return len(l.direct) == 0 && len(l.vpn) == 0 && len(l.socks) == 0 }
 
 // own is the family a process has by its own name. An explicit "via VPN"
 // wins over an accidental overlap with the exclusions.
 func (l appLists) own(image string) appFamily {
 	if image == "" {
 		return familyNone
+	}
+	for _, re := range l.socks {
+		if re.MatchString(image) {
+			return familySocks
+		}
 	}
 	for _, re := range l.vpn {
 		if re.MatchString(image) {

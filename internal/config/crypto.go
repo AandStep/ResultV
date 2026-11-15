@@ -32,6 +32,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/pbkdf2"
@@ -128,15 +129,20 @@ func loadOrCreateInstallSalt(userDataPath string) ([]byte, error) {
 	if userDataPath == "" {
 		return nil, errors.New("install salt: empty user data path")
 	}
-	path := filepath.Join(userDataPath, installSaltFile)
-	if data, err := os.ReadFile(path); err == nil {
+	return installSalt(filepath.Join(userDataPath, installSaltFile), os.ReadFile)
+}
+
+func installSalt(path string, read func(string) ([]byte, error)) ([]byte, error) {
+	data, err := readSaltFile(path, read)
+	if err == nil {
 		decoded, decErr := base64.StdEncoding.DecodeString(strings.TrimSpace(string(data)))
 		if decErr == nil && len(decoded) >= 16 {
 			return decoded, nil
 		}
-		// Corrupted or truncated salt file: fall through to regenerate.
-		// Existing configs will be migrated via the legacy-key path because
-		// the new salt produces a new key.
+	} else if !os.IsNotExist(err) {
+		// Replacing a salt that is merely unreadable right now would lock the
+		// user out of the config encrypted with it.
+		return nil, fmt.Errorf("reading install salt: %w", err)
 	}
 	salt := make([]byte, installSaltBytes)
 	if _, err := rand.Read(salt); err != nil {
@@ -146,10 +152,24 @@ func loadOrCreateInstallSalt(userDataPath string) ([]byte, error) {
 		return nil, fmt.Errorf("creating data dir: %w", err)
 	}
 	encoded := base64.StdEncoding.EncodeToString(salt)
-	if err := os.WriteFile(path, []byte(encoded), 0o600); err != nil {
+	if err := writeFileAtomic(path, []byte(encoded), 0o600); err != nil {
 		return nil, fmt.Errorf("writing install salt: %w", err)
 	}
 	return salt, nil
+}
+
+func readSaltFile(path string, read func(string) ([]byte, error)) ([]byte, error) {
+	var data []byte
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+		if attempt > 0 {
+			time.Sleep(20 * time.Millisecond)
+		}
+		if data, err = read(path); err == nil || os.IsNotExist(err) {
+			break
+		}
+	}
+	return data, err
 }
 
 // NeedsReencrypt reports whether the most recent Decrypt fell back to the

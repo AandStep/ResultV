@@ -73,6 +73,10 @@
   color: var(--rv-main-color);
 }
 
+:root[data-theme="light"] .rv-big-btn:not(:hover, :active, [data-state="hover"], [data-state="idle"], [data-state="active"]) > span {
+  color: var(--rv-description-color);
+}
+
 /* idle — залитое состояние, отдельного CSS-триггера у него нет. */
 .rv-big-btn[data-state="idle"] {
   background: var(--rv-main-a10);

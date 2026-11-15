@@ -1,0 +1,108 @@
+package proxy
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"resultproxy-wails/internal/config"
+)
+
+func (m *Manager) SetSocks5Exit(profile *config.Socks5ExitConfig) error {
+	if profile == nil {
+		profile = &config.Socks5ExitConfig{}
+	}
+	previous, reconnect, err := m.applySocks5Exit(profile)
+	if err != nil || !reconnect {
+		return err
+	}
+	if res := m.reload(m.ctx, func(*reloadSession) {}); !res.Success && res.ErrorCode != ConnectErrorSuperseded {
+		m.mu.Lock()
+		m.socks5Exit = previous
+		m.mu.Unlock()
+		return errors.New(res.Message)
+	}
+	return nil
+}
+
+// A session built without the SOCKS5 route has no selector to switch, and the
+// lists are routing rules fixed when the session was built.
+func socks5ExitNeedsReconnect(connected, wired bool, built, next *config.Socks5ExitConfig) bool {
+	return connected && next.IsActive() && (!wired || !config.SameSocks5ExitLists(built, next))
+}
+
+func (m *Manager) applySocks5Exit(profile *config.Socks5ExitConfig) (*config.Socks5ExitConfig, bool, error) {
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	previous := m.socks5Exit
+	if socks5ExitNeedsReconnect(m.connected, m.socks5ExitWired, m.socks5ExitBuilt, profile) {
+		m.socks5Exit = profile
+		return previous, true, nil
+	}
+	if m.connected && m.socks5ExitWired {
+		if m.engine != nil && m.engine.IsRunning() {
+			engine, ok := m.engine.(interface {
+				SetSocks5Exit(*config.Socks5ExitConfig) error
+			})
+			if !ok {
+				return previous, false, errSocks5ExitUnavailable
+			}
+			if err := engine.SetSocks5Exit(profile); err != nil {
+				return previous, false, err
+			}
+		} else if profile.IsActive() {
+			return previous, false, errSocks5ExitUnavailable
+		}
+	}
+	m.socks5Exit = profile
+	return previous, false, nil
+}
+
+func (m *Manager) socks5ExitActiveLocked() bool {
+	return m.connected && m.socks5ExitWired && m.socks5Exit.IsActive()
+}
+
+func (m *Manager) Socks5ExitActive() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.socks5ExitActiveLocked()
+}
+
+func (m *Manager) Socks5ExitCoversAllVPN() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.socks5ExitActiveLocked() && !m.socks5ExitBuilt.HasLists()
+}
+
+func (m *Manager) CheckSocks5Exit(ctx context.Context) Socks5ExitCheck {
+	m.mu.Lock()
+	engine, active := m.engine, m.socks5ExitActiveLocked()
+	m.mu.Unlock()
+	checker, ok := engine.(interface {
+		CheckSocks5Exit(context.Context) Socks5ExitCheck
+	})
+	if !active || !ok {
+		return Socks5ExitCheck{Reason: Socks5CheckInactive}
+	}
+	return checker.CheckSocks5Exit(ctx)
+}
+
+func probePortForSession(localPort, firstHopProbePort int) int {
+	if firstHopProbePort != 0 {
+		return firstHopProbePort
+	}
+	return localPort
+}
+
+// Startup verification must test the VPN node independently of the SOCKS5 exit.
+func (m *Manager) Socks5ExitFirstHopProbeAddress() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.connected || !m.socks5Exit.IsActive() || m.localPort == 0 {
+		return ""
+	}
+	return fmt.Sprintf("127.0.0.1:%d", probePortForSession(m.localPort, m.firstHopProbePort))
+}

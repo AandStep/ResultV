@@ -15,111 +15,86 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-/*
- * Страница «Купить сервера». Figma "ResultV" -> App Design, фрейм BuyServers
- * (6613:3136).
- *
- * Фрейм один, состояний у него нет. Раскладка простая: шапка страницы, под
- * ней карточка партнёра — знак 96 на подложке, название с описанием и ряд из
- * трёх кнопок: ТГ-бот, сайт и промокод. Карточек в макете одна, но рисуются
- * все, что придут: партнёр — это данные, а не вёрстка.
- */
-
 import { Button, Icon } from "../../components/kit";
 import PageHeader from "./PageHeader";
 import "./BuyPage.css";
 
-/* Подписи в написании макета. В приложении они идут через i18n. */
-export const BUY_PAGE_TEXT = {
-  /*
-   * В макете (6613:3140) набрано «Купить сервер». В приложении страница
-   * зовётся «Купить сервера» — так её назвали при переименовании из
-   * «Сервера impVPN», см. GAPS.md.
-   */
-  title: "Купить сервера",
-  subtitle:
-    "Здесь вы можете приобрести лучшие подписки у наших партнеров с бонусами по нашему промокоду.",
-  /* Подписей у кнопок-иконок в макете нет — это подсказки. */
-  bot: "Открыть бота",
-  site: "Перейти на сайт",
-  copyPromo: "Скопировать промокод",
-  copied: "Скопировано!",
-};
-
-/**
- * `partners` — карточки страницы сверху вниз. У каждой свои знак, название,
- * описание и промокод; кнопка бота или сайта появляется только если ссылка
- * на них есть.
- */
 export default function BuyPage({
-  title,
-  subtitle,
-  partners = [],
-  /* id партнёра, чей промокод только что скопировали. */
-  copiedId = "",
+  subscriptionURL,
+  copyMessage,
+  connecting,
+  canCancel,
+  onConnectTelegram,
+  onCancelTelegram,
   onOpenBot,
-  onOpenSite,
-  onCopyPromo,
+  onCopySubscription,
   sidebar,
-  /* Узел, который прокручивается. Страница отдаёт его наружу, чтобы экран мог
-     вернуть прокрутку туда, где её оставили при уходе на другую страницу. */
   contentRef,
-  text = BUY_PAGE_TEXT,
-  className = "",
-  ...rest
+  text,
 }) {
   return (
-    <div className={`rv-buy-page ${className}`} {...rest}>
+    <div className="rv-buy-page">
       {sidebar}
 
       <div ref={contentRef} className="rv-buy-page__content rv-scroll">
-        <PageHeader title={title ?? text.title} subtitle={subtitle ?? text.subtitle} />
+        <PageHeader title={text.title} subtitle={text.subtitle} />
 
         <div className="rv-buy-page__list">
-          {partners.map((partner) => (
-            <div key={partner.id} className="rv-buy-page__card">
-              <div className="rv-buy-page__head">
-                <div className="rv-buy-page__logo">
-                  <img src={partner.logo} alt="" className="rv-buy-page__logo-img" />
-                </div>
-                <div className="rv-buy-page__text">
-                  <h2 className="rv-buy-page__title">{partner.title}</h2>
-                  <p className="rv-buy-page__desc">{partner.desc}</p>
-                </div>
-              </div>
-
-              <div className="rv-buy-page__actions">
-                {partner.botLink && (
-                  <Button
-                    variant="green"
-                    className="rv-buy-page__icon-btn"
-                    title={text.bot}
-                    aria-label={text.bot}
-                    icon={<Icon name="tg" color="currentColor" />}
-                    onClick={() => onOpenBot?.(partner)}
-                  />
-                )}
-                {partner.siteLink && (
-                  <Button
-                    variant="green"
-                    className="rv-buy-page__icon-btn"
-                    title={text.site}
-                    aria-label={text.site}
-                    icon={<Icon name="site" color="currentColor" />}
-                    onClick={() => onOpenSite?.(partner)}
-                  />
-                )}
-                <Button
-                  className="rv-buy-page__promo"
-                  title={text.copyPromo}
-                  icon={<Icon name="copy" color="currentColor" />}
-                  onClick={() => onCopyPromo?.(partner)}
-                >
-                  {copiedId === partner.id ? text.copied : partner.promo}
-                </Button>
+          <section className="rv-buy-page__card">
+            <div className="rv-buy-page__head">
+              <span className="rv-buy-page__logo" aria-hidden="true" />
+              <div className="rv-buy-page__text">
+                <h2 className="rv-buy-page__title">{text.offerTitle}</h2>
+                <p className="rv-buy-page__desc">{text.offerDescription}</p>
               </div>
             </div>
-          ))}
+
+            <div className="rv-buy-page__actions">
+              <Button
+                variant="green"
+                className="rv-buy-page__icon-btn"
+                title={text.connect}
+                aria-label={text.connect}
+                disabled={canCancel}
+                icon={<Icon name="tg" color="currentColor" />}
+                onClick={onConnectTelegram}
+              />
+              <Button
+                className="rv-buy-page__purchase"
+                icon={<Icon name="tg" color="var(--rv-white-a50)" />}
+                onClick={onOpenBot}
+              >
+                {text.purchase}
+              </Button>
+            </div>
+            {canCancel && (
+              <div className="rv-buy-page__secondary">
+                {connecting && <p className="rv-buy-page__desc" role="status">{text.connecting}</p>}
+                <Button className="rv-buy-page__cancel" onClick={onCancelTelegram}>{text.cancel}</Button>
+              </div>
+            )}
+            {text.connectionError && (
+              <p className="rv-buy-page__error" role="alert">{text.connectionError}</p>
+            )}
+          </section>
+
+          {subscriptionURL && (
+            <section className="rv-buy-page__card">
+              <div className="rv-buy-page__text">
+                <h2 className="rv-buy-page__title">{text.subscriptionTitle}</h2>
+                <p className="rv-buy-page__desc">{text.subscriptionDescription}</p>
+              </div>
+              <Button
+                className="rv-buy-page__subscription-url"
+                title={text.copySubscription}
+                aria-label={text.copySubscription}
+                icon={<Icon name="copy" color="currentColor" />}
+                onClick={onCopySubscription}
+              >
+                <span aria-live="polite">{copyMessage || subscriptionURL}</span>
+              </Button>
+            </section>
+          )}
         </div>
       </div>
     </div>

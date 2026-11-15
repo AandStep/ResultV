@@ -1778,8 +1778,8 @@ func TestBuildDNS_GlobalModeDefaultsToFallbackWrapper(t *testing.T) {
 				final = &dns.Servers[i]
 			}
 		}
-		if final == nil || (final.Type != "fallback" && final.Type != dnsBreakerType) {
-			t.Fatalf("dns=%v: Final=%q must name a wrapper, not a bare leg", servers, dns.Final)
+		if final == nil || (final.Type != dnsAsyncType && final.Type != dnsBreakerType) {
+			t.Fatalf("dns=%v: Final=%q must name an async wrapper: the core answers hijacked DNS on the TUN read loop", servers, dns.Final)
 		}
 	}
 }

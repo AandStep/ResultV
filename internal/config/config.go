@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +42,10 @@ type RoutingRules struct {
 	// CustomBlockedDomains are user-added "route via VPN" domains, unioned
 	// with the fetched block-lists in Smart mode.
 	CustomBlockedDomains []string `json:"customBlockedDomains"`
+	SmartDirectSites     []string `json:"smartDirectSites"`
+	SmartDirectApps      []string `json:"smartDirectApps"`
+	GlobalVPNSites       []string `json:"globalVpnSites"`
+	GlobalVPNApps        []string `json:"globalVpnApps"`
 	// RoutingLists are user-managed routing subscriptions (URL + action).
 	RoutingLists []RoutingList `json:"routingLists"`
 	// Profiles are whole routing rule sets — the shape panels and deep links
@@ -334,6 +339,11 @@ type AppSettings struct {
 
 	// PingTimeoutSec bounds one measurement, 1..10, 0/absent → 3.
 	PingTimeoutSec int `json:"pingTimeoutSec,omitempty"`
+
+	Socks5Exit *Socks5ExitConfig `json:"socks5Exit,omitempty"`
+	// Read the previous preview's recovery flag until the user explicitly
+	// chooses how to connect with the wider exit policy.
+	LegacySocks5ExitArmed bool `json:"socks5ExitArmed,omitempty"`
 }
 
 // EffectiveDNSLeakProtection returns true unless the user has explicitly
@@ -505,6 +515,10 @@ func DefaultConfig() AppConfig {
 			AppWhitelist:         []string{},
 			AppForceVPN:          []string{},
 			CustomBlockedDomains: []string{},
+			SmartDirectSites:     []string{},
+			SmartDirectApps:      []string{},
+			GlobalVPNSites:       []string{},
+			GlobalVPNApps:        []string{},
 			RoutingLists:         []RoutingList{},
 			Profiles:             []RoutingProfile{},
 		},
@@ -534,6 +548,7 @@ type Manager struct {
 	// existing one. A config that exists but fails to decrypt does NOT count as
 	// fresh — the user had the app before, we just cannot read their settings.
 	createdFresh bool
+	recovery     Recovery
 }
 
 func NewManager(crypto *CryptoService) *Manager {
@@ -547,8 +562,8 @@ func (m *Manager) Init(userDataPath string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.configPath = filepath.Join(userDataPath, "proxy_config.json")
-	legacyConfigPath := filepath.Join(legacyUserDataDir(userDataPath), "proxy_config.json")
+	m.configPath = filepath.Join(userDataPath, configFileName)
+	legacyConfigPath := filepath.Join(legacyUserDataDir(userDataPath), configFileName)
 	if err := migrateLegacyConfigFile(m.configPath, legacyConfigPath); err != nil {
 		return fmt.Errorf("migrating legacy config: %w", err)
 	}
@@ -667,7 +682,49 @@ func (m *Manager) WasCreatedFresh() bool {
 func (m *Manager) SaveConfig(cfg AppConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	cfg.Settings.Socks5Exit = m.cache.Settings.Socks5Exit
+	cfg.Settings.LegacySocks5ExitArmed = m.cache.Settings.LegacySocks5ExitArmed
+	return m.saveConfigLocked(cfg)
+}
 
+// AddSubscriptionWithProxies installs the subscription and its servers in one write.
+// Reuse an orphaned subscription record so its settings survive reimport.
+func (m *Manager) AddSubscriptionWithProxies(sub Subscription, entries []ProxyEntry) (Subscription, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cfg := m.cache
+	cfg.Subscriptions = slices.Clone(cfg.Subscriptions)
+	for i, existing := range cfg.Subscriptions {
+		if existing.URL != sub.URL {
+			continue
+		}
+		if slices.ContainsFunc(cfg.Proxies, func(p ProxyEntry) bool {
+			return p.SubscriptionURL == sub.URL && p.IP != "" && p.Type != "SECTION"
+		}) {
+			return existing, false, nil
+		}
+		sub.ID = existing.ID
+		sub.ShowOnHome = existing.ShowOnHome
+		sub.UpdateIntervalMinutes = existing.UpdateIntervalMinutes
+		sub.RemovedRoutingListURLs = existing.RemovedRoutingListURLs
+		if existing.NameOverridden {
+			sub.Name = existing.Name
+			sub.NameOverridden = true
+		}
+		cfg.Subscriptions[i] = sub
+		cfg.Proxies = slices.DeleteFunc(slices.Clone(cfg.Proxies), func(p ProxyEntry) bool {
+			return p.SubscriptionURL == sub.URL
+		})
+		cfg.Proxies = append(cfg.Proxies, entries...)
+		return sub, true, m.saveConfigLocked(cfg)
+	}
+	cfg.Subscriptions = append(cfg.Subscriptions, sub)
+	cfg.Proxies = append(slices.Clone(cfg.Proxies), entries...)
+	return sub, true, m.saveConfigLocked(cfg)
+}
+
+func (m *Manager) saveConfigLocked(cfg AppConfig) error {
 	if m.configPath == "" {
 		return fmt.Errorf("config manager not initialized")
 	}
@@ -684,7 +741,7 @@ func (m *Manager) SaveConfig(cfg AppConfig) error {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
 
-	if err := os.WriteFile(m.configPath, []byte(encrypted), 0o600); err != nil {
+	if err := writeFileAtomic(m.configPath, []byte(encrypted), 0o600); err != nil {
 		return fmt.Errorf("writing config: %w", err)
 	}
 
@@ -729,14 +786,18 @@ func (m *Manager) loadLocked() error {
 	}
 
 	var cfg AppConfig
-	if err := m.crypto.DecryptInto(string(data), &cfg); err != nil {
-		m.cache = DefaultConfig()
+	if decryptErr := m.crypto.DecryptInto(string(data), &cfg); decryptErr != nil {
+		if err := m.recoverUnreadableLocked(data); err != nil {
+			return fmt.Errorf("%w: %v; recovery failed: %v", ErrDecryptFailed, decryptErr, err)
+		}
 		m.loaded = true
-		return fmt.Errorf("%w: %v", ErrDecryptFailed, err)
+		return nil
 	}
 
 	m.cache = ensureDefaults(cfg)
 	m.loaded = true
+	// The backup is the config as it stood at the last successful start.
+	_ = writeFileAtomic(m.configPath+backupSuffix, data, 0o600)
 	return nil
 }
 
@@ -758,6 +819,18 @@ func ensureDefaults(cfg AppConfig) AppConfig {
 	}
 	if cfg.RoutingRules.CustomBlockedDomains == nil {
 		cfg.RoutingRules.CustomBlockedDomains = []string{}
+	}
+	if cfg.RoutingRules.SmartDirectSites == nil {
+		cfg.RoutingRules.SmartDirectSites = []string{}
+	}
+	if cfg.RoutingRules.SmartDirectApps == nil {
+		cfg.RoutingRules.SmartDirectApps = []string{}
+	}
+	if cfg.RoutingRules.GlobalVPNSites == nil {
+		cfg.RoutingRules.GlobalVPNSites = []string{}
+	}
+	if cfg.RoutingRules.GlobalVPNApps == nil {
+		cfg.RoutingRules.GlobalVPNApps = []string{}
 	}
 	if cfg.RoutingRules.Profiles == nil {
 		cfg.RoutingRules.Profiles = []RoutingProfile{}

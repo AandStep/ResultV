@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"net"
 	"net/netip"
 	"os"
@@ -61,7 +62,10 @@ func TestEndpointResolver(t *testing.T) {
 	if !found {
 		t.Fatal("missing server peer on client device")
 	}
-	peer.SetEndpointResolver(func() ([]conn.Endpoint, error) {
+	client.SetEndpointResolverFunc(func(publicKey device.NoisePublicKey) ([]conn.Endpoint, error) {
+		if !publicKey.Equals(serverKey) {
+			return nil, fmt.Errorf("resolver called for unexpected peer %v", publicKey)
+		}
 		var endpoints []conn.Endpoint
 		for _, addrPort := range *candidates.Load() {
 			endpoint, parseErr := client.Bind().ParseEndpoint(addrPort.String())
@@ -74,7 +78,7 @@ func TestEndpointResolver(t *testing.T) {
 	})
 
 	clientTUN.inbound <- buildTestPacket()
-	waitForEndpoint(t, client, netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), serverPort))
+	waitForEndpoint(t, client, netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), serverPort), 15*time.Second)
 
 	server.Close()
 	server, _ = startTestDevice(t, "server", serverPrivate, clientPublic, "10.0.0.2/32")
@@ -84,7 +88,86 @@ func TestEndpointResolver(t *testing.T) {
 
 	peer.ExpireCurrentKeypairs()
 	clientTUN.inbound <- buildTestPacket()
-	waitForEndpoint(t, client, netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), movedPort))
+	waitForEndpoint(t, client, netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), movedPort), 15*time.Second)
+}
+
+// TestEndpointResolverOnPeerCreation proves that a peer configured without an
+// endpoint resolves one in time for the handshake initiation that IpcSet itself
+// triggers, when it is added to an up device with persistent keepalives on.
+// Without a resolver in place at that point the initiation reports no known
+// endpoint and stamps lastSentHandshake, so nothing reaches the peer until the
+// RekeyTimeout retry.
+func TestEndpointResolverOnPeerCreation(t *testing.T) {
+	t.Parallel()
+	serverPrivate, serverPublic := generateTestKeyPair(t)
+	clientPrivate, clientPublic := generateTestKeyPair(t)
+
+	server, _ := startTestDevice(t, "server", serverPrivate, clientPublic, "10.0.0.2/32")
+	defer server.Close()
+	serverAddr := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), devicePort(t, server))
+
+	var serverKey device.NoisePublicKey
+	err := serverKey.FromHex(serverPublic)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	clientTUN := &testTUN{
+		name:    "client",
+		inbound: make(chan []byte, 16),
+		events:  make(chan tun.Event, 1),
+		done:    make(chan struct{}),
+	}
+	var missingEndpointErrors atomic.Int32
+	clientLogger := &device.Logger{
+		Verbosef: device.DiscardLogf,
+		Errorf: func(format string, args ...any) {
+			line := fmt.Sprintf(format, args...)
+			if strings.Contains(line, "no known endpoint") {
+				missingEndpointErrors.Add(1)
+			}
+			t.Log("client: " + line)
+		},
+	}
+	client := device.NewDevice(context.Background(), clientTUN, conn.NewStdNetBind(nil), clientLogger, 0, 0, false)
+	defer client.Close()
+
+	var resolverCalls atomic.Int32
+	client.SetEndpointResolverFunc(func(publicKey device.NoisePublicKey) ([]conn.Endpoint, error) {
+		if !publicKey.Equals(serverKey) {
+			return nil, fmt.Errorf("resolver called for unexpected peer %v", publicKey)
+		}
+		resolverCalls.Add(1)
+		endpoint, parseErr := client.Bind().ParseEndpoint(serverAddr.String())
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		return []conn.Endpoint{endpoint}, nil
+	})
+
+	err = client.IpcSet("private_key=" + clientPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = client.Up()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = client.IpcSet("public_key=" + serverPublic +
+		"\nallowed_ip=10.0.0.2/32" +
+		"\npersistent_keepalive_interval=25")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if resolverCalls.Load() == 0 {
+		t.Fatal("resolver was not consulted by the handshake initiation IpcSet triggered")
+	}
+	if errorCount := missingEndpointErrors.Load(); errorCount != 0 {
+		t.Fatal("handshake initiation reported no known endpoint ", errorCount, " time(s)")
+	}
+	waitForEndpoint(t, client, serverAddr, 2*time.Second)
 }
 
 func generateTestKeyPair(t *testing.T) (privateHex string, publicHex string) {
@@ -143,8 +226,8 @@ func devicePort(t *testing.T, wgDevice *device.Device) uint16 {
 	return 0
 }
 
-func waitForEndpoint(t *testing.T, wgDevice *device.Device, expected netip.AddrPort) {
-	deadline := time.Now().Add(15 * time.Second)
+func waitForEndpoint(t *testing.T, wgDevice *device.Device, expected netip.AddrPort, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		config, err := wgDevice.IpcGet()
 		if err != nil {

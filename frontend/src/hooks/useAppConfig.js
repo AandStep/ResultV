@@ -20,8 +20,8 @@ import { useTranslation } from "react-i18next";
 import wailsAPI from "../utils/wailsAPI";
 import { adminRestartDialog } from "../utils/adminDialog";
 import { applyCountries, detectCountry, redetectCountries } from "../utils/network";
-import { flagEmojiCountry, mergeSubscriptionRefreshCountries } from "../utils/proxyParser";
-// import { applyTheme } from "../lib/theme";
+import { flagEmojiCountry, mergeImportedProxies, mergeSubscriptionRefreshCountries } from "../utils/proxyParser";
+import { applyTheme } from "../lib/theme";
 
 const RULES_PUSH_DEBOUNCE_MS = 400;
 
@@ -53,6 +53,7 @@ export const useAppConfig = (addLog) => {
     const { t } = useTranslation();
     const [isConfigLoaded, setIsConfigLoaded] = useState(false);
     const [proxies, setProxies] = useState([]);
+    const loadedProxiesRef = useRef(null);
     const [routingRules, setRoutingRules] = useState({
         // Стандартный режим — умный, как и в config.DefaultConfig на бэкенде.
         // Это значение видно только до первого ответа GetConfig, но разойтись
@@ -63,6 +64,10 @@ export const useAppConfig = (addLog) => {
         appWhitelist: [],
         appForceVPN: [],
         customBlockedDomains: [],
+        smartDirectSites: [],
+        smartDirectApps: [],
+        globalVpnSites: [],
+        globalVpnApps: [],
     });
     const [settings, setSettings] = useState(defaultSettings);
     const [showProtocolModal, setShowProtocolModal] = useState(false);
@@ -192,13 +197,8 @@ export const useAppConfig = (addLog) => {
     }, []);
 
     const persistSettings = useCallback(async (nextSettings) => {
-        await wailsAPI.saveConfig({
-            proxies: proxies.map(p => ({ ...p, port: parseInt(p.port, 10) || 0, id: String(p.id) })),
-            routingRules,
-            settings: nextSettings,
-            subscriptions,
-        });
-    }, [proxies, routingRules, subscriptions]);
+        await wailsAPI.saveSettings(nextSettings);
+    }, []);
 
     useEffect(() => {
         const loadInitialConfig = async () => {
@@ -208,16 +208,17 @@ export const useAppConfig = (addLog) => {
 
                 const config = await wailsAPI.getConfig();
                 if (config) {
-                    if (config.proxies && Array.isArray(config.proxies)) {
-                        setProxies(config.proxies.map(p => ({ ...p, port: parseInt(p.port, 10) || 0, id: String(p.id) })));
-                    }
+                    const loadedProxies = Array.isArray(config.proxies)
+                        ? config.proxies.map(p => ({ ...p, port: parseInt(p.port, 10) || 0, id: String(p.id) }))
+                        : [];
+                    loadedProxiesRef.current = loadedProxies;
+                    setProxies(loadedProxies);
                     if (config.routingRules) {
                         setRoutingRules(config.routingRules);
                     }
-                    if (config.settings) {
-                        setSettings({ ...defaultSettings, ...config.settings });
-                        // applyTheme(config.settings.theme);
-                    }
+                    const loadedSettings = { ...defaultSettings, ...config.settings };
+                    setSettings(loadedSettings);
+                    applyTheme(loadedSettings.theme);
                     if (config.subscriptions && Array.isArray(config.subscriptions)) {
                         setSubscriptions(config.subscriptions);
                     }
@@ -269,7 +270,8 @@ export const useAppConfig = (addLog) => {
     }, []);
 
     useEffect(() => {
-        if (!isConfigLoaded) return;
+        // Reading the stored list isn't an edit. Only send subsequent changes.
+        if (!isConfigLoaded || !loadedProxiesRef.current || proxies === loadedProxiesRef.current) return;
         const sanitizedProxies = proxies.map(p => ({ ...p, port: parseInt(p.port, 10) || 0, id: String(p.id) }));
         wailsAPI.syncProxies(sanitizedProxies).catch(err => console.error("SyncProxies err:", err));
     }, [proxies, isConfigLoaded]);
@@ -546,7 +548,8 @@ export const useAppConfig = (addLog) => {
             const now = Date.now();
             const finalProxies = await Promise.all(
                 proxiesData.map(async (p, index) => {
-                    const isVpn = VPN_TYPES.includes(p.type?.toUpperCase());
+                    const type = p.type?.toUpperCase();
+                    const keepType = type === "SOCKS5" || VPN_TYPES.includes(type);
                     const known = (c) => c && c !== "unknown" && c !== "\u{1F310}";
                     const fromName = flagEmojiCountry(p.name);
                     // Skip country detection for AUTO entries (no real host).
@@ -561,35 +564,13 @@ export const useAppConfig = (addLog) => {
                         ...p,
                         id: String(p.id || now + index),
                         country: fromName || (known(detected) ? detected : known(p.country) ? p.country : detected || p.country || ""),
-                        type: isVpn ? p.type : (defaultProtocol || p.type || "HTTP"),
+                        type: keepType ? p.type : (defaultProtocol || p.type || "HTTP"),
                         port: parseInt(p.port, 10) || 0,
                     };
                 })
             );
 
-            setProxies((prev) => {
-                const VPN_SET = new Set([
-                    "SS",
-                    "VMESS",
-                    "VLESS",
-                    "TROJAN",
-                    "WIREGUARD",
-                    "AMNEZIAWG",
-                    "HYSTERIA2",
-                    "AUTO",
-                    "SECTION",
-                ]);
-                const newKeys = new Set(
-                    finalProxies
-                        .filter((p) => VPN_SET.has(p.type))
-                        .map((p) => `${p.ip}:${p.port}:${p.type}`)
-                );
-                const filtered = prev.filter((p) => {
-                    if (!VPN_SET.has(p.type)) return true;
-                    return !newKeys.has(`${p.ip}:${p.port}:${p.type}`);
-                });
-                return [...filtered, ...finalProxies];
-            });
+            setProxies((prev) => mergeImportedProxies(prev, finalProxies));
             addLog(`Добавлено ${finalProxies.length} новых прокси.`, "success");
             setActiveTab("list");
         },
