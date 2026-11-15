@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mergeImportedProxies, parseProxies } from "./proxyParser.js";
+import { mergeImportedProxies, mergeSubscriptionRefreshCountries, parseProxies } from "./proxyParser.js";
 
 test("importing or reimporting a subscription keeps other subscriptions and their AUTO members", () => {
     const ownURL = "https://own.example/sub";
@@ -26,6 +26,23 @@ test("importing a manual VPN server preserves matching subscription entries", ()
     const subscriber = { ...manual, id: "subscriber", subscriptionUrl: "https://own.example/sub" };
     const replacement = { ...manual, id: "replacement" };
     assert.deepEqual(mergeImportedProxies([manual, subscriber], [replacement]), [subscriber, replacement]);
+});
+
+test("refresh keeps distinct IDs for servers that share an endpoint", () => {
+    const subscriptionUrl = "https://other.example/sub";
+    const endpoint = { ip: "192.0.2.10", port: 443, type: "VLESS", subscriptionUrl };
+    const first = { ...endpoint, id: "old-a", name: "Германия | №1" };
+    const second = { ...endpoint, id: "old-b", name: "Германия | №2" };
+    const updated = [{ ...second, id: "new-b" }, { ...first, id: "new-a" }];
+
+    assert.deepEqual(
+        mergeSubscriptionRefreshCountries([first, second], updated, subscriptionUrl).map((p) => p.id),
+        ["old-b", "old-a"],
+    );
+    assert.deepEqual(
+        mergeSubscriptionRefreshCountries([first, { ...second, id: first.id }], updated, subscriptionUrl).map((p) => p.id),
+        ["old-a", "new-a"],
+    );
 });
 
 test("imports an authenticated SOCKS5 URL alongside a bare proxy address", () => {

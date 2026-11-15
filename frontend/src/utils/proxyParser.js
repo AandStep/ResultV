@@ -975,7 +975,8 @@ export const mergeSubscriptionRefreshCountries = (
     const oldBy = new Map();
     oldSub.forEach((p, idx) => {
         const key = oldMemberIds.has(String(p.id)) ? memberKey(p) : rowKey(oldSub, p, idx);
-        oldBy.set(key, p);
+        if (!oldBy.has(key)) oldBy.set(key, []);
+        oldBy.get(key).push(p);
     });
 
     const freshMemberIds = new Set();
@@ -986,10 +987,17 @@ export const mergeSubscriptionRefreshCountries = (
         }
     });
 
-    // First pass: build merged array with country/id continuity
+    // Reuse each old ID once. Servers on the same endpoint can have different
+    // names, and older refreshes may have saved the same ID for several rows.
+    const reusedIds = new Set();
     const merged = updatedProxies.map((p, idx) => {
         const key = freshMemberIds.has(String(p.id)) ? memberKey(p) : rowKey(updatedProxies, p, idx);
-        const old = oldBy.get(key);
+        const candidates = oldBy.get(key) || [];
+        const match = candidates.length === 1 ? candidates[0] : candidates.find((row) =>
+            row.name === p.name && !reusedIds.has(String(row.id)),
+        );
+        const old = match && !reusedIds.has(String(match.id)) ? match : undefined;
+        if (old) reusedIds.add(String(old.id));
         const port = parseInt(p.port, 10) || 0;
         const base = {
             ...p,
