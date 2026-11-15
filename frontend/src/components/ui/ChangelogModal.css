@@ -34,6 +34,7 @@
 .rv-dialog.rv-changelog {
   --dialog-accent: var(--rv-second-color);
   --dialog-tint: var(--rv-second-a10);
+  overflow: visible;
 
   /*
    * Ореол — эллипс 518x492 из макета (6816:4884), заведённый градиентом, а не
@@ -69,6 +70,11 @@
   display: flex;
 }
 
+.rv-changelog .rv-dialog__head,
+.rv-changelog .rv-dialog__actions {
+  flex-shrink: 0;
+}
+
 /* --- Тело ---------------------------------------------------------------- */
 
 .rv-changelog__body {
@@ -76,6 +82,7 @@
   flex-direction: column;
   gap: var(--rv-space-nest-2);
   min-width: 0;
+  min-height: 0;
 }
 
 /* Название выпуска — TitleSm, единственное место окна с этим стилем. */
