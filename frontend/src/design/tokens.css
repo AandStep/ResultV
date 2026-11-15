@@ -323,6 +323,7 @@
   --rv-dark-grey: var(--rv-light-gray);
   --rv-grey: #ffffff;
   --rv-light-gray: #eef0ef;
+  --rv-server-list-bg: #f2f2f2;
 
   --rv-warning: #b58900;
 

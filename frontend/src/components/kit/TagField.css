@@ -82,6 +82,12 @@
   color: var(--rv-white-a50);
 }
 
+:root[data-theme="light"] .rv-tag-field__tag {
+  background: var(--rv-grey);
+  box-shadow: inset 0 0 0 1px var(--rv-white-a20);
+  color: var(--rv-description-color);
+}
+
 .rv-tag-field__remove {
   display: flex;
   align-items: center;

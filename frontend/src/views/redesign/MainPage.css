@@ -85,9 +85,8 @@
   transition-delay: calc(var(--rv-wave) * 2);
 }
 
-.rv-main-page[data-status="connected"] .rv-flag,
-.rv-main-page[data-status="connected"] .rv-server-item__badge,
-.rv-main-page[data-status="connected"] .rv-badge {
+.rv-main-page[data-status="connected"] .rv-server-item[data-variant="header"]
+  :is(.rv-flag, .rv-server-item__badge, .rv-badge) {
   transition-delay: calc(var(--rv-wave) * 3);
 }
 
@@ -101,9 +100,8 @@
   transition-delay: 0ms;
 }
 
-.rv-main-page:not([data-status="connected"]) .rv-flag,
-.rv-main-page:not([data-status="connected"]) .rv-server-item__badge,
-.rv-main-page:not([data-status="connected"]) .rv-badge {
+.rv-main-page:not([data-status="connected"]) .rv-server-item[data-variant="header"]
+  :is(.rv-flag, .rv-server-item__badge, .rv-badge) {
   transition-delay: var(--rv-wave);
 }
 

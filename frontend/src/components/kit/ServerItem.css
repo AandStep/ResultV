@@ -47,56 +47,25 @@
   background: var(--rv-grey);
   text-align: left;
   cursor: pointer;
-  transition:
-    background var(--rv-transition),
-    opacity var(--rv-transition);
 }
 
-.rv-server-item[data-variant="row"],
-.rv-server-item[data-variant="autoserver"] {
+.rv-server-item:is([data-variant="row"], [data-variant="autoserver"]) {
   height: 106px;
-}
-
-.rv-server-item[data-variant="row"] {
-  background: var(--rv-black);
+  background: var(--rv-server-list-bg, var(--rv-black));
   opacity: 0.7;
 }
 
-/*
- * В макете у AutoServer заливка Dark Grey, у соседних строк списка — Black:
- * это ошибка макета, строка одного списка не может выбиваться фоном. Здесь
- * авто-строка живёт по правилам Row. См. docs/design/GAPS.md.
- */
-.rv-server-item[data-variant="autoserver"] {
-  background: var(--rv-black);
-  opacity: 0.7;
+.rv-server-item:is([data-variant="header"], [data-variant="subitem"], [data-variant="myitem"]):is(:hover:not([data-mode]), [data-mode="hover"]) {
+  background: var(--rv-server-list-bg, var(--rv-dark-grey));
 }
 
-.rv-server-item[data-variant="autoserver"]:hover:not([data-mode]),
-.rv-server-item[data-variant="autoserver"][data-mode="hover"] {
-  background: var(--server-row-highlight, var(--rv-dark-grey));
-  opacity: 1;
-}
-
-.rv-server-item[data-variant="row"]:hover:not([data-mode]),
-.rv-server-item[data-variant="row"][data-mode="hover"] {
-  background: var(--server-row-highlight, var(--rv-dark-grey));
-  opacity: 1;
-}
-
-/*
- * Подключённый сервер в списке (Figma 6744:4162, страница серверов): строка
- * выходит из прозрачности на ту же подложку Dark Grey, что и при наведении,
- * — по ней его и находят глазами среди остальных.
- */
-.rv-server-item[data-variant="row"][data-active="true"],
-.rv-server-item[data-variant="autoserver"][data-active="true"] {
+.rv-server-item:is([data-variant="row"], [data-variant="autoserver"]):is(:hover:not([data-mode]), [data-mode="hover"], [data-active="true"]) {
   background: var(--server-row-highlight, var(--rv-dark-grey));
   opacity: 1;
 }
 
 :root[data-theme="light"] .rv-server-item {
-  --server-row-highlight: #f2f2f2;
+  --server-row-highlight: #e5e5e5;
 }
 
 :root[data-theme="light"] .rv-server-item:is([data-variant="row"], [data-variant="autoserver"])
@@ -109,9 +78,25 @@
   --badge-bg: var(--rv-light-gray);
 }
 
-:root[data-theme="light"] .rv-server-item:is([data-variant="row"], [data-variant="autoserver"]):is(:hover, [data-mode="hover"], [data-active="true"])
+:root[data-theme="light"] .rv-server-item:is([data-variant="row"], [data-variant="autoserver"])
   :is(.rv-flag, .rv-server-item__badge)[data-status="default"] {
   background: var(--rv-grey);
+  transition: none;
+}
+
+:root[data-theme="light"] .rv-server-item:is([data-variant="row"], [data-variant="autoserver"]):is(:hover:not([data-mode]), [data-mode="hover"], [data-active="true"])
+  :is(.rv-flag, .rv-server-item__badge)[data-status="default"] {
+  background: #fcfcfc;
+}
+
+:root[data-theme="light"] .rv-server-item[data-variant="row"] :is(.rv-flag__img, .rv-flag__inner) {
+  outline: 1px solid var(--rv-white-a20);
+  outline-offset: -1px;
+}
+
+:root[data-theme="light"] .rv-server-item:is([data-variant="subitem"], [data-variant="myitem"])
+  :is(.rv-server-item__badge, .rv-server-item__count) {
+  background: var(--rv-server-list-bg);
 }
 
 /* --- Левая часть -------------------------------------------------------- */
