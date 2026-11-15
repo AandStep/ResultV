@@ -146,10 +146,6 @@
   color: var(--rv-white-a20);
 }
 
-:root[data-theme="light"] :is(.rv-logs-page__time, .rv-logs-page__source) {
-  color: var(--rv-white-a50);
-}
-
 /*
  * Цвет по важности записи. В макете нарисованы только обычные строки, но
  * журнал различает их и до редизайна: цвета взяты из палитры. См. GAPS.md.

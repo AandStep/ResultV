@@ -57,33 +57,30 @@
   height: 106px;
 }
 
+.rv-server-item[data-variant="row"] {
+  background: var(--rv-black);
+  opacity: 0.7;
+}
+
 /*
  * В макете у AutoServer заливка Dark Grey, у соседних строк списка — Black:
  * это ошибка макета, строка одного списка не может выбиваться фоном. Здесь
  * авто-строка живёт по правилам Row. См. docs/design/GAPS.md.
  */
-.rv-server-item[data-variant="row"],
 .rv-server-item[data-variant="autoserver"] {
-  background: var(--server-row-bg, var(--rv-black));
-  opacity: var(--server-row-opacity, 0.7);
-}
-
-:root[data-theme="light"] .rv-server-item {
-  --server-row-bg: #f7f9f7;
-  --server-row-opacity: 1;
-  --server-row-hover-bg: var(--rv-dark-grey);
-  --server-row-active-bg: #dcece2;
+  background: var(--rv-black);
+  opacity: 0.7;
 }
 
 .rv-server-item[data-variant="autoserver"]:hover:not([data-mode]),
 .rv-server-item[data-variant="autoserver"][data-mode="hover"] {
-  background: var(--server-row-hover-bg, var(--rv-dark-grey));
+  background: var(--rv-dark-grey);
   opacity: 1;
 }
 
 .rv-server-item[data-variant="row"]:hover:not([data-mode]),
 .rv-server-item[data-variant="row"][data-mode="hover"] {
-  background: var(--server-row-hover-bg, var(--rv-dark-grey));
+  background: var(--rv-dark-grey);
   opacity: 1;
 }
 
@@ -94,7 +91,7 @@
  */
 .rv-server-item[data-variant="row"][data-active="true"],
 .rv-server-item[data-variant="autoserver"][data-active="true"] {
-  background: var(--server-row-active-bg, var(--rv-dark-grey));
+  background: var(--rv-dark-grey);
   opacity: 1;
 }
 
@@ -246,10 +243,6 @@
   text-align: center;
   white-space: nowrap;
   color: var(--rv-white-a20);
-}
-
-:root[data-theme="light"] .rv-server-item__subtitle {
-  color: var(--rv-white-a50);
 }
 
 /* --- Правая часть ------------------------------------------------------- */

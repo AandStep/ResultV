@@ -26,9 +26,6 @@
  */
 
 .rv-tumbler {
-  --rv-border: linear-gradient(var(--rv-white-a20), var(--rv-white-a20));
-  --rv-border-hover: linear-gradient(var(--rv-white-a40), var(--rv-white-a40));
-
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
@@ -38,7 +35,7 @@
   padding: 4px;
   border: 0;
   border-radius: var(--rv-radius-pill);
-  background: var(--rv-dark-grey);
+  background: var(--rv-grey);
   cursor: pointer;
 }
 
@@ -52,7 +49,7 @@
   width: 20px;
   height: 20px;
   border-radius: var(--rv-radius-pill);
-  background: var(--rv-white-a50);
+  background: var(--rv-white-a20);
   transition:
     transform var(--rv-transition),
     background var(--rv-transition);

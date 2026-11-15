@@ -63,10 +63,6 @@
   color: var(--rv-white-a20);
 }
 
-:root[data-theme="light"] :is(.rv-input, .rv-textarea)::placeholder {
-  color: var(--rv-white-a50);
-}
-
 .rv-input:focus,
 .rv-textarea:focus {
   box-shadow: 0 0 0 var(--rv-border-width) var(--rv-main-a20);

@@ -97,12 +97,3 @@
   --badge-bg: var(--rv-errors-a20);
   --badge-text: var(--rv-errors);
 }
-
-:root[data-theme="light"] .rv-badge[data-variant="first"][data-color="default"] {
-  --badge-bg: var(--rv-main-a10);
-  --badge-text: var(--rv-main-color);
-}
-
-:root[data-theme="light"] .rv-badge[data-variant="second"][data-color="default"] {
-  --badge-bg: var(--rv-light-gray);
-}

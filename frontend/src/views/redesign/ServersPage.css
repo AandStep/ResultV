@@ -130,11 +130,6 @@
   color: var(--rv-white-a20);
 }
 
-:root[data-theme="light"] .rv-servers-page__search-input::placeholder,
-:root[data-theme="light"] .rv-servers-page__search-icon {
-  color: var(--rv-white-a50);
-}
-
 /* --- Пусто --------------------------------------------------------------- */
 
 /*
