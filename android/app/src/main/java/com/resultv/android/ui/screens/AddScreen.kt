@@ -76,6 +76,7 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.resultv.android.vpn.BuildOptionsBuilder
 import com.resultv.android.vpn.DeepLinkImporter
+import com.resultv.android.vpn.NativeCore
 import com.resultv.android.vpn.Profile
 import com.resultv.android.vpn.ProfileRepository
 import com.resultv.android.vpn.Subscription
@@ -182,7 +183,7 @@ fun AddScreen(
             Text(
                 it,
                 style = MaterialTheme.typography.bodySmall,
-                color = RvColor.whiteA50,
+                color = RvColor.description,
             )
         }
 
@@ -228,6 +229,7 @@ private val AddProtocols = listOf(
 @Composable
 private fun ProtocolRow(selected: String, onSelect: (String) -> Unit) {
     val scroll = rememberScrollState()
+    val colors = RvColor
     Box(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.horizontalScroll(scroll),
@@ -235,9 +237,14 @@ private fun ProtocolRow(selected: String, onSelect: (String) -> Unit) {
         ) {
             AddProtocols.forEach { p ->
                 val on = p.key == selected
+                val solid = on && !colors.isDark
                 RvButton(
                     onClick = { onSelect(p.key) },
-                    fill = if (on) RvButtonColors.greenSelected else RvButtonColors.greenFill,
+                    fill = when {
+                        solid -> colors.Main
+                        on -> RvButtonColors.greenSelected
+                        else -> RvButtonColors.greenFill
+                    },
                     outline = RvButtonColors.greenOutline,
                     modifier = Modifier.semantics { this.selected = on },
                 ) {
@@ -245,7 +252,7 @@ private fun ProtocolRow(selected: String, onSelect: (String) -> Unit) {
                         text = p.label,
                         style = RvButtonLabel,
                         fontWeight = FontWeight.Bold,
-                        color = RvColor.Main,
+                        color = if (solid) colors.OnAccent else colors.Main,
                         modifier = Modifier.padding(horizontal = 32.dp),
                     )
                 }
@@ -347,6 +354,7 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
 
     val errEmpty = stringResource(R.string.add_link_err_empty)
     val errInvalid = stringResource(R.string.add_link_err_invalid)
+    val errCore = stringResource(R.string.native_core_unavailable)
     val defaultName = stringResource(R.string.add_paste_default_name)
 
     // Auto-tick everything real when a new fetch lands (SECTION rows are
@@ -361,6 +369,7 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
     val submit = submit@{
         val trimmed = input.trim()
         if (trimmed.isEmpty()) { error = errEmpty; return@submit }
+        if (!NativeCore.available) { error = errCore; return@submit }
         keyboard?.hide(); focusManager.clearFocus()
         val lower = trimmed.lowercase()
         when {
@@ -421,7 +430,7 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
             Text(
                 stringResource(R.string.manual_choose_protocol),
                 style = FieldTextStyle,
-                color = RvColor.whiteA50,
+                color = RvColor.description,
             )
             ProtocolRow(selected = protocolKey, onSelect = { protocolKey = it })
         }
@@ -435,7 +444,7 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
                     },
                 ),
                 style = FieldTextStyle,
-                color = RvColor.whiteA50,
+                color = RvColor.description,
             )
             // Многострочное: .conf или JSON вставляют целиком, список ссылок —
             // по нескольку строк. Enter переносит строку, добавляет кнопка ниже.
@@ -503,7 +512,7 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
                 Text(
                     text = stringResource(R.string.add_sub_selected, selected.value.size, realCount),
                     style = MaterialTheme.typography.bodySmall,
-                    color = RvColor.whiteA50,
+                    color = RvColor.description,
                     modifier = Modifier.weight(1f),
                 )
                 TextButton(onClick = {
@@ -553,7 +562,7 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
                         Text(
                             text = e.name,
                             style = MaterialTheme.typography.labelLarge,
-                            color = RvColor.whiteA50,
+                            color = RvColor.description,
                             modifier = Modifier.padding(start = RvSpace.xs, top = RvSpace.nest3, bottom = RvSpace.xs),
                         )
                         return@items
@@ -581,7 +590,7 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
                                 Text(
                                     e.preview,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = RvColor.whiteA50,
+                                    color = RvColor.description,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
@@ -841,6 +850,10 @@ private fun smartClipboardImport(
     msgImportedSubscription: (Int) -> String,
     onMessage: (String?) -> Unit,
 ) {
+    if (!NativeCore.available) {
+        onMessage(ctx.getString(R.string.native_core_unavailable))
+        return
+    }
     val trimmed = text.trim()
     val lower = trimmed.lowercase()
 
@@ -913,6 +926,10 @@ private fun launchQrScan(
             val raw = barcode.rawValue.orEmpty().trim()
             if (raw.isEmpty()) {
                 onResult(msgEmpty)
+                return@addOnSuccessListener
+            }
+            if (!NativeCore.available) {
+                onResult(ctx.getString(R.string.native_core_unavailable))
                 return@addOnSuccessListener
             }
             val lower = raw.lowercase()

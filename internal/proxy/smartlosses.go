@@ -62,3 +62,9 @@ func (l *raceLosses) reset(key string) {
 	defer l.mu.Unlock()
 	delete(l.m, key)
 }
+
+func (l *raceLosses) clear() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	clear(l.m)
+}

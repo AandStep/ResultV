@@ -102,7 +102,7 @@ fun ProfileSortMenu(
                     text = {
                         Text(
                             text = stringResource(entry.labelRes),
-                            color = if (entry == mode) RvColor.Second else MaterialTheme.colorScheme.onBackground,
+                            color = if (entry == mode) RvColor.successText else MaterialTheme.colorScheme.onBackground,
                         )
                     },
                     onClick = {

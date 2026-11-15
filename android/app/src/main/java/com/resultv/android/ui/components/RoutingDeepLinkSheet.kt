@@ -47,7 +47,7 @@ fun RoutingDeepLinkSheet(
         containerColor = RvColor.Grey,
         dragHandle = { BottomSheetDefaults.DragHandle() },
     ) {
-        DarkSheetSystemBars()
+        SheetSystemBars()
         ClearFocusOnImeHide()
         Column(
             modifier = Modifier
@@ -68,7 +68,7 @@ fun RoutingDeepLinkSheet(
                 Text(
                     stringResource(R.string.routing_sheet_publisher, profile.publisherName),
                     style = MaterialTheme.typography.bodySmall,
-                    color = RvColor.whiteA50,
+                    color = RvColor.description,
                 )
             }
             // Ноль не показывается — то же правило, что у карточки в списке
@@ -89,7 +89,7 @@ fun RoutingDeepLinkSheet(
                 Text(
                     stringResource(R.string.routing_sheet_geo),
                     style = MaterialTheme.typography.bodySmall,
-                    color = RvColor.whiteA50,
+                    color = RvColor.description,
                 )
             }
             Row(

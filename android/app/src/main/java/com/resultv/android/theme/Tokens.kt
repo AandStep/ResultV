@@ -1,6 +1,10 @@
 package com.resultv.android.theme
 
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
@@ -13,40 +17,48 @@ import androidx.compose.ui.unit.dp
  * docs/superpowers/specs/2026-09-16-android-design-system-design.md, а не
  * додумывается здесь.
  *
- * Объект плоский, а не CompositionLocal: тема одна и тёмная, светлой в макете
- * нет вовсе. CompositionLocal платил бы сложностью за возможность, которой не
- * пользуются; надстроить его сверху, если светлая тема появится, ничто не
- * мешает.
- *
- * Это единственный файл модуля с литералами Color(0x…). Проверяется гревом,
- * см. спеку, раздел «Проверка».
+ * Светлые токены сняты из :root[data-theme="light"] того же файла.
  */
-object RvColor {
-    val White = Color(0xFFFFFFFF)
-    val Black = Color(0xFF141414)      // фон экрана
-    val DarkGrey = Color(0xFF171717)
-    val Grey = Color(0xFF1A1A1A)       // карточка
-    val LightGray = Color(0xFF1F1F1F)
+@Immutable
+class RvPalette internal constructor(val isDark: Boolean) {
+    val White = if (isDark) Color.White else Color(0xFF161A17)
+    val Black = if (isDark) Color(0xFF141414) else Color(0xFFE6E6E6)
+    val DarkGrey = if (isDark) Color(0xFF171717) else Color(0xFFEEF0EF)
+    val Grey = if (isDark) Color(0xFF1A1A1A) else Color.White
+    val LightGray = if (isDark) Color(0xFF1F1F1F) else DarkGrey
+    val ServerList = if (isDark) Black else Color(0xFFF2F2F2)
+    val ActiveServer = if (isDark) DarkGrey else Color(0xFFE5E5E5)
+    val OnAccent = Color.White
+    val OnAccentGlyph = if (isDark) Black else OnAccent
 
     val Main = Color(0xFF007E3A)
     val Second = Color(0xFF00A819)
-    val Warning = Color(0xFFF2CC0D)
+    val Warning = if (isDark) Color(0xFFF2CC0D) else Color(0xFFB58900)
     val Errors = Color(0xFFF20D46)
 
     // Прозрачные ступени. В Figma это не отдельные переменные, а базовый цвет
     // с непрозрачностью слоя; значения сняты с компонентов кита.
-    val whiteA05 = White.copy(alpha = 0.05f)
-    val whiteA06 = White.copy(alpha = 0.06f)   // обводка карточек групп в шторках
+    val whiteA05 = White.copy(alpha = if (isDark) 0.05f else 0.045f)
+    val whiteA06 = White.copy(alpha = if (isDark) 0.06f else 0.065f)   // обводка карточек групп в шторках
     val whiteA07 = White.copy(alpha = 0.07f)   // белая обводка элементов (кроме главной кнопки)
-    val whiteA10 = White.copy(alpha = 0.10f)
-    val whiteA15 = White.copy(alpha = 0.15f)
-    val whiteA20 = White.copy(alpha = 0.20f)
-    val whiteA50 = White.copy(alpha = 0.50f)
-    val whiteA80 = White.copy(alpha = 0.80f)
+    val whiteA10 = White.copy(alpha = if (isDark) 0.10f else 0.09f)
+    val whiteA15 = White.copy(alpha = if (isDark) 0.15f else 0.14f)
+    val whiteA20 = White.copy(alpha = if (isDark) 0.20f else 0.24f)
+    val whiteA50 = White.copy(alpha = if (isDark) 0.50f else 0.56f)
+    val whiteA80 = White.copy(alpha = if (isDark) 0.80f else 0.84f)
+    val description = if (isDark) whiteA50 else whiteA80
+    val successText = if (isDark) Second else Main
+    val warningText = if (isDark) Warning else Color(0xFF785A00)
+    internal val badgeSuccessText = if (isDark) Second else Color(0xFF00672F)
+    internal val badgeWarningText = if (isDark) Warning else Color(0xFF6B5000)
+    internal val badgeErrorText = if (isDark) Errors else Color(0xFFA00730)
+    internal val chipOutline = if (isDark) Color.Transparent else whiteA20
+    internal val tagChipFill = if (isDark) LightGray else Grey
+    internal val tagPlaceholder = if (isDark) whiteA20 else description
 
-    val blackA20 = Black.copy(alpha = 0.20f)
-    val blackA25 = Black.copy(alpha = 0.25f)
-    val blackA80 = Black.copy(alpha = 0.80f)
+    val blackA20 = if (isDark) Black.copy(alpha = 0.20f) else White.copy(alpha = 0.08f)
+    val blackA25 = if (isDark) Black.copy(alpha = 0.25f) else White.copy(alpha = 0.10f)
+    val blackA80 = if (isDark) Black.copy(alpha = 0.80f) else White.copy(alpha = 0.16f)
 
     val mainA08 = Main.copy(alpha = 0.08f)
     val mainA10 = Main.copy(alpha = 0.10f)
@@ -66,29 +78,45 @@ object RvColor {
     val secondA10 = Second.copy(alpha = 0.10f)
     val secondA50 = Second.copy(alpha = 0.50f)
 
-    val lightGrayA50 = LightGray.copy(alpha = 0.50f)
+    val lightGrayA50 = if (isDark) LightGray.copy(alpha = 0.50f) else White.copy(alpha = 0.05f)
 
     // Сняты с компонентов, переменными Figma не являются.
     val iconDefault = whiteA50
-    val overlay = Color(0x80000000)
+    val overlay = if (isDark) Color(0x80000000) else White.copy(alpha = 0.30f)
 }
+
+private val DarkPalette = RvPalette(isDark = true)
+private val LightPalette = RvPalette(isDark = false)
+
+internal fun paletteFor(dark: Boolean): RvPalette = if (dark) DarkPalette else LightPalette
+
+internal val LocalRvPalette = staticCompositionLocalOf { DarkPalette }
+
+val RvColor: RvPalette
+    @Composable @ReadOnlyComposable get() = LocalRvPalette.current
 
 /**
  * Цвета плиток категорий. В палитре Figma их нет — это решение для телефона,
  * где список длиннее и цвет помогает найти строку глазом (пробел G-4 спеки).
  * Подложка у всех 18 %, глиф — светлый парный тон.
  */
-data class CategoryTint(val tile: Color, val glyph: Color)
+@Immutable
+data class CategoryTint(val tile: Color, private val darkGlyph: Color, private val lightGlyph: Color = darkGlyph) {
+    val glyph: Color
+        @Composable @ReadOnlyComposable get() = glyphFor(RvColor.isDark)
+
+    internal fun glyphFor(dark: Boolean): Color = if (dark) darkGlyph else lightGlyph
+}
 
 object RvCategory {
-    val Main = CategoryTint(RvColor.Main.copy(alpha = 0.18f), RvColor.Second)
-    val Blue = CategoryTint(Color(0xFF3B82F6).copy(alpha = 0.18f), Color(0xFF60A5FA))
-    val Red = CategoryTint(Color(0xFFEF4444).copy(alpha = 0.18f), Color(0xFFF87171))
-    val Amber = CategoryTint(Color(0xFFF59E0B).copy(alpha = 0.18f), Color(0xFFFBBF24))
-    val Violet = CategoryTint(Color(0xFF8B5CF6).copy(alpha = 0.18f), Color(0xFFA78BFA))
-    val Slate = CategoryTint(Color(0xFF64748B).copy(alpha = 0.18f), Color(0xFF94A3B8))
-    val Cyan = CategoryTint(Color(0xFF06B6D4).copy(alpha = 0.18f), Color(0xFF22D3EE))
-    val Emerald = CategoryTint(Color(0xFF10B981).copy(alpha = 0.18f), Color(0xFF34D399))
+    val Main = DarkPalette.Main.let { CategoryTint(it.copy(alpha = 0.18f), DarkPalette.Second, it) }
+    val Blue = CategoryTint(Color(0xFF3B82F6).copy(alpha = 0.18f), Color(0xFF60A5FA), Color(0xFF1D4ED8))
+    val Red = CategoryTint(Color(0xFFEF4444).copy(alpha = 0.18f), Color(0xFFF87171), Color(0xFFB91C1C))
+    val Amber = CategoryTint(Color(0xFFF59E0B).copy(alpha = 0.18f), Color(0xFFFBBF24), Color(0xFF92400E))
+    val Violet = CategoryTint(Color(0xFF8B5CF6).copy(alpha = 0.18f), Color(0xFFA78BFA), Color(0xFF6D28D9))
+    val Slate = CategoryTint(Color(0xFF64748B).copy(alpha = 0.18f), Color(0xFF94A3B8), Color(0xFF475569))
+    val Cyan = CategoryTint(Color(0xFF06B6D4).copy(alpha = 0.18f), Color(0xFF22D3EE), Color(0xFF0E7490))
+    val Emerald = CategoryTint(Color(0xFF10B981).copy(alpha = 0.18f), Color(0xFF34D399), Color(0xFF047857))
 }
 
 /**

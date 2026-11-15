@@ -19,6 +19,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.resultv.android.theme.RvColor
+import com.resultv.android.theme.paletteFor
 import com.resultv.android.theme.rvBorderBrush
 import com.resultv.android.theme.RvBorderBrush
 import androidx.compose.ui.graphics.Brush
@@ -59,9 +60,11 @@ fun RvButton(
 
 /** Цвета кнопок макета: зелёная — основное действие, серая — второстепенное. */
 object RvButtonColors {
-    val greenFill = RvColor.mainA10
-    val greenOutline: Brush = rvBorderBrush(RvColor.mainA10)
-    val greenSelected = RvColor.mainA50
-    val greyFill = RvColor.Grey
-    val greyOutline: Brush = RvBorderBrush
+    val greenFill = paletteFor(dark = true).mainA10
+    val greenOutline: Brush = rvBorderBrush(greenFill)
+    val greenSelected = paletteFor(dark = true).mainA50
+    val greyFill: Color
+        @Composable get() = RvColor.Grey
+    val greyOutline: Brush
+        @Composable get() = RvBorderBrush
 }

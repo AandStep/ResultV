@@ -123,7 +123,7 @@ fun SubscriptionEditSheet(
         contentColor = MaterialTheme.colorScheme.onSurface,
         dragHandle = { BottomSheetDefaults.DragHandle() },
     ) {
-        DarkSheetSystemBars()
+        SheetSystemBars()
         ClearFocusOnImeHide()
         Column(
             modifier = Modifier
@@ -182,7 +182,7 @@ fun SubscriptionEditSheet(
                         label = { Text(stringResource(choice.labelResId)) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = RvColor.Main.copy(alpha = 0.2f),
-                            selectedLabelColor = RvColor.Second,
+                            selectedLabelColor = RvColor.successText,
                         ),
                     )
                 }
@@ -258,7 +258,7 @@ private fun SheetHeader(displayName: String, onClose: () -> Unit) {
             Text(
                 text = stringResource(R.string.sub_edit_title),
                 style = MaterialTheme.typography.bodyMedium,
-                color = RvColor.whiteA50,
+                color = RvColor.description,
             )
         }
         IconButton(onClick = onClose) {
@@ -332,7 +332,7 @@ private fun ToggleRow(
         SettingIcon(icon, CategoryTint(iconBg, iconTint))
         Column(modifier = Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = RvColor.whiteA50)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = RvColor.description)
         }
         Switch(checked = checked, onCheckedChange = onCheckedChange)
     }

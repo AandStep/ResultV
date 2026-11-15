@@ -92,7 +92,7 @@ fun ProfileEditSheet(
         sheetState = sheetState,
         containerColor = RvColor.Grey,
     ) {
-        DarkSheetSystemBars()
+        SheetSystemBars()
         ClearFocusOnImeHide()
         Column(
             modifier = Modifier
@@ -164,7 +164,7 @@ fun ProfileEditSheet(
             )
             HorizontalDivider(
                 modifier = Modifier.padding(horizontal = RvSpace.nest1, vertical = RvSpace.xs),
-                color = Color.White.copy(alpha = 0.08f),
+                color = RvColor.White.copy(alpha = 0.08f),
             )
             ActionRow(
                 icon = Icons.Outlined.DeleteOutline,

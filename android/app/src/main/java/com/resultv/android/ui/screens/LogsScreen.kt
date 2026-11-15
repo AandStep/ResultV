@@ -47,10 +47,11 @@ import java.util.Locale
 
 private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
 
+@Composable
 private fun LogLevel.color(): Color = when (this) {
-    LogLevel.Info -> RvColor.whiteA50
-    LogLevel.Success -> RvColor.Second
-    LogLevel.Warning -> RvColor.Warning
+    LogLevel.Info -> RvColor.description
+    LogLevel.Success -> RvColor.successText
+    LogLevel.Warning -> RvColor.warningText
     LogLevel.Error -> RvColor.Errors
 }
 
@@ -131,7 +132,7 @@ fun LogsScreen(onBack: () -> Unit) {
                 Text(
                     stringResource(R.string.logs_empty),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = RvColor.whiteA50,
+                    color = RvColor.description,
                 )
             }
         } else {
@@ -163,7 +164,7 @@ private fun LogRow(entry: LogEntry) {
             text = "[${timeFormat.format(Date(entry.timestamp))}]",
             style = MaterialTheme.typography.bodySmall,
             fontFamily = FontFamily.Monospace,
-            color = RvColor.whiteA50,
+            color = RvColor.description,
         )
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             if (entry.source.isNotEmpty()) {
@@ -171,7 +172,7 @@ private fun LogRow(entry: LogEntry) {
                     text = entry.source,
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold,
-                    color = RvColor.whiteA50,
+                    color = RvColor.description,
                 )
             }
             Text(

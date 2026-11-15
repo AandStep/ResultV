@@ -4,6 +4,7 @@
 package mobile
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -37,10 +38,11 @@ func StartAdaptiveSmart(dataDir string, memoryOnly bool) (string, error) {
 		return fmt.Sprintf(`{"started":true,"port":%d}`, smartRelay.Port()), nil
 	}
 	relay, err := proxy.StartSmartRelay(proxy.SmartRelayOptions{
-		DataDir:    dataDir,
-		ListenPort: SmartRelayPort,
-		TunnelPort: SmartRaceInboundPort,
-		MemoryOnly: memoryOnly,
+		DataDir:        dataDir,
+		ListenPort:     SmartRelayPort,
+		TunnelPort:     SmartRaceInboundPort,
+		ExitTunnelPort: smartRaceExitInboundPort,
+		MemoryOnly:     memoryOnly,
 	})
 	if err != nil {
 		return "", err
@@ -53,11 +55,10 @@ func StartAdaptiveSmart(dataDir string, memoryOnly bool) (string, error) {
 // оно не поднято.
 func StopAdaptiveSmart() {
 	smartRelayMu.Lock()
-	relay := smartRelay
-	smartRelay = nil
-	smartRelayMu.Unlock()
-	if relay != nil {
-		_ = relay.Close()
+	defer smartRelayMu.Unlock()
+	if smartRelay != nil {
+		_ = smartRelay.Close()
+		smartRelay = nil
 	}
 }
 
@@ -67,4 +68,33 @@ func AdaptiveSmartRunning() bool {
 	smartRelayMu.Lock()
 	defer smartRelayMu.Unlock()
 	return smartRelay != nil
+}
+
+// GetAdaptiveSmartLearnedRoutes returns {items, hidden} for Android settings.
+func GetAdaptiveSmartLearnedRoutes(dataDir string) (string, error) {
+	return adaptiveSmartLearnedRoutes(dataDir, "", false)
+}
+
+// ForgetAdaptiveSmartLearnedRoute removes one learned destination.
+func ForgetAdaptiveSmartLearnedRoute(dataDir, host string) (string, error) {
+	return adaptiveSmartLearnedRoutes(dataDir, host, false)
+}
+
+// ClearAdaptiveSmartLearnedRoutes resets all learned decisions.
+func ClearAdaptiveSmartLearnedRoutes(dataDir string) (string, error) {
+	return adaptiveSmartLearnedRoutes(dataDir, "", true)
+}
+
+func adaptiveSmartLearnedRoutes(dataDir, host string, reset bool) (string, error) {
+	if strings.TrimSpace(dataDir) == "" {
+		return "", fmt.Errorf("dataDir is required")
+	}
+	smartRelayMu.Lock()
+	defer smartRelayMu.Unlock()
+	routes, err := proxy.ManageSmartLearnedRoutes(dataDir, smartRelay, host, reset)
+	if err != nil {
+		return "", err
+	}
+	result, err := json.Marshal(routes)
+	return string(result), err
 }

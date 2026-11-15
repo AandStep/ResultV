@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="socks5_title">SOCKS5 after VPN</string>
+    <string name="socks5_description">Use a SOCKS5 proxy as the exit for VPN traffic</string>
+    <string name="socks5_enable">Enable SOCKS5 exit</string>
+    <string name="socks5_server">Server or IP address</string>
+    <string name="socks5_port">Port</string>
+    <string name="socks5_login">Username</string>
+    <string name="socks5_password">Password</string>
+    <string name="socks5_scope">Leave both lists empty to use this exit for all VPN traffic.</string>
+    <string name="socks5_sites">Sites or IP ranges</string>
+    <string name="socks5_save">Save</string>
+    <string name="socks5_save_error">Check the server, port and credentials.</string>
+    <string name="socks5_check">Check exit</string>
+    <string name="socks5_checking">Checking the SOCKS5 exit…</string>
+    <string name="socks5_check_error">The SOCKS5 exit could not be reached through the VPN.</string>
+    <string name="socks5_check_result">IP %1$s · %2$s · UDP %3$s</string>
+    <string name="socks5_udp_exit">through SOCKS5</string>
+    <string name="socks5_udp_vpn">through VPN</string>
+    <string name="socks5_connection">Connection</string>
+    <string name="socks5_connection_desc">Enter the exit server address and its credentials if required.</string>
+    <string name="socks5_apps_title">Applications</string>
+    <string name="socks5_check_hint">Connect the VPN and check the exit IP, country and UDP support.</string>
+    <string name="native_core_unavailable">This build is missing the VPN core for this device.</string>
+    <string name="socks5_status">Exit status</string>
+</resources>

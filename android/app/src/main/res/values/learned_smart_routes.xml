@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="learned_routes_group">Routing</string>
+    <string name="learned_routes_title">Learned routes</string>
+    <string name="learned_routes_desc">Sites Adaptive Smart routes through the VPN.</string>
+    <string name="learned_routes_empty">No learned sites to show.</string>
+    <string name="learned_routes_remove">Forget %1$s</string>
+    <string name="learned_routes_reset">Reset learned routes</string>
+    <string name="learned_routes_reset_desc">Clear all learned VPN and direct routes. Your routing rules will be kept.</string>
+    <string name="learned_routes_reset_action">Reset</string>
+    <string name="learned_routes_error">Could not update learned routes.</string>
+    <plurals name="learned_routes_hidden">
+        <item quantity="one">%d route from a previous session is stored without its site name.</item>
+        <item quantity="other">%d routes from previous sessions are stored without their site names.</item>
+    </plurals>
+</resources>

@@ -23,10 +23,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$RepoRoot = "C:\ResultV"
-if (-not (Test-Path "$RepoRoot\go.mod")) {
-    $RepoRoot = $PWD.Path
-}
+$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 
 $Output = Join-Path $RepoRoot "android\libs\libbox.aar"
 $OutputDir = Split-Path -Parent $Output
@@ -44,6 +41,7 @@ if ($WithNaive) {
 Write-Host "Building AAR with tags: $Tags"
 Write-Host "Output: $Output"
 
+$PreviousGoFlags = $env:GOFLAGS
 Push-Location $RepoRoot
 try {
     $env:GOFLAGS = "-tags=$Tags"
@@ -57,13 +55,14 @@ try {
         "./mobile",
         "github.com/sagernet/sing-box/experimental/libbox"
     )
-    & gomobile @Splat
+    & go run ./scripts/android-core-build gomobile @Splat
 
     if ($LASTEXITCODE -ne 0) {
         Write-Error "gomobile bind failed with exit code $LASTEXITCODE"
         exit $LASTEXITCODE
     }
 } finally {
+    $env:GOFLAGS = $PreviousGoFlags
     Pop-Location
 }
 

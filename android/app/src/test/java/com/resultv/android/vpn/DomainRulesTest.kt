@@ -68,13 +68,11 @@ class DomainRulesTest {
         assertEquals(RoutingMode.Smart, RoutingRulesState().mode)
     }
 
-    // Тот же список, что Whitelist в DefaultConfig() на ПК: без *.ru / *.рф.
-    // В Smart активна вкладка «в туннель», и доменные исключения там ни на что
-    // не влияют — держать их в дефолте значило бы показывать свежему
-    // пользователю правила, которые не работают.
     @Test fun freshInstallExclusionsMatchDesktop() {
-        assertEquals(listOf("localhost", "127.0.0.1"), RoutingRulesState().domains.outOfVpn)
-        assertTrue(RoutingRulesState().domains.intoVpn.isEmpty())
+        val rules = RoutingRulesState()
+        assertEquals(listOf("localhost", "127.0.0.1"), rules.globalDomains.outOfVpn)
+        assertTrue(rules.globalDomains.intoVpn.isEmpty())
+        assertEquals(DomainRulesState(), rules.smartDomains)
     }
 
     // Миграция ПК (ensureDefaults): режим доставляется только тому конфигу,

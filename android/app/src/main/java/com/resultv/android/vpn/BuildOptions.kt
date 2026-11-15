@@ -20,13 +20,12 @@ internal object BuildOptionsBuilder {
         val smartMode = rules.mode == RoutingMode.Smart
         return JSONObject()
             .put("dnsServers", SettingsRepository.resolveDnsServers())
-            // "Out of VPN" domains keep the legacy transport key: the Go side
-            // already knows it, and the Global-only gate lives there.
-            .put("excludedDomains", RoutingRulesRepository.engineOutOfVpn().joinToString(","))
-            .put("intoVpnDomains", RoutingRulesRepository.engineIntoVpn().joinToString(","))
-            .put("blockedDomains", RoutingRulesRepository.engineBlocked().joinToString(","))
-            .put("intoVpnApps", AppRoutingRepository.engineIntoVpn().joinToString(","))
-            .put("blockedApps", AppRoutingRepository.engineBlocked().joinToString(","))
+            .put("bidirectionalRules", true)
+            .put("excludedDomains", rules.domains.outOfVpn.joinToString(","))
+            .put("intoVpnDomains", rules.domains.intoVpn.joinToString(","))
+            .put("blockedDomains", rules.domains.blocked.joinToString(","))
+            .put("intoVpnApps", AppRoutingRepository.engineIntoVpn(rules.mode).joinToString(","))
+            .put("blockedApps", AppRoutingRepository.engineBlocked(rules.mode).joinToString(","))
             // Honour the IPv6 toggle only when the underlying (non-VPN) network
             // actually routes IPv6. On carriers that advertise a v6 address but
             // blackhole transit, a dual-stack TUN makes every `direct` IPv6
@@ -37,6 +36,7 @@ internal object BuildOptionsBuilder {
             .put("bypassLAN", settings.bypassLan)
             .put("logLevel", settings.logLevel)
             .put("smartMode", smartMode)
+            .put("socks5Exit", Socks5ExitRepository.profile.value.toJson())
             // Профиль маршрутизации: через JNI едет только его id и порядок
             // действий. Правила движок находит на диске сам — профиль на
             // 20 000 токенов иначе означал бы мегабайты на каждый коннект,
@@ -114,6 +114,7 @@ internal object BuildOptionsBuilder {
     }
 
     fun fetchSubscription(url: String, dataDir: String): String = try {
+        check(NativeCore.available) { AppLog.resolve(R.string.native_core_unavailable) }
         Mobile.fetchSubscriptionV3(url, dataDir, currentSubscriptionFetchOptionsJson())
     } catch (error: Exception) {
         val message = when (error.message) {

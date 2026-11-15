@@ -54,6 +54,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.resultv.android.R
@@ -63,7 +64,7 @@ import com.resultv.android.theme.rvBorder
 import com.resultv.android.theme.RvSpace
 import com.resultv.android.theme.SegoeUi
 import com.resultv.android.ui.components.ClearFocusOnImeHide
-import com.resultv.android.ui.components.DarkSheetSystemBars
+import com.resultv.android.ui.components.SheetSystemBars
 import com.resultv.android.ui.components.RvButton
 import com.resultv.android.ui.components.RvButtonColors
 import com.resultv.android.ui.components.RvButtonLabel
@@ -102,7 +103,7 @@ internal fun SettingsSheet(
         containerColor = RvColor.Black,
         dragHandle = { BottomSheetDefaults.DragHandle(width = 32.dp, height = 4.dp, color = RvColor.whiteA20) },
     ) {
-        DarkSheetSystemBars()
+        SheetSystemBars()
         ClearFocusOnImeHide()
         Column(
             modifier = Modifier
@@ -125,7 +126,7 @@ internal fun SettingsSheet(
                 }
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(RvSpace.xs)) {
                     Text(title, style = SheetTitle, color = RvColor.White)
-                    Text(description, style = SheetDesc, color = RvColor.whiteA50)
+                    Text(description, style = SheetDesc, color = RvColor.description)
                 }
                 Box(
                     modifier = Modifier
@@ -220,7 +221,7 @@ internal fun SheetRow(
             }
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(title, style = RowTitle, color = RvColor.White)
-                Text(subtitle, style = SheetDesc, color = RvColor.whiteA50)
+                Text(subtitle, style = SheetDesc, color = RvColor.description)
             }
             trailing?.invoke()
         }
@@ -332,6 +333,7 @@ internal fun SheetField(
     placeholder: String,
     isError: Boolean = false,
     keyboardType: KeyboardType = KeyboardType.Text,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
 ) {
     val shape = RoundedCornerShape(16.dp)
     BasicTextField(
@@ -341,6 +343,7 @@ internal fun SheetField(
         textStyle = FieldStyle.copy(color = RvColor.White),
         cursorBrush = SolidColor(RvColor.whiteA50),
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+        visualTransformation = visualTransformation,
         modifier = Modifier.fillMaxWidth().height(44.dp),
         decorationBox = { inner ->
             Box(
@@ -397,7 +400,7 @@ internal fun <T> SheetDropdown(
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             options.forEach { (key, label) ->
                 DropdownMenuItem(
-                    text = { Text(label, color = if (key == value) RvColor.Second else RvColor.White) },
+                    text = { Text(label, color = if (key == value) RvColor.successText else RvColor.White) },
                     onClick = { open = false; onSelect(key) },
                 )
             }

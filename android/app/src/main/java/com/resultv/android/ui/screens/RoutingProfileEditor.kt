@@ -77,9 +77,10 @@ private fun actionLabelRes(action: String): Int = when (action) {
     else -> R.string.routing_editor_block
 }
 
+@Composable
 private fun actionColor(action: String): Color = when (action) {
     "direct" -> RvColor.Main
-    "proxy" -> RvColor.Second
+    "proxy" -> RvColor.successText
     else -> RvColor.Errors
 }
 
@@ -148,12 +149,12 @@ fun RoutingProfileEditorContent(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2),
         ) {
-            Text(stringResource(R.string.routing_editor_name), style = RowLabel, color = RvColor.whiteA50)
+            Text(stringResource(R.string.routing_editor_name), style = RowLabel, color = RvColor.description)
             BasicTextField(
                 value = name,
                 onValueChange = { name = it },
                 singleLine = true,
-                textStyle = RowValue.copy(color = RvColor.whiteA50, textAlign = TextAlign.End),
+                textStyle = RowValue.copy(color = RvColor.description, textAlign = TextAlign.End),
                 cursorBrush = SolidColor(RvColor.whiteA50),
                 modifier = Modifier.weight(1f),
                 decorationBox = { inner ->
@@ -198,8 +199,8 @@ fun RoutingProfileEditorContent(
             verticalArrangement = Arrangement.spacedBy(RvSpace.nest2),
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(RvSpace.xs)) {
-                Text(stringResource(R.string.routing_editor_order), style = RowLabel, color = RvColor.whiteA50)
-                Text(stringResource(R.string.routing_editor_strategy_hint), style = SheetNoteStyle, color = RvColor.whiteA50)
+                Text(stringResource(R.string.routing_editor_order), style = RowLabel, color = RvColor.description)
+                Text(stringResource(R.string.routing_editor_strategy_hint), style = SheetNoteStyle, color = RvColor.description)
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 order.forEachIndexed { index, action ->
@@ -242,7 +243,7 @@ fun RoutingProfileEditorContent(
         Text(
             stringResource(R.string.routing_profiles_actions),
             style = RowValue,
-            color = RvColor.whiteA50,
+            color = RvColor.description,
             modifier = Modifier.padding(start = RvSpace.xs),
         )
         Row(horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3)) {
@@ -316,7 +317,7 @@ private fun RuleRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(RvSpace.nest3),
         ) {
-            Text(label, style = RowLabel, color = RvColor.whiteA50, modifier = Modifier.weight(1f))
+            Text(label, style = RowLabel, color = RvColor.description, modifier = Modifier.weight(1f))
             // Сколько правил внутри — видно, не раскрывая строку.
             val count = routingTokensOf(value).size
             if (count > 0) {
@@ -378,7 +379,7 @@ private fun GeoRow(label: String, value: String, onChange: (String) -> Unit) {
         modifier = Modifier.fillMaxWidth().padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(RvSpace.nest3),
     ) {
-        Text(label, style = RowLabel, color = RvColor.whiteA50)
+        Text(label, style = RowLabel, color = RvColor.description)
         val shape = RoundedCornerShape(12.dp)
         BasicTextField(
             value = value,

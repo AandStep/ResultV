@@ -288,6 +288,7 @@ type SBInbound struct {
 }
 
 type SBOutbound struct {
+	Detour string `json:"detour,omitempty"`
 	Type       string           `json:"type"`
 	Tag        string           `json:"tag"`
 	Server     string           `json:"server,omitempty"`
@@ -544,6 +545,9 @@ type SBRouteRuleSet struct {
 }
 
 type SBRouteRule struct {
+	Type  string        `json:"type,omitempty"`
+	Mode  string        `json:"mode,omitempty"`
+	Rules []SBRouteRule `json:"rules,omitempty"`
 	Protocol []string `json:"protocol,omitempty"`
 	// Inbound матчит по тегу инбаунда, через который соединение вошло.
 	// Нужно ровно одному правилу — тому, что выводит туннельную ногу реле

@@ -48,6 +48,7 @@ import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -80,7 +81,6 @@ import com.resultv.android.theme.RvSpace
 import com.resultv.android.ui.components.TagField
 import com.resultv.android.vpn.AppInventory
 import com.resultv.android.vpn.AppRoutingRepository
-import com.resultv.android.vpn.AppTunnelMembership
 import com.resultv.android.vpn.RoutingMode
 import com.resultv.android.vpn.RoutingRulesRepository
 import com.resultv.android.vpn.RuleAction
@@ -94,20 +94,18 @@ import kotlinx.coroutines.withContext
  * 6869:4923 Global). Плитки режимов, в Global под ними — профили
  * маршрутизации, дальше две секции-карточки: сайты и приложения.
  *
- * Переключателя «В ВПН / Запретить» в макете нет: у каждой секции один
- * список, и какой — решает режим. Smart правит «через ВПН», Global —
- * «напрямую». Список блокировки из интерфейса ушёл, но то, что в нём уже
- * было, движок по-прежнему применяет.
+ * Оба направления редактируются независимо для каждого режима.
  */
 @Composable
 fun RulesScreen(onOpenRoutingProfiles: () -> Unit = {}) {
     val rules by RoutingRulesRepository.state.collectAsStateWithLifecycle()
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
-    var domainInput by remember { mutableStateOf("") }
-    var confirmClearSites by remember { mutableStateOf(false) }
     val smart = rules.mode == RoutingMode.Smart
-    val action = primaryAction(rules.mode)
+    var action by remember(rules.mode) { mutableStateOf(primaryAction(rules.mode)) }
+    var domainInput by remember(rules.mode, action) { mutableStateOf("") }
+    var confirmClearSites by remember(rules.mode, action) { mutableStateOf(false) }
+    val intoVpn = action == RuleAction.IntoVpn
 
     Column(
         modifier = Modifier
@@ -148,10 +146,23 @@ fun RulesScreen(onOpenRoutingProfiles: () -> Unit = {}) {
             ProfilesCard(onClick = onOpenRoutingProfiles)
         }
 
+        Row(horizontalArrangement = Arrangement.spacedBy(RvSpace.nest2)) {
+            FilterChip(
+                selected = intoVpn,
+                onClick = { action = RuleAction.IntoVpn },
+                label = { Text(stringResource(R.string.routing_direction_vpn)) },
+            )
+            FilterChip(
+                selected = !intoVpn,
+                onClick = { action = RuleAction.OutOfVpn },
+                label = { Text(stringResource(R.string.routing_direction_direct)) },
+            )
+        }
+
         RulesSection(
-            title = stringResource(if (smart) R.string.rules_sites_vpn else R.string.rules_sites_direct),
+            title = stringResource(if (intoVpn) R.string.rules_sites_vpn else R.string.rules_sites_direct),
             description = stringResource(
-                if (smart) R.string.rules_sites_vpn_desc else R.string.rules_sites_direct_desc,
+                if (intoVpn) R.string.routing_sites_vpn_desc else R.string.rules_sites_direct_desc,
             ),
             onClear = { confirmClearSites = true },
         ) {
@@ -168,7 +179,7 @@ fun RulesScreen(onOpenRoutingProfiles: () -> Unit = {}) {
             )
         }
 
-        PerAppRoutingSection(mode = rules.mode)
+        PerAppRoutingSection(mode = rules.mode, tab = action)
     }
 
     if (confirmClearSites) {
@@ -222,7 +233,7 @@ private fun ProfilesCard(onClick: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(RvSpace.xs),
         ) {
             Text(stringResource(R.string.routing_profiles_row), style = SectionTitle, color = RvColor.White)
-            Text(stringResource(R.string.rules_profiles_desc), style = SectionDesc, color = RvColor.whiteA50)
+            Text(stringResource(R.string.rules_profiles_desc), style = SectionDesc, color = RvColor.description)
         }
         Icon(
             imageVector = Icons.AutoMirrored.Outlined.OpenInNew,
@@ -272,7 +283,7 @@ private fun RulesSection(
                 verticalArrangement = Arrangement.spacedBy(RvSpace.xs),
             ) {
                 Text(title, style = SectionTitle, color = RvColor.White)
-                Text(description, style = SectionDesc, color = RvColor.whiteA50)
+                Text(description, style = SectionDesc, color = RvColor.description)
             }
             // Глиф 20, цель пальца 36: лишнее уходит сдвигом за край глифа.
             IconButton(
@@ -318,17 +329,16 @@ private data class InstalledApp(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PerAppRoutingSection(mode: RoutingMode) {
+private fun PerAppRoutingSection(mode: RoutingMode, tab: RuleAction) {
     // package_name rules can't match without ConnectivityManager
     // .getConnectionOwnerUid — see BoxPlatform.findConnectionOwner.
     val canResolveOwner = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
-    val tab = primaryAction(mode)
-    val smart = mode == RoutingMode.Smart
-    var confirmClear by remember { mutableStateOf(false) }
+    val intoVpn = tab == RuleAction.IntoVpn
+    var confirmClear by remember(mode, tab) { mutableStateOf(false) }
 
     RulesSection(
-        title = stringResource(if (smart) R.string.rules_apps_vpn else R.string.rules_apps_direct),
-        description = stringResource(if (smart) R.string.rules_apps_vpn_desc else R.string.rules_apps_direct_desc),
+        title = stringResource(if (intoVpn) R.string.rules_apps_vpn else R.string.rules_apps_direct),
+        description = stringResource(if (intoVpn) R.string.rules_apps_vpn_desc else R.string.rules_apps_direct_desc),
         onClear = { confirmClear = true },
     ) {
         // «Через ВПН» держится на package_name-правилах, а их ниже API 29 не
@@ -337,7 +347,7 @@ private fun PerAppRoutingSection(mode: RoutingMode) {
             Text(
                 stringResource(R.string.rules_apps_needs_q),
                 style = SectionDesc,
-                color = RvColor.whiteA50,
+                color = RvColor.description,
             )
         } else {
             AppList(mode = mode, tab = tab)
@@ -347,7 +357,7 @@ private fun PerAppRoutingSection(mode: RoutingMode) {
     if (confirmClear) {
         ConfirmClear(
             message = stringResource(R.string.rules_confirm_clear_apps),
-            onConfirm = { AppRoutingRepository.clearList(tab) },
+            onConfirm = { AppRoutingRepository.clearList(mode, tab) },
             onDismiss = { confirmClear = false },
         )
     }
@@ -355,9 +365,35 @@ private fun PerAppRoutingSection(mode: RoutingMode) {
 
 @Composable
 private fun AppList(mode: RoutingMode, tab: RuleAction) {
+    val modeRules by AppRoutingRepository.state.collectAsStateWithLifecycle()
+    val rules = modeRules.forMode(mode)
+    val selected = when (tab) {
+        RuleAction.OutOfVpn -> rules.outOfVpn
+        RuleAction.IntoVpn -> rules.intoVpn
+        RuleAction.Block -> rules.blocked
+    }
+    InstalledAppPicker(
+        selectedPackages = selected,
+        showAutomatic = mode == RoutingMode.Smart,
+        directPackages = rules.outOfVpn,
+        blockedPackages = rules.blocked,
+        onToggle = { packageName, checked ->
+            if (checked) AppRoutingRepository.setAction(mode, packageName, tab)
+            else AppRoutingRepository.clearAction(mode, packageName, tab)
+        },
+    )
+}
 
+@Composable
+internal fun InstalledAppPicker(
+    selectedPackages: Set<String>,
+    onToggle: (String, Boolean) -> Unit,
+    showAutomatic: Boolean = false,
+    showCount: Boolean = true,
+    directPackages: Set<String> = emptySet(),
+    blockedPackages: Set<String> = emptySet(),
+) {
     val ctx = LocalContext.current
-    val appRules by AppRoutingRepository.state.collectAsStateWithLifecycle()
     var apps by remember { mutableStateOf<List<InstalledApp>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
@@ -381,9 +417,9 @@ private fun AppList(mode: RoutingMode, tab: RuleAction) {
     // наверху, а авто-отмеченные известны только после этого подсчёта: покажи
     // список раньше — он откроется по алфавиту и тут же пересортируется, и
     // отмеченные уедут за верхний край. Поэтому до подсчёта — индикатор загрузки.
-    var autoInFor by remember { mutableStateOf<Pair<List<InstalledApp>, RoutingMode>?>(null) }
-    LaunchedEffect(mode, apps, smartSnapshot.count, smartSnapshot.ready) {
-        autoIn = if (mode != RoutingMode.Smart || apps.isEmpty()) {
+    var autoInFor by remember { mutableStateOf<Pair<List<InstalledApp>, Boolean>?>(null) }
+    LaunchedEffect(showAutomatic, apps, smartSnapshot.count, smartSnapshot.ready) {
+        autoIn = if (!showAutomatic || apps.isEmpty()) {
             emptySet()
         } else withContext(Dispatchers.IO) {
             val matched = SmartAppMembership.matchedPackages(
@@ -392,9 +428,9 @@ private fun AppList(mode: RoutingMode, tab: RuleAction) {
             val browsers = AppInventory.browserPackages(ctx)
             matched + browsers
         }
-        autoInFor = apps to mode
+        autoInFor = apps to showAutomatic
     }
-    val orderReady = autoInFor?.let { (forApps, forMode) -> forApps === apps && forMode == mode } == true
+    val orderReady = autoInFor?.let { (forApps, forMode) -> forApps === apps && forMode == showAutomatic } == true
 
     val filtered = remember(apps, query) {
         if (query.isBlank()) apps
@@ -404,16 +440,7 @@ private fun AppList(mode: RoutingMode, tab: RuleAction) {
         }
     }
 
-    // В Smart вкладка «Через ВПН» — это членство в туннеле (авто + ручное), в
-    // остальных вкладках — действие приложения, совпавшее с вкладкой.
-    val smartMembershipTab = mode == RoutingMode.Smart && tab == RuleAction.IntoVpn
-    val isChecked: (InstalledApp) -> Boolean = { app ->
-        if (smartMembershipTab) {
-            AppTunnelMembership.isInSmart(app.packageName, autoIn, emptySet(), appRules)
-        } else {
-            appRules.actionOf(app.packageName, mode) == tab
-        }
-    }
+    val isChecked: (InstalledApp) -> Boolean = { it.packageName in selectedPackages }
     // Отмеченные всегда наверху. Сортировка устойчивая, так что внутри обеих
     // частей остаётся порядок каталога: пользовательские, затем системные, по имени.
     // Не rememberSaveable: каталог грузится заново при каждом показе, и список
@@ -422,7 +449,7 @@ private fun AppList(mode: RoutingMode, tab: RuleAction) {
     val atTop by remember {
         derivedStateOf { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0 }
     }
-    val ordered = remember(filtered, appRules, autoIn, mode, tab) {
+    val ordered = remember(filtered, selectedPackages) {
         // Отметка, сделанная в начале списка, поднимает строку на место выше
         // первой видимой, а ленивый список держит позицию за первой видимой —
         // и только что отмеченное ушло бы за верхний край. requestScrollToItem
@@ -440,16 +467,13 @@ private fun AppList(mode: RoutingMode, tab: RuleAction) {
             placeholder = stringResource(R.string.rules_app_search),
         )
 
-        val selectedCount = when (tab) {
-            RuleAction.OutOfVpn -> appRules.outOfVpn.size
-            RuleAction.IntoVpn -> appRules.intoVpn.size
-            RuleAction.Block -> appRules.blocked.size
+        if (showCount) {
+            Text(
+                stringResource(R.string.rules_app_selected_count, selectedPackages.size),
+                style = SectionDesc.copy(fontSize = 12.sp, lineHeight = 13.2.sp),
+                color = RvColor.description,
+            )
         }
-        Text(
-            stringResource(R.string.rules_app_selected_count, selectedCount),
-            style = SectionDesc.copy(fontSize = 12.sp, lineHeight = 13.2.sp),
-            color = RvColor.whiteA50,
-        )
 
         if (loading || !orderReady) {
             Box(modifier = Modifier.fillMaxWidth().padding(RvSpace.nest1), contentAlignment = Alignment.Center) {
@@ -464,39 +488,16 @@ private fun AppList(mode: RoutingMode, tab: RuleAction) {
                     // Отмеченная строка уезжает наверх — видимым движением, а
                     // не исчезновением из-под пальца.
                     val rowModifier = Modifier.animateItem()
-                    if (smartMembershipTab) {
-                        val auto = app.packageName in autoIn
-                        val inVpn = isChecked(app)
-                        val blocked = app.packageName in appRules.blocked
-                        AppRow(
-                            app = app,
-                            checked = inVpn,
-                            blockedElsewhere = blocked,
-                            autoBadge = auto && inVpn,
-                            onToggle = {
-                                AppRoutingRepository.setSmartMembership(
-                                    app.packageName, wantIn = !inVpn, isAuto = auto
-                                )
-                            },
-                            modifier = rowModifier,
-                        )
-                    } else {
-                        val effective = appRules.actionOf(app.packageName, mode)
-                        AppRow(
-                            app = app,
-                            checked = effective == tab,
-                            // The user's ask: an app blocked in the Block tab shows
-                            // as blocked in the routing tab too. Tapping it there
-                            // moves it silently — withAction clears the block.
-                            blockedElsewhere = effective == RuleAction.Block && tab != RuleAction.Block,
-                            autoBadge = false,
-                            onToggle = {
-                                if (effective == tab) AppRoutingRepository.clearAction(app.packageName, tab)
-                                else AppRoutingRepository.setAction(app.packageName, tab)
-                            },
-                            modifier = rowModifier,
-                        )
-                    }
+                    val checked = isChecked(app)
+                    AppRow(
+                        app = app,
+                        checked = checked,
+                        blockedElsewhere = app.packageName in blockedPackages,
+                        autoBadge = showAutomatic && app.packageName in autoIn &&
+                            app.packageName !in directPackages && app.packageName !in blockedPackages,
+                        onToggle = { onToggle(app.packageName, !checked) },
+                        modifier = rowModifier,
+                    )
                 }
             }
                 Box(
@@ -556,12 +557,12 @@ private fun AppRow(
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(app.label, style = SectionTitle, color = RvColor.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (autoBadge) {
-                Text("✓ " + stringResource(R.string.rules_badge_auto_vpn), style = PackageStyle, color = RvColor.Second)
+                Text("✓ " + stringResource(R.string.rules_badge_auto_vpn), style = PackageStyle, color = RvColor.successText)
             }
             if (blockedElsewhere) {
-                Text("⛔ " + stringResource(R.string.rules_badge_blocked), style = PackageStyle, color = RvColor.whiteA50)
+                Text("⛔ " + stringResource(R.string.rules_badge_blocked), style = PackageStyle, color = RvColor.description)
             }
-            Text(app.packageName, style = PackageStyle, color = RvColor.whiteA20, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(app.packageName, style = PackageStyle, color = if (RvColor.isDark) RvColor.whiteA20 else RvColor.description, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (app.isSystem) {
             Box(
@@ -572,7 +573,7 @@ private fun AppRow(
                     .padding(horizontal = 6.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(stringResource(R.string.rules_app_system_tag), style = PackageStyle, color = RvColor.whiteA50)
+                Text(stringResource(R.string.rules_app_system_tag), style = PackageStyle, color = RvColor.description)
             }
         }
     }
@@ -598,7 +599,7 @@ private fun RulesCheckbox(checked: Boolean) {
         contentAlignment = Alignment.Center,
     ) {
         if (checked) {
-            Icon(Icons.Filled.Check, contentDescription = null, tint = RvColor.Black, modifier = Modifier.size(14.dp))
+            Icon(Icons.Filled.Check, contentDescription = null, tint = RvColor.OnAccentGlyph, modifier = Modifier.size(14.dp))
         }
     }
 }

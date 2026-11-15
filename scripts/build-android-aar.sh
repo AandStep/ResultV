@@ -210,8 +210,8 @@ env -i \
     ANDROID_NDK_ROOT="${ANDROID_NDK_ROOT:-${ANDROID_NDK_HOME:-}}" \
     NDK_HOME="${NDK_HOME:-${ANDROID_NDK_HOME:-}}" \
     JAVA_HOME="${JAVA_HOME:-}" \
-    gomobile bind \
-        -target=android \
+    go run ./scripts/android-core-build gomobile bind \
+        -target="${RESULTV_ANDROID_TARGET:-android}" \
         -androidapi=26 \
         -tags="${TAGS}" \
         -ldflags="${LDFLAGS}" \

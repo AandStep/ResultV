@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="learned_routes_group">Маршрутизация</string>
+    <string name="learned_routes_title">Изученные маршруты</string>
+    <string name="learned_routes_desc">Сайты, которые адаптивный Smart направляет через VPN.</string>
+    <string name="learned_routes_empty">Нет изученных сайтов для отображения.</string>
+    <string name="learned_routes_remove">Забыть %1$s</string>
+    <string name="learned_routes_reset">Сбросить изученные маршруты</string>
+    <string name="learned_routes_reset_desc">Будут удалены все изученные маршруты через VPN и напрямую. Ваши правила маршрутизации сохранятся.</string>
+    <string name="learned_routes_reset_action">Сбросить</string>
+    <string name="learned_routes_error">Не удалось обновить изученные маршруты.</string>
+    <plurals name="learned_routes_hidden">
+        <item quantity="one">Из прошлых сеансов сохранился %d маршрут без имени сайта.</item>
+        <item quantity="few">Из прошлых сеансов сохранились %d маршрута без имён сайтов.</item>
+        <item quantity="many">Из прошлых сеансов сохранилось %d маршрутов без имён сайтов.</item>
+        <item quantity="other">Маршрутов из прошлых сеансов без имён сайтов: %d.</item>
+    </plurals>
+</resources>

@@ -88,8 +88,8 @@ fun SpeedTile(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(label, style = labelStyle, color = RvColor.whiteA50)
-                    Text(rate, style = labelStyle, color = RvColor.whiteA50)
+                    Text(label, style = labelStyle, color = RvColor.description)
+                    Text(rate, style = labelStyle, color = RvColor.description)
                 }
                 Text(
                     total,

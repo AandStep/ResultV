@@ -102,8 +102,8 @@
     <string name="settings_group_security_desc">Connection protection on failures</string>
     <string name="settings_group_network">Network</string>
     <string name="settings_group_network_desc">DNS, IPv6 and the local network</string>
-    <string name="settings_group_appearance">More settings</string>
-    <string name="settings_group_appearance_desc">Interface language</string>
+    <string name="settings_group_appearance">Appearance</string>
+    <string name="settings_group_appearance_desc">App language and color theme</string>
 
     <string name="settings_dns_private_warning">Not working? Turn off Private DNS in Android settings.</string>
     <string name="settings_group_ping">Ping</string>
@@ -126,6 +126,11 @@
     <string name="settings_sub_ua_desc">Empty — the default value</string>
 
     <string name="settings_appearance_language_title">Interface language</string>
+    <string name="settings_appearance_theme_title">Theme</string>
+    <string name="settings_appearance_theme_desc">Light or dark appearance</string>
+    <string name="settings_theme_dark">Dark</string>
+    <string name="settings_theme_light">Light</string>
+    <string name="settings_theme_system">System</string>
 
     <!-- VPN service notification -->
     <string name="vpn_status_killswitch">Kill switch active — traffic blocked</string>
@@ -368,7 +373,7 @@
     <string name="settings_group_logs_items">• Connection and app events</string>
     <string name="settings_privacy_policy">Privacy policy</string>
     <string name="settings_privacy_policy_items">• What leaves the device and where</string>
-    <string name="settings_group_appearance_items">• Interface language</string>
+    <string name="settings_group_appearance_items">• Interface language  • Theme</string>
     <string name="settings_appearance_language_desc">Language of the app\'s labels</string>
     <string name="settings_label_interface">Interface</string>
     <string name="settings_label_update">Refresh</string>
@@ -387,7 +392,7 @@
     <string name="settings_group_experimental_items">• Adaptive Smart</string>
     <string name="settings_group_security_items">• Kill Switch</string>
     <string name="settings_group_ping_items">• Probe type  • Test URL  • Timeout</string>
-    <string name="settings_group_network_items">• DNS  • IPv6  • Local network</string>
+    <string name="settings_group_network_items">• DNS  • IPv6  • Local network  • SOCKS5</string>
     <string name="logs_title">Logs</string>
     <string name="logs_empty">No events yet.</string>
     <string name="logs_save_cd">Save logs</string>

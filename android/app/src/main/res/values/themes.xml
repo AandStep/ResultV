@@ -2,8 +2,14 @@
 <resources>
     <style name="Theme.ResultV" parent="android:Theme.Material.NoActionBar" />
 
+    <style name="Theme.ResultV.Light" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#E6E6E6</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
     <!-- Cold-start splash. Activity's manifest theme; MainActivity
-         calls setTheme(R.style.Theme_ResultV) in onCreate() before
+         selects the running window theme in onCreate() before
          super.onCreate so the splash window background is replaced
          the moment Compose takes over. -->
     <style name="Theme.ResultV.Splash" parent="android:Theme.Material.NoActionBar">

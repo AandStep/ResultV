@@ -415,3 +415,40 @@ func TestSmartRelayHostnameProxyVerdictRequiresProbeConfirmation(t *testing.T) {
 		return ok && rec.Decision == verdict.Proxy && !rec.Unverified
 	}, "proxy verdict was not confirmed")
 }
+
+func TestSmartRelayKeepsSelectedAppExitOnTheTunnelLeg(t *testing.T) {
+	ordinary := echoServer(t, "ordinary")
+	exit := echoServer(t, "exit")
+	r, err := StartSmartRelay(SmartRelayOptions{
+		DataDir: t.TempDir(), MemoryOnly: true,
+		TunnelPort:     fakeSocksInbound(t, ordinary.Addr().String()),
+		ExitTunnelPort: fakeSocksInbound(t, exit.Addr().String()),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	const host = "203.0.113.27"
+	r.store.LearnIP(netip.MustParseAddr(host), verdict.Proxy)
+	endpoint := fmt.Sprintf("127.0.0.1:%d", r.Port())
+	c, err := net.DialTimeout("tcp", endpoint, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(3 * time.Second))
+	fmt.Fprintf(c, "CONNECT %s:443 HTTP/1.1\r\nProxy-Authorization: %s\r\n\r\n", host, smartRelayExitAuthorization)
+	p := bufio.NewReader(c)
+	status, err := p.ReadString('\n')
+	if err != nil || !strings.Contains(status, "200") {
+		t.Fatalf("bad reply %q: %v", status, err)
+	}
+	if _, err := p.ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = fmt.Fprint(c, "hello")
+	response, err := io.ReadAll(p)
+	if err != nil || !strings.HasPrefix(string(response), "exit:") {
+		t.Fatalf("got %q, err %v", response, err)
+	}
+}

@@ -62,17 +62,16 @@ fun SubscriptionLogo(usesImpLogo: Boolean, size: Dp = 40.dp, official: Boolean =
     }
 }
 
-private const val OFFICIAL_SUBSCRIPTION_DOMAIN = "result-proxy.ru"
+private const val LEGACY_SUBSCRIPTION_DOMAIN = "result-proxy.ru"
+private const val SUBSCRIPTION_SERVICE_HOST = "result-service.ru"
 
-/**
- * Официальная подписка ResultV: https-адрес на result-proxy.ru или его
- * поддомене. Как `isOfficialSubscription` на ПК (SubscriptionLogo.jsx).
- */
+/** Official ResultV HTTPS subscription hosts, including links saved before migration. */
 fun isOfficialSubscription(s: Subscription): Boolean {
     val uri = runCatching { java.net.URI(s.url.trim()) }.getOrNull() ?: return false
     if (!uri.scheme.equals("https", ignoreCase = true)) return false
     val host = uri.host?.lowercase() ?: return false
-    return host == OFFICIAL_SUBSCRIPTION_DOMAIN || host.endsWith(".$OFFICIAL_SUBSCRIPTION_DOMAIN")
+    return host == SUBSCRIPTION_SERVICE_HOST || host == LEGACY_SUBSCRIPTION_DOMAIN ||
+        host.endsWith(".$LEGACY_SUBSCRIPTION_DOMAIN")
 }
 
 /**

@@ -73,8 +73,8 @@ fun HomeHeader(
 
     val titleColor by animateColorAsState(
         targetValue = when (look) {
-            HomeLook.Idle -> RvColor.whiteA50
-            HomeLook.Processing -> RvColor.Warning
+            HomeLook.Idle -> RvColor.description
+            HomeLook.Processing -> RvColor.warningText
             HomeLook.Success -> RvColor.Main
             HomeLook.Error -> RvColor.Errors
         },
@@ -116,7 +116,7 @@ fun HomeHeader(
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 12.sp,
                     lineHeight = 13.2.sp,
-                    color = RvColor.whiteA50,
+                    color = RvColor.description,
                     maxLines = 1,
                 )
             }
@@ -248,7 +248,7 @@ private fun UptimeChipBody(connectedAt: Long) {
             // по центру коробки они смотрятся ниже значка часов. Подъём снят
             // замером на телефоне — центр цифр совпадает с центром плашки.
             modifier = Modifier.offset(y = (-1.8).dp),
-            color = RvColor.whiteA50,
+            color = RvColor.description,
         )
     }
 }

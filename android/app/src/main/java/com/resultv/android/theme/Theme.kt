@@ -1,9 +1,11 @@
 package com.resultv.android.theme
 
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -55,52 +57,58 @@ val SegoeUi = FontFamily(
  * палитру Material по умолчанию, и тогда Switch, SegmentedButton или индикатор
  * NavigationBar оказываются не нашего цвета.
  */
-private val ResultVColors = darkColorScheme(
-    primary = RvColor.Main,
-    onPrimary = RvColor.White,
-    primaryContainer = RvColor.mainA20,
-    onPrimaryContainer = RvColor.Main,
-    inversePrimary = RvColor.Second,
+private fun materialColors(colors: RvPalette): ColorScheme {
+    val base = if (colors.isDark) darkColorScheme() else lightColorScheme()
+    return base.copy(
+        primary = colors.Main,
+        onPrimary = colors.OnAccent,
+        primaryContainer = colors.mainA20,
+        onPrimaryContainer = colors.Main,
+        inversePrimary = colors.Second,
 
-    secondary = RvColor.Second,
-    onSecondary = RvColor.Black,
-    secondaryContainer = RvColor.secondA10,
-    onSecondaryContainer = RvColor.Second,
+        secondary = colors.Second,
+        onSecondary = if (colors.isDark) colors.Black else colors.White,
+        secondaryContainer = colors.secondA10,
+        onSecondaryContainer = colors.successText,
 
-    tertiary = RvColor.Warning,
-    onTertiary = RvColor.Black,
-    tertiaryContainer = RvColor.warningA10,
-    onTertiaryContainer = RvColor.Warning,
+        tertiary = colors.Warning,
+        onTertiary = if (colors.isDark) colors.Black else colors.White,
+        tertiaryContainer = colors.warningA10,
+        onTertiaryContainer = colors.warningText,
 
-    error = RvColor.Errors,
-    onError = RvColor.White,
-    errorContainer = RvColor.errorsA10,
-    onErrorContainer = RvColor.Errors,
+        error = colors.Errors,
+        onError = colors.OnAccent,
+        errorContainer = colors.errorsA10,
+        onErrorContainer = colors.Errors,
 
-    background = RvColor.Black,
-    onBackground = RvColor.White,
-    surface = RvColor.Grey,
-    onSurface = RvColor.White,
-    surfaceVariant = RvColor.LightGray,
-    onSurfaceVariant = RvColor.whiteA50,
-    surfaceTint = RvColor.Main,
+        background = colors.Black,
+        onBackground = colors.White,
+        surface = colors.Grey,
+        onSurface = colors.White,
+        surfaceVariant = colors.LightGray,
+        onSurfaceVariant = colors.description,
+        surfaceTint = colors.Main,
 
-    inverseSurface = RvColor.White,
-    inverseOnSurface = RvColor.Black,
+        inverseSurface = colors.White,
+        inverseOnSurface = colors.Black,
 
-    outline = RvColor.whiteA07,
-    outlineVariant = RvColor.whiteA05,
+        outline = colors.whiteA07,
+        outlineVariant = colors.whiteA05,
 
-    scrim = RvColor.overlay,
+        scrim = colors.overlay,
 
-    surfaceBright = RvColor.LightGray,
-    surfaceDim = RvColor.Black,
-    surfaceContainerLowest = RvColor.Black,
-    surfaceContainerLow = RvColor.DarkGrey,
-    surfaceContainer = RvColor.Grey,
-    surfaceContainerHigh = RvColor.LightGray,
-    surfaceContainerHighest = RvColor.LightGray,
-)
+        surfaceBright = colors.LightGray,
+        surfaceDim = colors.Black,
+        surfaceContainerLowest = colors.Black,
+        surfaceContainerLow = colors.DarkGrey,
+        surfaceContainer = colors.Grey,
+        surfaceContainerHigh = colors.LightGray,
+        surfaceContainerHighest = colors.LightGray,
+    )
+}
+
+private val DarkColors = materialColors(paletteFor(dark = true))
+private val LightColors = materialColors(paletteFor(dark = false))
 
 /**
  * Типографика НЕ переносится с ПК — единственная часть дизайн-системы,
@@ -154,14 +162,15 @@ private const val DESIGN_WIDTH_DP = 360f
  * Системный масштаб шрифта сохраняется поверх — это настройка доступности.
  */
 @Composable
-fun ResultVTheme(content: @Composable () -> Unit) {
+fun ResultVTheme(dark: Boolean, content: @Composable () -> Unit) {
     val base = LocalDensity.current
     val scale = LocalConfiguration.current.smallestScreenWidthDp / DESIGN_WIDTH_DP
     CompositionLocalProvider(
         LocalDensity provides Density(base.density * scale, base.fontScale),
+        LocalRvPalette provides paletteFor(dark),
     ) {
         MaterialTheme(
-            colorScheme = ResultVColors,
+            colorScheme = if (dark) DarkColors else LightColors,
             typography = ResultVTypography,
             shapes = ResultVShapes,
             content = content,

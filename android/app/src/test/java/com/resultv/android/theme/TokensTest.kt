@@ -45,7 +45,8 @@ class TokensTest {
      * упорядочивается, а здесь все четыре оттенка серые и растут ровно.
      */
     @Test fun backgroundLadderHasFourDistinctSteps() {
-        val ladder = listOf(RvColor.Black, RvColor.DarkGrey, RvColor.Grey, RvColor.LightGray)
+        val dark = paletteFor(dark = true)
+        val ladder = listOf(dark.Black, dark.DarkGrey, dark.Grey, dark.LightGray)
         assertEquals("фоновые ступени должны различаться", ladder.distinct(), ladder)
     }
 
@@ -61,7 +62,7 @@ class TokensTest {
         val tints = listOf(
             RvCategory.Blue, RvCategory.Red, RvCategory.Amber,
             RvCategory.Violet, RvCategory.Slate, RvCategory.Cyan, RvCategory.Emerald,
-        ).map { it.glyph }
+        ).map { it.glyphFor(dark = true) }
         assertEquals("цвета плиток должны различаться", tints.distinct(), tints)
     }
 

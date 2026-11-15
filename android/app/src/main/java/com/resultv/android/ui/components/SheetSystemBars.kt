@@ -8,39 +8,21 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
+import com.resultv.android.theme.RvColor
 
-/**
- * Приводит системные панели окна `ModalBottomSheet` к тому же виду, что
- * `MainActivity` ставит активити через
- * `enableEdgeToEdge(SystemBarStyle.dark(TRANSPARENT))`.
- *
- * Лист живёт в собственном окне-диалоге, и стиль панелей активити на него не
- * распространяется. Своя тема у листа — `EdgeToEdgeFloatingDialogTheme`
- * (material3), а её родитель `android:Theme.DeviceDefault.Dialog` следует
- * системной светлой/тёмной теме. На устройстве в светлой теме она поднимает
- * `windowLightNavigationBar`, и под прозрачной панелью система рисует светлый
- * контраст-скрим — белую полосу под всегда тёмным листом. Цвета самих панелей
- * в теме уже `transparent`, поэтому чинится именно appearance.
- *
- * Вызывать первым в содержимом листа.
- */
-// isStatusBarContrastEnforced / isNavigationBarContrastEnforced помечены
-// deprecated вместе со всем до-edge-to-edge API в API 35; замены у них нет,
-// и AndroidX сам дёргает их внутри enableEdgeToEdge(). На API 35+ они уже
-// no-op, но сборка ездит с minSdk 26.
+/** Applies the active palette's system bar contrast to the sheet's own window. */
 @Suppress("DEPRECATION")
 @Composable
-fun DarkSheetSystemBars() {
+fun SheetSystemBars() {
+    val light = !RvColor.isDark
     val view = LocalView.current
     val window = view.dialogWindow() ?: return
     SideEffect {
         WindowCompat.getInsetsController(window, view).apply {
-            isAppearanceLightStatusBars = false
-            isAppearanceLightNavigationBars = false
+            isAppearanceLightStatusBars = light
+            isAppearanceLightNavigationBars = light
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // enableEdgeToEdge(SystemBarStyle.dark) снимает то же самое с окна
-            // активити: скрим не нужен, панели и так лежат на тёмном листе.
             window.isStatusBarContrastEnforced = false
             window.isNavigationBarContrastEnforced = false
         }

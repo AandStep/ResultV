@@ -3,6 +3,7 @@ package com.resultv.android.vpn
 import android.content.Context
 import android.content.SharedPreferences
 import android.provider.Settings
+import com.resultv.android.theme.AppearanceTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -87,6 +88,7 @@ data class SettingsState(
      * builder-default ("ResultV/<ver>/Android/<api>") — matches desktop.
      */
     val subscriptionUserAgent: String = "",
+    val appearanceTheme: AppearanceTheme = AppearanceTheme.Dark,
 )
 
 object SettingsRepository {
@@ -112,6 +114,7 @@ object SettingsRepository {
     private const val K_SUB_INTERVAL = "sub_update_interval_hours"
     private const val K_SUB_HWID = "sub_send_hwid"
     private const val K_SUB_UA = "sub_user_agent"
+    private const val K_APPEARANCE_THEME = "appearance_theme"
 
     private lateinit var prefs: SharedPreferences
 
@@ -132,9 +135,17 @@ object SettingsRepository {
     private val _state = MutableStateFlow(SettingsState())
     val state: StateFlow<SettingsState> = _state.asStateFlow()
 
+    fun readAppearanceTheme(context: Context): AppearanceTheme = appearanceTheme(
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE),
+    )
+
+    private fun appearanceTheme(preferences: SharedPreferences): AppearanceTheme =
+        AppearanceTheme.fromPreference(preferences.getString(K_APPEARANCE_THEME, null))
+
     fun init(context: Context) {
         if (::prefs.isInitialized) return
         val app = context.applicationContext
+        Socks5ExitRepository.init(app)
         hwidSource = runCatching {
             Settings.Secure.getString(app.contentResolver, Settings.Secure.ANDROID_ID)
         }.getOrNull().orEmpty()
@@ -170,7 +181,13 @@ object SettingsRepository {
             subscriptionUpdateIntervalHours = prefs.getInt(K_SUB_INTERVAL, 6).coerceAtLeast(1),
             subscriptionSendHwid = prefs.getBoolean(K_SUB_HWID, true),
             subscriptionUserAgent = prefs.getString(K_SUB_UA, "") ?: "",
+            appearanceTheme = appearanceTheme(prefs),
         )
+    }
+
+    fun setAppearanceTheme(theme: AppearanceTheme) = mutate {
+        prefs.edit().putString(K_APPEARANCE_THEME, theme.preference).apply()
+        it.copy(appearanceTheme = theme)
     }
 
     fun setDnsPreset(preset: String, custom: String = "") = mutate {

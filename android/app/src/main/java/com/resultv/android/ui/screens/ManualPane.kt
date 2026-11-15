@@ -48,7 +48,7 @@ import com.resultv.android.R
 import com.resultv.android.theme.RvColor
 import com.resultv.android.theme.RvSpace
 import com.resultv.android.ui.components.ClearFocusOnImeHide
-import com.resultv.android.ui.components.DarkSheetSystemBars
+import com.resultv.android.ui.components.SheetSystemBars
 import com.resultv.android.vpn.Profile
 import com.resultv.android.vpn.ProfileRepository
 import com.resultv.android.vpn.applyRawProxyEntryEdit
@@ -72,7 +72,7 @@ private fun FieldRow(
         Text(
             stringResource(it),
             style = MaterialTheme.typography.labelMedium,
-            color = RvColor.whiteA50,
+            color = RvColor.description,
             modifier = Modifier.padding(top = RvSpace.nest2),
         )
     }
@@ -135,7 +135,7 @@ private fun ChoiceField(
 ) {
     var expanded by remember { mutableStateOf(false) }
     Column {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = RvColor.whiteA50)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = RvColor.description)
         Spacer(Modifier.height(RvSpace.xs))
         Box {
             AssistChip(
@@ -613,7 +613,7 @@ internal fun ProfileFullEditSheet(
         sheetState = sheetState,
         containerColor = RvColor.Grey,
     ) {
-        DarkSheetSystemBars()
+        SheetSystemBars()
         ClearFocusOnImeHide()
         Column(
             modifier = Modifier

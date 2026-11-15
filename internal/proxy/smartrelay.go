@@ -18,6 +18,7 @@ package proxy
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -55,6 +56,16 @@ const (
 	smartRelayHeaderBudget = 8 * 1024
 )
 
+// The HTTP relay accepts a route marker from the engine's loopback outbound.
+const SmartRelayExitUsername = "socks5-exit"
+const SmartRelayExitPassword = "relay"
+
+const smartRelayDirect = -1
+
+var smartRelayExitAuthorization = "Basic " + base64.StdEncoding.EncodeToString(
+	[]byte(SmartRelayExitUsername+":"+SmartRelayExitPassword),
+)
+
 // SmartRelayOptions — всё, что реле нужно знать о мире.
 type SmartRelayOptions struct {
 	// DataDir — корень данных приложения (filesDir). Файлы лягут в его
@@ -65,7 +76,8 @@ type SmartRelayOptions struct {
 	// TunnelPort — порт loopback-инбаунда движка, через который проходит
 	// туннельная нога. 0 означает, что туннеля нет: гонка тогда вырождается в
 	// прямой путь, и это честнее, чем мерить прямой путь дважды.
-	TunnelPort int
+	TunnelPort     int
+	ExitTunnelPort int
 	// MemoryOnly — не писать на диск ничего, кроме пустого скелета rule-set
 	// (без файла ядро не стартует).
 	MemoryOnly bool
@@ -88,6 +100,10 @@ type SmartRelay struct {
 	// начало бы свою пробу и одна страница съела бы весь бюджет намордника.
 	inflight sync.Map
 	losses   raceLosses
+	learnMu  sync.Mutex
+	// Results measured before a user edit cannot restore removed decisions.
+	learnGeneration uint64
+	persistMu       sync.Mutex
 
 	dirty  chan struct{}
 	closed chan struct{}
@@ -222,6 +238,8 @@ func (r *SmartRelay) renderSet() {
 	if r.opts.MemoryOnly {
 		return
 	}
+	r.persistMu.Lock()
+	defer r.persistMu.Unlock()
 	if err := RenderSmartDirectSet(SmartDirectSetPath(r.opts.DataDir), directNamesOf(r.store)); err != nil {
 		// Молча: файл — кэш. Потеря рендера стоит петли до следующего
 		// изменения, отказ реле стоил бы всего трафика.
@@ -233,6 +251,8 @@ func (r *SmartRelay) saveStore() {
 	if r.opts.MemoryOnly {
 		return
 	}
+	r.persistMu.Lock()
+	defer r.persistMu.Unlock()
 	_ = r.store.Save(SmartVerdictStorePath(r.opts.DataDir))
 }
 
@@ -247,7 +267,7 @@ func (r *SmartRelay) serve(client net.Conn) {
 
 	_ = client.SetReadDeadline(time.Now().Add(smartRelayHeaderTimeout))
 	reader := bufio.NewReader(client)
-	target, err := readConnectRequest(reader)
+	target, useExit, err := readConnectRequest(reader)
 	if err != nil {
 		return
 	}
@@ -266,27 +286,31 @@ func (r *SmartRelay) serve(client net.Conn) {
 	if err != nil {
 		return
 	}
+	tunnelPort := r.opts.TunnelPort
+	if useExit && r.opts.ExitTunnelPort != 0 {
+		tunnelPort = r.opts.ExitTunnelPort
+	}
 	addr, _ := netip.ParseAddr(host)
 
 	rec, known := lookupSmart(r.store, host, addr)
 	switch choiceFrom(rec, known) {
 	case chooseProxy:
-		r.pipeVia(client, reader, target, true)
+		r.pipeVia(client, reader, target, tunnelPort)
 	case chooseDirect:
-		r.pipeVia(client, reader, target, false)
+		r.pipeVia(client, reader, target, smartRelayDirect)
 	default:
-		r.race(client, reader, target, host)
+		r.race(client, reader, target, host, tunnelPort)
 	}
 }
 
 // pipeVia ведёт соединение одной ногой, без гонки: вердикт уже есть.
-func (r *SmartRelay) pipeVia(client net.Conn, buffered *bufio.Reader, target string, viaTunnel bool) {
+func (r *SmartRelay) pipeVia(client net.Conn, buffered *bufio.Reader, target string, tunnelPort int) {
 	var (
 		up  net.Conn
 		err error
 	)
-	if viaTunnel {
-		up, err = r.dialTunnel(context.Background(), target)
+	if tunnelPort != smartRelayDirect {
+		up, err = r.dialTunnel(context.Background(), target, tunnelPort)
 	} else {
 		up, err = r.dialDirect(context.Background(), target)
 	}
@@ -298,7 +322,10 @@ func (r *SmartRelay) pipeVia(client net.Conn, buffered *bufio.Reader, target str
 }
 
 // race разыгрывает незнакомое назначение.
-func (r *SmartRelay) race(client net.Conn, buffered *bufio.Reader, target, host string) {
+func (r *SmartRelay) race(client net.Conn, buffered *bufio.Reader, target, host string, tunnelPort int) {
+	r.learnMu.Lock()
+	generation := r.learnGeneration
+	r.learnMu.Unlock()
 	first := make([]byte, smartFirstReadBudget)
 	_ = client.SetReadDeadline(time.Now().Add(smartRaceHeadStart))
 	n, _ := buffered.Read(first)
@@ -306,13 +333,13 @@ func (r *SmartRelay) race(client net.Conn, buffered *bufio.Reader, target, host 
 	if n == 0 {
 		// Клиент, который молчит, разыграть нельзя: нечего послать и нечем
 		// различить ноги. Пусть идёт так, как ходил до появления фичи.
-		r.pipeVia(client, buffered, target, false)
+		r.pipeVia(client, buffered, target, smartRelayDirect)
 		return
 	}
 
 	res := runSmartRace(context.Background(), first[:n],
 		func(ctx context.Context) (net.Conn, error) { return r.dialDirect(ctx, target) },
-		func(ctx context.Context) (net.Conn, error) { return r.dialTunnel(ctx, target) },
+		func(ctx context.Context) (net.Conn, error) { return r.dialTunnel(ctx, target, tunnelPort) },
 	)
 	if report, ok := raceLinkEvidence(res); report {
 		r.health.record(host, ok)
@@ -323,7 +350,11 @@ func (r *SmartRelay) race(client net.Conn, buffered *bufio.Reader, target, host 
 	defer res.Conn.Close()
 
 	if raceTeaches(res) {
-		r.learn(host, res.ViaProxy, time.Now())
+		r.learnMu.Lock()
+		if generation == r.learnGeneration {
+			r.learn(host, res.ViaProxy, time.Now())
+		}
+		r.learnMu.Unlock()
 	}
 
 	// У переданного молчащего узла первых байт сервера нет — писать нечего.
@@ -337,6 +368,7 @@ func (r *SmartRelay) race(client net.Conn, buffered *bufio.Reader, target, host 
 
 // learn records a direct win and verifies a proxy win with a separate probe.
 // Repeated losses can temporarily select the proxy while the probe is inconclusive.
+// The caller holds learnMu.
 func (r *SmartRelay) learn(host string, viaTunnel bool, now time.Time) {
 	if !r.health.healthy() {
 		return
@@ -378,10 +410,16 @@ func (r *SmartRelay) recheckAsync(host string) {
 	if _, busy := r.inflight.LoadOrStore(host, struct{}{}); busy {
 		return
 	}
+	generation := r.learnGeneration
 	go func() {
 		defer r.inflight.Delete(host)
 		d := r.probe(context.Background(), host, r.probes)
 		if d == verdict.Unknown {
+			return
+		}
+		r.learnMu.Lock()
+		defer r.learnMu.Unlock()
+		if generation != r.learnGeneration {
 			return
 		}
 		r.store.Learn(host, d)
@@ -398,11 +436,11 @@ func (r *SmartRelay) dialDirect(ctx context.Context, target string) (net.Conn, e
 // dialTunnel ходит SOCKS5 в loopback-инбаунд движка — тем же способом, которым
 // сегодня ходит MITM (mobile/libbox_filter.go). Адрес передаётся именем, чтобы
 // инбаунд увидел домен и применил к нему обычные правила.
-func (r *SmartRelay) dialTunnel(ctx context.Context, target string) (net.Conn, error) {
-	if r.opts.TunnelPort == 0 {
+func (r *SmartRelay) dialTunnel(ctx context.Context, target string, port int) (net.Conn, error) {
+	if port == 0 {
 		return nil, errors.New("smart: туннельный инбаунд не поднят")
 	}
-	dialer, err := socksproxy.SOCKS5("tcp", fmt.Sprintf("127.0.0.1:%d", r.opts.TunnelPort), nil, socksproxy.Direct)
+	dialer, err := socksproxy.SOCKS5("tcp", fmt.Sprintf("127.0.0.1:%d", port), nil, socksproxy.Direct)
 	if err != nil {
 		return nil, err
 	}
@@ -420,30 +458,36 @@ func (r *SmartRelay) dialTunnel(ctx context.Context, target string) (net.Conn, e
 // Объём заголовочной фазы ограничен smartRelayHeaderBudget: до этого порта
 // дотянется любое приложение устройства, а неограниченный ReadString растил бы
 // память, пока не истечёт дедлайн.
-func readConnectRequest(reader *bufio.Reader) (string, error) {
+func readConnectRequest(reader *bufio.Reader) (string, bool, error) {
 	line, err := readLineLimited(reader, smartRelayHeaderBudget)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	parts := strings.Fields(strings.TrimSpace(line))
 	if len(parts) < 2 || !strings.EqualFold(parts[0], "CONNECT") {
-		return "", errors.New("smart: ожидался CONNECT, получено " + strings.TrimSpace(line))
+		return "", false, errors.New("smart: ожидался CONNECT, получено " + strings.TrimSpace(line))
 	}
 	budget := smartRelayHeaderBudget - len(line)
+	useExit := false
 	for {
 		h, hErr := readLineLimited(reader, budget)
 		if hErr != nil {
-			return "", hErr
+			return "", false, hErr
 		}
 		budget -= len(h)
+		name, value, ok := strings.Cut(h, ":")
+		if ok && strings.EqualFold(name, "Proxy-Authorization") &&
+			strings.TrimSpace(value) == smartRelayExitAuthorization {
+			useExit = true
+		}
 		if strings.TrimSpace(h) == "" {
 			break
 		}
 		if budget <= 0 {
-			return "", errors.New("smart: заголовки CONNECT длиннее допустимого")
+			return "", false, errors.New("smart: заголовки CONNECT длиннее допустимого")
 		}
 	}
-	return parts[1], nil
+	return parts[1], useExit, nil
 }
 
 // readLineLimited — ReadString('\n') с потолком. Читает по байту из уже

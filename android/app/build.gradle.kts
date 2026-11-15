@@ -1,4 +1,7 @@
+import com.android.build.api.variant.FilterConfiguration.FilterType.ABI
 import java.util.Properties
+import java.util.zip.ZipFile
+import org.gradle.work.DisableCachingByDefault
 
 plugins {
     id("com.android.application")
@@ -19,6 +22,43 @@ val keystoreProps = Properties().apply {
     if (f.exists()) f.inputStream().use { load(it) }
 }
 val hasReleaseKeystore = keystoreProps.containsKey("storeFile")
+val releaseAbis = listOf("arm64-v8a", "armeabi-v7a")
+val debugAbi = providers.gradleProperty("debug.abi").orElse("x86_64").get()
+val libboxAars = listOf("full", "play").associateWith { dist ->
+    rootProject.layout.projectDirectory.file("libs/libbox-$dist.aar")
+}
+
+@DisableCachingByDefault(because = "Checks the current native archive and produces no output")
+abstract class CheckLibboxAbis : DefaultTask() {
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.NAME_ONLY)
+    abstract val archive: ConfigurableFileCollection
+
+    @get:Input
+    abstract val requiredAbis: ListProperty<String>
+
+    @get:Input
+    abstract val distribution: Property<String>
+
+    @TaskAction
+    fun checkAbis() {
+        val aar = archive.singleFile
+        val abis = requiredAbis.get()
+        val missing = if (aar.isFile) {
+            ZipFile(aar).use { zip ->
+                abis.filter { (zip.getEntry("jni/$it/libgojni.so")?.size ?: 0L) <= 0L }
+            }
+        } else {
+            abis
+        }
+        if (missing.isNotEmpty()) {
+            throw GradleException(
+                "${aar.name} is missing libgojni.so for ${missing.joinToString()}. " +
+                    "Run DIST=${distribution.get()} bash scripts/build-android-aar.sh with the required Android ABIs."
+            )
+        }
+    }
+}
 
 android {
     namespace = "com.resultv.android"
@@ -92,15 +132,14 @@ android {
             // Release APKs target real devices only — arm64-v8a covers
             // 99%+ of active Android devices; armeabi-v7a is the fallback
             // for older 32-bit hardware. x86/x86_64 are emulator-only.
-            ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+            ndk { abiFilters += releaseAbis }
         }
         debug {
             isMinifyEnabled = false
             // Debug picks ABI from -Pdebug.abi (defaults to x86_64 for the
             // emulator). Pass -Pdebug.abi=arm64-v8a when installing on a
             // real phone over USB. Single-ABI keeps the APK ~70 MB.
-            val abi = (project.findProperty("debug.abi") as String?) ?: "x86_64"
-            ndk { abiFilters += abi }
+            ndk { abiFilters += debugAbi }
         }
     }
 
@@ -128,7 +167,7 @@ android {
         abi {
             isEnable = !project.hasProperty("debug.abi") && !buildingBundle
             reset()
-            include("arm64-v8a", "armeabi-v7a")
+            include(*releaseAbis.toTypedArray())
             isUniversalApk = true  // fallback for sideloading
         }
     }
@@ -169,12 +208,31 @@ android {
     }
 }
 
+androidComponents.onVariants { variant ->
+    val dist = variant.productFlavors.single { it.first == "dist" }.second
+    val configuredAbis = if (variant.buildType == "release") releaseAbis else listOf(debugAbi)
+    val packagedAbis = variant.outputs.flatMap { output ->
+        // A universal APK or bundle uses the NDK filters even when the same
+        // variant also defines ABI-specific APK outputs.
+        output.filters.filter { it.filterType == ABI }
+            .map { it.identifier }
+            .ifEmpty { configuredAbis }
+    }.distinct()
+    val checkLibbox = tasks.register<CheckLibboxAbis>(variant.computeTaskName("check", "LibboxAbis")) {
+        archive.from(libboxAars.getValue(dist))
+        requiredAbis.set(packagedAbis)
+        distribution.set(dist)
+    }
+    val nativeMergeTask = variant.computeTaskName("merge", "NativeLibs")
+    tasks.matching { it.name == nativeMergeTask }.configureEach { dependsOn(checkLibbox) }
+}
+
 dependencies {
     // По AAR на дистрибутив: play-вариант собран с тегом no_mitm и не содержит
     // ни генерации корневого CA, ни перехвата TLS. Собираются скриптом
     // scripts/build-android-aar.sh с DIST=full / DIST=play.
-    "fullImplementation"(files("$rootDir/libs/libbox-full.aar"))
-    "playImplementation"(files("$rootDir/libs/libbox-play.aar"))
+    "fullImplementation"(files(libboxAars.getValue("full")))
+    "playImplementation"(files(libboxAars.getValue("play")))
 
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")

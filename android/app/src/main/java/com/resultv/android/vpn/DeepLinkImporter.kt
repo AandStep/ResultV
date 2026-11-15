@@ -124,6 +124,10 @@ object DeepLinkImporter {
      * Shared dispatch for the deep-link and QR paths.
      */
     private suspend fun dispatch(ctx: Context, plain: String, sourceTag: String) {
+        if (!NativeCore.available) {
+            toast(ctx, R.string.native_core_unavailable)
+            return
+        }
         val explicitSubscription = sourceTag == "rvsub" &&
             !plain.contains('\n') && !plain.contains('\r') &&
             (plain.startsWith("http://", ignoreCase = true) || plain.startsWith("https://", ignoreCase = true))

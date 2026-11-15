@@ -67,7 +67,7 @@ fun PowerButton(
         targetValue = when (look) {
             HomeLook.Idle -> RvColor.whiteA50
             HomeLook.Processing -> RvColor.Warning
-            HomeLook.Success -> RvColor.Black
+            HomeLook.Success -> RvColor.OnAccentGlyph
             HomeLook.Error -> RvColor.Errors
         },
         animationSpec = motion, label = "powerGlyph",

@@ -1,6 +1,7 @@
 package com.resultv.android.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -29,6 +30,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -210,8 +212,8 @@ fun TagField(
                     }
                 },
             singleLine = true,
-            textStyle = TagTextStyle.copy(color = Color.White),
-            cursorBrush = SolidColor(Color.White.copy(alpha = 0.5f)),
+            textStyle = TagTextStyle.copy(color = RvColor.White),
+            cursorBrush = SolidColor(RvColor.description),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = {
                 commitDraft()
@@ -225,7 +227,7 @@ fun TagField(
                         Text(
                             placeholder,
                             style = TagTextStyle,
-                            color = Color.White.copy(alpha = 0.2f),
+                            color = RvColor.tagPlaceholder,
                         )
                     }
                     inner()
@@ -235,12 +237,31 @@ fun TagField(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TagChip(label: String, onRemove: () -> Unit) {
+internal fun RemovableTagList(values: List<String>, onRemove: (String) -> Unit, enabled: Boolean = true) {
+    if (values.isEmpty()) return
+    FlowRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(RvColor.DarkGrey, FieldShape)
+            .padding(FieldPadding),
+        horizontalArrangement = Arrangement.spacedBy(FieldGap),
+        verticalArrangement = Arrangement.spacedBy(FieldGap),
+    ) {
+        values.forEach { value ->
+            TagChip(label = value, onRemove = { onRemove(value) }, enabled = enabled)
+        }
+    }
+}
+
+@Composable
+private fun TagChip(label: String, onRemove: () -> Unit, enabled: Boolean = true) {
     Row(
         modifier = Modifier
             .height(26.dp)
-            .background(RvColor.LightGray, ChipShape)
+            .background(RvColor.tagChipFill, ChipShape)
+            .border(width = 1.dp, color = RvColor.chipOutline, shape = ChipShape)
             // Прозрачное поле крестика (22) шире иконки (12) на 5 с каждой
             // стороны: справа 10 − 5, и между подписью и глифом те же 6 − 5.
             .padding(start = 10.dp, end = 5.dp),
@@ -250,12 +271,13 @@ private fun TagChip(label: String, onRemove: () -> Unit) {
         Text(
             label,
             style = ChipTextStyle,
-            color = Color.White.copy(alpha = 0.5f),
+            color = RvColor.description,
         )
         Box(
             modifier = Modifier
                 .size(RemoveTouchSize)
                 .clickable(
+                    enabled = enabled,
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                     onClick = onRemove,
@@ -265,8 +287,8 @@ private fun TagChip(label: String, onRemove: () -> Unit) {
             Icon(
                 Icons.Outlined.Close,
                 contentDescription = stringResource(R.string.action_remove),
-                tint = Color.White.copy(alpha = 0.5f),
-                modifier = Modifier.size(RemoveIconSize),
+                tint = RvColor.description,
+                modifier = Modifier.size(RemoveIconSize).alpha(if (enabled) 1f else 0.5f),
             )
         }
     }

@@ -27,6 +27,10 @@ import libbox.StringIterator
 import libbox.SystemProxyStatus
 import libbox.TunOptions
 import libbox.WIFIState
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import java.io.File
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -45,6 +49,7 @@ const val BROWSER_ADBLOCK_PORT = 8130
 object BoxModule {
     private var setupDone = false
     private var commandServer: CommandServer? = null
+    private val exitChecks = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     val isRunning: Boolean
         @Synchronized get() = commandServer != null
@@ -135,6 +140,7 @@ object BoxModule {
         }
         Log.i(TAG, "startOrReloadService=${System.currentTimeMillis() - tStart}ms")
         commandServer = server
+        checkConfiguredExit(configJson)
         Log.i(TAG, "BoxModule started")
     }
 
@@ -190,14 +196,28 @@ object BoxModule {
         Log.i(TAG, "reload config: ${configJson.length} chars")
 
         server.startOrReloadService(configJson, OverrideOptions())
+        checkConfiguredExit(configJson)
         Log.i(TAG, "BoxModule reloaded")
         AppLog.info(R.string.log_engine_reloaded, source = EngineLog.ENGINE)
+    }
+
+    private fun checkConfiguredExit(configJson: String) {
+        Socks5ExitRepository.resetCheck()
+        if (configJson.contains("\"socks5-exit\"")) {
+            exitChecks.launch { Socks5ExitRepository.checkExit() }
+        }
+    }
+
+    fun checkSocks5Exit(): String {
+        val server = synchronized(this) { commandServer } ?: error("VPN is disconnected")
+        return mobile.Mobile.checkSocks5Exit(server)
     }
 
     @Synchronized
     fun stop() {
         val server = commandServer ?: return
         commandServer = null
+        Socks5ExitRepository.resetCheck()
         try {
             server.closeService()
         } catch (t: Throwable) {

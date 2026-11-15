@@ -840,11 +840,12 @@ func normalizeSubscriptionURL(subURL string) string {
 // gomobile cannot bind structs across the JNI boundary, so callers
 // stringify their options as JSON and pass via the V2 entry point.
 type BuildOptions struct {
-	DNSServers      string `json:"dnsServers"`
-	ExcludedDomains string `json:"excludedDomains"`
-	IPv6            bool   `json:"ipv6"`
-	BypassLAN       bool   `json:"bypassLAN"`
-	LogLevel        string `json:"logLevel"`
+	Socks5Exit      *config.Socks5ExitConfig `json:"socks5Exit,omitempty"`
+	DNSServers      string                   `json:"dnsServers"`
+	ExcludedDomains string                   `json:"excludedDomains"`
+	IPv6            bool                     `json:"ipv6"`
+	BypassLAN       bool                     `json:"bypassLAN"`
+	LogLevel        string                   `json:"logLevel"`
 	// SmartMode enables Antizapret-style routing: only listed domains
 	// go through the proxy; everything else (foreign sites, LAN, system
 	// traffic) stays direct. The list is fetched by Mobile.FetchSmartList
@@ -898,10 +899,11 @@ type BuildOptions struct {
 	// both modes. The "out of VPN" app list never arrives here — it's applied
 	// by VpnService.Builder.addDisallowedApplication on the Kotlin side, so
 	// those apps never enter the TUN at all.
-	IntoVpnDomains string `json:"intoVpnDomains,omitempty"`
-	BlockedDomains string `json:"blockedDomains,omitempty"`
-	IntoVpnApps    string `json:"intoVpnApps,omitempty"`
-	BlockedApps    string `json:"blockedApps,omitempty"`
+	BidirectionalRules bool   `json:"bidirectionalRules,omitempty"`
+	IntoVpnDomains     string `json:"intoVpnDomains,omitempty"`
+	BlockedDomains     string `json:"blockedDomains,omitempty"`
+	IntoVpnApps        string `json:"intoVpnApps,omitempty"`
+	BlockedApps        string `json:"blockedApps,omitempty"`
 
 	// RoutingProfileID names the active routing profile. The engine looks up
 	// its compiled rule-sets on disk by this id; the rules themselves never
@@ -1100,8 +1102,12 @@ func buildUserRules(opts BuildOptions) []proxy.SBRouteRule {
 	if r, ok := buildBrowserAdBlockRedirect(opts); ok {
 		rules = append(rules, r)
 	}
-	// "Into VPN" is Smart-only: in Global final=proxy already tunnels it.
-	if opts.SmartMode {
+	if opts.BidirectionalRules && !opts.KillSwitchPanic {
+		rules = append(rules, personalSiteRules(opts)...)
+		if apps := splitRuleCSV(opts.IntoVpnApps); len(apps) > 0 {
+			rules = append(rules, proxy.SBRouteRule{Action: "route", Outbound: "proxy", PackageName: apps})
+		}
+	} else if opts.SmartMode {
 		if apps := splitRuleCSV(opts.IntoVpnApps); len(apps) > 0 {
 			rules = append(rules, proxy.SBRouteRule{
 				Action: "route", Outbound: "proxy", PackageName: apps,
@@ -1786,7 +1792,7 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 		// the user's domain list means the opposite (into VPN) and is emitted
 		// by buildUserRules above. The gate lives here rather than in Kotlin so
 		// it stays a single source of truth covered by a Go test.
-		if opts.ExcludedDomains != "" && !opts.SmartMode {
+		if opts.ExcludedDomains != "" && !opts.SmartMode && !opts.BidirectionalRules {
 			seen := make(map[string]struct{})
 			var normalized []string
 			for _, part := range strings.Split(opts.ExcludedDomains, ",") {
@@ -1898,6 +1904,11 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 	// "debug" while iterating on a new protocol; default is "error" so
 	// release builds don't spam logcat.
 
+	if !opts.KillSwitchPanic {
+		if err := applySocks5Exit(&sb, opts.Socks5Exit); err != nil {
+			return "", err
+		}
+	}
 	applyKillSwitch(&sb, opts.KillSwitchArmed, opts.KillSwitchPanic)
 
 	out, err := json.MarshalIndent(sb, "", "  ")

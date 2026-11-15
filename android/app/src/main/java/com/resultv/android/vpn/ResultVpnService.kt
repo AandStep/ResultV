@@ -557,11 +557,12 @@ class ResultVpnService : VpnService() {
                 SettingsRepository.state,
                 RoutingProfileRepository.state,
                 RoutingProfileRepository.compileGeneration,
+                Socks5ExitRepository.profile,
             ) { values ->
                 // combine на пять и более потоков отдаёт Array<*> без типов,
                 // отсюда приведения.
                 val rules = values[0] as RoutingRulesState
-                val app = values[1] as AppRulesState
+                val app = values[1] as AppModeRules
                 val profiles = values[2] as ProfilesState
                 val settings = values[3] as SettingsState
                 val routing = values[4] as RoutingProfilesState
@@ -574,7 +575,7 @@ class ResultVpnService : VpnService() {
                 // editing an INACTIVE profile must not tear down a live
                 // connection. See routingReloadKey.
                 profiles.active?.connectionRevision() to listOf(
-                    rules, app, settings.adblock,
+                    rules.mode, rules.domains, app.forMode(rules.mode), settings.adblock, values[6],
                     routingReloadKey(rules.mode, routing.activeId, generation),
                 )
             }

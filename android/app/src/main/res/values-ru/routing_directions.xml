@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="routing_direction_vpn">Через VPN</string>
+    <string name="routing_direction_direct">Напрямую</string>
+    <string name="routing_sites_vpn_desc">Трафик к этим сайтам пойдёт через VPN.</string>
+</resources>

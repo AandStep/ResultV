@@ -98,12 +98,14 @@ import kotlinx.coroutines.withContext
  */
 
 private val CardShape = RoundedCornerShape(20.dp)
-private val Muted = RvColor.whiteA50
+private val Muted: Color
+    @Composable get() = RvColor.description
 
 /** Цвет счётчика — цвет действия, как в макете (Figma 6887:5064). */
+@Composable
 private fun countColor(action: String): Color = when (action) {
     "direct" -> RvColor.Main
-    "proxy" -> RvColor.Second
+    "proxy" -> RvColor.successText
     else -> RvColor.Errors
 }
 
@@ -216,7 +218,7 @@ fun RoutingProfilesSheetContent(
                         stringResource(R.string.routing_profiles_import),
                         style = RvButtonLabel,
                         fontWeight = FontWeight.SemiBold,
-                        color = RvColor.whiteA50,
+                        color = RvColor.description,
                     )
                 }
             }

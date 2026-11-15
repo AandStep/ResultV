@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="socks5_title">SOCKS5 после VPN</string>
+    <string name="socks5_description">Выход через SOCKS5 для трафика VPN</string>
+    <string name="socks5_enable">Включить выход через SOCKS5</string>
+    <string name="socks5_server">Сервер или IP-адрес</string>
+    <string name="socks5_port">Порт</string>
+    <string name="socks5_login">Логин</string>
+    <string name="socks5_password">Пароль</string>
+    <string name="socks5_scope">Если оба списка пусты, через SOCKS5 пойдёт весь VPN-трафик.</string>
+    <string name="socks5_sites">Сайты или диапазоны IP</string>
+    <string name="socks5_save">Сохранить</string>
+    <string name="socks5_save_error">Проверьте адрес, порт и данные для входа.</string>
+    <string name="socks5_check">Проверить выход</string>
+    <string name="socks5_checking">Проверяем выход через SOCKS5…</string>
+    <string name="socks5_check_error">Выход SOCKS5 недоступен через VPN.</string>
+    <string name="socks5_check_result">IP %1$s · %2$s · UDP %3$s</string>
+    <string name="socks5_udp_exit">через SOCKS5</string>
+    <string name="socks5_udp_vpn">через VPN</string>
+    <string name="socks5_connection">Подключение</string>
+    <string name="socks5_connection_desc">Укажите адрес прокси и данные для входа, если они нужны.</string>
+    <string name="socks5_apps_title">Приложения</string>
+    <string name="socks5_check_hint">Подключите VPN, чтобы проверить IP и страну выхода, а также поддержку UDP.</string>
+    <string name="native_core_unavailable">В этой сборке нет ядра VPN для вашего устройства.</string>
+    <string name="socks5_status">Статус выхода</string>
+</resources>

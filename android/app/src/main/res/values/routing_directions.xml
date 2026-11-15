@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="routing_direction_vpn">Through VPN</string>
+    <string name="routing_direction_direct">Direct</string>
+    <string name="routing_sites_vpn_desc">Send traffic to these sites through the VPN.</string>
+</resources>

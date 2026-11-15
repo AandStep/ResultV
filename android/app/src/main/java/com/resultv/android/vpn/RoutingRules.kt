@@ -38,22 +38,57 @@ fun decodeRoutingMode(json: String): RoutingMode {
     return RoutingMode.entries.firstOrNull { it.name == name } ?: RoutingMode.Smart
 }
 
-/**
- * Top-level routing state. The domain lists live in [DomainRulesState]; `mode`
- * selects which of them is active (Global → outOfVpn, Smart → intoVpn), while
- * `blocked` applies in both.
- */
 data class RoutingRulesState(
     val mode: RoutingMode = RoutingMode.Smart,
-    val domains: DomainRulesState = DomainRulesState(
-        // Fresh installs only, and the same list the desktop ships in
-        // `DefaultConfig().RoutingRules.Whitelist`. `*.ru` / `*.рф` used to be
-        // here from the Global-only days; in Smart the active tab is "into the
-        // tunnel", so shipping domain exclusions by default would hand a new
-        // user rules that cannot fire.
-        outOfVpn = listOf("localhost", "127.0.0.1"),
-    ),
-)
+    val smartDomains: DomainRulesState = DomainRulesState(),
+    val globalDomains: DomainRulesState = DomainRulesState(outOfVpn = listOf("localhost", "127.0.0.1")),
+) {
+    val domains: DomainRulesState get() = if (mode == RoutingMode.Smart) smartDomains else globalDomains
+
+    fun editDomains(edit: (DomainRulesState) -> DomainRulesState): RoutingRulesState =
+        if (mode == RoutingMode.Smart) copy(smartDomains = edit(smartDomains))
+        else copy(globalDomains = edit(globalDomains))
+}
+
+internal fun decodeModeRoutingRules(text: String): RoutingRulesState {
+    val root = JSONObject(text)
+    val mode = decodeRoutingMode(text)
+    if (root.has("smart") || root.has("global")) {
+        return RoutingRulesState(
+            mode,
+            decodeDomainRules(root.getJSONObject("smart").toString()),
+            decodeDomainRules(root.getJSONObject("global").toString()),
+        )
+    }
+
+    val legacy = decodeDomainRules(text)
+    val normalized = legacy.outOfVpn.map { it.trim().lowercase().trim('*', '.') }.filter { it.isNotEmpty() }.distinct()
+    val (direct, vpn) = legacy.outOfVpn.partition { entry ->
+        val name = entry.trim().lowercase().trim('*', '.')
+        // Legacy nested exclusions alternated between direct and VPN.
+        normalized.count { name == it || name.endsWith(".$it") } % 2 == 1
+    }
+    return RoutingRulesState(
+        mode,
+        legacy.copy(outOfVpn = emptyList()),
+        legacy.copy(outOfVpn = direct, intoVpn = vpn),
+    )
+}
+
+internal fun encodeModeRoutingRules(state: RoutingRulesState): String = JSONObject()
+    .put("mode", state.mode.name)
+    .put("smart", JSONObject(encodeDomainRules(state.smartDomains)))
+    .put("global", JSONObject(encodeDomainRules(state.globalDomains)))
+    .toString()
+
+private fun DomainRulesState.selectDomain(domain: String, action: RuleAction): DomainRulesState {
+    val normalized = domain.trim().lowercase()
+    return when (action) {
+        RuleAction.IntoVpn -> withoutAction(normalized, RuleAction.OutOfVpn)
+        RuleAction.OutOfVpn -> withoutAction(normalized, RuleAction.IntoVpn)
+        RuleAction.Block -> this
+    }.withAction(normalized, action)
+}
 
 /**
  * True when [pattern] is a strict superset of [candidate] — i.e. anything
@@ -102,26 +137,19 @@ object RoutingRulesRepository {
 
     @Synchronized
     fun addDomain(domain: String, action: RuleAction) =
-        mutate { it.copy(domains = it.domains.withAction(domain, action)) }
+        mutate { it.editDomains { rules -> rules.selectDomain(domain, action) } }
 
     @Synchronized
     fun removeDomain(domain: String, action: RuleAction) =
-        mutate { it.copy(domains = it.domains.withoutAction(domain, action)) }
+        mutate { it.editDomains { rules -> rules.withoutAction(domain, action) } }
 
     /** Очищает один список целиком — корзина в шапке секции. */
     @Synchronized
-    fun clearDomains(action: RuleAction) = mutate { st ->
-        st.copy(domains = st.domains.listFor(action).fold(st.domains) { d, v -> d.withoutAction(v, action) })
+    fun clearDomains(action: RuleAction) = mutate { state ->
+        state.editDomains { rules ->
+            rules.listFor(action).fold(rules) { list, domain -> list.withoutAction(domain, action) }
+        }
     }
-
-    /** Domains sent to the engine as `domain_suffix` → direct (Global only). */
-    fun engineOutOfVpn(): List<String> = _state.value.domains.outOfVpn
-
-    /** Domains sent as `domain_suffix` → proxy (Smart only). */
-    fun engineIntoVpn(): List<String> = _state.value.domains.intoVpn
-
-    /** Domains sent as `domain_suffix` → reject (both modes). */
-    fun engineBlocked(): List<String> = _state.value.domains.blocked
 
     private fun mutate(block: (RoutingRulesState) -> RoutingRulesState) {
         val next = block(_state.value)
@@ -133,8 +161,7 @@ object RoutingRulesRepository {
     private fun load(f: File): RoutingRulesState {
         if (!f.exists()) return RoutingRulesState()
         return try {
-            val text = f.readText()
-            RoutingRulesState(mode = decodeRoutingMode(text), domains = decodeDomainRules(text))
+            decodeModeRoutingRules(f.readText())
         } catch (t: Throwable) {
             Log.w(TAG, "failed to read $f, starting empty", t)
             AppLog.warning(R.string.log_read_failed, f.name,
@@ -144,14 +171,13 @@ object RoutingRulesRepository {
             // mode does fall back to the default (Smart), same as the desktop
             // dropping to DefaultConfig() when the config fails to decrypt —
             // an unreadable file tells us nothing about what was chosen.
-            RoutingRulesState(mode = RoutingMode.Smart, domains = DomainRulesState())
+            RoutingRulesState(globalDomains = DomainRulesState())
         }
     }
 
     private fun save(f: File, s: RoutingRulesState) {
         try {
-            val root = JSONObject(encodeDomainRules(s.domains)).put("mode", s.mode.name)
-            f.writeText(root.toString())
+            replaceRepositoryJson(f, encodeModeRoutingRules(s), ::decodeModeRoutingRules)
         } catch (t: Throwable) {
             Log.e(TAG, "failed to persist routing rules", t)
             AppLog.error(R.string.log_persist_failed, f.name,

@@ -55,6 +55,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import android.widget.Toast
@@ -361,7 +362,7 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
         AlertDialog(
             onDismissRequest = { pendingDeleteProfile = null },
             title = { Text(stringResource(R.string.proxies_delete_title)) },
-            text = { Text(stringResource(R.string.proxies_delete_message, target.name), color = RvColor.whiteA50) },
+            text = { Text(stringResource(R.string.proxies_delete_message, target.name), color = RvColor.description) },
             confirmButton = {
                 TextButton(onClick = {
                     ProfileRepository.remove(target.id)
@@ -443,7 +444,7 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
             text = {
                 Text(
                     stringResource(R.string.sub_delete_message, target.displayName, children),
-                    color = RvColor.whiteA50,
+                    color = RvColor.description,
                 )
             },
             confirmButton = {
@@ -473,7 +474,7 @@ fun ProxiesScreen(onAddPressed: () -> Unit) {
             text = {
                 Text(
                     stringResource(R.string.proxies_standalone_delete_message, own.size),
-                    color = RvColor.whiteA50,
+                    color = RvColor.description,
                 )
             },
             confirmButton = {
@@ -511,8 +512,10 @@ private object GroupLook {
     val verifiedGap = 4.dp
     val verifiedIcon = 16.dp
     val countIcon = 12.dp
-    val iconTint = RvColor.whiteA50
-    val metaColor = RvColor.whiteA20
+    val iconTint: Color
+        @Composable get() = RvColor.iconDefault
+    val metaColor: Color
+        @Composable get() = if (RvColor.isDark) RvColor.whiteA20 else RvColor.description
     val titleStyle = TextStyle(
         fontFamily = SegoeUi,
         fontWeight = FontWeight.Bold,
@@ -558,7 +561,7 @@ private fun GroupHeaderBlock(
             // у раскрытой шапка несёт её верх, а строки — бока и низ.
             .then(
                 if (collapsed) Modifier.rvBorder(shape)
-                else Modifier.groupOutline(GroupEdge.Top)
+                else Modifier.groupOutline(GroupEdge.Top, RvBorderBrush)
             )
             .clickable(
                 onClickLabel = stringResource(
@@ -805,8 +808,8 @@ private fun GroupServerRowBlock(
         modifier = Modifier
             .fillMaxWidth()
             .groupBottom(isLast)
-            .background(RvColor.Black)
-            .groupOutline(if (isLast) GroupEdge.Bottom else GroupEdge.Sides),
+            .background(RvColor.ServerList)
+            .groupOutline(if (isLast) GroupEdge.Bottom else GroupEdge.Sides, RvBorderBrush),
     ) {
         ServerRow(
             name = serverDisplayName(profile.name, country),
@@ -821,7 +824,7 @@ private fun GroupServerRowBlock(
             surface = Color.Transparent,
             // Dark Grey, а не Grey: Grey — заливка шапки группы, и строка
             // сливалась бы с ней (на ПК так же, Figma 6744:4162).
-            activeSurface = RvColor.DarkGrey,
+            activeSurface = RvColor.ActiveServer,
             latencyMs = sample?.takeIf { it.reachable }?.latencyMs,
             offlineReason = sample?.takeUnless { it.reachable }?.reason,
             isLoading = isLoading,
@@ -836,8 +839,8 @@ private fun SubscriptionSectionRowBlock(name: String, isLast: Boolean) {
         modifier = Modifier
             .fillMaxWidth()
             .groupBottom(isLast)
-            .background(RvColor.Black)
-            .groupOutline(if (isLast) GroupEdge.Bottom else GroupEdge.Sides),
+            .background(RvColor.ServerList)
+            .groupOutline(if (isLast) GroupEdge.Bottom else GroupEdge.Sides, RvBorderBrush),
     ) {
         SectionLabel(name)
     }
@@ -864,7 +867,7 @@ private enum class GroupEdge { Top, Sides, Bottom }
  * одной рамкой её не обвести: шапка рисует верх со скруглёнными углами,
  * строки — боковые линии, последняя строка — низ.
  */
-private fun Modifier.groupOutline(edge: GroupEdge): Modifier = drawWithContent {
+private fun Modifier.groupOutline(edge: GroupEdge, brush: Brush): Modifier = drawWithContent {
     drawContent()
     val stroke = 1.dp.toPx()
     val half = stroke / 2
@@ -897,7 +900,7 @@ private fun Modifier.groupOutline(edge: GroupEdge): Modifier = drawWithContent {
     }
     // Градиент горизонтальный, а шапка и строки во всю ширину — куски
     // обводки у соседей сходятся без шва.
-    drawPath(path, RvBorderBrush, style = Stroke(width = stroke))
+    drawPath(path, brush, style = Stroke(width = stroke))
 }
 
 internal fun reorderForDisplay(
@@ -978,7 +981,7 @@ private fun RefreshChip(refreshing: Boolean, onClick: () -> Unit, contentDescrip
             CircularProgressIndicator(
                 modifier = Modifier.size(GroupLook.chipIcon),
                 strokeWidth = 2.dp,
-                color = RvColor.Second,
+                color = RvColor.successText,
             )
         } else {
             ChipIcon(Icons.Filled.Sync)
@@ -1004,7 +1007,7 @@ internal fun SectionLabel(text: String) {
         Text(
             text = text,
             style = MaterialTheme.typography.labelMedium,
-            color = RvColor.whiteA50,
+            color = RvColor.description,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
@@ -1026,7 +1029,7 @@ private fun EmptyState(onAddPressed: () -> Unit) {
             Text(
                 stringResource(R.string.proxies_empty_subtitle),
                 style = MaterialTheme.typography.bodyMedium,
-                color = RvColor.whiteA50,
+                color = RvColor.description,
             )
             Spacer(Modifier.height(RvSpace.xs))
             FilledTonalButton(onClick = onAddPressed) {

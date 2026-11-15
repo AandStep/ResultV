@@ -217,6 +217,13 @@ func applyRoutingProfile(sb *proxy.SingBoxConfig, dataDir string, opts BuildOpti
 	if len(ready) == 0 {
 		return
 	}
+	if opts.BidirectionalRules && ready["block"] && !opts.KillSwitchPanic {
+		guards := personalProfileBlocks(opts, proxy.RoutingProfileRuleSetTag(id, "block"))
+		at := userRuleInsertIndex(sb.Route.Rules)
+		rules := append([]proxy.SBRouteRule(nil), sb.Route.Rules[:at]...)
+		rules = append(rules, guards...)
+		sb.Route.Rules = append(rules, sb.Route.Rules[at:]...)
+	}
 	order := proxy.DefaultRoutingOrder
 	if strings.TrimSpace(opts.RoutingOrder) != "" {
 		order = proxy.NormalizeRoutingOrder(opts.RoutingOrder)

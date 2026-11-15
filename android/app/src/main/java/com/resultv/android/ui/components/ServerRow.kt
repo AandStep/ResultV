@@ -4,6 +4,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -43,9 +44,32 @@ import androidx.compose.ui.unit.em
 import com.resultv.android.R
 import com.resultv.android.theme.RvColor
 import com.resultv.android.theme.RvMotion
+import com.resultv.android.theme.RvPalette
 import com.resultv.android.theme.RvRadius
 import com.resultv.android.theme.RvSpace
 import com.resultv.android.theme.rvBorder
+
+internal data class ProtocolBadgeColors(val fill: Color, val text: Color)
+
+internal fun protocolBadgeColors(colors: RvPalette, first: Boolean, accent: HomeLook): ProtocolBadgeColors {
+    val fill = when (accent) {
+        HomeLook.Idle -> when {
+            !colors.isDark -> if (first) colors.Grey else colors.LightGray
+            first -> colors.LightGray
+            else -> colors.lightGrayA50
+        }
+        HomeLook.Processing -> if (first) colors.warningA10 else colors.warningA20
+        HomeLook.Success -> if (first) colors.mainA10 else colors.secondA10
+        HomeLook.Error -> if (first) colors.errorsA10 else colors.errorsA20
+    }
+    val text = when (accent) {
+        HomeLook.Idle -> colors.description
+        HomeLook.Processing -> colors.badgeWarningText
+        HomeLook.Success -> if (first && colors.isDark) colors.Main else colors.badgeSuccessText
+        HomeLook.Error -> colors.badgeErrorText
+    }
+    return ProtocolBadgeColors(fill, text)
+}
 
 /**
  * Бейдж протокола — перенос `Badge` (Figma 6503:3035) из кита ПК.
@@ -65,34 +89,20 @@ fun ProtocolBadge(text: String, first: Boolean, accent: HomeLook) {
     } else 0
     val spec = tween<Color>(RvMotion.durationMillis, delay, RvMotion.easing)
 
-    // Первый бейдж и остальные различаются В КАЖДОМ состоянии, а не только в
-    // покое — так задан компонент кита на ПК (`Badge.css`, варианты First и
-    // Second). Второй вариант всюду глуше первого: у покоя заливка вполовину
-    // прозрачнее, у жёлтого и красного — вдвое плотнее при том же тексте, а у
-    // зелёного меняется сам тон, с Main-color на Second-color.
-    val bg by animateColorAsState(
-        targetValue = when (accent) {
-            HomeLook.Idle -> if (first) RvColor.LightGray else RvColor.lightGrayA50
-            HomeLook.Processing -> if (first) RvColor.warningA10 else RvColor.warningA20
-            HomeLook.Success -> if (first) RvColor.mainA10 else RvColor.secondA10
-            HomeLook.Error -> if (first) RvColor.errorsA10 else RvColor.errorsA20
-        },
-        animationSpec = spec, label = "badgeBg",
-    )
-    val fg by animateColorAsState(
-        targetValue = when (accent) {
-            HomeLook.Idle -> RvColor.whiteA50
-            HomeLook.Processing -> RvColor.Warning
-            HomeLook.Success -> if (first) RvColor.Main else RvColor.Second
-            HomeLook.Error -> RvColor.Errors
-        },
-        animationSpec = spec, label = "badgeFg",
-    )
+    val palette = RvColor
+    val badge = protocolBadgeColors(palette, first, accent)
+    val bg by animateColorAsState(targetValue = badge.fill, animationSpec = spec, label = "badgeBg")
+    val fg by animateColorAsState(targetValue = badge.text, animationSpec = spec, label = "badgeFg")
+    val shape = RoundedCornerShape(percent = 50)
+    // На белой карточке и светлой группе нейтральные заливки совпадают с фоном.
+    val outline = if (accent == HomeLook.Idle) palette.chipOutline else Color.Transparent
+
     Box(
         modifier = Modifier
             .height(20.dp)
-            .clip(RoundedCornerShape(percent = 50))
+            .clip(shape)
             .background(bg)
+            .border(width = 1.dp, color = outline, shape = shape)
             .padding(horizontal = 6.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -134,7 +144,7 @@ fun ProfileTile(
         HomeLook.Success -> RvColor.mainA10
         HomeLook.Processing -> RvColor.warningA10
         HomeLook.Error -> RvColor.errorsA10
-        HomeLook.Idle -> RvColor.LightGray
+        HomeLook.Idle -> if (RvColor.isDark) RvColor.LightGray else RvColor.Grey
     }
     val connected = accent == HomeLook.Success
     val waveEnabled = rememberWaveEnabled()
@@ -311,14 +321,14 @@ fun ServerRow(
         when {
             isLoading -> androidx.compose.material3.CircularProgressIndicator(
                 modifier = Modifier.size(14.dp),
-                color = RvColor.whiteA50,
+                color = RvColor.description,
                 strokeWidth = 2.dp,
             )
             latencyMs != null -> Text(
                 text = if (latencyMs <= 0) stringResource(R.string.ping_online)
                 else stringResource(R.string.ping_ms, latencyMs),
                 style = PingStyle,
-                color = RvColor.whiteA50,
+                color = RvColor.description,
             )
             offlineReason != null -> Text(
                 text = offlineLabel(offlineReason),
@@ -327,7 +337,7 @@ fun ServerRow(
             )
             else -> androidx.compose.material3.CircularProgressIndicator(
                 modifier = Modifier.size(14.dp),
-                color = RvColor.whiteA50,
+                color = RvColor.description,
                 strokeWidth = 2.dp,
             )
         }

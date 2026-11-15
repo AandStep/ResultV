@@ -44,13 +44,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import mobile.Mobile
+import com.resultv.android.theme.AppearanceTheme
 import com.resultv.android.theme.CategoryTint
 import com.resultv.android.theme.RvCategory
 import com.resultv.android.theme.RvColor
 import com.resultv.android.theme.RvRadius
 import com.resultv.android.theme.RvSpace
 import com.resultv.android.theme.rvBorder
-import com.resultv.android.ui.components.DarkSheetSystemBars
 import com.resultv.android.ui.components.SettingIcon
 import com.resultv.android.vpn.SettingsRepository
 
@@ -195,7 +195,10 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}, onOpenCertWizard: () -> Unit = {
                 SettingsSubcategory.Network -> NetworkGroup(settings)
                 SettingsSubcategory.Ping -> PingGroup(settings)
                 SettingsSubcategory.Experimental -> ExperimentalGroup(settings)
-                SettingsSubcategory.Appearance -> AppearanceGroup(onBeforeRecreate = { activeSheet = null })
+                SettingsSubcategory.Appearance -> AppearanceGroup(
+                    theme = settings.appearanceTheme,
+                    onBeforeRecreate = { activeSheet = null },
+                )
             }
         }
     }
@@ -242,7 +245,7 @@ private fun SettingsEntry(
                 fontSize = 10.sp,
                 lineHeight = 11.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = RvColor.whiteA50,
+                color = RvColor.description,
             )
         }
     }
@@ -343,7 +346,7 @@ private fun NetworkGroup(settings: com.resultv.android.vpn.SettingsState) {
                 Text(
                     stringResource(R.string.settings_dns_private_warning),
                     style = SheetNoteStyle,
-                    color = RvColor.whiteA50,
+                    color = RvColor.description,
                 )
             },
         )
@@ -368,6 +371,7 @@ private fun NetworkGroup(settings: com.resultv.android.vpn.SettingsState) {
             onCheckedChange = { SettingsRepository.setIpv6(it) },
         )
     }
+    Socks5ExitContent()
 }
 
 /**
@@ -403,6 +407,8 @@ private fun ExperimentalGroup(settings: com.resultv.android.vpn.SettingsState) {
                 onCheckedChange = { SettingsRepository.setAdaptiveSmartMemoryOnly(it) },
             )
         }
+        SheetDivider()
+        LearnedSmartRoutesRow()
     }
 }
 
@@ -499,7 +505,7 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 }
 
 @Composable
-private fun AppearanceGroup(onBeforeRecreate: () -> Unit) {
+private fun AppearanceGroup(theme: AppearanceTheme, onBeforeRecreate: () -> Unit) {
     val ctx = LocalContext.current
     val activity = remember(ctx) { ctx.findActivity() }
     val currentLang = remember(activity) { LocaleManager.currentLocale(ctx) ?: "EN" }
@@ -521,6 +527,23 @@ private fun AppearanceGroup(onBeforeRecreate: () -> Unit) {
                             LocaleManager.setLocale(activity, code)
                         }
                     },
+                )
+            },
+        )
+        SheetRow(
+            icon = Icons.Outlined.Palette,
+            tint = RvCategory.Violet,
+            title = stringResource(R.string.settings_appearance_theme_title),
+            subtitle = stringResource(R.string.settings_appearance_theme_desc),
+            trailing = {
+                SheetDropdown(
+                    value = theme,
+                    options = listOf(
+                        AppearanceTheme.Dark to stringResource(R.string.settings_theme_dark),
+                        AppearanceTheme.Light to stringResource(R.string.settings_theme_light),
+                        AppearanceTheme.System to stringResource(R.string.settings_theme_system),
+                    ),
+                    onSelect = SettingsRepository::setAppearanceTheme,
                 )
             },
         )

@@ -2,6 +2,7 @@ package com.resultv.android
 
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color
 import android.net.VpnService
 import android.os.Bundle
@@ -16,8 +17,10 @@ import androidx.annotation.StringRes
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.core.net.toUri
+import androidx.core.view.WindowCompat
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -50,6 +53,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -88,6 +92,7 @@ import com.resultv.android.vpn.DeepLinkImporter
 import com.resultv.android.vpn.PendingRoutingImport
 import com.resultv.android.vpn.PingRepository
 import com.resultv.android.vpn.ProfileRepository
+import com.resultv.android.vpn.SettingsRepository
 import com.resultv.android.vpn.RoutingProfileCompiler
 import com.resultv.android.vpn.RoutingProfileRepository
 import com.resultv.android.vpn.parseRoutingMergeResult
@@ -159,29 +164,15 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Swap from the white splash theme (manifest) to the real app theme
-        // BEFORE super.onCreate, so the system's first frame after the
-        // splash window matches Compose's dark background instead of
-        // flashing white.
-        setTheme(R.style.Theme_ResultV)
+        val systemDark = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+            Configuration.UI_MODE_NIGHT_YES
+        val initialDark = SettingsRepository.readAppearanceTheme(this).isDark(systemDark)
+        setTheme(if (initialDark) R.style.Theme_ResultV else R.style.Theme_ResultV_Light)
         super.onCreate(savedInstanceState)
         com.resultv.android.vpn.AppLog.init(this)
-        // Edge-to-edge: app draws behind status + nav bars; Scaffold's TopAppBar
-        // and NavigationBar consume the window-inset paddings so content above
-        // the gesture nav stays tappable.
-        //
-        // Both bars are pinned to the dark style instead of the default auto(),
-        // which follows the *system* light/dark setting. This UI is dark at all
-        // times (RvColor.Black), so on a phone in light mode auto() picked dark icons
-        // — an unreadable clock over our near-black background — and painted the
-        // three-button nav bar white. Until targetSdk 35 the splash theme's
-        // statusBarColor/navigationBarColor hid that; API 35 ignores both, so
-        // the styles have to say it here. TRANSPARENT scrims keep the bars
-        // showing app content rather than a tinted band.
-        enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
-            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
-        )
+        val barStyle = if (initialDark) SystemBarStyle.dark(Color.TRANSPARENT)
+            else SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
+        enableEdgeToEdge(statusBarStyle = barStyle, navigationBarStyle = barStyle)
         ProfileRepository.init(applicationContext)
         com.resultv.android.vpn.SubscriptionRepository.init(applicationContext)
         AppRoutingRepository.init(applicationContext)
@@ -214,7 +205,15 @@ class MainActivity : ComponentActivity() {
 
         
         setContent {
-            ResultVTheme {
+            val settings by SettingsRepository.state.collectAsStateWithLifecycle()
+            val dark = settings.appearanceTheme.isDark(isSystemInDarkTheme())
+            SideEffect {
+                WindowCompat.getInsetsController(window, window.decorView).apply {
+                    isAppearanceLightStatusBars = !dark
+                    isAppearanceLightNavigationBars = !dark
+                }
+            }
+            ResultVTheme(dark = dark) {
                 AppShell(
                     dataDir = filesDir.absolutePath,
                     onPower = ::onPowerPressed,
@@ -421,13 +420,14 @@ private fun AppShell(
  */
 @Composable
 private fun BottomBar(selected: Tab, onSelect: (Tab) -> Unit) {
+    val borderColor = RvColor.whiteA20
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(RvColor.Grey)
             .drawBehind {
                 drawLine(
-                    color = RvColor.whiteA20,
+                    color = borderColor,
                     start = Offset(0f, 0f),
                     end = Offset(size.width, 0f),
                     strokeWidth = 1.dp.toPx(),

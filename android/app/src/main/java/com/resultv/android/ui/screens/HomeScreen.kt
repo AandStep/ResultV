@@ -274,7 +274,7 @@ fun HomeScreen(
         AlertDialog(
             onDismissRequest = { pendingDeleteProfile = null },
             title = { Text(stringResource(R.string.proxies_delete_title)) },
-            text = { Text(stringResource(R.string.proxies_delete_message, target.name), color = RvColor.whiteA50) },
+            text = { Text(stringResource(R.string.proxies_delete_message, target.name), color = RvColor.description) },
             confirmButton = {
                 TextButton(onClick = {
                     ProfileRepository.remove(target.id)
@@ -441,7 +441,7 @@ private fun ProfileDropdown(
             Text(
                 text = stringResource(R.string.home_no_profiles_yet),
                 style = MaterialTheme.typography.bodySmall,
-                color = RvColor.whiteA50,
+                color = RvColor.description,
                 modifier = Modifier.padding(RvSpace.nest3),
             )
             return@Column
@@ -559,7 +559,7 @@ private fun HomeGroupHeader(group: HomeGroup) {
                 Text(
                     text = stringResource(R.string.home_favorites),
                     style = MaterialTheme.typography.labelMedium,
-                    color = RvColor.whiteA20,
+                    color = if (RvColor.isDark) RvColor.whiteA20 else RvColor.description,
                 )
             }
             HomeGroupKind.Subscription -> {
@@ -570,7 +570,7 @@ private fun HomeGroupHeader(group: HomeGroup) {
                 Text(
                     text = sub?.displayName.orEmpty().uppercase(),
                     style = MaterialTheme.typography.labelMedium,
-                    color = RvColor.whiteA20,
+                    color = if (RvColor.isDark) RvColor.whiteA20 else RvColor.description,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -585,7 +585,7 @@ private fun HomeGroupHeader(group: HomeGroup) {
                 Text(
                     text = stringResource(R.string.home_group_standalone),
                     style = MaterialTheme.typography.labelMedium,
-                    color = RvColor.whiteA20,
+                    color = if (RvColor.isDark) RvColor.whiteA20 else RvColor.description,
                 )
             }
         }
@@ -646,7 +646,7 @@ private fun HomeActions(onAdd: () -> Unit, onPaste: () -> Unit, onScan: () -> Un
                 text = stringResource(R.string.home_paste),
                 style = RvButtonLabel,
                 fontWeight = FontWeight.SemiBold,
-                color = RvColor.whiteA50,
+                color = RvColor.description,
             )
         }
         val scanLabel = stringResource(R.string.add_quick_qr_title)
