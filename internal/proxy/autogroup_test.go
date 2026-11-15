@@ -316,3 +316,27 @@ func TestSplitAutoEntriesFallbackCyrillicName(t *testing.T) {
 		t.Errorf("individual = %+v", individual)
 	}
 }
+
+func TestParseSubscriptionBodyIgnoresDomainOnlyBalancer(t *testing.T) {
+	const body = `[{
+		"remarks":"Germany",
+		"routing":{
+			"balancers":[{"tag":"aux","selector":["aux-"]}],
+			"rules":[
+				{"type":"field","domain":["example.org"],"balancerTag":"aux"},
+				{"type":"field","network":"tcp,udp","outboundTag":"fixed"}
+			]
+		},
+		"outbounds":[
+			{"tag":"fixed","protocol":"vless","settings":{"vnext":[{"address":"fixed.example.org","port":443,"users":[{"id":"00000000-0000-4000-8000-000000000001"}]}]}},
+			{"tag":"aux-de","protocol":"vless","settings":{"vnext":[{"address":"aux.example.org","port":443,"users":[{"id":"00000000-0000-4000-8000-000000000002"}]}]}}
+		]
+	}]`
+	entries, err := ParseSubscriptionBody(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 || entries[0].IP != "fixed.example.org" || entries[0].AutoGroup != "" || entries[1].AutoGroup != "" {
+		t.Fatalf("want the fixed server first with no auto group, got %+v", entries)
+	}
+}

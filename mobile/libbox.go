@@ -15,6 +15,7 @@ package mobile
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -38,7 +39,6 @@ import (
 	"resultproxy-wails/internal/config"
 	"resultproxy-wails/internal/proxy"
 )
-
 
 // BrowserAdBlockSocksPort is the loopback port of the SOCKS inbound the mobile
 // engine config exposes when BuildOptions.BrowserAdBlock is on. The in-process
@@ -612,8 +612,8 @@ func fetchSubscription(subURL, dataDir string, opts SubscriptionFetchOptions) (s
 	}
 	if !hasReal {
 		return subscriptionResult{}, fmt.Errorf(
-			"no valid proxies in subscription (parsed=%d, all sections, url=%s, diag=%s)",
-			rawCount, subURL, primaryRes.Diag,
+			"no valid proxies in subscription (parsed=%d, all sections, diag=%s)",
+			rawCount, primaryRes.Diag,
 		)
 	}
 
@@ -771,6 +771,15 @@ func fetchSubscriptionWithUA(subURL, userAgent, hwid string, extraHeaders map[st
 	}
 	defer resp.Body.Close()
 
+	// The panel can report the refusal with an otherwise successful HTTP
+	// status and a non-connectable placeholder in the response body.
+	if strings.EqualFold(resp.Header.Get("X-Hwid-Not-Supported"), "true") {
+		return subscriptionFetchResult{}, errors.New("subscription_hwid_required")
+	}
+	if strings.EqualFold(resp.Header.Get("X-Hwid-Max-Devices-Reached"), "true") {
+		return subscriptionFetchResult{}, errors.New("subscription_hwid_limit_reached")
+	}
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		errPreview := strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(string(errBody)), "\n", " "), "\r", "")
@@ -785,14 +794,8 @@ func fetchSubscriptionWithUA(subURL, userAgent, hwid string, extraHeaders map[st
 		return subscriptionFetchResult{}, fmt.Errorf("reading body: %w", err)
 	}
 
-	preview := string(body)
-	if len(preview) > 80 {
-		preview = preview[:80]
-	}
-	preview = strings.ReplaceAll(strings.ReplaceAll(preview, "\n", " "), "\r", "")
-
 	entries, err := proxy.ParseSubscriptionBody(string(body))
-	diag := fmt.Sprintf("ua=%q bytes=%d preview=%q parsed=%d", userAgent, len(body), preview, len(entries))
+	diag := fmt.Sprintf("ua=%q bytes=%d parsed=%d", userAgent, len(body), len(entries))
 	if err != nil {
 		return subscriptionFetchResult{Diag: diag}, fmt.Errorf("parsing subscription (%s): %w", diag, err)
 	}
@@ -1656,9 +1659,6 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 	if !opts.KillSwitchPanic {
 		cfg.Proxy = learnRealityMLKEM(context.Background(), cfg.Proxy)
 	}
-	// Узел, на котором ядро вот-вот поднимут. Нужен применению AmneziaWG 3.1
-	// после старта — в конфиг эти ключи не попадают (см. awg31.go).
-	rememberBuiltNode(cfg.Proxy)
 	if opts.DNSServers != "" {
 		for _, p := range strings.Split(opts.DNSServers, ",") {
 			if s := strings.TrimSpace(p); s != "" {
@@ -1906,4 +1906,3 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 	}
 	return string(out), nil
 }
-

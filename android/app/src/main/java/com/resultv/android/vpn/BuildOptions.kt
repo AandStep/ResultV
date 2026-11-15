@@ -1,6 +1,7 @@
 package com.resultv.android.vpn
 
 import android.os.Build
+import com.resultv.android.R
 import mobile.Mobile
 import org.json.JSONObject
 
@@ -112,13 +113,24 @@ internal object BuildOptionsBuilder {
         }
     }
 
+    fun fetchSubscription(url: String, dataDir: String): String = try {
+        Mobile.fetchSubscriptionV3(url, dataDir, currentSubscriptionFetchOptionsJson())
+    } catch (error: Exception) {
+        val message = when (error.message) {
+            "subscription_hwid_required" -> R.string.subscription_error_hwid_required
+            "subscription_hwid_limit_reached" -> R.string.subscription_error_hwid_limit
+            else -> throw error
+        }
+        throw IllegalStateException(AppLog.resolve(message), error)
+    }
+
     /**
      * Build the JSON payload for `Mobile.fetchSubscriptionV3`. Pulls the
      * user-configured UA / HWID preferences out of [SettingsRepository] and
      * tags the request with the device-id headers Happ / Remnawave panels
      * use for their device-list UI.
      */
-    fun currentSubscriptionFetchOptionsJson(): String {
+    private fun currentSubscriptionFetchOptionsJson(): String {
         val s = SettingsRepository.state.value
         return JSONObject().apply {
             put("userAgent", s.subscriptionUserAgent)

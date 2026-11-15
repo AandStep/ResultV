@@ -226,11 +226,37 @@ private fun protocolCase(type: String): String = when (type.uppercase()) {
     else -> type.uppercase()
 }
 
+private fun Profile.subscriptionIdentity(): String = when {
+    isSection -> "section:$name"
+    isAuto -> "auto:$name"
+    uri.isNotBlank() -> "uri:${uri.substringBefore('#')}"
+    else -> {
+        val entry = cachedEntry()
+        val host = entry?.optString("ip").orEmpty()
+        val port = entry?.optInt("port") ?: 0
+        if (host.isBlank() || port == 0) "entry:$entryJson" else "$protocol|$host|$port"
+    }
+}
+
+private fun Profile.subscriptionConnection(): Any? {
+    if (uri.isNotBlank()) return uri.substringBefore('#')
+    val entry = cachedEntry() ?: return null
+    return listOf(entry.optString("username"), entry.optString("password"), jsonValue(entry.opt("extra")))
+}
+
+private fun jsonValue(value: Any?): Any? = when (value) {
+    is JSONObject -> value.keys().asSequence().associateWith { jsonValue(value.opt(it)) }
+    is JSONArray -> (0 until value.length()).map { jsonValue(value.opt(it)) }
+    else -> value
+}
+
+internal fun Profile.connectionRevision() = Triple(id, uri, entryJson)
+
 data class ProfilesState(
     val profiles: List<Profile> = emptyList(),
     val activeId: String? = null,
 ) {
-    val active: Profile? get() = profiles.firstOrNull { it.id == activeId }
+    val active: Profile? get() = profiles.firstOrNull { !it.isSection && it.id == activeId }
 }
 
 /**
@@ -260,7 +286,7 @@ object ProfileRepository {
     @Synchronized
     fun remove(id: String) = mutate { s ->
         val list = s.profiles.filterNot { it.id == id }
-        val active = if (s.activeId == id) list.firstOrNull()?.id else s.activeId
+        val active = s.activeId?.takeUnless { it == id }
         s.copy(profiles = list, activeId = active)
     }
 
@@ -271,45 +297,45 @@ object ProfileRepository {
     @Synchronized
     fun removeBySubscriptionId(subscriptionId: String) = mutate { s ->
         val list = s.profiles.filterNot { it.subscriptionId == subscriptionId }
-        val active = if (list.any { it.id == s.activeId }) s.activeId else list.firstOrNull()?.id
+        val active = s.activeId?.takeIf { id -> list.any { !it.isSection && it.id == id } }
         s.copy(profiles = list, activeId = active)
     }
 
-    /**
-     * Names of the user's favourited profiles within one subscription.
-     * Used to carry favourites across a refresh / re-import, where the old
-     * profile records are dropped and rebuilt — favourites are matched back
-     * by display name (the only stable identity an entry keeps across fetches).
-     */
-    fun favouriteNamesFor(subscriptionId: String): Set<String> =
-        _state.value.profiles.asSequence()
-            .filter { it.subscriptionId == subscriptionId && it.isFavorite }
-            .map { it.name }
-            .toSet()
-
-    /**
-     * Replace all profiles for one subscription with a fresh set (used on refresh).
-     *
-     * Refreshed entries always get new random ids (see [SubscriptionRefresher]),
-     * so an active profile that belonged to this subscription is guaranteed to
-     * fall out of [s.activeId]'s match here. Re-pick it by name within the
-     * fresh set (same convention as favourite carry-over) instead of falling
-     * back to the first profile of the whole app — losing an active connection
-     * to a subscription refresh should not reroute it to an unrelated server.
-     */
     @Synchronized
-    fun replaceForSubscription(subscriptionId: String, fresh: List<Profile>) = mutate { s ->
-        val oldActive = s.profiles.firstOrNull { it.id == s.activeId }
-        val kept = s.profiles.filterNot { it.subscriptionId == subscriptionId }
-        val list = kept + fresh
-        val active = when {
-            oldActive == null -> list.firstOrNull()?.id
-            oldActive.subscriptionId != subscriptionId -> s.activeId
-            else -> fresh.firstOrNull { !it.isSection && it.name == oldActive.name }?.id
-                ?: fresh.firstOrNull { !it.isSection }?.id
-                ?: s.activeId
+    fun replaceForSubscription(subscriptionId: String, fresh: List<Profile>): List<Profile> {
+        val before = _state.value
+        val (old, kept) = before.profiles.partition { it.subscriptionId == subscriptionId }
+        val oldByKey = old.groupBy { it.subscriptionIdentity() }
+        val freshByName = fresh.groupingBy { it.subscriptionIdentity() to it.name }.eachCount()
+        val usedIds = kept.mapTo(mutableSetOf()) { it.id }
+        val retainedIds = mutableSetOf<String>()
+        val refreshed = fresh.map { incoming ->
+            val key = incoming.subscriptionIdentity()
+            val candidates = oldByKey[key].orEmpty()
+            val connection = incoming.subscriptionConnection()
+            val exact = candidates.filter { it.id !in usedIds && it.subscriptionConnection() == connection }
+            val match = exact.firstOrNull { it.name == incoming.name }
+                ?: candidates.filter { it.name == incoming.name }.singleOrNull()?.takeIf {
+                    it.id !in usedIds && freshByName[key to incoming.name] == 1
+                }
+                ?: exact.singleOrNull()
+            if (match == null) {
+                val id = if (incoming.id in usedIds) UUID.randomUUID().toString() else incoming.id
+                usedIds.add(id)
+                incoming.copy(id = id)
+            } else {
+                usedIds.add(match.id)
+                retainedIds.add(match.id)
+                incoming.copy(id = match.id, isFavorite = match.isFavorite)
+            }
         }
-        s.copy(profiles = list, activeId = active)
+        val activeId = when {
+            before.profiles.isEmpty() -> refreshed.firstOrNull { !it.isSection }?.id
+            before.activeId in retainedIds || kept.any { !it.isSection && it.id == before.activeId } -> before.activeId
+            else -> null
+        }
+        mutate { before.copy(profiles = kept + refreshed, activeId = activeId) }
+        return refreshed
     }
 
     @Synchronized
@@ -400,19 +426,26 @@ object ProfileRepository {
         file?.let { save(it, next) }
     }
 
-    private fun load(f: File): ProfilesState {
-        if (!f.exists()) return ProfilesState()
-        return try {
-            val root = JSONObject(f.readText())
-            val arr = root.optJSONArray("profiles") ?: JSONArray()
-            val list = (0 until arr.length()).map { Profile.fromJson(arr.getJSONObject(it)) }
-            ProfilesState(profiles = list, activeId = root.optString("activeId").takeIf { it.isNotEmpty() })
-        } catch (t: Throwable) {
-            Log.w(TAG, "failed to read $f, starting empty", t)
+    private fun load(f: File): ProfilesState = readRepositoryJson(
+        f,
+        ::decode,
+        onRecovered = { error ->
+            Log.w(TAG, "restored ${f.name} from backup", error)
+            AppLog.warning(R.string.log_recovered_backup, f.name,
+                source = AppLog.resolve(R.string.log_source_config))
+        },
+        onUnreadable = { error ->
+            Log.w(TAG, "failed to read $f, starting empty", error)
             AppLog.warning(R.string.log_read_failed, f.name,
                 source = AppLog.resolve(R.string.log_source_config))
-            ProfilesState()
-        }
+        },
+    ) ?: ProfilesState()
+
+    private fun decode(text: String): ProfilesState {
+        val root = JSONObject(text)
+        val arr = root.getJSONArray("profiles")
+        val list = (0 until arr.length()).map { Profile.fromJson(arr.getJSONObject(it)) }
+        return ProfilesState(list, root.optString("activeId").takeIf { id -> list.any { !it.isSection && it.id == id } })
     }
 
     private fun save(f: File, s: ProfilesState) {
@@ -422,7 +455,7 @@ object ProfileRepository {
             val root = JSONObject()
                 .put("profiles", arr)
                 .put("activeId", s.activeId ?: JSONObject.NULL)
-            f.writeText(root.toString())
+            replaceRepositoryJson(f, root.toString(), ::decode)
         } catch (t: Throwable) {
             Log.e(TAG, "failed to persist profiles", t)
             AppLog.error(R.string.log_persist_failed, f.name,

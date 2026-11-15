@@ -118,6 +118,8 @@
     <string name="settings_sub_auto_update_desc">Refresh every subscription on a schedule</string>
     <string name="settings_sub_interval_title">Update interval</string>
     <string name="settings_sub_interval_desc">How often to refresh subscriptions, in hours</string>
+    <string name="subscription_error_hwid_required">This subscription requires a device ID. Check Send HWID in subscription settings.</string>
+    <string name="subscription_error_hwid_limit">This subscription has reached its device limit. Remove an unused device or add a device slot.</string>
     <string name="settings_sub_hwid_title">Send HWID</string>
     <string name="settings_sub_hwid_desc">Device ID — for the device limit check</string>
     <string name="settings_sub_ua_title">User agent</string>
@@ -425,8 +427,6 @@
     <string name="log_app_route_failed">Per-app routing: rule for %1$s was not applied.</string>
     <string name="log_protect_failed">Failed to protect an engine socket — possible routing loop.</string>
     <string name="log_awg_knobs_dropped">AmneziaWG: the engine does not support %1$s — connecting without them. Obfuscation is weaker; if the server requires them, the handshake will not complete.</string>
-    <string name="log_awg31_applied">AmneziaWG 3.1: applied %1$s.</string>
-    <string name="log_awg31_failed">AmneziaWG 3.1 parameters were not applied: %1$s. The tunnel runs with 3.0 behaviour — if the server adds random trailers, the handshake will not complete.</string>
     <string name="log_traffic_stats_failed">Traffic statistics unavailable this session: %1$s</string>
     <string name="log_auto_selected">AUTO: selected %1$s (%2$s)</string>
     <string name="log_auto_failover">AUTO: node unavailable, trying %1$s</string>
@@ -455,6 +455,7 @@
     <string name="log_routing_unresolved">Routing profile \"%1$s\": %2$d rules could not be applied</string>
     <string name="log_routing_compile_failed">Routing profile \"%1$s\" was saved, but its rules were not built: %2$s</string>
     <string name="log_routing_from_subscription">Routing profile received with subscription \"%1$s\"</string>
+    <string name="log_recovered_backup">Restored %1$s from its backup.</string>
     <string name="log_read_failed">Failed to read %1$s — starting with empty data.</string>
     <string name="log_app_rules_allowlist_migrated">Per-app mode "Allow" was removed; the list moved to "Into VPN" (Smart mode)</string>
     <string name="log_app_started">ResultV started.</string>

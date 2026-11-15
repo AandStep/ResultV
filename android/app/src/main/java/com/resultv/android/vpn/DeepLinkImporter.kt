@@ -143,11 +143,7 @@ object DeepLinkImporter {
         val dataDir = ctx.filesDir.absolutePath
         val responseJson = withContext(Dispatchers.IO) {
             runCatching {
-                Mobile.fetchSubscriptionV3(
-                    subUrl,
-                    dataDir,
-                    BuildOptionsBuilder.currentSubscriptionFetchOptionsJson(),
-                )
+                BuildOptionsBuilder.fetchSubscription(subUrl, dataDir)
             }
         }
         if (responseJson.isFailure) {
@@ -173,8 +169,6 @@ object DeepLinkImporter {
             supportUrl = supportUrl,
             source = sourceTag,
         )
-        val favouriteNames = ProfileRepository.favouriteNamesFor(subId)
-
         val profiles = (0 until arr.length()).map { i ->
             val o = arr.getJSONObject(i)
             val type = o.optString("type")
@@ -183,11 +177,10 @@ object DeepLinkImporter {
                 Profile.section(name, subscriptionId = subId)
             } else {
                 val uri = o.optString("uri")
-                val base = if (uri.isNotBlank())
+                if (uri.isNotBlank())
                     Profile.fromUri(name, uri, subscriptionId = subId)
                 else
                     Profile.fromEntryJson(name, o.toString(), subscriptionId = subId)
-                if (base.name in favouriteNames) base.copy(isFavorite = true) else base
             }
         }
         ProfileRepository.replaceForSubscription(subId, profiles)

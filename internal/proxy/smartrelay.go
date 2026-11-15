@@ -23,6 +23,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -86,6 +87,7 @@ type SmartRelay struct {
 	// открывает десятки соединений к одному имени разом; без этого каждое
 	// начало бы свою пробу и одна страница съела бы весь бюджет намордника.
 	inflight sync.Map
+	losses   raceLosses
 
 	dirty  chan struct{}
 	closed chan struct{}
@@ -111,6 +113,14 @@ func StartSmartRelay(opts SmartRelayOptions) (*SmartRelay, error) {
 
 	if err := EnsureSmartDirectSet(setPath); err != nil {
 		return nil, err
+	}
+
+	// Reconcile the file used by the engine with the verdict store after
+	// expiry or a cache-version change.
+	if direct := directNamesOf(store); !opts.MemoryOnly && !slices.Equal(names, direct) {
+		if err := RenderSmartDirectSet(setPath, direct); err != nil {
+			return nil, err
+		}
 	}
 
 	ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(opts.ListenPort))
@@ -313,13 +323,7 @@ func (r *SmartRelay) race(client net.Conn, buffered *bufio.Reader, target, host 
 	defer res.Conn.Close()
 
 	if raceTeaches(res) {
-		r.learn(host, res.ViaProxy)
-		if !res.ViaProxy {
-			// Прямой путь победил по байтам. Байты это сайт или стена — вопрос
-			// другой, и отвечает на него только проба. У переданного молчащего
-			// узла байтов нет, подозревать в нём нечего.
-			r.recheckAsync(host)
-		}
+		r.learn(host, res.ViaProxy, time.Now())
 	}
 
 	// У переданного молчащего узла первых байт сервера нет — писать нечего.
@@ -331,31 +335,42 @@ func (r *SmartRelay) race(client net.Conn, buffered *bufio.Reader, target, host 
 	splice(client, buffered, res.Conn)
 }
 
-// learn записывает, что доказала гонка.
-func (r *SmartRelay) learn(host string, viaTunnel bool) {
+// learn records a direct win and verifies a proxy win with a separate probe.
+// Repeated losses can temporarily select the proxy while the probe is inconclusive.
+func (r *SmartRelay) learn(host string, viaTunnel bool, now time.Time) {
 	if !r.health.healthy() {
-		// Линия лежит. Всё записанное сейчас было бы догадкой сроком до недели.
 		return
 	}
-	d := verdict.Direct
-	if viaTunnel {
-		d = verdict.Proxy
+	addr, _ := netip.ParseAddr(host)
+	key := verdict.NormalizeHost(host)
+	if addr.IsValid() {
+		key = verdict.IPKey(addr)
 	}
-	if addr, err := netip.ParseAddr(host); err == nil {
-		// Голый адрес — это Telegram MTProto и голос Discord: имени они не
-		// дают никогда, и записывать их приходится по адресу.
-		r.store.LearnIP(addr, d)
-	} else {
-		r.store.Learn(host, d)
+	if key == "" {
+		return
 	}
-	if d == verdict.Direct {
-		// После Close() читателя у канала нет, и сигнал пропадёт. Это та самая
-		// принятая потеря, что описана в Close().
+	if !viaTunnel {
+		r.losses.reset(key)
+		if addr.IsValid() {
+			r.store.LearnIP(addr, verdict.Direct)
+		} else {
+			r.store.Learn(host, verdict.Direct)
+		}
 		r.markDirty()
+	} else if r.losses.add(key, now) >= raceLossesToLearn {
+		r.losses.reset(key)
+		if addr.IsValid() {
+			r.store.LearnIPUnverified(addr)
+		} else {
+			r.store.LearnUnverified(host)
+		}
+	}
+	if !addr.IsValid() {
+		r.recheckAsync(host)
 	}
 }
 
-// recheckAsync перепроверяет имя, которое гонка отдала прямому пути.
+// recheckAsync compares the direct and VPN paths for a hostname.
 func (r *SmartRelay) recheckAsync(host string) {
 	if host == "" || r.probe == nil {
 		return
@@ -370,6 +385,7 @@ func (r *SmartRelay) recheckAsync(host string) {
 			return
 		}
 		r.store.Learn(host, d)
+		r.losses.reset(verdict.NormalizeHost(host))
 		r.markDirty()
 	}()
 }

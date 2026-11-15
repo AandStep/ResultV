@@ -42,7 +42,7 @@ type Store struct {
 
 	// children counts, per namespace, which hashed child keys were learned
 	// under which hashed parent key and with what answer. Promotion reads it.
-	children map[string]map[string]map[string]Decision
+	children map[string]map[string]map[string]vote
 }
 
 func New(salt []byte, now func() time.Time) *Store {
@@ -55,7 +55,7 @@ func New(salt []byte, now func() time.Time) *Store {
 		ns:       "default",
 		spaces:   make(map[string]map[string]Record),
 		plain:    make(map[string]string),
-		children: make(map[string]map[string]map[string]Decision),
+		children: make(map[string]map[string]map[string]vote),
 	}
 }
 
@@ -95,6 +95,16 @@ func (s *Store) Learn(host string, d Decision) {
 	s.put(NormalizeHost(host), rec)
 }
 
+// LearnUnverified records a proxy verdict that rests on lost races alone.
+func (s *Store) LearnUnverified(host string) {
+	s.put(NormalizeHost(host), s.unverifiedRecord())
+}
+
+func (s *Store) unverifiedRecord() Record {
+	now := s.now()
+	return Record{Decision: Proxy, Source: SourceLearned, Observed: now, ExpiresAt: now.Add(TTLUnverified), Unverified: true}
+}
+
 func ttlFor(d Decision) time.Duration {
 	if d == Proxy {
 		return TTLProxy
@@ -125,7 +135,7 @@ func (s *Store) putLocked(key string, rec Record) {
 	}
 	space[h] = rec
 	s.plain[h] = key
-	if rec.Source == SourceLearned {
+	if rec.Source == SourceLearned && !rec.Unverified {
 		s.notePromotionLocked(key, rec.Decision)
 	}
 }

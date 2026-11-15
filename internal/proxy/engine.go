@@ -323,9 +323,10 @@ type SBOutbound struct {
 	// Строка VLESS Encryption — раньше терялась молча.
 	Encryption string `json:"encryption,omitempty"`
 	// Hysteria2 port hopping.
-	ServerPorts []string     `json:"server_ports,omitempty"`
-	HopInterval string       `json:"hop_interval,omitempty"`
-	Multiplex   *SBMultiplex `json:"multiplex,omitempty"`
+	ServerPorts    []string     `json:"server_ports,omitempty"`
+	HopInterval    string       `json:"hop_interval,omitempty"`
+	HopIntervalMax string       `json:"hop_interval_max,omitempty"`
+	Multiplex      *SBMultiplex `json:"multiplex,omitempty"`
 
 	// urltest/selector group fields (mobile kill-switch only; omitempty keeps
 	// every existing outbound's JSON byte-identical).
@@ -393,6 +394,8 @@ type SBWireGuardPeer struct {
 }
 
 type SBWireGuardAmnezia struct {
+	RandomTrailers bool `json:"random_trailers,omitempty"`
+	DisableCookies bool `json:"disable_cookies,omitempty"`
 	JC    int    `json:"jc,omitempty"`
 	JMin  int    `json:"jmin,omitempty"`
 	JMax  int    `json:"jmax,omitempty"`

@@ -86,3 +86,12 @@ func TestNodeFailureAloneTeachesNothing(t *testing.T) {
 		t.Fatalf("got %v, want unknown", got)
 	}
 }
+
+func TestClassifyProbe_SameRestrictedResponseKeepsDirect(t *testing.T) {
+	for _, status := range []int{403, 451} {
+		blocked := probeOutcome{Status: status}
+		if got := classifyProbe(blocked, blocked); got != verdict.Direct {
+			t.Fatalf("both paths returned %d: got %v, want direct", status, got)
+		}
+	}
+}

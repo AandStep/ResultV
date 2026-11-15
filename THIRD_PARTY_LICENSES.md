@@ -15,11 +15,10 @@ The vendored copy has been modified by ResultV (`device/send.go`):
 handshake messages are sliced to their own size before MACs are added, so
 random trailers no longer overwrite MAC1/MAC2, and transport packets injected
 through `InputPacket` get room for trailers instead of overrunning their
-buffer. Switching `random_trailers` on a running device restarts handshakes
-still in flight (`device/uapi.go`). `device/random_trailers_test.go` covers
-all three. `device/padding_test.go` was dropped and
-`device/endpoint_resolver_test.go` adjusted because they no longer compiled
-against the fork. Drop the copy once upstream ships the fix.
+buffer. The core sets the AmneziaWG 3.1 switches when it creates the device.
+The vendored copy also resolves peer endpoints in the initial handshake and
+refreshes them after a network rebind. `device/endpoint_resolver_test.go`
+covers both paths.
 
 ---
 

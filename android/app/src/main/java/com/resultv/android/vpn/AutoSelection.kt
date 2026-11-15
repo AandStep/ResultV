@@ -44,6 +44,7 @@ object AutoSelection {
     private const val MAX_ATTEMPTS = 5
 
     private var profileId: String = ""
+    private var profileEntryJson: String = ""
     private var ranked: List<Candidate> = emptyList()
     private var index: Int = 0
 
@@ -51,9 +52,10 @@ object AutoSelection {
     @Synchronized
     fun current(): Candidate? = ranked.getOrNull(index)
 
-    /** As [current], but only if the resolution belongs to [id]. */
+    /** A refreshed group can keep its ID and contain different members. */
     @Synchronized
-    fun currentFor(id: String): Candidate? = if (id == profileId) current() else null
+    fun currentFor(profile: Profile): Candidate? =
+        if (profile.id == profileId && profile.entryJson == profileEntryJson) current() else null
 
     /**
      * Move to the next-best member after a failed connect. Returns null when the
@@ -69,6 +71,7 @@ object AutoSelection {
     @Synchronized
     fun reset() {
         profileId = ""
+        profileEntryJson = ""
         ranked = emptyList()
         index = 0
     }
@@ -100,6 +103,7 @@ object AutoSelection {
         val list = parseCandidates(raw)
         synchronized(this) {
             profileId = profile.id
+            profileEntryJson = profile.entryJson
             ranked = list
             index = 0
             return current()
@@ -148,6 +152,7 @@ object AutoSelection {
     @Synchronized
     internal fun installForTest(id: String, candidates: List<Candidate>) {
         profileId = id
+        profileEntryJson = ""
         ranked = candidates
         index = 0
     }

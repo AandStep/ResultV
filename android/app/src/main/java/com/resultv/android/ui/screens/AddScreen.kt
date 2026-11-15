@@ -74,6 +74,7 @@ import com.resultv.android.theme.RvSpace
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import com.resultv.android.vpn.BuildOptionsBuilder
 import com.resultv.android.vpn.DeepLinkImporter
 import com.resultv.android.vpn.Profile
 import com.resultv.android.vpn.ProfileRepository
@@ -680,11 +681,7 @@ private fun doFetch(
         onLoad(true)
         try {
             val responseJson = withContext(Dispatchers.IO) {
-                Mobile.fetchSubscriptionV3(
-                    url.trim(),
-                    dataDir,
-                    com.resultv.android.vpn.BuildOptionsBuilder.currentSubscriptionFetchOptionsJson(),
-                )
+                BuildOptionsBuilder.fetchSubscription(url.trim(), dataDir)
             }
             val response = JSONObject(responseJson)
             val arr = response.optJSONArray("entries") ?: JSONArray()
@@ -749,7 +746,6 @@ private fun importSubscription(
         supportUrl = sub.supportUrl,
         source = sourceTag,
     )
-    val favouriteNames = ProfileRepository.favouriteNamesFor(subId)
     // Preserve the response order so SECTION rows land between the right
     // group of real entries.
     val profiles = sub.entries.mapNotNull { e ->
@@ -758,7 +754,7 @@ private fun importSubscription(
             e.key !in selectedKeys -> null
             e.uri.isNotBlank() -> Profile.fromUri(e.name, e.uri, subscriptionId = subId)
             else -> Profile.fromEntryJson(e.name, e.entryJson, subscriptionId = subId)
-        }?.let { p -> if (!p.isSection && p.name in favouriteNames) p.copy(isFavorite = true) else p }
+        }
     }
     ProfileRepository.replaceForSubscription(subId, profiles)
     // Маршрутизация провайдера приехала тем же ответом, что и серверы.
@@ -860,11 +856,7 @@ private fun smartClipboardImport(
         scope.launch {
             try {
                 val responseJson = withContext(Dispatchers.IO) {
-                    Mobile.fetchSubscriptionV3(
-                        trimmed,
-                        dataDir,
-                        com.resultv.android.vpn.BuildOptionsBuilder.currentSubscriptionFetchOptionsJson(),
-                    )
+                    BuildOptionsBuilder.fetchSubscription(trimmed, dataDir)
                 }
                 val response = JSONObject(responseJson)
                 val arr = response.optJSONArray("entries") ?: JSONArray()

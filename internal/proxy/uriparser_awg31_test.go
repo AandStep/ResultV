@@ -69,10 +69,8 @@ func TestAWG31SurvivesJSONOutbound(t *testing.T) {
 	}
 }
 
-// AWG 3.1 knobs must not leak into the sing-box config: the core parses it
-// strictly and an unknown key under "amnezia" fails the entire start. They
-// travel to the device by a second IpcSet instead (see ApplyAWG31).
-func TestAWG31NeverReachesEngineConfig(t *testing.T) {
+// Both switches must reach the device as part of the initial configuration.
+func TestAWG31ReachesEngineConfig(t *testing.T) {
 	q := url.Values{}
 	q.Set("private_key", "aAXFScHA5tAA9mUwp1aBDV9cAbHj1mSfwdc1ISTsbm8=")
 	q.Set("public_key", "WpE32HIFCmunopfbfcuwwgOqdGxmuu04tdZmFQdTBTE=")
@@ -94,11 +92,9 @@ func TestAWG31NeverReachesEngineConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, key := range awg31Keys {
-		if strings.Contains(string(rendered), key) {
-			t.Errorf("%s попал в конфиг ядра — ядро отвергнет неизвестный ключ целиком:\n%s", key, rendered)
+		if !strings.Contains(string(rendered), `"`+key+`":true`) {
+			t.Errorf("%s was not enabled in the initial engine config", key)
 		}
 	}
-	// Не «ключей нет», а «ядро принимает»: пустая проверка прошла бы и на
-	// сломанном конфиге.
 	assertCoreAcceptsConfig(t, cfg)
 }

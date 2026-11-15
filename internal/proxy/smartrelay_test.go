@@ -3,6 +3,7 @@ package proxy
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -87,9 +88,8 @@ func TestSmartRelay_KnownDirect_GoesStraightOut(t *testing.T) {
 	}
 }
 
-// Незнакомое имя реле разыгрывает и записывает исход. Туннель здесь отвечает
-// быстрее, потому что прямого пути к этому адресу нет вовсе.
-func TestSmartRelay_UnknownRaces_AndLearns(t *testing.T) {
+// A single race can connect through the tunnel without persisting a verdict.
+func TestSmartRelay_UnknownRaces_UsesTunnel(t *testing.T) {
 	tunnelSite := echoServer(t, "tunnel")
 	dir := t.TempDir()
 
@@ -116,12 +116,9 @@ func TestSmartRelay_UnknownRaces_AndLearns(t *testing.T) {
 
 	host, _, _ := net.SplitHostPort(dead)
 	addr := netip.MustParseAddr(host)
-	// Имени тут нет — только адрес, как у Telegram MTProto. Спрашиваем так же,
-	// как спросит реле на следующем соединении.
-	waitFor(t, func() bool {
-		rec, ok := relay.store.LookupIP(addr)
-		return ok && rec.Decision == verdict.Proxy
-	}, "вердикт proxy не записан")
+	if rec, ok := relay.store.LookupIP(addr); ok {
+		t.Fatalf("a single loss taught a verdict: %+v", rec)
+	}
 }
 
 // Файл rule-set обновляется после того, как гонка научилась: иначе выученное
@@ -377,4 +374,44 @@ func serveFakeSocks(c net.Conn, target string) {
 	defer up.Close()
 	go io.Copy(up, r)
 	io.Copy(c, up)
+}
+
+func TestSmartRelaySpacedLossesAreTemporary(t *testing.T) {
+	relay, err := StartSmartRelay(SmartRelayOptions{DataDir: t.TempDir(), MemoryOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer relay.Close()
+
+	const host = "203.0.113.50"
+	addr := netip.MustParseAddr(host)
+	now := time.Now()
+	for _, elapsed := range []time.Duration{0, time.Second, raceLossSpacing} {
+		relay.learn(host, true, now.Add(elapsed))
+		if rec, ok := relay.store.LookupIP(addr); ok {
+			t.Fatalf("premature proxy verdict: %+v", rec)
+		}
+	}
+
+	relay.learn(host, true, now.Add(2*raceLossSpacing))
+	rec, ok := relay.store.LookupIP(addr)
+	if !ok || rec.Decision != verdict.Proxy || !rec.Unverified {
+		t.Fatalf("want an unverified proxy verdict, got %+v", rec)
+	}
+}
+
+func TestSmartRelayHostnameProxyVerdictRequiresProbeConfirmation(t *testing.T) {
+	relay, err := StartSmartRelay(SmartRelayOptions{DataDir: t.TempDir(), MemoryOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer relay.Close()
+
+	relay.probe = func(context.Context, string, *probeGate) verdict.Decision { return verdict.Proxy }
+	const host = "confirmed.example.org"
+	relay.learn(host, true, time.Now())
+	waitFor(t, func() bool {
+		rec, ok := relay.store.Lookup(host)
+		return ok && rec.Decision == verdict.Proxy && !rec.Unverified
+	}, "proxy verdict was not confirmed")
 }

@@ -144,16 +144,10 @@ object SubscriptionRefresher {
      */
     suspend fun refreshOne(sub: Subscription, dataDir: String) {
         val responseJson = withContext(Dispatchers.IO) {
-            Mobile.fetchSubscriptionV3(
-                sub.url,
-                dataDir,
-                BuildOptionsBuilder.currentSubscriptionFetchOptionsJson(),
-            )
+            BuildOptionsBuilder.fetchSubscription(sub.url, dataDir)
         }
         val response = JSONObject(responseJson)
         val arr = response.optJSONArray("entries") ?: JSONArray()
-
-        val existingFavouriteNames = ProfileRepository.favouriteNamesFor(sub.id)
 
         val fresh = (0 until arr.length()).mapNotNull { i ->
             val o = arr.getJSONObject(i)
@@ -164,15 +158,14 @@ object SubscriptionRefresher {
                 isSection -> Profile.section(name = name, subscriptionId = sub.id)
                 else -> {
                     val uri = o.optString("uri")
-                    val base = if (uri.isNotBlank())
+                    if (uri.isNotBlank())
                         Profile.fromUri(name, uri, subscriptionId = sub.id)
                     else
                         Profile.fromEntryJson(name, o.toString(), subscriptionId = sub.id)
-                    base.copy(isFavorite = base.name in existingFavouriteNames)
                 }
             }
         }
-        ProfileRepository.replaceForSubscription(sub.id, fresh)
+        val refreshed = SubscriptionRepository.applyRefreshedProfiles(sub, fresh) ?: return
         // Desktop parity: «Подписка 'X' обновлена: N серверов».
         val displayName = response.optString("title").ifBlank { sub.name }
         // activate=false: фоновое обновление профиль обновляет, но активным не
@@ -188,7 +181,7 @@ object SubscriptionRefresher {
         // Ping only the servers that just changed, not the whole app's
         // profile list — keeps this as fast/streaming as a manual per-row
         // ping instead of getting diluted into a full-app sweep.
-        PingRepository.refreshAll(fresh)
+        PingRepository.refreshAll(refreshed)
         // Re-apply panel metadata. supportUrl tracks the Support-Url header
         // verbatim — empty in the response clears any stale value, so the
         // edit sheet's Links section stays in sync with what the panel

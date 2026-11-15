@@ -90,6 +90,9 @@ func classifyProbe(direct, viaNode probeOutcome) verdict.Decision {
 		return verdict.Proxy
 	}
 	if looksLikeRegionBlock(direct) {
+		if looksLikeRegionBlock(viaNode) {
+			return verdict.Direct
+		}
 		return verdict.Proxy
 	}
 	if !direct.reachable() {

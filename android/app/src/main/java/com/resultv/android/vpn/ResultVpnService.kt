@@ -22,7 +22,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.withIndex
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
@@ -96,40 +97,7 @@ class ResultVpnService : VpnService() {
 
         when (intent?.action) {
             ACTION_STOP -> {
-                Log.i(TAG, "received STOP")
-                AppLog.info(getString(R.string.log_disconnecting))
-                // A genuine user-initiated disconnect must not pin the next
-                // connect to this session's ranking — re-rank from scratch.
-                // Caching across an in-place RELOAD is the settled behaviour
-                // (see buildConfigForReload); this is a real stop, not that.
-                AutoSelection.reset()
-                reloadWatcher?.cancel(); reloadWatcher = null
-                stopKillSwitchWatchdog()
-                browserAdBlock.stopWatchdog()
-                TrafficWatcher.stop()
-                ConnectionWatcher.stop()
-                // Close the tun fd up front — this drops the system VPN
-                // lock icon immediately. libbox.closeService() takes a
-                // couple of seconds to drain connections, so push it to
-                // the worker and let the user see Idle right away.
-                closeTun()
-                VpnState.set(VpnStatus.Idle)
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                // Resolve the string before the service is torn down, then log
-                // once the engine has actually drained on the worker thread.
-                val disconnectedMsg = getString(R.string.log_disconnected)
-                worker.execute {
-                    BoxModule.filterProxyRunning = false
-                    // Stop the box FIRST: closeService closes libbox's dup of
-                    // the tun fd, which is what actually drops the VPN network
-                    // (and its setHttpProxy) — our closeTun() above only closed
-                    // our own pfd. If the MITM close below is ever slow, the
-                    // browser must not be left on a dead proxy meanwhile.
-                    BoxModule.stop()
-                    mobile.Mobile.stopFilterProxy()
-                    AppLog.info(disconnectedMsg)
-                }
-                stopSelf()
+                disconnectSession()
                 return START_NOT_STICKY
             }
             else -> {
@@ -141,6 +109,7 @@ class ResultVpnService : VpnService() {
                 // limit.
                 if (ProfileRepository.state.value.active == null) {
                     Log.e(TAG, "no active profile — stopping")
+                    VpnState.set(VpnStatus.Idle)
                     stopSelf()
                     return START_NOT_STICKY
                 }
@@ -182,14 +151,15 @@ class ResultVpnService : VpnService() {
                     }
                     val listsReady = if (isReload) true else listsAlreadyOnDisk()
                     val tCfg = System.currentTimeMillis()
-                    val config = buildConfigFromActiveProfile()
+                    val active = ProfileRepository.state.value.active
+                    val config = active?.let(::buildConfigFromActiveProfile)
                     Log.i(TAG, "connect timing: buildConfig=${System.currentTimeMillis() - tCfg}ms, size=${config?.length ?: 0}")
-                    if (config.isNullOrEmpty()) {
+                    if (active == null || config.isNullOrEmpty()) {
                         Log.e(TAG, "no config available — stopping")
                         withContext(Dispatchers.Main) { stopSelf() }
                         return@launch
                     }
-                    worker.execute { startWithConfig(config, isReload, connectedMsg, listsReady) }
+                    worker.execute { startWithConfig(config, active, isReload, connectedMsg, listsReady) }
                 }
                 return START_STICKY
             }
@@ -235,14 +205,13 @@ class ResultVpnService : VpnService() {
      * [buildConfigForReload] rather than probing again, so the member connect
      * picked stays pinned until a genuine disconnect or a failover moves it.
      */
-    private fun buildConfigFromActiveProfile(): String? {
-        val active = ProfileRepository.state.value.active ?: return null
+    private fun buildConfigFromActiveProfile(active: Profile): String? {
         warnAboutUnsupportedAwgKnobs(active)
         if (!active.isAuto) {
             AutoSelection.reset()
             return buildConfigForReload(active)
         }
-        if (AutoSelection.currentFor(active.id) == null) {
+        if (AutoSelection.currentFor(active) == null) {
             val member = AutoSelection.resolve(active, filesDir.absolutePath)
             if (member == null) {
                 // Nothing reachable in the sweep. Fall back to the group head rather
@@ -286,7 +255,7 @@ class ResultVpnService : VpnService() {
      */
     private fun buildConfigForReload(active: Profile, panic: Boolean = VpnState.killSwitchEngaged.value): String? {
         if (active.isAuto) {
-            AutoSelection.currentFor(active.id)?.let { member ->
+            AutoSelection.currentFor(active)?.let { member ->
                 return BuildOptionsBuilder.buildConfigFromEntry(member.entryJson, filesDir.absolutePath, panic)
             }
         }
@@ -302,6 +271,7 @@ class ResultVpnService : VpnService() {
      */
     private fun startWithConfig(
         config: String,
+        active: Profile,
         isReload: Boolean,
         connectedMsg: String,
         listsReady: Boolean,
@@ -316,6 +286,10 @@ class ResultVpnService : VpnService() {
             // незнакомый хост пошёл бы в никуда.
             startAdaptiveSmartIfEnabled()
             BoxModule.start(this@ResultVpnService, config)
+            if (ProfileRepository.state.value.active == null) {
+                Handler(Looper.getMainLooper()).post { disconnectSession() }
+                return
+            }
             val connectedAt = System.currentTimeMillis()
             // Real end-to-end success — the strongest signal the node ranking
             // gets, and the one that outweighs any amount of probe latency.
@@ -332,7 +306,7 @@ class ResultVpnService : VpnService() {
                 )
             }
             renotify(buildNotification(connected))
-            startReloadWatcher()
+            startReloadWatcher(active)
             startKillSwitchWatchdog()
             // Subscribe to libbox status stream so HomeScreen's traffic cards
             // show real uplink/downlink.
@@ -358,7 +332,7 @@ class ResultVpnService : VpnService() {
                     .buildConfigFromEntry(next.entryJson, filesDir.absolutePath)
                 if (retry != null) {
                     AppLog.warning(getString(R.string.log_auto_failover, next.name))
-                    worker.execute { startWithConfig(retry, isReload, connectedMsg, listsReady) }
+                    worker.execute { startWithConfig(retry, active, isReload, connectedMsg, listsReady) }
                     return
                 }
             }
@@ -566,14 +540,14 @@ class ResultVpnService : VpnService() {
     /**
      * Watch routing-rule + per-app-routing + active-profile state and ask
      * libbox to swap the running config in-place when anything changes.
-     * Drops the very first emission (that's the state at start time, which
-     * is already wired into the running engine).
+     * Ignore the first emission when it still describes the started profile.
      *
      * Debounce coalesces rapid edits — if the user types several domain
      * patterns in quick succession we rebuild once, not once per keystroke.
      */
     @OptIn(FlowPreview::class)
-    private fun startReloadWatcher() {
+    private fun startReloadWatcher(started: Profile) {
+        val startedRevision = started.connectionRevision()
         reloadWatcher?.cancel()
         reloadWatcher = scope.launch {
             combine(
@@ -592,20 +566,21 @@ class ResultVpnService : VpnService() {
                 val settings = values[3] as SettingsState
                 val routing = values[4] as RoutingProfilesState
                 val generation = values[5] as Int
-                // Key on the active profile + everything that changes routing.
+                // Watch the selected server and its connection data.
                 // From settings we only watch ad-block (it rebuilds the route
                 // rules); other settings keep applying on reconnect.
                 //
                 // The routing profile contributes a KEY, not its whole state:
                 // editing an INACTIVE profile must not tear down a live
                 // connection. See routingReloadKey.
-                listOf(
-                    rules, app, profiles.activeId, settings.adblock,
+                profiles.active?.connectionRevision() to listOf(
+                    rules, app, settings.adblock,
                     routingReloadKey(rules.mode, routing.activeId, generation),
                 )
             }
                 .distinctUntilChanged()
-                .drop(1)
+                .withIndex()
+                .filter { it.index > 0 || it.value.first != startedRevision }
                 .debounce(300)
                 .onEach { triggerReload() }
                 .launchIn(this)
@@ -661,8 +636,48 @@ class ResultVpnService : VpnService() {
         }
     }
 
-    private fun triggerReload() {
-        ProfileRepository.state.value.active ?: return
+    private fun disconnectSession() {
+        Log.i(TAG, "received STOP")
+        AppLog.info(getString(R.string.log_disconnecting))
+        // A genuine user-initiated disconnect must not pin the next
+        // connect to this session's ranking — re-rank from scratch.
+        // Caching across an in-place RELOAD is the settled behaviour
+        // (see buildConfigForReload); this is a real stop, not that.
+        AutoSelection.reset()
+        reloadWatcher?.cancel(); reloadWatcher = null
+        stopKillSwitchWatchdog()
+        browserAdBlock.stopWatchdog()
+        TrafficWatcher.stop()
+        ConnectionWatcher.stop()
+        // Close the tun fd up front — this drops the system VPN
+        // lock icon immediately. libbox.closeService() takes a
+        // couple of seconds to drain connections, so push it to
+        // the worker and let the user see Idle right away.
+        closeTun()
+        VpnState.set(VpnStatus.Idle)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        // Resolve the string before the service is torn down, then log
+        // once the engine has actually drained on the worker thread.
+        val disconnectedMsg = getString(R.string.log_disconnected)
+        worker.execute {
+            BoxModule.filterProxyRunning = false
+            // Stop the box FIRST: closeService closes libbox's dup of
+            // the tun fd, which is what actually drops the VPN network
+            // (and its setHttpProxy) — our closeTun() above only closed
+            // our own pfd. If the MITM close below is ever slow, the
+            // browser must not be left on a dead proxy meanwhile.
+            BoxModule.stop()
+            mobile.Mobile.stopFilterProxy()
+            AppLog.info(disconnectedMsg)
+        }
+        stopSelf()
+    }
+
+    private suspend fun triggerReload() {
+        if (ProfileRepository.state.value.active == null) {
+            withContext(Dispatchers.Main) { disconnectSession() }
+            return
+        }
         if (!BoxModule.isRunning) {
             Log.w(TAG, "reload skipped — no running server")
             return

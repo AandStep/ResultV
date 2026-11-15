@@ -242,6 +242,12 @@ object SubscriptionRepository {
         mutate { s -> s.copy(subs = s.subs.filterNot { it.id == id }) }
     }
 
+    @Synchronized
+    fun applyRefreshedProfiles(sub: Subscription, profiles: List<Profile>): List<Profile>? {
+        if (byId(sub.id)?.url != sub.url) return null
+        return ProfileRepository.replaceForSubscription(sub.id, profiles)
+    }
+
     fun byId(id: String): Subscription? = _state.value.subs.firstOrNull { it.id == id }
 
     private fun mutate(block: (SubscriptionsState) -> SubscriptionsState) {
@@ -251,19 +257,26 @@ object SubscriptionRepository {
         file?.let { save(it, next) }
     }
 
-    private fun load(f: File): SubscriptionsState {
-        if (!f.exists()) return SubscriptionsState()
-        return try {
-            val root = JSONObject(f.readText())
-            val arr = root.optJSONArray("subs") ?: JSONArray()
-            val list = (0 until arr.length()).map { Subscription.fromJson(arr.getJSONObject(it)) }
-            SubscriptionsState(subs = list)
-        } catch (t: Throwable) {
-            Log.w(TAG, "failed to read $f, starting empty", t)
+    private fun load(f: File): SubscriptionsState = readRepositoryJson(
+        f,
+        ::decode,
+        onRecovered = { error ->
+            Log.w(TAG, "restored ${f.name} from backup", error)
+            AppLog.warning(R.string.log_recovered_backup, f.name,
+                source = AppLog.resolve(R.string.log_source_config))
+        },
+        onUnreadable = { error ->
+            Log.w(TAG, "failed to read $f, starting empty", error)
             AppLog.warning(R.string.log_read_failed, f.name,
                 source = AppLog.resolve(R.string.log_source_config))
-            SubscriptionsState()
-        }
+        },
+    ) ?: SubscriptionsState()
+
+    private fun decode(text: String): SubscriptionsState {
+        val root = JSONObject(text)
+        val arr = root.getJSONArray("subs")
+        val list = (0 until arr.length()).map { Subscription.fromJson(arr.getJSONObject(it)) }
+        return SubscriptionsState(subs = list)
     }
 
     private fun save(f: File, s: SubscriptionsState) {
@@ -271,7 +284,7 @@ object SubscriptionRepository {
             val arr = JSONArray()
             s.subs.forEach { arr.put(it.toJson()) }
             val root = JSONObject().put("subs", arr)
-            f.writeText(root.toString())
+            replaceRepositoryJson(f, root.toString(), ::decode)
         } catch (t: Throwable) {
             Log.e(TAG, "failed to persist subscriptions", t)
             AppLog.error(R.string.log_persist_failed, f.name,

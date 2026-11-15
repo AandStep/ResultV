@@ -225,6 +225,9 @@ func amneziaFromExtra(extra map[string]interface{}) *SBWireGuardAmnezia {
 		KeepaliveTimeout:       amneziaRangeString(m["keepalive_timeout"]),
 		MaxHandshakeAttempts:   amneziaRangeString(m["max_handshake_attempts"]),
 	}
+	switches := awg31FromExtra(m)
+	am.RandomTrailers = switches.RandomTrailers != nil && *switches.RandomTrailers
+	am.DisableCookies = switches.DisableCookies != nil && *switches.DisableCookies
 	// J1-J3 / ITime are simply never read into the struct: there is nowhere to
 	// put them since 2.6.1 dropped the option fields. unsupportedAmneziaKnobs
 	// still reports them from the raw extra so the user learns they were lost.
@@ -281,8 +284,7 @@ func amneziaRangeString(v interface{}) string {
 }
 
 // wireguardEndpointTag is the tag a WireGuard/AmneziaWG node is given in the
-// engine config. Named because ApplyAWG31 and the WG counters look the
-// endpoint up by it after start — the two must never drift apart.
+// engine config.
 const wireguardEndpointTag = "proxy"
 
 // awg3Keys are the AmneziaWG 3.0 device-level knobs, in the order the

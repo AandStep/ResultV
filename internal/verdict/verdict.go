@@ -71,6 +71,9 @@ type Record struct {
 	// ExpiresAt zero means never: user rules, floor entries and list entries
 	// are replaced, never aged out.
 	ExpiresAt time.Time `json:"e,omitempty"`
+	// Unverified marks a proxy verdict inferred from repeated lost races with
+	// no probe to confirm it.
+	Unverified bool `json:"u,omitempty"`
 }
 
 // TTLs are asymmetric on purpose. A stale "blocked" costs some wasted node
@@ -79,6 +82,8 @@ type Record struct {
 const (
 	TTLProxy  = 7 * 24 * time.Hour
 	TTLDirect = 24 * time.Hour
+	// TTLUnverified is the life of a proxy verdict no probe has confirmed.
+	TTLUnverified = 2 * time.Hour
 )
 
 // NormalizeHost lowercases a host and strips the things that are the same

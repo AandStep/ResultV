@@ -552,19 +552,30 @@ func parseJSONOutbound(outbound map[string]interface{}, name string) (config.Pro
 	case "hysteria", "hysteria2", "hy2":
 		host := asString(settings["address"])
 		port := asInt(settings["port"])
-		
+
 		var auth string
 		if hySettings, ok := asMap(stream["hysteriaSettings"]); ok {
 			auth = asString(hySettings["auth"])
 		}
-		
+
 		if name == "" {
 			name = "HYSTERIA2"
 		}
-		
+
 		extra := map[string]interface{}{}
 		extra["password"] = auth
-		
+
+		finalMask, ok := asMap(stream["finalmask"])
+		if !ok {
+			finalMask, _ = asMap(stream["finalMask"])
+		}
+		quicParams, _ := asMap(finalMask["quicParams"])
+		udpHop, _ := asMap(quicParams["udpHop"])
+		if ports := asString(udpHop["ports"]); ports != "" {
+			extra["mport"] = ports
+			extra["hop_interval"] = asString(udpHop["interval"])
+		}
+
 		if tls, ok := asMap(stream["tlsSettings"]); ok {
 			if sni := asString(tls["serverName"]); sni != "" {
 				extra["sni"] = sni
@@ -576,7 +587,7 @@ func parseJSONOutbound(outbound map[string]interface{}, name string) (config.Pro
 				extra["alpn"] = asString(alpn[0])
 			}
 		}
-		
+
 		extraJSON, _ := json.Marshal(extra)
 		return config.ProxyEntry{
 			IP:       host,

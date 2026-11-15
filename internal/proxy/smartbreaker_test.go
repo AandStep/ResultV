@@ -82,7 +82,7 @@ func TestOpenBreakerStillStopsLearning(t *testing.T) {
 
 	store := choiceStore(t)
 	r := &SmartRelay{store: store, health: h}
-	r.learn("example.com", true)
+	r.learn("example.com", true, now)
 	if _, ok := store.Lookup("example.com"); ok {
 		t.Fatal("вердикт записан при взведённом предохранителе — именно этого он должен не допускать")
 	}

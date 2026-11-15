@@ -68,8 +68,9 @@ class AutoSelectionTest {
     @Test
     fun `a different profile invalidates the cached selection`() {
         AutoSelection.installForTest("p1", AutoSelection.parseCandidates(payload))
-        assertNull(AutoSelection.currentFor("p2"))
-        assertEquals("k1", AutoSelection.currentFor("p1")?.key)
+        assertNull(AutoSelection.currentFor(Profile("p2", "Auto")))
+        assertNull(AutoSelection.currentFor(Profile("p1", "Auto", entryJson = """{"type":"AUTO"}""")))
+        assertEquals("k1", AutoSelection.currentFor(Profile("p1", "Auto"))?.key)
     }
 
     @Test
