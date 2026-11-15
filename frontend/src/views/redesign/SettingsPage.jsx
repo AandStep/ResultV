@@ -391,7 +391,6 @@ export default function SettingsPage({
             aria-label={rows.language.title}
           />
         </Row>
-        {/* Светлая тема отложена до доработки.
         <Row title={rows.theme.title} description={rows.theme.desc}>
           <Select
             options={themes}
@@ -400,7 +399,6 @@ export default function SettingsPage({
             aria-label={rows.theme.title}
           />
         </Row>
-        */}
       </>
     ),
 

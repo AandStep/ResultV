@@ -21,7 +21,7 @@ import wailsAPI from "../utils/wailsAPI";
 import { adminRestartDialog } from "../utils/adminDialog";
 import { applyCountries, detectCountry, redetectCountries } from "../utils/network";
 import { flagEmojiCountry, mergeSubscriptionRefreshCountries } from "../utils/proxyParser";
-// import { applyTheme } from "../lib/theme";
+import { applyTheme } from "../lib/theme";
 
 const RULES_PUSH_DEBOUNCE_MS = 400;
 
@@ -216,10 +216,9 @@ export const useAppConfig = (addLog) => {
                     if (config.routingRules) {
                         setRoutingRules(config.routingRules);
                     }
-                    if (config.settings) {
-                        setSettings({ ...defaultSettings, ...config.settings });
-                        // applyTheme(config.settings.theme);
-                    }
+                    const loadedSettings = { ...defaultSettings, ...config.settings };
+                    setSettings(loadedSettings);
+                    applyTheme(loadedSettings.theme);
                     if (config.subscriptions && Array.isArray(config.subscriptions)) {
                         setSubscriptions(config.subscriptions);
                     }
