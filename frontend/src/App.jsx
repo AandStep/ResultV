@@ -22,7 +22,6 @@ import HomeScreen from "./views/redesign/HomeScreen";
 import SmartRulesScreen from "./views/redesign/SmartRulesScreen";
 import AddScreen from "./views/redesign/AddScreen";
 import ServersScreen from "./views/redesign/ServersScreen";
-import BuyScreen from "./views/redesign/BuyScreen";
 import LogsScreen from "./views/redesign/LogsScreen";
 import SettingsScreen from "./views/redesign/SettingsScreen";
 import { formatBytes, formatSpeed } from "./utils/formatters";
@@ -213,7 +212,6 @@ const AppContent = () => {
             {activeTab === "list" && <ServersScreen />}
             {activeTab === "rules" && <SmartRulesScreen />}
             {activeTab === "add" && <AddScreen />}
-            {activeTab === "buy" && <BuyScreen />}
             {activeTab === "logs" && <LogsScreen />}
             {activeTab === "settings" && <SettingsScreen />}
 

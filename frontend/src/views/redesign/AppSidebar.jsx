@@ -30,7 +30,6 @@ export const MENU = [
   { key: "add", icon: "add", label: "sidebar.add" },
   { key: "list", icon: "list", label: "sidebar.list" },
   { key: "rules", icon: "routing", label: "sidebar.rules" },
-  { key: "buy", icon: "buy", label: "sidebar.buy" },
   { key: "logs", icon: "logs", label: "sidebar.logs" },
 ];
 
