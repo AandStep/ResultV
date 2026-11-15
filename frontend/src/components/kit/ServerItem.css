@@ -67,10 +67,6 @@
   --server-row-highlight: #e5e5e5;
 }
 
-:root[data-theme="light"] .rv-server-item:is([data-variant="row"], [data-variant="autoserver"]) {
-  transition: none;
-}
-
 :root[data-theme="light"] .rv-server-item:is([data-variant="row"], [data-variant="autoserver"])
   .rv-badge[data-color="default"][data-variant="first"] {
   --badge-bg: var(--rv-grey);
@@ -84,17 +80,13 @@
 :root[data-theme="light"] .rv-server-item:is([data-variant="row"], [data-variant="autoserver"])
   :is(.rv-flag, .rv-server-item__badge)[data-status="default"] {
   background: var(--rv-grey);
-  transition: none;
+  /* На главной задержка волны подключения не нужна для hover строки. */
+  transition-delay: 0s;
 }
 
 :root[data-theme="light"] .rv-server-item:is([data-variant="row"], [data-variant="autoserver"]):is(:hover:not([data-mode]), [data-mode="hover"], [data-active="true"])
   :is(.rv-flag, .rv-server-item__badge)[data-status="default"] {
   background: #fcfcfc;
-}
-
-:root[data-theme="light"] .rv-server-item[data-variant="row"] :is(.rv-flag__img, .rv-flag__inner) {
-  outline: 1px solid var(--rv-white-a20);
-  outline-offset: -1px;
 }
 
 :root[data-theme="light"] .rv-server-item:is([data-variant="subitem"], [data-variant="myitem"])
