@@ -47,16 +47,15 @@
   background: var(--rv-grey);
   text-align: left;
   cursor: pointer;
+  transition:
+    background var(--rv-transition),
+    opacity var(--rv-transition);
 }
 
 .rv-server-item:is([data-variant="row"], [data-variant="autoserver"]) {
   height: 106px;
   background: var(--rv-server-list-bg, var(--rv-black));
   opacity: 0.7;
-}
-
-.rv-server-item:is([data-variant="header"], [data-variant="subitem"], [data-variant="myitem"]):is(:hover:not([data-mode]), [data-mode="hover"]) {
-  background: var(--rv-server-list-bg, var(--rv-dark-grey));
 }
 
 .rv-server-item:is([data-variant="row"], [data-variant="autoserver"]):is(:hover:not([data-mode]), [data-mode="hover"], [data-active="true"]) {
@@ -66,6 +65,10 @@
 
 :root[data-theme="light"] .rv-server-item {
   --server-row-highlight: #e5e5e5;
+}
+
+:root[data-theme="light"] .rv-server-item:is([data-variant="row"], [data-variant="autoserver"]) {
+  transition: none;
 }
 
 :root[data-theme="light"] .rv-server-item:is([data-variant="row"], [data-variant="autoserver"])

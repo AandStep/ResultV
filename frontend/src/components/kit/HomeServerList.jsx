@@ -57,7 +57,7 @@ export default function HomeServerList({
 
   return (
     <div
-      className={`rv-home-server-list rv-border rv-border--static ${className}`}
+      className={`rv-home-server-list rv-border ${className}`}
       data-status={status}
       data-open={open}
       {...rest}

@@ -43,6 +43,7 @@
   border: 0;
   border-radius: var(--rv-radius-24);
   background: var(--rv-black);
+  transition: background var(--rv-transition);
 }
 
 /*
