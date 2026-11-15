@@ -28,6 +28,8 @@ import (
 const (
 	testExitGroup = socks5ExitSelector
 	testExitUUID  = "90e4099f-aaf7-452d-9bc5-f9f2bb82c5b0"
+	// The SOCKS5 UDP client reads the header and the one-byte echo together.
+	testExitEchoReadSize = 3 + M.MaxSocksaddrLength + 1
 )
 
 type testExitSwitch interface {
@@ -134,7 +136,8 @@ func TestSocks5ExitCoreSwitch(t *testing.T) {
 		udp := testExitDial(t, client, N.NetworkUDP, targetUDP)
 		if _, err := udp.Write([]byte("x")); err == nil {
 			_ = udp.SetReadDeadline(time.Now().Add(250 * time.Millisecond))
-			if _, err := udp.Read(make([]byte, 1)); err == nil {
+			var reply [testExitEchoReadSize]byte
+			if n, err := udp.Read(reply[:]); n > 0 || err == nil {
 				t.Fatal("selected UDP reached the target via a TCP-only exit")
 			}
 		}
@@ -458,8 +461,9 @@ func testExitRoundTrip(t *testing.T, conn net.Conn) {
 	if _, err := conn.Write([]byte("x")); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := io.ReadFull(conn, make([]byte, 1)); got != 1 || err != nil {
-		t.Fatalf("echo returned %d bytes: %v", got, err)
+	var reply [testExitEchoReadSize]byte
+	if n, err := conn.Read(reply[:]); err != nil || n != 1 || reply[0] != 'x' {
+		t.Fatalf("echo returned %q, want %q: %v", reply[:n], "x", err)
 	}
 }
 
