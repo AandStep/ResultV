@@ -118,6 +118,18 @@
   --btn-shadow-active: var(--rv-errors-a08);
 }
 
+:root[data-theme="light"] .rv-btn[data-variant="default"] {
+  --btn-bg: var(--rv-dark-grey);
+  --btn-bg-hover: var(--rv-black);
+  --btn-bg-active: var(--rv-black);
+  --rv-border: linear-gradient(var(--rv-white-a10), var(--rv-white-a10));
+}
+
+:root[data-theme="light"] .rv-btn[data-variant="green"][data-mode="idle"]:not(:disabled) {
+  --btn-bg-idle: var(--rv-main-color);
+  --btn-text: var(--rv-on-accent);
+}
+
 /* --- Состояния ---------------------------------------------------------- */
 
 .rv-btn:hover:not(:disabled):not([data-mode]),

@@ -68,6 +68,10 @@
   color: var(--rv-white-a50);
 }
 
+:where(:root[data-theme="light"]) .rv-big-btn {
+  color: var(--rv-white-a80);
+}
+
 .rv-big-btn:hover:not([data-state]),
 .rv-big-btn[data-state="hover"] {
   color: var(--rv-main-color);

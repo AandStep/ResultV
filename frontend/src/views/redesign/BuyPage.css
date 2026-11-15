@@ -68,6 +68,8 @@
 .rv-buy-page__logo {
   display: block;
   flex-shrink: 0;
+  border-radius: var(--rv-radius-24);
+  background: var(--rv-light-gray);
 }
 
 .rv-buy-page__text {

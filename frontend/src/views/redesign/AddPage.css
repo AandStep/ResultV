@@ -99,6 +99,13 @@
   color: var(--rv-white-a50);
 }
 
+:root[data-theme="light"] .rv-add-page__submit:not(:disabled) {
+  --btn-bg: var(--rv-main-color);
+  --btn-bg-hover: #005e2e;
+  --btn-bg-active: #005426;
+  --btn-text: var(--rv-on-accent);
+}
+
 /* --- Ряд протоколов ----------------------------------------------------- */
 
 /* Прокрутка ряда и растяжки у краёв — общие, см. ScrollRow.css. */

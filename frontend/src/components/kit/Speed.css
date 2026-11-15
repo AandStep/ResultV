@@ -116,3 +116,7 @@
 .rv-speed[data-variant="second"] .rv-speed__chart--empty {
   background: var(--rv-second-color);
 }
+
+:root[data-theme="light"] :is(.rv-speed[data-mode="default"] .rv-speed__data, .rv-speed__chart--empty) {
+  opacity: 1;
+}

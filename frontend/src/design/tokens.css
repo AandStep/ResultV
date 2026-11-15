@@ -312,19 +312,34 @@
 }
 
 /*
- * Светлая тема. В Figma её нет — палитра собрана из тёмной по смыслу ступеней,
- * а не зеркалом: страница светло-серая, карточки белые, поля и кнопка питания
- * чуть утоплены. «Белые» ступени становятся чернилами, жёлтый затемнён до
- * читаемого на белом, остальные фирменные цвета прежние.
+ * Светлая тема: серый фон окна, белые карточки и отдельная подложка полей.
+ * Основной, вторичный и статусные цвета читаются на белом и на цветных подложках.
  */
 :root[data-theme="light"] {
   --rv-white: #161a17;
-  --rv-black: #eceeed;
-  --rv-dark-grey: #f5f6f5;
+  --rv-black: #e4e7e5;
+  --rv-dark-grey: #edf1ee;
   --rv-grey: #ffffff;
   --rv-light-gray: #eef0ef;
 
-  --rv-warning: #b58900;
+  --rv-main-color: #006832;
+  --rv-second-color: #246d00;
+  --rv-warning: #775100;
+  --rv-errors: #ab163c;
+
+  --rv-main-a08: rgba(0, 104, 50, 0.08);
+  --rv-main-a10: rgba(0, 104, 50, 0.1);
+  --rv-main-a20: rgba(0, 104, 50, 0.2);
+  --rv-main-a50: rgba(0, 104, 50, 0.5);
+  --rv-second-a10: rgba(36, 109, 0, 0.1);
+  --rv-warning-a08: rgba(119, 81, 0, 0.08);
+  --rv-warning-a10: rgba(119, 81, 0, 0.1);
+  --rv-warning-a20: rgba(119, 81, 0, 0.2);
+  --rv-warning-a50: rgba(119, 81, 0, 0.5);
+  --rv-errors-a08: rgba(171, 22, 60, 0.08);
+  --rv-errors-a10: rgba(171, 22, 60, 0.1);
+  --rv-errors-a20: rgba(171, 22, 60, 0.2);
+  --rv-errors-a50: rgba(171, 22, 60, 0.5);
 
   --rv-icon-default: var(--rv-white-a50);
   --rv-overlay: rgba(22, 26, 23, 0.3);
@@ -335,7 +350,7 @@
   --rv-white-a16: rgba(22, 26, 23, 0.14);
   --rv-white-a20: rgba(22, 26, 23, 0.24);
   --rv-white-a40: rgba(22, 26, 23, 0.36);
-  --rv-white-a50: rgba(22, 26, 23, 0.56);
+  --rv-white-a50: rgba(22, 26, 23, 0.73);
   --rv-white-a80: rgba(22, 26, 23, 0.84);
   --rv-black-a20: rgba(22, 26, 23, 0.08);
   --rv-black-a25: rgba(22, 26, 23, 0.1);
