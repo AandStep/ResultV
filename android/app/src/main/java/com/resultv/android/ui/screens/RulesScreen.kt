@@ -8,6 +8,7 @@ import android.graphics.Canvas
 import android.graphics.drawable.Drawable
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.filled.Check
@@ -31,15 +32,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AltRoute
 import androidx.compose.material.icons.outlined.Apps
@@ -62,7 +64,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
@@ -72,6 +78,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.resultv.android.R
@@ -89,6 +96,8 @@ import com.resultv.android.vpn.SmartListRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+private val RulesSectionPadding = 14.dp
+
 /**
  * Страница «Умные правила» — мобильный макет (Figma 6865:4881 Smart,
  * 6869:4923 Global). Плитки режимов, в Global под ними — профили
@@ -97,7 +106,7 @@ import kotlinx.coroutines.withContext
  * Оба направления редактируются независимо для каждого режима.
  */
 @Composable
-fun RulesScreen(onOpenRoutingProfiles: () -> Unit = {}) {
+fun RulesScreen(viewportHeight: Dp, onOpenRoutingProfiles: () -> Unit = {}) {
     val rules by RoutingRulesRepository.state.collectAsStateWithLifecycle()
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
@@ -106,10 +115,22 @@ fun RulesScreen(onOpenRoutingProfiles: () -> Unit = {}) {
     var domainInput by remember(rules.mode, action) { mutableStateOf("") }
     var confirmClearSites by remember(rules.mode, action) { mutableStateOf(false) }
     val intoVpn = action == RuleAction.IntoVpn
+    val pageScroll = rememberScrollState()
+    val revealAppList = remember(pageScroll) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                // Reveal the full list before its rows start scrolling.
+                if (available.y >= 0f || !pageScroll.canScrollForward) return Offset.Zero
+                return Offset(0f, -pageScroll.dispatchRawDelta(-available.y))
+            }
+        }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .verticalScroll(pageScroll)
+            .nestedScroll(revealAppList)
             .pointerInput(Unit) {
                 detectTapGestures(onTap = {
                     keyboard?.hide()
@@ -179,7 +200,11 @@ fun RulesScreen(onOpenRoutingProfiles: () -> Unit = {}) {
             )
         }
 
-        PerAppRoutingSection(mode = rules.mode, tab = action)
+        PerAppRoutingSection(
+            mode = rules.mode,
+            tab = action,
+            listHeight = (viewportHeight - RulesSectionPadding).coerceAtLeast(0.dp),
+        )
     }
 
     if (confirmClearSites) {
@@ -274,7 +299,7 @@ private fun RulesSection(
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
             .background(RvColor.Grey)
-            .padding(14.dp),
+            .padding(RulesSectionPadding),
         verticalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
         Row {
@@ -329,7 +354,7 @@ private data class InstalledApp(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PerAppRoutingSection(mode: RoutingMode, tab: RuleAction) {
+private fun PerAppRoutingSection(mode: RoutingMode, tab: RuleAction, listHeight: Dp) {
     // package_name rules can't match without ConnectivityManager
     // .getConnectionOwnerUid — see BoxPlatform.findConnectionOwner.
     val canResolveOwner = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
@@ -350,7 +375,7 @@ private fun PerAppRoutingSection(mode: RoutingMode, tab: RuleAction) {
                 color = RvColor.description,
             )
         } else {
-            AppList(mode = mode, tab = tab)
+            AppList(mode = mode, tab = tab, listHeight = listHeight)
         }
     }
 
@@ -364,7 +389,7 @@ private fun PerAppRoutingSection(mode: RoutingMode, tab: RuleAction) {
 }
 
 @Composable
-private fun AppList(mode: RoutingMode, tab: RuleAction) {
+private fun AppList(mode: RoutingMode, tab: RuleAction, listHeight: Dp) {
     val modeRules by AppRoutingRepository.state.collectAsStateWithLifecycle()
     val rules = modeRules.forMode(mode)
     val selected = when (tab) {
@@ -374,6 +399,7 @@ private fun AppList(mode: RoutingMode, tab: RuleAction) {
     }
     InstalledAppPicker(
         selectedPackages = selected,
+        listModifier = Modifier.heightIn(max = listHeight),
         onToggleAutomatic = if (mode == RoutingMode.Smart && tab == RuleAction.IntoVpn) {
             AppRoutingRepository::setAutomaticSmartMembership
         } else null,
@@ -390,6 +416,7 @@ private fun AppList(mode: RoutingMode, tab: RuleAction) {
 internal fun InstalledAppPicker(
     selectedPackages: Set<String>,
     onToggle: (String, Boolean) -> Unit,
+    listModifier: Modifier = Modifier.height(280.dp),
     onToggleAutomatic: ((String, Boolean) -> Unit)? = null,
     showCount: Boolean = true,
     directPackages: Set<String> = emptySet(),
@@ -485,33 +512,30 @@ internal fun InstalledAppPicker(
                 CircularProgressIndicator()
             }
         } else {
-            // Список фиксированной высоты со своей прокруткой и затуханием
-            // снизу — страница из-за сотни приложений не растёт.
-            Box(modifier = Modifier.fillMaxWidth().height(280.dp)) {
-            LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                items(ordered, key = { it.packageName }) { app ->
-                    // Отмеченная строка уезжает наверх — видимым движением, а
-                    // не исчезновением из-под пальца.
-                    val rowModifier = Modifier.animateItem()
-                    val checked = app.packageName in checkedPackages
-                    val automaticToggle = onToggleAutomatic?.takeIf { app.packageName in autoIn }
-                    AppRow(
-                        app = app,
-                        checked = checked,
-                        blockedElsewhere = app.packageName in blockedPackages,
-                        autoBadge = automaticToggle != null && checked,
-                        onToggle = { (automaticToggle ?: onToggle)(app.packageName, !checked) },
-                        modifier = rowModifier,
+            Box(modifier = Modifier.fillMaxWidth().then(listModifier)) {
+                LazyColumn(state = listState, modifier = Modifier.fillMaxWidth()) {
+                    items(ordered, key = { it.packageName }) { app ->
+                        val checked = app.packageName in checkedPackages
+                        val automaticToggle = onToggleAutomatic?.takeIf { app.packageName in autoIn }
+                        AppRow(
+                            app = app,
+                            checked = checked,
+                            blockedElsewhere = app.packageName in blockedPackages,
+                            autoBadge = automaticToggle != null && checked,
+                            onToggle = { (automaticToggle ?: onToggle)(app.packageName, !checked) },
+                            modifier = Modifier.animateItem(),
+                        )
+                    }
+                }
+                if (listState.canScrollForward) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .height(40.dp)
+                            .background(Brush.verticalGradient(listOf(Color.Transparent, RvColor.Grey))),
                     )
                 }
-            }
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .height(40.dp)
-                        .background(Brush.verticalGradient(listOf(Color.Transparent, RvColor.Grey))),
-                )
             }
         }
     }

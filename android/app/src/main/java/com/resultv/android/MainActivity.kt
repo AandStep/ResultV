@@ -22,6 +22,7 @@ import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -31,10 +32,8 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
@@ -378,13 +377,13 @@ private fun AppShell(
                     )
                     Tab.Rules -> {
                         var profilesOpen by rememberSaveable { mutableStateOf(false) }
-                        Column(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .verticalScroll(rememberScrollState())
-                                .padding(horizontal = 12.dp),
+                        BoxWithConstraints(
+                            Modifier.fillMaxSize().padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
                         ) {
-                            RulesScreen(onOpenRoutingProfiles = { profilesOpen = true })
+                            RulesScreen(
+                                viewportHeight = maxHeight,
+                                onOpenRoutingProfiles = { profilesOpen = true },
+                            )
                         }
                         RoutingProfilesSheets(open = profilesOpen, onDismiss = { profilesOpen = false })
                     }
