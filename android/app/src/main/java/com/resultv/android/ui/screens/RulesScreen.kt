@@ -460,7 +460,7 @@ internal fun InstalledAppPicker(
             emptySet()
         } else withContext(Dispatchers.IO) {
             val matched = SmartAppMembership.matchedPackages(
-                ctx.filesDir.absolutePath, apps.map { it.packageName },
+                ctx.filesDir.absolutePath, AppInventory.smartDomainCandidates(ctx),
             )
             val browsers = AppInventory.browserPackages(ctx)
             matched + browsers

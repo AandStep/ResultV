@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.util.Log
@@ -16,14 +17,12 @@ private const val TAG = "ResultV/AppInventory"
  * bound and free of routing logic so SmartAppMembership / AppTunnelMembership
  * stay pure and JVM-testable.
  *
- * Results are memoized for the process lifetime: both queries are binder IPCs
- * that ran on the openTun hot path on EVERY connect. The set of installed apps
- * only changes on install/uninstall — [init] wires that up automatically via
- * [invalidate].
+ * Results are memoized to keep PackageManager queries off the reconnect path.
+ * [init] invalidates the cache when installed packages or components change.
  */
 object AppInventory {
 
-    @Volatile private var cachedApps: List<String>? = null
+    @Volatile private var cachedSmartCandidates: List<String>? = null
     @Volatile private var cachedBrowsers: Set<String>? = null
     @Volatile private var receiverRegistered = false
 
@@ -62,6 +61,7 @@ object AppInventory {
         try {
             val filter = IntentFilter().apply {
                 addAction(Intent.ACTION_PACKAGE_ADDED)
+                addAction(Intent.ACTION_PACKAGE_CHANGED)
                 addAction(Intent.ACTION_PACKAGE_REMOVED)
                 addAction(Intent.ACTION_PACKAGE_FULLY_REMOVED)
                 addDataScheme("package")
@@ -94,32 +94,34 @@ object AppInventory {
     /** Drop the memoized lists (call on package install/uninstall). */
     @Synchronized
     fun invalidate() {
-        cachedApps = null
+        cachedSmartCandidates = null
         cachedBrowsers = null
     }
 
     /**
-     * Installed app package names (excluding our own). Deliberately does NOT
-     * resolve labels: [SmartAppMembership] keys on the package's reverse-DNS
-     * domain, and getApplicationLabel loads each app's resources — hundreds of
-     * those on the openTun hot path was the 3-5s Smart connect stall.
+     * Packages eligible for Smart's domain-based detection. A system utility
+     * with no launcher entry must not inherit its manufacturer's web block.
+     * Browsers and manually selected packages are handled separately.
      */
-    fun installedApps(ctx: Context): List<String> {
-        cachedApps?.let { return it }
+    fun smartDomainCandidates(ctx: Context): List<String> {
+        cachedSmartCandidates?.let { return it }
         val own = ctx.packageName
-        val apps = ctx.packageManager
-            .getInstalledApplications(0)
+        val pm = ctx.packageManager
+        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val launchablePackages = pm.queryIntentActivities(launcher, 0)
+            .mapNotNull { it.activityInfo?.packageName }
+            .toSet()
+        val systemFlags = ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP
+        val apps = pm.getInstalledApplications(0)
             .asSequence()
+            .filter { app ->
+                app.packageName != own &&
+                    ((app.flags and systemFlags) == 0 || app.packageName in launchablePackages)
+            }
             .map { it.packageName }
-            .filter { it != own }
             .toList()
-        // Видимость приложений держится на <queries> в манифесте, а не на
-        // QUERY_ALL_PACKAGES. Ошибка там проявляется не отказом, а молча
-        // укоротившимся списком: приложение, которого мы не видим, не попадёт
-        // ни в пикер исключений, ни в Smart-членство, и его трафик пойдёт
-        // мимо туннеля. Поэтому счётчик виден в логе.
-        Log.i(TAG, "visible apps: ${apps.size}")
-        cachedApps = apps
+        Log.i(TAG, "Smart domain candidates: ${apps.size}")
+        cachedSmartCandidates = apps
         return apps
     }
 

@@ -376,7 +376,7 @@ private class BoxPlatform(private val service: ResultVpnService) : PlatformInter
      */
     private fun applySmartAllowlist(builder: VpnService.Builder, ownPkg: String): Boolean {
         val tMatch = System.currentTimeMillis()
-        val apps = AppInventory.installedApps(service)
+        val apps = AppInventory.smartDomainCandidates(service)
         val browsers = AppInventory.browserPackages(service)
         val matched = SmartAppMembership.matchedPackages(
             service.filesDir.absolutePath, apps,
