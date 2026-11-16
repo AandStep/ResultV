@@ -164,7 +164,7 @@ func decodeRoutingPayload(body string) ([]byte, error) {
 		return nil, fmt.Errorf("routing link payload is too large (%d bytes)", len(body))
 	}
 	// Percent-encoding survives some browsers and shells.
-	if decoded, derr := urlpkg.QueryUnescape(body); derr == nil && decoded != "" {
+	if decoded, derr := urlpkg.PathUnescape(body); derr == nil && decoded != "" {
 		body = decoded
 	}
 	body = sanitizeBase64(body)
@@ -182,6 +182,43 @@ func decodeRoutingPayload(body string) ([]byte, error) {
 		}
 	}
 	return nil, errors.New("routing link payload is not valid base64")
+}
+
+// ParseRoutingHeader reads the Routing response header. Providers use bare
+// base64 or a client-specific routing link. Off withdraws the published profile.
+func ParseRoutingHeader(value string) (profile *config.RoutingProfile, off bool, err error) {
+	body := strings.TrimSpace(value)
+	if body == "" {
+		return nil, false, nil
+	}
+	lower := strings.ToLower(body)
+	if lower == "off" {
+		return nil, true, nil
+	}
+	const path = "://routing/"
+	if i := strings.Index(lower, path); i >= 0 {
+		body = body[i+len(path):]
+		action, payload, _ := strings.Cut(body, "/")
+		switch strings.ToLower(action) {
+		case "off":
+			return nil, true, nil
+		case "onadd", "add":
+			body = payload
+		default:
+			return nil, false, errors.New("unknown action in Routing header")
+		}
+	}
+
+	blob, err := decodeRoutingPayload(body)
+	if err != nil {
+		return nil, false, err
+	}
+	parsed, err := ParseRoutingProfileJSON(blob)
+	if err != nil {
+		return nil, false, err
+	}
+	parsed.Source = "subscription"
+	return &parsed, false, nil
 }
 
 // ParseRoutingProfileJSON reads the published JSON into a profile.

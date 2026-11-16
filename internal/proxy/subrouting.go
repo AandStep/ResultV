@@ -36,7 +36,7 @@ import (
 func BuildSubscriptionRoutingProfile(
 	subID, subName string,
 	allowInsecure bool,
-	headerVal, body string,
+	profileHeader, listsHeader, body string,
 ) (config.RoutingProfile, bool) {
 	name := strings.TrimSpace(subName)
 	if name == "" {
@@ -46,35 +46,36 @@ func BuildSubscriptionRoutingProfile(
 		// stable, which is the whole job of a handle.
 		name = subID
 	}
+	published, off, _ := ParseRoutingHeader(profileHeader)
 	p := config.RoutingProfile{
-		Name:           name,
-		OriginName:     name,
-		Source:         "subscription",
-		SubscriptionID: subID,
-		AllowInsecure:  allowInsecure,
-		UpdatedAt:      time.Now().Unix(),
-		ListURLs:       map[string][]string{},
+		Name:       name,
+		OriginName: name,
+		UpdatedAt:  time.Now().Unix(),
 	}
+	if published != nil {
+		p = *published
+	}
+	p.Source = "subscription"
+	p.SubscriptionID = subID
+	p.AllowInsecure = allowInsecure
 
 	// Rules the provider linked to: kept as links.
-	for _, decl := range ExtractSubscriptionRoutingLists(headerVal, body) {
+	for _, decl := range ExtractSubscriptionRoutingLists(listsHeader, body) {
 		if strings.HasPrefix(decl.URL, "embedded:") {
 			continue // handled below, straight from the body
+		}
+		if p.ListURLs == nil {
+			p.ListURLs = make(map[string][]string)
 		}
 		p.ListURLs[decl.Action] = append(p.ListURLs[decl.Action], decl.URL)
 	}
 
-	// Rules the provider inlined into its xray config: become tokens.
-	for _, action := range RoutingActions {
-		parsed, ok := ExtractEmbeddedRoutingLists(body)[action]
-		if !ok {
-			continue
+	// The published profile is complete. Embedded Xray rules are a fallback
+	// for providers that don't publish one, as on desktop.
+	if published == nil && !off {
+		for action, rules := range ExtractEmbeddedRoutingLists(body) {
+			addSubscriptionTokens(&p, action, rules)
 		}
-		addSubscriptionTokens(&p, action, parsed)
-	}
-
-	if len(p.ListURLs) == 0 {
-		p.ListURLs = nil
 	}
 	if p.RuleCount("direct")+p.RuleCount("proxy")+p.RuleCount("block") == 0 {
 		return config.RoutingProfile{}, false

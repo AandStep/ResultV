@@ -16,7 +16,7 @@ func TestBuildSubscriptionRoutingProfileFromHeader(t *testing.T) {
 	decl := `[{"name":"L","url":"https://panel.example/l.txt","action":"proxy"}]`
 	header := base64.StdEncoding.EncodeToString([]byte(decl))
 
-	p, ok := BuildSubscriptionRoutingProfile("sub1", "impVPN", false, header, "")
+	p, ok := BuildSubscriptionRoutingProfile("sub1", "impVPN", false, "", header, "")
 	if !ok {
 		t.Fatal("профиль не собран из заголовка")
 	}
@@ -43,7 +43,7 @@ func TestBuildSubscriptionRoutingProfileFromEmbeddedXray(t *testing.T) {
 		{"type":"field","outboundTag":"proxy","domain":["proxy.example"],"ip":["10.0.0.0/8"]},
 		{"type":"field","outboundTag":"block","domain":["ads.example"]}
 	]}}`
-	p, ok := BuildSubscriptionRoutingProfile("sub1", "impVPN", false, "", body)
+	p, ok := BuildSubscriptionRoutingProfile("sub1", "impVPN", false, "", "", body)
 	if !ok {
 		t.Fatal("профиль не собран из встроенных правил")
 	}
@@ -65,7 +65,7 @@ func TestBuildSubscriptionRoutingProfileMergesBothSources(t *testing.T) {
 	header := base64.StdEncoding.EncodeToString([]byte(decl))
 	body := `{"routing":{"rules":[{"type":"field","outboundTag":"direct","domain":["direct.example"]}]}}`
 
-	p, ok := BuildSubscriptionRoutingProfile("sub1", "impVPN", true, header, body)
+	p, ok := BuildSubscriptionRoutingProfile("sub1", "impVPN", true, "", header, body)
 	if !ok {
 		t.Fatal("профиль не собран")
 	}
@@ -81,13 +81,48 @@ func TestBuildSubscriptionRoutingProfileMergesBothSources(t *testing.T) {
 	}
 }
 
+func TestBuildSubscriptionRoutingProfilePublishedHeaderPrecedence(t *testing.T) {
+	const body = `{"routing":{"rules":[{"type":"field","outboundTag":"direct","domain":["embedded.example"]}]}}`
+	const payload = `{"Name":"Provider","DirectSites":["published.example"]}`
+	const lists = `[{"name":"L","url":"https://panel.example/proxy.txt","action":"proxy"}]`
+	header := base64.RawURLEncoding.EncodeToString([]byte(payload))
+	standardHeader := base64.StdEncoding.EncodeToString([]byte(`{"Name":">>>","DirectSites":["published.example"]}`))
+	listsHeader := base64.StdEncoding.EncodeToString([]byte(lists))
+	for _, tc := range []struct {
+		name, routing, wantDirect string
+	}{
+		{"bare profile", header, "published.example"},
+		{"standard base64 with plus", standardHeader, "published.example"},
+		{"client link", "incy://routing/add/" + header, "published.example"},
+		{"withdrawn", "happ://routing/off", ""},
+		{"invalid profile", "happ://routing/onadd/%%%", "embedded.example"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			profile, ok := BuildSubscriptionRoutingProfile("sub1", "Title", false, tc.routing, listsHeader, body)
+			if !ok || profile.RuleCount("proxy") != 1 || profile.SubscriptionID != "sub1" {
+				t.Fatalf("linked list did not survive: %+v", profile)
+			}
+			if tc.wantDirect == "" {
+				if len(profile.DirectSites) != 0 {
+					t.Fatalf("withdrawn profile kept inline rules: %v", profile.DirectSites)
+				}
+			} else if len(profile.DirectSites) != 1 || profile.DirectSites[0] != tc.wantDirect {
+				t.Fatalf("direct sites = %v, want [%s]", profile.DirectSites, tc.wantDirect)
+			}
+		})
+	}
+	if _, ok := BuildSubscriptionRoutingProfile("sub1", "Title", false, "off", "", body); ok {
+		t.Fatal("a withdrawn profile was recreated from inline rules")
+	}
+}
+
 func TestBuildSubscriptionRoutingProfileEmptyWhenNothingDeclared(t *testing.T) {
 	for _, tc := range []struct{ header, body string }{
 		{"", ""},
 		{"", "vless://11111111-1111-1111-1111-111111111111@1.2.3.4:443"},
 		{"не base64", "{}"},
 	} {
-		if _, ok := BuildSubscriptionRoutingProfile("sub1", "S", false, tc.header, tc.body); ok {
+		if _, ok := BuildSubscriptionRoutingProfile("sub1", "S", false, "", tc.header, tc.body); ok {
 			t.Errorf("пустая подписка дала профиль: header=%q", tc.header)
 		}
 	}
@@ -97,7 +132,7 @@ func TestBuildSubscriptionRoutingProfileEmptyWhenNothingDeclared(t *testing.T) {
 // OriginName его находит следующая синхронизация.
 func TestBuildSubscriptionRoutingProfileFallsBackToSubID(t *testing.T) {
 	body := `{"routing":{"rules":[{"type":"field","outboundTag":"direct","domain":["a.example"]}]}}`
-	p, ok := BuildSubscriptionRoutingProfile("sub1", "   ", false, "", body)
+	p, ok := BuildSubscriptionRoutingProfile("sub1", "   ", false, "", "", body)
 	if !ok {
 		t.Fatal("профиль не собран")
 	}
@@ -111,7 +146,7 @@ func TestBuildSubscriptionRoutingProfileFallsBackToSubID(t *testing.T) {
 // его назначит UpsertRoutingProfile.
 func TestBuildSubscriptionRoutingProfileSurvivesUpsert(t *testing.T) {
 	body := `{"routing":{"rules":[{"type":"field","outboundTag":"proxy","domain":["a.example"]}]}}`
-	p, ok := BuildSubscriptionRoutingProfile("sub1", "impVPN", false, "", body)
+	p, ok := BuildSubscriptionRoutingProfile("sub1", "impVPN", false, "", "", body)
 	if !ok {
 		t.Fatal("профиль не собран")
 	}
@@ -126,7 +161,7 @@ func TestBuildSubscriptionRoutingProfileSurvivesUpsert(t *testing.T) {
 		t.Errorf("первый профиль не стал активным: %q", activeID)
 	}
 	// Повторная синхронизация той же подписки обновляет, а не раздваивает.
-	again, _ := BuildSubscriptionRoutingProfile("sub1", "impVPN", false, "", body)
+	again, _ := BuildSubscriptionRoutingProfile("sub1", "impVPN", false, "", "", body)
 	out2, _, _, err := UpsertRoutingProfile(out, again, activeID, false)
 	if err != nil {
 		t.Fatalf("повторная синхронизация: %v", err)

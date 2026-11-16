@@ -470,9 +470,8 @@ type SubscriptionResponse struct {
 	SupportURL string          `json:"supportUrl,omitempty"`
 	// Routing is the provider's own routing folded into ONE profile, as JSON,
 	// or empty when it declared none. Kotlin only has to stamp its own
-	// subscription id on it and merge — the parsing of both channels (the
-	// Routing-Lists header and the embedded xray rules) lives in Go, and a
-	// second copy of it there would drift from this one.
+	// subscription id on it and merge. Go handles the Routing and
+	// Routing-Lists headers and rules embedded in the response body.
 	Routing string `json:"routing,omitempty"`
 }
 
@@ -631,7 +630,7 @@ func fetchSubscription(subURL, dataDir string, opts SubscriptionFetchOptions) (s
 	// нечем, а чужой id сломал бы поиск профиля при следующей синхронизации.
 	routing := ""
 	if p, ok := proxy.BuildSubscriptionRoutingProfile(
-		"", primaryRes.Title, false, primaryRes.RoutingHeader, primaryRes.Body,
+		"", primaryRes.Title, false, primaryRes.RoutingProfileHeader, primaryRes.RoutingListsHeader, primaryRes.Body,
 	); ok {
 		if blob, merr := json.Marshal(p); merr == nil {
 			routing = string(blob)
@@ -714,17 +713,14 @@ func marshalAutoMembers(members []config.ProxyEntry) json.RawMessage {
 // traffic quota, profile-title for default subscription name, support-url
 // for the per-sub help link in the edit sheet).
 type subscriptionFetchResult struct {
-	Entries    []config.ProxyEntry
-	UserInfo   string
-	Title      string
-	SupportURL string
-	Diag       string
-	// RoutingHeader и Body нужны разбору маршрутизации: провайдер объявляет её
-	// либо заголовком Routing-Lists, либо ключом routingLists в JSON-теле,
-	// либо встроенными xray-правилами прямо в конфигах. Тело здесь уже
-	// прочитано — второй запрос за тем же ответом был бы лишним.
-	RoutingHeader string
-	Body          string
+	Entries              []config.ProxyEntry
+	UserInfo             string
+	Title                string
+	SupportURL           string
+	Diag                 string
+	RoutingProfileHeader string
+	RoutingListsHeader   string
+	Body                 string
 }
 
 // subscriptionDeviceHeaders pulls the user-tag headers out of the fetch
@@ -805,13 +801,14 @@ func fetchSubscriptionWithUA(subURL, userAgent, hwid string, extraHeaders map[st
 	// don't set them get empty strings here and the UI hides the
 	// corresponding affordance instead of falling back to a hardcoded value.
 	return subscriptionFetchResult{
-		Entries:       entries,
-		UserInfo:      resp.Header.Get("Subscription-Userinfo"),
-		Title:         resp.Header.Get("Profile-Title"),
-		SupportURL:    strings.TrimSpace(resp.Header.Get("Support-Url")),
-		Diag:          diag,
-		RoutingHeader: resp.Header.Get("Routing-Lists"),
-		Body:          string(body),
+		Entries:              entries,
+		UserInfo:             resp.Header.Get("Subscription-Userinfo"),
+		Title:                resp.Header.Get("Profile-Title"),
+		SupportURL:           strings.TrimSpace(resp.Header.Get("Support-Url")),
+		Diag:                 diag,
+		RoutingProfileHeader: resp.Header.Get("Routing"),
+		RoutingListsHeader:   resp.Header.Get("Routing-Lists"),
+		Body:                 string(body),
 	}, nil
 }
 

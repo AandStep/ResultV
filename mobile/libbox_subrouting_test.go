@@ -14,12 +14,44 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"resultproxy-wails/internal/config"
 )
 
 const subTestEntry = "vless://11111111-1111-1111-1111-111111111111@1.2.3.4:443?security=none&type=tcp#n\n"
 
-// Ответ подписки несёт маршрутизацию двумя каналами; оба должны доехать до
-// Kotlin одним ключом, а не потеряться между заголовком и телом.
+func TestFetchSubscriptionCarriesPublishedRoutingProfile(t *testing.T) {
+	const payload = `{"Name":"Provider routing","DirectSites":["direct.example"],"ProxySites":["proxy.example"],"BlockSites":["block.example"],"Geoipurl":"https://panel.example/geoip.dat"}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Routing", "happ://routing/onadd/"+base64.RawURLEncoding.EncodeToString([]byte(payload)))
+		w.Header().Set("Profile-Title", "Subscription title")
+		w.Write([]byte(subTestEntry))
+	}))
+	defer server.Close()
+
+	raw, err := FetchSubscriptionV3(server.URL, t.TempDir(), `{"sendHwid":false}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response SubscriptionResponse
+	if err := json.Unmarshal([]byte(raw), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Routing == "" {
+		t.Fatal("the published Routing header was lost")
+	}
+	var profile config.RoutingProfile
+	if err := json.Unmarshal([]byte(response.Routing), &profile); err != nil {
+		t.Fatal(err)
+	}
+	if profile.Name != "Provider routing" || profile.OriginName != profile.Name || profile.Source != "subscription" ||
+		profile.RuleCount("direct") != 1 || profile.RuleCount("proxy") != 1 || profile.RuleCount("block") != 1 ||
+		profile.GeoIPURL != "https://panel.example/geoip.dat" {
+		t.Fatalf("unexpected provider profile: %+v", profile)
+	}
+}
+
+// Linked lists reach Kotlin in the same routing field as published profiles.
 func TestFetchSubscriptionCarriesRoutingFromHeader(t *testing.T) {
 	decl := `[{"name":"L","url":"https://panel.example/l.txt","action":"proxy"}]`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +93,7 @@ func TestFetchSubscriptionCarriesRoutingFromHeader(t *testing.T) {
 	}
 }
 
-// Встроенные в тело xray-правила — второй канал, и он тоже должен доехать.
+// Embedded Xray rules reach Kotlin even when the server sends no header.
 func TestFetchSubscriptionCarriesRoutingFromBody(t *testing.T) {
 	body := `{"outbounds":[{"protocol":"vless","settings":{"vnext":[{"address":"1.2.3.4",` +
 		`"port":443,"users":[{"id":"11111111-1111-1111-1111-111111111111"}]}]},` +
