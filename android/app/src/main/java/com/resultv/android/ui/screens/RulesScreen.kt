@@ -31,12 +31,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
@@ -97,6 +99,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 private val RulesSectionPadding = 14.dp
+private val RulesSectionRadius = 20.dp
+private val RulesListEndPadding = 12.dp
 
 /**
  * Страница «Умные правила» — мобильный макет (Figma 6865:4881 Smart,
@@ -203,7 +207,7 @@ fun RulesScreen(viewportHeight: Dp, onOpenRoutingProfiles: () -> Unit = {}) {
         PerAppRoutingSection(
             mode = rules.mode,
             tab = action,
-            listHeight = (viewportHeight - RulesSectionPadding).coerceAtLeast(0.dp),
+            listHeight = viewportHeight,
         )
     }
 
@@ -297,33 +301,38 @@ private fun RulesSection(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(RulesSectionRadius))
             .background(RvColor.Grey)
             .padding(RulesSectionPadding),
         verticalArrangement = Arrangement.spacedBy(RvSpace.nest2),
     ) {
-        Row {
-            Column(
-                modifier = Modifier.weight(1f).padding(end = RvSpace.nest2),
-                verticalArrangement = Arrangement.spacedBy(RvSpace.xs),
-            ) {
-                Text(title, style = SectionTitle, color = RvColor.White)
-                Text(description, style = SectionDesc, color = RvColor.description)
-            }
-            // Глиф 20, цель пальца 36: лишнее уходит сдвигом за край глифа.
-            IconButton(
-                onClick = onClear,
-                modifier = Modifier.size(36.dp).offset(x = 8.dp, y = (-8).dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Delete,
-                    contentDescription = stringResource(R.string.rules_clear_list),
-                    tint = RvColor.whiteA50,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-        }
+        RulesSectionHeader(title, description, onClear)
         content()
+    }
+}
+
+@Composable
+private fun RulesSectionHeader(title: String, description: String, onClear: () -> Unit) {
+    Row {
+        Column(
+            modifier = Modifier.weight(1f).padding(end = RvSpace.nest2),
+            verticalArrangement = Arrangement.spacedBy(RvSpace.xs),
+        ) {
+            Text(title, style = SectionTitle, color = RvColor.White)
+            Text(description, style = SectionDesc, color = RvColor.description)
+        }
+        // Глиф 20, цель пальца 36: лишнее уходит сдвигом за край глифа.
+        IconButton(
+            onClick = onClear,
+            modifier = Modifier.size(36.dp).offset(x = 8.dp, y = (-8).dp),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Delete,
+                contentDescription = stringResource(R.string.rules_clear_list),
+                tint = RvColor.whiteA50,
+                modifier = Modifier.size(20.dp),
+            )
+        }
     }
 }
 
@@ -360,22 +369,22 @@ private fun PerAppRoutingSection(mode: RoutingMode, tab: RuleAction, listHeight:
     val canResolveOwner = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
     val intoVpn = tab == RuleAction.IntoVpn
     var confirmClear by remember(mode, tab) { mutableStateOf(false) }
+    val title = stringResource(if (intoVpn) R.string.rules_apps_vpn else R.string.rules_apps_direct)
+    val description = stringResource(if (intoVpn) R.string.rules_apps_vpn_desc else R.string.rules_apps_direct_desc)
+    val onClear = { confirmClear = true }
 
-    RulesSection(
-        title = stringResource(if (intoVpn) R.string.rules_apps_vpn else R.string.rules_apps_direct),
-        description = stringResource(if (intoVpn) R.string.rules_apps_vpn_desc else R.string.rules_apps_direct_desc),
-        onClear = { confirmClear = true },
-    ) {
-        // «Через ВПН» держится на package_name-правилах, а их ниже API 29 не
-        // сопоставить — объяснение вместо списка.
-        if (tab != RuleAction.OutOfVpn && !canResolveOwner) {
+    // Package rules need connection-owner lookup, which was added in Android 10.
+    if (tab != RuleAction.OutOfVpn && !canResolveOwner) {
+        RulesSection(title, description, onClear) {
             Text(
                 stringResource(R.string.rules_apps_needs_q),
                 style = SectionDesc,
                 color = RvColor.description,
             )
-        } else {
-            AppList(mode = mode, tab = tab, listHeight = listHeight)
+        }
+    } else {
+        AppList(mode = mode, tab = tab, listHeight = listHeight) {
+            RulesSectionHeader(title, description, onClear)
         }
     }
 
@@ -389,7 +398,7 @@ private fun PerAppRoutingSection(mode: RoutingMode, tab: RuleAction, listHeight:
 }
 
 @Composable
-private fun AppList(mode: RoutingMode, tab: RuleAction, listHeight: Dp) {
+private fun AppList(mode: RoutingMode, tab: RuleAction, listHeight: Dp, cardHeader: @Composable () -> Unit) {
     val modeRules by AppRoutingRepository.state.collectAsStateWithLifecycle()
     val rules = modeRules.forMode(mode)
     val selected = when (tab) {
@@ -400,6 +409,7 @@ private fun AppList(mode: RoutingMode, tab: RuleAction, listHeight: Dp) {
     InstalledAppPicker(
         selectedPackages = selected,
         listModifier = Modifier.heightIn(max = listHeight),
+        cardHeader = cardHeader,
         onToggleAutomatic = if (mode == RoutingMode.Smart && tab == RuleAction.IntoVpn) {
             AppRoutingRepository::setAutomaticSmartMembership
         } else null,
@@ -417,6 +427,7 @@ internal fun InstalledAppPicker(
     selectedPackages: Set<String>,
     onToggle: (String, Boolean) -> Unit,
     listModifier: Modifier = Modifier.height(280.dp),
+    cardHeader: (@Composable () -> Unit)? = null,
     onToggleAutomatic: ((String, Boolean) -> Unit)? = null,
     showCount: Boolean = true,
     directPackages: Set<String> = emptySet(),
@@ -492,38 +503,66 @@ internal fun InstalledAppPicker(
         filtered.sortedByDescending { it.packageName in checkedPackages }
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(RvSpace.nest2)) {
-        RvSearchField(
-            value = query,
-            onValueChange = { query = it },
-            placeholder = stringResource(R.string.rules_app_search),
-        )
+    val waiting = loading || !orderReady
+    val rowsVisible = !waiting && ordered.isNotEmpty()
+    val headerModifier = if (cardHeader != null) {
+        val shape = if (rowsVisible) RoundedCornerShape(topStart = RulesSectionRadius, topEnd = RulesSectionRadius)
+        else RoundedCornerShape(RulesSectionRadius)
+        Modifier.fillMaxWidth().clip(shape).background(RvColor.Grey).padding(RulesSectionPadding)
+    } else Modifier
 
-        if (showCount) {
-            Text(
-                stringResource(R.string.rules_app_selected_count, selectedPackages.size),
-                style = SectionDesc.copy(fontSize = 12.sp, lineHeight = 13.2.sp),
-                color = RvColor.description,
+    Column(verticalArrangement = Arrangement.spacedBy(if (cardHeader == null) RvSpace.nest2 else 0.dp)) {
+        Column(modifier = headerModifier, verticalArrangement = Arrangement.spacedBy(RvSpace.nest2)) {
+            cardHeader?.invoke()
+            RvSearchField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = stringResource(R.string.rules_app_search),
             )
+
+            if (showCount) {
+                Text(
+                    stringResource(R.string.rules_app_selected_count, selectedPackages.size),
+                    style = SectionDesc.copy(fontSize = 12.sp, lineHeight = 13.2.sp),
+                    color = RvColor.description,
+                )
+            }
+            if (waiting) {
+                Box(modifier = Modifier.fillMaxWidth().padding(RvSpace.nest1), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            }
         }
 
-        if (loading || !orderReady) {
-            Box(modifier = Modifier.fillMaxWidth().padding(RvSpace.nest1), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
-        } else {
+        if (!waiting && (rowsVisible || cardHeader == null)) {
             Box(modifier = Modifier.fillMaxWidth().then(listModifier)) {
-                LazyColumn(state = listState, modifier = Modifier.fillMaxWidth()) {
-                    items(ordered, key = { it.packageName }) { app ->
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(bottom = if (cardHeader != null) RulesListEndPadding else 0.dp),
+                ) {
+                    itemsIndexed(ordered, key = { _, app -> app.packageName }) { index, app ->
                         val checked = app.packageName in checkedPackages
                         val automaticToggle = onToggleAutomatic?.takeIf { app.packageName in autoIn }
+                        val rowModifier = if (cardHeader != null) {
+                            val last = index == ordered.lastIndex
+                            val shape = if (last) {
+                                Modifier.clip(RoundedCornerShape(bottomStart = RulesSectionRadius, bottomEnd = RulesSectionRadius))
+                            } else Modifier
+                            shape.background(RvColor.Grey)
+                                .padding(
+                                    start = RulesSectionPadding,
+                                    end = RulesSectionPadding,
+                                    bottom = if (last) RulesSectionPadding else 0.dp,
+                                )
+                        } else Modifier
                         AppRow(
                             app = app,
                             checked = checked,
                             blockedElsewhere = app.packageName in blockedPackages,
                             autoBadge = automaticToggle != null && checked,
                             onToggle = { (automaticToggle ?: onToggle)(app.packageName, !checked) },
-                            modifier = Modifier.animateItem(),
+                            modifier = Modifier.animateItem().then(rowModifier),
                         )
                     }
                 }
@@ -537,6 +576,8 @@ internal fun InstalledAppPicker(
                     )
                 }
             }
+        } else if (cardHeader != null) {
+            Spacer(Modifier.height(RulesListEndPadding))
         }
     }
 }

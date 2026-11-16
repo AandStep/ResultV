@@ -377,9 +377,7 @@ private fun AppShell(
                     )
                     Tab.Rules -> {
                         var profilesOpen by rememberSaveable { mutableStateOf(false) }
-                        BoxWithConstraints(
-                            Modifier.fillMaxSize().padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
-                        ) {
+                        BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
                             RulesScreen(
                                 viewportHeight = maxHeight,
                                 onOpenRoutingProfiles = { profilesOpen = true },
