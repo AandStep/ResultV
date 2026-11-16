@@ -79,6 +79,17 @@ object AppRoutingRepository {
         mutate { state -> state.edit(mode) { it.withoutAction(pkg, action) } }
 
     @Synchronized
+    fun setAutomaticSmartMembership(pkg: String, wantIn: Boolean) {
+        if (pkg == ownPackage) return
+        mutate { state ->
+            state.edit(RoutingMode.Smart) { rules ->
+                val editable = if (wantIn) rules.withoutAction(pkg, RuleAction.Block) else rules
+                AppTunnelMembership.setSmartMembership(editable, pkg, wantIn = wantIn, isAuto = true)
+            }
+        }
+    }
+
+    @Synchronized
     fun clearList(mode: RoutingMode, action: RuleAction) = mutate { state ->
         state.edit(mode) {
             when (action) {

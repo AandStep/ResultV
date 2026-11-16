@@ -374,7 +374,9 @@ private fun AppList(mode: RoutingMode, tab: RuleAction) {
     }
     InstalledAppPicker(
         selectedPackages = selected,
-        showAutomatic = mode == RoutingMode.Smart,
+        onToggleAutomatic = if (mode == RoutingMode.Smart && tab == RuleAction.IntoVpn) {
+            AppRoutingRepository::setAutomaticSmartMembership
+        } else null,
         directPackages = rules.outOfVpn,
         blockedPackages = rules.blocked,
         onToggle = { packageName, checked ->
@@ -388,12 +390,13 @@ private fun AppList(mode: RoutingMode, tab: RuleAction) {
 internal fun InstalledAppPicker(
     selectedPackages: Set<String>,
     onToggle: (String, Boolean) -> Unit,
-    showAutomatic: Boolean = false,
+    onToggleAutomatic: ((String, Boolean) -> Unit)? = null,
     showCount: Boolean = true,
     directPackages: Set<String> = emptySet(),
     blockedPackages: Set<String> = emptySet(),
 ) {
     val ctx = LocalContext.current
+    val showAutomatic = onToggleAutomatic != null
     var apps by remember { mutableStateOf<List<InstalledApp>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
@@ -440,7 +443,9 @@ internal fun InstalledAppPicker(
         }
     }
 
-    val isChecked: (InstalledApp) -> Boolean = { it.packageName in selectedPackages }
+    val checkedPackages = remember(selectedPackages, showAutomatic, autoIn, directPackages, blockedPackages) {
+        if (showAutomatic) (selectedPackages + autoIn) - directPackages - blockedPackages else selectedPackages
+    }
     // Отмеченные всегда наверху. Сортировка устойчивая, так что внутри обеих
     // частей остаётся порядок каталога: пользовательские, затем системные, по имени.
     // Не rememberSaveable: каталог грузится заново при каждом показе, и список
@@ -449,7 +454,7 @@ internal fun InstalledAppPicker(
     val atTop by remember {
         derivedStateOf { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0 }
     }
-    val ordered = remember(filtered, selectedPackages) {
+    val ordered = remember(filtered, checkedPackages) {
         // Отметка, сделанная в начале списка, поднимает строку на место выше
         // первой видимой, а ленивый список держит позицию за первой видимой —
         // и только что отмеченное ушло бы за верхний край. requestScrollToItem
@@ -457,7 +462,7 @@ internal fun InstalledAppPicker(
         // ключ. На открытии списка он ничего не делает: порядок к первому кадру
         // уже окончательный (orderReady).
         if (atTop) listState.requestScrollToItem(0)
-        filtered.sortedByDescending(isChecked)
+        filtered.sortedByDescending { it.packageName in checkedPackages }
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(RvSpace.nest2)) {
@@ -488,14 +493,14 @@ internal fun InstalledAppPicker(
                     // Отмеченная строка уезжает наверх — видимым движением, а
                     // не исчезновением из-под пальца.
                     val rowModifier = Modifier.animateItem()
-                    val checked = isChecked(app)
+                    val checked = app.packageName in checkedPackages
+                    val automaticToggle = onToggleAutomatic?.takeIf { app.packageName in autoIn }
                     AppRow(
                         app = app,
                         checked = checked,
                         blockedElsewhere = app.packageName in blockedPackages,
-                        autoBadge = showAutomatic && app.packageName in autoIn &&
-                            app.packageName !in directPackages && app.packageName !in blockedPackages,
-                        onToggle = { onToggle(app.packageName, !checked) },
+                        autoBadge = automaticToggle != null && checked,
+                        onToggle = { (automaticToggle ?: onToggle)(app.packageName, !checked) },
                         modifier = rowModifier,
                     )
                 }
