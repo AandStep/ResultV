@@ -2368,7 +2368,7 @@ func (m *Manager) GetStatus() StatusDTO {
 
 	if m.connected {
 		uptime = int64(time.Since(m.connectedAt).Seconds())
-		bytesUp, bytesDown = m.engine.GetTrafficStats()
+		bytesUp, bytesDown = m.engine.GetProxyTrafficStats()
 
 		now := time.Now()
 		elapsed := now.Sub(m.lastTick).Seconds()
@@ -3563,12 +3563,11 @@ func (m *Manager) emitStatus() {
 	m.mu.Lock()
 	var uptime int64
 	var bytesUp, bytesDown int64
-	var speedUp, speedDown int64
 	if m.connected {
 		uptime = int64(time.Since(m.connectedAt).Seconds())
-		bytesUp, bytesDown = m.engine.GetTrafficStats()
+		bytesUp, bytesDown = m.engine.GetProxyTrafficStats()
 	}
-	status := m.buildStatusLocked(uptime, bytesDown, bytesUp, speedUp, speedDown)
+	status := m.buildStatusLocked(uptime, bytesDown, bytesUp, 0, 0)
 	m.mu.Unlock()
 	wailsRuntime.EventsEmit(m.ctx, "status:update", status)
 }

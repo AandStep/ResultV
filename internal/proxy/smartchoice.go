@@ -25,9 +25,8 @@ import (
 type smartChoice uint8
 
 const (
-	// chooseRace means nothing is known about this destination, so both paths
-	// are tried and the outcome is written down. It is the only choice that
-	// teaches the store anything.
+	// chooseRace means the route is unknown. TCP tries direct and can fall back
+	// to the node if direct fails.
 	chooseRace smartChoice = iota
 	chooseDirect
 	chooseProxy
@@ -58,10 +57,7 @@ type smartLookup interface {
 // whichever CDN edge answered today, the name is what the user actually asked
 // for, and a verdict filed under the name survives the rotation.
 //
-// An unknown destination is always raced. The breaker (spec §6.5) used to send
-// it direct instead; that handed every unknown name straight to a blackholed
-// path at the exact moment hedging was worth most. It now gates learning only —
-// see smartOutbound.learn.
+// The breaker gates learning from an unknown destination.
 func decideSmart(store smartLookup, host string, addr netip.Addr) smartChoice {
 	rec, ok := lookupSmart(store, host, addr)
 	if !ok {
@@ -81,13 +77,15 @@ func lookupSmart(store smartLookup, host string, addr netip.Addr) (verdict.Recor
 	if store == nil {
 		return verdict.Record{}, false
 	}
+	// Older versions cached repeated fallbacks as unverified VPN decisions.
+	// Require a new direct attempt for those destinations.
 	if key := verdict.NormalizeHost(host); key != "" {
-		if rec, ok := store.Lookup(key); ok {
+		if rec, ok := store.Lookup(key); ok && !rec.Unverified {
 			return rec, true
 		}
 	}
 	if addr.IsValid() {
-		if rec, ok := store.LookupIP(addr); ok {
+		if rec, ok := store.LookupIP(addr); ok && !rec.Unverified {
 			return rec, true
 		}
 	}

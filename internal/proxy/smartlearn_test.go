@@ -79,60 +79,29 @@ func TestNodeWinIsOverruledByTheProbe(t *testing.T) {
 	}
 }
 
-func TestRepeatedSpacedLossesBecomeAnUnverifiedProxy(t *testing.T) {
+func TestRepeatedFallbacksDoNotLearnProxyWithoutConfirmation(t *testing.T) {
 	r := newLearnRig(t, verdict.Unknown)
 	meta := udpMetadata("mute.example", 443)
-	for i := 0; i < raceLossesToLearn; i++ {
+	for range 4 {
 		r.s.noteRace(meta, nodeWon)
-		r.clock = r.clock.Add(raceLossSpacing + time.Second)
+		r.settle(t, "mute.example")
+		r.clock = r.clock.Add(16 * time.Second)
 	}
-	rec, ok := r.s.store.Lookup("mute.example")
-	if !ok || rec.Decision != verdict.Proxy || !rec.Unverified {
-		t.Fatalf("got %+v, ok=%v", rec, ok)
+	if rec, ok := r.s.store.Lookup("mute.example"); ok {
+		t.Fatalf("saved a VPN verdict without confirmation: %+v", rec)
 	}
 }
 
-func TestABurstOfLossesCountsOnce(t *testing.T) {
-	r := newLearnRig(t, verdict.Unknown)
-	meta := udpMetadata("burst.example", 443)
-	for i := 0; i < raceLossesToLearn*4; i++ {
-		r.s.noteRace(meta, nodeWon)
-	}
-	if rec, ok := r.s.store.Lookup("burst.example"); ok {
-		t.Fatalf("simultaneous losses became a verdict: %+v", rec)
-	}
-}
-
-func TestDirectWinResetsTheLossCount(t *testing.T) {
-	r := newLearnRig(t, verdict.Unknown)
-	meta := udpMetadata("flaky.example", 443)
-	for i := 0; i < raceLossesToLearn-1; i++ {
-		r.s.noteRace(meta, nodeWon)
-		r.clock = r.clock.Add(raceLossSpacing + time.Second)
-	}
-	r.s.noteRace(meta, directWon)
-	r.s.store.Forget("flaky.example")
-	r.s.noteRace(meta, nodeWon)
-	if rec, ok := r.s.store.Lookup("flaky.example"); ok {
-		t.Fatalf("losses before a direct win still counted: %+v", rec)
-	}
-}
-
-func TestBareAddressLearnsFromSpacedLossesOnly(t *testing.T) {
+func TestBareAddressFallbackDoesNotLearnProxy(t *testing.T) {
 	r := newLearnRig(t, verdict.Proxy)
 	addr := netip.MustParseAddr("203.0.113.9")
 	meta := adapter.InboundContext{Destination: M.SocksaddrFrom(addr, 443)}
-	r.s.noteRace(meta, nodeWon)
-	if _, ok := r.s.store.LookupIP(addr); ok {
-		t.Fatal("one lost race on a bare address became a verdict")
-	}
-	for i := 1; i < raceLossesToLearn; i++ {
-		r.clock = r.clock.Add(raceLossSpacing + time.Second)
+	for range 4 {
 		r.s.noteRace(meta, nodeWon)
+		r.clock = r.clock.Add(16 * time.Second)
 	}
-	rec, ok := r.s.store.LookupIP(addr)
-	if !ok || rec.Decision != verdict.Proxy || !rec.Unverified {
-		t.Fatalf("got %+v, ok=%v", rec, ok)
+	if rec, ok := r.s.store.LookupIP(addr); ok {
+		t.Fatalf("saved a VPN verdict for an unverified IP: %+v", rec)
 	}
 	if r.probes.Load() != 0 {
 		t.Fatal("a bare address cannot be probed")

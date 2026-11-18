@@ -162,7 +162,7 @@ func subscriptionReply(expire int64, contentType, body string) http.HandlerFunc 
 func fetch(t *testing.T, url string) (*http.Response, string) {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodGet, url, nil)
-	req.Header.Set("User-Agent", "ResultV/3.6.0/Windows/11")
+	req.Header.Set("User-Agent", "ResultV/3.6.1/Windows/11")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -186,7 +186,7 @@ func TestGatewayKeepsActiveSubscriptionIntact(t *testing.T) {
 	if got != body || resp.Header.Get("Routing") == "" || resp.Header.Get("Profile-Title") == "" {
 		t.Fatalf("active subscription changed: %q %v", got, resp.Header)
 	}
-	if seen.URL.Path != "/api/sub/AbCdEf123/json" || seen.URL.RawQuery != "x=1" || seen.UserAgent() != "ResultV/3.6.0/Windows/11" {
+	if seen.URL.Path != "/api/sub/AbCdEf123/json" || seen.URL.RawQuery != "x=1" || seen.UserAgent() != "ResultV/3.6.1/Windows/11" {
 		t.Fatalf("upstream saw %s?%s UA %q", seen.URL.Path, seen.URL.RawQuery, seen.UserAgent())
 	}
 	if seen.Header.Get("X-Forwarded-Proto") != "https" || seen.Header.Get("X-Forwarded-For") == "" {

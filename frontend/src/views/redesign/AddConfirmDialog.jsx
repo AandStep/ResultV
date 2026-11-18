@@ -38,14 +38,14 @@ export function countByType(proxies) {
   }
   const counts = new Map();
   for (const p of proxies) {
-    if (members.has(p.id) || p.type === "SECTION") continue;
+    if (members.has(p.id)) continue;
     const key = String(p.type || "").toUpperCase();
     counts.set(key, (counts.get(key) || 0) + 1);
   }
   return [...counts].map(([type, count]) => ({
     type,
     count,
-    label: PROTOCOL_CASE[type] ?? type,
+    label: type === "SECTION" ? "Section" : (PROTOCOL_CASE[type] ?? type),
   }));
 }
 
@@ -83,7 +83,7 @@ export default function AddConfirmDialog({
       <div className="rv-add-confirm">
         <div className="rv-add-confirm__found">
           {found.map((item) => (
-            <Badge key={item.type} color="success">
+            <Badge key={item.type} color={item.type === "SECTION" ? "default" : "success"}>
               {item.label} ({item.count})
             </Badge>
           ))}

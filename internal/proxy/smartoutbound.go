@@ -86,8 +86,7 @@ type smartOutbound struct {
 	// twenty-per-minute budget the gate exists to enforce.
 	inflight sync.Map
 
-	now    func() time.Time
-	losses raceLosses
+	now func() time.Time
 }
 
 // nodeUDPCheck reports whether the node currently in use has been measured
@@ -271,7 +270,7 @@ func (s *smartOutbound) attributeProxy(conn net.Conn, metadata adapter.InboundCo
 	if s.traffic == nil {
 		return conn
 	}
-	s.traffic.logProxyConnection(metadata)
+	s.traffic.logConnection(metadata, smartOutboundTag)
 	return s.traffic.attributeProxyConn(conn)
 }
 
@@ -279,7 +278,7 @@ func (s *smartOutbound) NewConnection(ctx context.Context, conn net.Conn, metada
 	rec, known := s.lookupAndRefresh(&metadata)
 	choice := choiceFrom(rec, known)
 	if choice == chooseRace {
-		s.raceConnection(ctx, conn, metadata, onClose)
+		s.connectUnknownTCP(ctx, conn, metadata, onClose)
 		return
 	}
 	if choice == chooseProxy {
@@ -298,14 +297,14 @@ func (s *smartOutbound) NewConnection(ctx context.Context, conn net.Conn, metada
 	s.connection.NewConnection(ctx, chosen, conn, metadata, onClose)
 }
 
-// raceConnection handles a destination nothing is known about.
+// connectUnknownTCP uses direct first for a destination with no known route.
 //
 // The client's opening bytes are usually already waiting in the connection: the
 // router pushes the sniffed buffer back before handing it over (fork
 // route/route.go:155-157), so on the normal path this read costs nothing.
-func (s *smartOutbound) raceConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
+func (s *smartOutbound) connectUnknownTCP(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	first := make([]byte, smartFirstReadBudget)
-	_ = conn.SetReadDeadline(time.Now().Add(smartRaceHeadStart))
+	_ = conn.SetReadDeadline(time.Now().Add(smartOpeningReadTimeout))
 	n, readErr := conn.Read(first)
 	_ = conn.SetReadDeadline(time.Time{})
 	if n == 0 {
@@ -319,7 +318,7 @@ func (s *smartOutbound) raceConnection(ctx context.Context, conn net.Conn, metad
 		return
 	}
 
-	res := runSmartRace(ctx, first[:n],
+	res := connectSmartTCP(ctx, first[:n],
 		func(dialCtx context.Context) (net.Conn, error) {
 			return s.direct.DialContext(dialCtx, N.NetworkTCP, metadata.Destination)
 		},
@@ -352,42 +351,19 @@ func (s *smartOutbound) raceConnection(ctx context.Context, conn net.Conn, metad
 
 // noteRace turns one finished race into knowledge.
 //
-// A direct win is a measurement and is written down. A node win is not: the
-// direct leg loses to a dropped SYN or a slow resolver as readily as to a
-// censor, so it only asks the probe, which compares the two paths without a
-// stopwatch. Losses that keep coming with no probe verdict become a
-// short-lived proxy record.
+// A working direct connection can teach a direct route. A VPN fallback only
+// schedules the independent probe, which can confirm that the node is needed.
 func (s *smartOutbound) noteRace(metadata adapter.InboundContext, res raceResult) {
 	if s.store == nil || !raceTeaches(res) || !s.health.healthy() {
 		return
 	}
 	host := smartHost(&metadata)
-	key := verdict.NormalizeHost(host)
-	if key == "" {
-		key = verdict.IPKey(metadata.Destination.Addr)
-	}
-	if key == "" {
-		return
-	}
 	if !res.ViaProxy {
-		s.losses.reset(key)
 		if host != "" {
 			s.store.Learn(host, verdict.Direct)
 		} else {
 			s.store.LearnIP(metadata.Destination.Addr, verdict.Direct)
 		}
-		// Whether direct's bytes were the site or a wall only a probe can tell.
-		s.recheckAsync(host)
-		return
-	}
-	if s.losses.add(key, s.clock()) >= raceLossesToLearn {
-		s.losses.reset(key)
-		if host != "" {
-			s.store.LearnUnverified(host)
-		} else {
-			s.store.LearnIPUnverified(metadata.Destination.Addr)
-		}
-		s.logVerdict(key, "узел (прямой путь раз за разом проигрывает, проверка не удалась)")
 	}
 	s.recheckAsync(host)
 }
@@ -425,7 +401,6 @@ func (s *smartOutbound) recheckAsync(host string) {
 		}
 		before, known := s.store.Lookup(host)
 		s.store.Learn(host, d)
-		s.losses.reset(verdict.NormalizeHost(host))
 		if d == verdict.Proxy && !(known && before.Decision == verdict.Proxy && !before.Unverified) {
 			s.logVerdict(host, "узел (проверка: напрямую недоступен или закрыт)")
 		}
@@ -465,7 +440,7 @@ func verdictNeedsRefresh(rec verdict.Record, now time.Time) bool {
 // Nothing waits on it: the record still in force answers the connection that
 // triggered this, and the probe replaces it behind the user's back.
 func (s *smartOutbound) refreshExpiringAsync(host string, rec verdict.Record) {
-	if !verdictNeedsRefresh(rec, time.Now()) {
+	if !verdictNeedsRefresh(rec, s.clock()) {
 		return
 	}
 	s.recheckAsync(host)
@@ -508,7 +483,7 @@ func (s *smartOutbound) NewPacketConnection(ctx context.Context, conn N.PacketCo
 			return
 		}
 		if s.traffic != nil {
-			s.traffic.logProxyConnection(metadata)
+			s.traffic.logConnection(metadata, smartOutboundTag)
 			// Booked here for the same reason the TCP path books in
 			// attributeProxy: the router's tracker ran before this outbound
 			// had chosen, so without this the node's share of every tunnelled

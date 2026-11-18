@@ -259,10 +259,7 @@ type SingBoxEngine struct {
 	uploadBytes   atomic.Int64
 	downloadBytes atomic.Int64
 
-	// proxyUploadBytes/proxyDownloadBytes count ONLY traffic carried by the
-	// proxy/endpoint outbound (the tracker increments them only when the matched
-	// outbound is not direct/block). The watchdog's traffic veto reads these so
-	// direct/split-tunnel traffic cannot make a dead upstream look alive.
+	// The dashboard and health watchdog read the bytes carried by the VPN node.
 	proxyUploadBytes   atomic.Int64
 	proxyDownloadBytes atomic.Int64
 }
@@ -509,23 +506,23 @@ const loggedRotateThreshold = 1000
 
 type trackedConn struct {
 	net.Conn
-	host   string
-	dest   string
-	server string
+	host     string
+	dest     string
+	server   string
 	protocol string
 	mode     ProxyMode
-	log    *logger.Logger
-	start  time.Time
-	up     atomic.Int64
-	down   atomic.Int64
-	closed atomic.Bool
-	isSub  bool
+	log      *logger.Logger
+	start    time.Time
+	up       atomic.Int64
+	down     atomic.Int64
+	closed   atomic.Bool
+	isSub    bool
 }
 
 func (c *trackedConn) Read(p []byte) (int, error) {
 	n, err := c.Conn.Read(p)
 	if n > 0 {
-		c.down.Add(int64(n))
+		c.up.Add(int64(n))
 	}
 	return n, err
 }
@@ -533,7 +530,7 @@ func (c *trackedConn) Read(p []byte) (int, error) {
 func (c *trackedConn) Write(p []byte) (int, error) {
 	n, err := c.Conn.Write(p)
 	if n > 0 {
-		c.up.Add(int64(n))
+		c.down.Add(int64(n))
 	}
 	return n, err
 }
@@ -1111,19 +1108,28 @@ func (e *SingBoxEngine) GetProxyTrafficStats() (up, down int64) {
 	return e.proxyUploadBytes.Load(), e.proxyDownloadBytes.Load()
 }
 
-// downCounters/upCounters return the byte counters a routed connection should
-// increment. Every connection feeds the global counters; only proxy-outbound
-// connections (shouldTrack) additionally feed the proxy-only counters used by
-// the watchdog traffic veto.
-func (t *trafficTracker) downCounters(shouldTrack bool) []*atomic.Int64 {
-	if shouldTrack {
+// vpnOutboundTag identifies the outbounds that carry traffic through the node.
+// The adaptive outbound attributes its traffic once it picks the VPN path.
+func vpnOutboundTag(outbound adapter.Outbound) string {
+	if outbound == nil {
+		return ""
+	}
+	switch tag := outbound.Tag(); tag {
+	case "proxy", socks5ExitSelector, socks5ExitTag, socks5ExitNextTag:
+		return tag
+	}
+	return ""
+}
+
+func (t *trafficTracker) downCounters(viaVPN bool) []*atomic.Int64 {
+	if viaVPN {
 		return []*atomic.Int64{t.download, t.proxyDownload}
 	}
 	return []*atomic.Int64{t.download}
 }
 
-func (t *trafficTracker) upCounters(shouldTrack bool) []*atomic.Int64 {
-	if shouldTrack {
+func (t *trafficTracker) upCounters(viaVPN bool) []*atomic.Int64 {
+	if viaVPN {
 		return []*atomic.Int64{t.upload, t.proxyUpload}
 	}
 	return []*atomic.Int64{t.upload}
@@ -1136,21 +1142,27 @@ func (t *trafficTracker) RoutedConnection(
 	_ adapter.Rule,
 	matchOutbound adapter.Outbound,
 ) net.Conn {
-	host, dest, shouldTrack := t.logConnection(metadata, matchOutbound)
-	wrapped := bufio.NewInt64CounterConn(conn, t.downCounters(shouldTrack), t.upCounters(shouldTrack))
-	if !shouldTrack {
+	tag := vpnOutboundTag(matchOutbound)
+	viaVPN := tag != ""
+	// Read gets data from the client. Write returns data to the client.
+	wrapped := bufio.NewInt64CounterConn(conn, t.upCounters(viaVPN), t.downCounters(viaVPN))
+	if !viaVPN {
+		return wrapped
+	}
+	host, dest, logged := t.logConnection(metadata, tag)
+	if !logged {
 		return wrapped
 	}
 	return &trackedConn{
-		Conn:   wrapped,
-		host:   host,
-		dest:   dest,
-		server: t.server,
+		Conn:     wrapped,
+		host:     host,
+		dest:     dest,
+		server:   t.server,
 		protocol: t.protocol,
 		mode:     t.mode,
-		log:    t.log,
-		start:  time.Now(),
-		isSub:  t.isSub,
+		log:      t.log,
+		start:    time.Now(),
+		isSub:    t.isSub,
 	}
 }
 
@@ -1161,8 +1173,12 @@ func (t *trafficTracker) RoutedPacketConnection(
 	_ adapter.Rule,
 	matchOutbound adapter.Outbound,
 ) N.PacketConn {
-	_, _, shouldTrack := t.logConnection(metadata, matchOutbound)
-	return bufio.NewInt64CounterPacketConn(conn, t.downCounters(shouldTrack), nil, t.upCounters(shouldTrack), nil)
+	tag := vpnOutboundTag(matchOutbound)
+	viaVPN := tag != ""
+	if viaVPN {
+		t.logConnection(metadata, tag)
+	}
+	return bufio.NewInt64CounterPacketConn(conn, t.upCounters(viaVPN), nil, t.downCounters(viaVPN), nil)
 }
 
 // RoutedFlow is the third method sing-box 1.14 added to adapter.ConnectionTracker.
@@ -1189,10 +1205,14 @@ func (t *trafficTracker) RoutedFlow(
 	if metadata.Network == N.NetworkICMP {
 		return nil
 	}
-	_, _, shouldTrack := t.logConnection(metadata, matchOutbound)
+	tag := vpnOutboundTag(matchOutbound)
+	viaVPN := tag != ""
+	if viaVPN {
+		t.logConnection(metadata, tag)
+	}
 	return &flowCounter{
-		down: t.downCounters(shouldTrack),
-		up:   t.upCounters(shouldTrack),
+		down: t.downCounters(viaVPN),
+		up:   t.upCounters(viaVPN),
 	}
 }
 
@@ -1244,94 +1264,41 @@ func (t *trafficTracker) rotateLogged() {
 // attributeProxyConn books everything that flows through conn to the node
 // counters, on top of whatever totals it is already feeding.
 //
-// The orientation is deliberately the same as RoutedConnection's: both wrap the
-// client-side connection, so "read" and "write" have to mean the same thing in
-// both places, or the node's share would be measured in the opposite direction
-// from the total.
+// Like RoutedConnection, this wraps the inbound connection. Reads count as
+// upload and writes count as download.
 func (t *trafficTracker) attributeProxyConn(conn net.Conn) net.Conn {
 	return bufio.NewInt64CounterConn(conn,
-		[]*atomic.Int64{t.proxyDownload},
-		[]*atomic.Int64{t.proxyUpload})
+		[]*atomic.Int64{t.proxyUpload},
+		[]*atomic.Int64{t.proxyDownload})
 }
 
 // attributeProxyPacketConn is attributeProxyConn for a UDP flow. Same job,
 // same reason it exists separately from RoutedPacketConnection: the tracker
 // runs before the smart outbound has chosen, so the node's share of a flow it
 // decides to tunnel has to be booked here instead.
-//
-// The orientation comes from RoutedPacketConnection rather than being derived
-// again — read is download, write is upload — because the two wrap the same
-// side of the same flow and a disagreement would make the node's share move
-// against the total.
 func (t *trafficTracker) attributeProxyPacketConn(conn N.PacketConn) N.PacketConn {
 	return bufio.NewInt64CounterPacketConn(conn,
-		[]*atomic.Int64{t.proxyDownload}, nil,
-		[]*atomic.Int64{t.proxyUpload}, nil)
+		[]*atomic.Int64{t.proxyUpload}, nil,
+		[]*atomic.Int64{t.proxyDownload}, nil)
 }
 
-// logProxyConnection writes the one [CONN] line per host that logConnection
-// would have written, for a connection whose outbound only became known later.
-func (t *trafficTracker) logProxyConnection(metadata adapter.InboundContext) {
+// logConnection reports the first connection for a host and outbound tag.
+func (t *trafficTracker) logConnection(metadata adapter.InboundContext, tag string) (string, string, bool) {
+	dest := metadata.Destination.String()
 	host := metadata.Domain
-	if host == "" {
+	if tag == smartOutboundTag && host == "" {
 		host = metadata.Destination.Fqdn
 	}
-	if host == "" {
-		return
-	}
-	key := host + "→" + smartOutboundTag
-	if _, loaded := t.logged.LoadOrStore(key, struct{}{}); loaded {
-		return
-	}
-	if t.count.Add(1) > loggedRotateThreshold {
-		t.rotateLogged()
-	}
-	viaStr := fmt.Sprintf(" | via %s", t.server)
-	if t.isSub {
-		viaStr = ""
-	}
-	msg := fmt.Sprintf("[CONN] %s -> %s%s | status: connected", host, metadata.Destination.String(), viaStr)
-	t.log.LogWithSource(msg, logger.TypeInfo, host, "", host)
-}
-
-func (t *trafficTracker) logConnection(metadata adapter.InboundContext, outbound adapter.Outbound) (string, string, bool) {
-	dest := metadata.Destination.String()
-	if dest == "" {
+	if dest == "" || host == "" {
 		return "", "", false
 	}
 
-	outTag := "direct"
-	if outbound != nil {
-		outTag = outbound.Tag()
-	}
-
-	host := metadata.Domain
-	if host == "" {
-		return "", "", false
-	}
-
-	key := host + "→" + outTag
+	key := host + "→" + tag
 	if _, loaded := t.logged.LoadOrStore(key, struct{}{}); loaded {
 		return host, dest, false
 	}
 	if t.count.Add(1) > loggedRotateThreshold {
 		t.rotateLogged()
-	}
-
-	// Direct and blocked traffic is not a connection "through" anything, so it
-	// gets no [CONN] line. It used to get a [ROUTE-DIAG] warning for anything
-	// matching a YouTube-shaped host, left over from a routing investigation —
-	// but that filter keyed on the substring "gvt2.com", which is Chrome's
-	// telemetry and Google Update beacon domain, not video. Every beacon fired
-	// a warning about a routing decision that was correct: in Smart mode
-	// Final="direct" (buildRoute), so anything off the censored block-list is
-	// supposed to go direct.
-	// The smart outbound has not chosen yet: the router wraps the connection
-	// before handing it over (fork route/route.go:158), so at this point the
-	// answer literally does not exist. It books its own traffic once it knows,
-	// via attributeProxyConn and logProxyConnection.
-	if outTag == "direct" || outTag == "block" || outTag == smartOutboundTag || outTag == appDirectTag {
-		return host, dest, false
 	}
 
 	viaStr := fmt.Sprintf(" | via %s", t.server)
@@ -1339,7 +1306,7 @@ func (t *trafficTracker) logConnection(metadata adapter.InboundContext, outbound
 		viaStr = ""
 	}
 	msg := fmt.Sprintf("[CONN] %s -> %s%s | status: connected", host, dest, viaStr)
-	t.log.LogWithSource(msg, logger.TypeInfo, host, "", metadata.Domain)
+	t.log.LogWithSource(msg, logger.TypeInfo, host, "", host)
 	return host, dest, true
 }
 

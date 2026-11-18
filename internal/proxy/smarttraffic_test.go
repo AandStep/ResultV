@@ -54,51 +54,13 @@ func trackerForTest() *trafficTracker {
 	}
 }
 
-// Before the smart outbound has chosen, nothing may be attributed to the node:
-// the tracker runs first (fork route/route.go:158) and at that moment the
-// answer does not exist yet.
-func TestSmartOutboundIsNotCountedAsProxyTrafficUpFront(t *testing.T) {
-	tr := trackerForTest()
-	_, _, shouldTrack := tr.logConnection(
-		adapter.InboundContext{Domain: "example.com", Destination: M.ParseSocksaddr("example.com:443")},
-		stubOutbound{tag: smartOutboundTag},
-	)
-	if shouldTrack {
-		t.Fatal("traffic was booked to the node before the outbound had chosen")
-	}
-}
-
-// The pre-existing outbounds must keep behaving exactly as before.
-func TestPlainOutboundsKeepTheirAttribution(t *testing.T) {
-	meta := adapter.InboundContext{Domain: "example.com", Destination: M.ParseSocksaddr("example.com:443")}
-	tr := trackerForTest()
-	if _, _, ok := tr.logConnection(meta, stubOutbound{tag: "proxy"}); !ok {
-		t.Error("proxy traffic stopped being counted as proxy traffic")
-	}
-	tr = trackerForTest()
-	if _, _, ok := tr.logConnection(meta, stubOutbound{tag: "direct"}); ok {
-		t.Error("direct traffic started being counted as proxy traffic")
-	}
-}
-
 // Once the choice is proxy, the bytes have to land in the node counters — the
 // speed indicator is the only place the user can see this.
 func TestAttributingAConnectionFeedsTheProxyCounters(t *testing.T) {
 	tr := trackerForTest()
-	left, right := newPipeConnPair()
-	defer left.Close()
-	defer right.Close()
-
-	wrapped := tr.attributeProxyConn(left)
-	go func() {
-		right.Write([]byte("0123456789"))
-	}()
-	buf := make([]byte, 10)
-	if _, err := wrapped.Read(buf); err != nil {
-		t.Fatal(err)
-	}
-	if tr.proxyDownload.Load() == 0 && tr.proxyUpload.Load() == 0 {
-		t.Fatal("ten bytes through an attributed connection moved no node counter")
+	exchangeTrackedTCP(t, tr.attributeProxyConn)
+	if up, down := tr.proxyUpload.Load(), tr.proxyDownload.Load(); up != 3 || down != 7 {
+		t.Fatalf("adaptive TCP upload=%d download=%d, want 3 and 7", up, down)
 	}
 }
 
@@ -133,14 +95,10 @@ func TestAttributingAPacketConnectionFeedsTheProxyCounters(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if tr.proxyDownload.Load() == 0 && tr.proxyUpload.Load() == 0 {
-		t.Fatal("ten bytes through an attributed packet connection moved no node counter")
+	if err := wrapped.WritePacket(buf.As([]byte("reply")), M.SocksaddrFromNet(right.LocalAddr())); err != nil {
+		t.Fatal(err)
 	}
-	// Same orientation as the TCP wrapper and as RoutedPacketConnection: an
-	// inbound packet is download. Getting this backwards would make the node's
-	// share move in the opposite direction from the total.
-	if tr.proxyDownload.Load() == 0 {
-		t.Fatalf("an inbound packet was booked as upload: down=%d up=%d",
-			tr.proxyDownload.Load(), tr.proxyUpload.Load())
+	if up, down := tr.proxyUpload.Load(), tr.proxyDownload.Load(); up != 10 || down != 5 {
+		t.Fatalf("adaptive UDP upload=%d download=%d, want 10 and 5", up, down)
 	}
 }

@@ -16,9 +16,86 @@
 package proxy
 
 import (
+	"context"
+	"io"
+	"net"
 	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/sagernet/sing-box/adapter"
+	M "github.com/sagernet/sing/common/metadata"
+	"resultproxy-wails/internal/logger"
 )
+
+func TestStatusCountsOnlyVPNTraffic(t *testing.T) {
+	for _, tc := range []struct {
+		name, tag, host string
+		wantSent        int64
+		wantReceived    int64
+	}{
+		{name: "app exclusion", tag: appDirectTag, host: "cache.steamcontent.com"},
+		{name: "direct", tag: "direct", host: "cache.steamcontent.com"},
+		{name: "adaptive decision pending", tag: smartOutboundTag, host: "cache.steamcontent.com"},
+		{name: "repeated hostname", tag: "proxy", host: "cache.steamcontent.com", wantSent: 6, wantReceived: 14},
+		{name: "IP only", tag: "proxy", wantSent: 6, wantReceived: 14},
+		{name: "SOCKS exit behind VPN", tag: socks5ExitSelector, wantSent: 6, wantReceived: 14},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := &SingBoxEngine{}
+			tr := &trafficTracker{
+				upload: &engine.uploadBytes, download: &engine.downloadBytes,
+				proxyUpload: &engine.proxyUploadBytes, proxyDownload: &engine.proxyDownloadBytes,
+				log: logger.New(),
+			}
+			for range 2 {
+				exchangeTrackedTCP(t, func(conn net.Conn) net.Conn {
+					return tr.RoutedConnection(context.Background(), conn, adapter.InboundContext{
+						Domain: tc.host, Destination: M.ParseSocksaddr("192.0.2.1:443"),
+					}, nil, stubOutbound{tag: tc.tag})
+				})
+			}
+			manager := &Manager{connected: true, connectedAt: time.Now(), engine: engine}
+			status := manager.GetStatus()
+			if status.BytesSent != tc.wantSent || status.BytesReceived != tc.wantReceived {
+				t.Fatalf("dashboard sent=%d received=%d, want sent=%d received=%d",
+					status.BytesSent, status.BytesReceived, tc.wantSent, tc.wantReceived)
+			}
+		})
+	}
+}
+
+func exchangeTrackedTCP(t *testing.T, wrap func(net.Conn) net.Conn) {
+	t.Helper()
+	inbound, client := net.Pipe()
+	defer client.Close()
+	conn := wrap(inbound)
+	defer conn.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	if err := conn.SetDeadline(deadline); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SetDeadline(deadline); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.Write([]byte("ask"))
+		if err == nil {
+			_, err = io.ReadFull(client, make([]byte, len("payload")))
+		}
+		done <- err
+	}()
+	if _, err := io.ReadFull(conn, make([]byte, len("ask"))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Write([]byte("payload")); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
 
 // TestTrafficTracker_ProxyCountersOnlyWhenTracked verifies the watchdog veto's
 // liveness signal is sound: proxy-only byte counters are fed ONLY by the proxy

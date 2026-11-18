@@ -48,6 +48,9 @@ func TestRoutedFlowCountsBytesForForwardedFlows(t *testing.T) {
 	if got := tr.download.Load(); got != 9000 {
 		t.Fatalf("download = %d, want 9000", got)
 	}
+	if up, down := tr.proxyUpload.Load(), tr.proxyDownload.Load(); up != 1500 || down != 9000 {
+		t.Fatalf("VPN flow without a hostname: upload=%d download=%d, want 1500 and 9000", up, down)
+	}
 }
 
 // ICMP is the one flow the core asks about even on a plain node: `direct`
