@@ -271,7 +271,7 @@ func (s *smartOutbound) attributeProxy(conn net.Conn, metadata adapter.InboundCo
 	if s.traffic == nil {
 		return conn
 	}
-	s.traffic.logProxyConnection(metadata)
+	s.traffic.logConnection(metadata, smartOutboundTag)
 	return s.traffic.attributeProxyConn(conn)
 }
 
@@ -508,7 +508,7 @@ func (s *smartOutbound) NewPacketConnection(ctx context.Context, conn N.PacketCo
 			return
 		}
 		if s.traffic != nil {
-			s.traffic.logProxyConnection(metadata)
+			s.traffic.logConnection(metadata, smartOutboundTag)
 			// Booked here for the same reason the TCP path books in
 			// attributeProxy: the router's tracker ran before this outbound
 			// had chosen, so without this the node's share of every tunnelled

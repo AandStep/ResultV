@@ -180,12 +180,9 @@ type Engine interface {
 
 	GetTrafficStats() (up, down int64)
 
-	// GetProxyTrafficStats returns cumulative bytes carried specifically by the
-	// proxy/endpoint outbound (NOT direct/split-tunnel traffic). The health
-	// watchdog uses the per-tick delta to veto a kill-switch engage while the
-	// upstream is demonstrably moving real traffic — counting only proxy bytes so
-	// direct traffic can never mask a genuinely dead upstream (which must still
-	// trip the kill switch).
+	// GetProxyTrafficStats returns cumulative bytes carried by the VPN node.
+	// The dashboard displays these totals and the watchdog uses their delta to
+	// check whether the node is still carrying traffic.
 	GetProxyTrafficStats() (up, down int64)
 
 	// ApplyAppWhitelist swaps the active per-app exclusion list without
