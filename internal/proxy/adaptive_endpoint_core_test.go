@@ -37,6 +37,8 @@ import (
 	"github.com/sagernet/sing/service"
 
 	mDNS "github.com/miekg/dns"
+
+	"resultproxy-wails/internal/verdict"
 )
 
 const endpointListDomain = "vpnlist.example"
@@ -104,7 +106,7 @@ func startEndpointCore(t *testing.T, cfg SingBoxConfig) context.Context {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	boxCtx := extendedBoxContext(ctx)
+	boxCtx := extendedBoxContext(service.ContextWith[*verdict.Store](ctx, choiceStore(t)))
 	var opts option.Options
 	if err := singjson.UnmarshalContext(boxCtx, raw, &opts); err != nil {
 		t.Fatalf("core rejected the config: %v\n%s", err, raw)
@@ -189,6 +191,74 @@ func (r routedMetadata) RoutedPacketConnection(_ context.Context, conn N.PacketC
 
 func (routedMetadata) RoutedFlow(context.Context, adapter.InboundContext, adapter.Rule, adapter.Outbound) tun.FlowTracker {
 	return nil
+}
+
+func TestAdaptiveSmartRoutesSteamDownloadsDirectly(t *testing.T) {
+	cfg := adaptiveTunnelConfig()
+	cfg.DataDir = t.TempDir()
+	cfg.LocalPort = getFreeLocalPort(25081)
+	cfg.PersonalRouting.SmartVPNSites = []string{"forced.steamcontent.com"}
+	cfg.BlockedDomains = []string{"blocked.steamcontent.com"}
+	built := mustBuildTunnelModeConfig(t, cfg)
+	for i, server := range built.DNS.Servers {
+		if server.Tag == "local" {
+			built.DNS.Servers[i] = SBDNSServer{Type: "hosts", Tag: "local"}
+		}
+	}
+	boxCtx := startEndpointCore(t, built)
+	service.FromContext[*verdict.Store](boxCtx).Learn("edgenext.cdn.steampipe.steamcontent.com", verdict.Proxy)
+	router := service.FromContext[adapter.Router](boxCtx)
+	routed := make(routedMetadata, 32)
+	router.AppendTracker(routed)
+
+	for i, tc := range []struct {
+		host string
+		want string
+		fake bool
+	}{
+		{"cache7-fra1.steamcontent.com", "direct", true},
+		{"edgenext.cdn.steampipe.steamcontent.com", "direct", true},
+		{"steampipe.akamaized.net", "direct", true},
+		{"steamcommunity.com", smartOutboundTag, false},
+		{"other.akamaized.net", smartOutboundTag, false},
+		{"forced.steamcontent.com", "proxy", false},
+		{"blocked.steamcontent.com", "proxy", false},
+	} {
+		t.Run(tc.host, func(t *testing.T) {
+			destination := M.ParseSocksaddrHostPort(tc.host, 443)
+			if tc.fake {
+				destination = M.SocksaddrFrom(fakeAddressFor(t, boxCtx, tc.host), 443)
+			}
+			ctx, cancel := context.WithCancel(boxCtx)
+			defer cancel()
+			client, inbound := net.Pipe()
+			defer client.Close()
+			source := M.SocksaddrFrom(netip.MustParseAddr("172.19.0.1"), uint16(50001+i))
+			go router.RouteConnectionEx(ctx, inbound, adapter.InboundContext{
+				Inbound:     "tun-in",
+				InboundType: "tun",
+				Network:     N.NetworkTCP,
+				Source:      source,
+				Destination: destination,
+			}, func(error) {})
+
+			timeout := time.After(5 * time.Second)
+			for {
+				select {
+				case got := <-routed:
+					if got.Inbound != "tun-in" || got.Source != source {
+						continue
+					}
+					if got.RouteOutbound != tc.want {
+						t.Fatalf("outbound = %q, want %q", got.RouteOutbound, tc.want)
+					}
+					return
+				case <-timeout:
+					t.Fatal("connection was never routed")
+				}
+			}
+		})
+	}
 }
 
 // TCP never reaches the pre-match path (the sniff rule sends it to the

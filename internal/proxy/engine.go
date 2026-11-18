@@ -2375,6 +2375,17 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		})
 	}
 
+	// A faster handshake can otherwise send an entire Steam depot download
+	// through the node. Keep the game-content CDNs direct ahead of the adaptive
+	// fallback, with explicit routing rules and blocked destinations above.
+	if adaptiveSmartActive(cfg) {
+		rules = append(rules, SBRouteRule{
+			Action:       "route",
+			DomainSuffix: []string{"steamcontent.com", "steampipe.akamaized.net"},
+			Outbound:     "direct",
+		})
+	}
+
 	// After the user's lists and the block-list, so a tracker or web seed listed
 	// for the node still reaches it; what is left is peers, which must not.
 	if len(torrentRegexes) > 0 {
