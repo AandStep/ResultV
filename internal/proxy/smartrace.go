@@ -20,8 +20,6 @@ import (
 	"errors"
 	"net"
 	"os"
-	"strconv"
-	"sync"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -30,27 +28,18 @@ import (
 
 // The numbers, and why each one is what it is.
 const (
-	// smartRaceHeadStart is how long the direct path gets alone before the
-	// tunnel is dialled in parallel. Long enough that a healthy site anywhere
-	// in Europe has answered (measured RTT to a working host: 47 ms), short
-	// enough that a censored one does not cost the user a visible stall.
-	smartRaceHeadStart = 700 * time.Millisecond
-	// smartDirectDialTimeout caps the direct dial itself. The system deadline
-	// is no use here: instagram.com on a Russian address takes ten seconds to
-	// report "i/o timeout" because the SYN is dropped rather than refused.
-	smartDirectDialTimeout = 2 * time.Second
-	// smartRaceDeadline is the ceiling on the whole race. Past it the
-	// connection fails the way it would have failed without this feature.
-	smartRaceDeadline = 5 * time.Second
+	// Give client-first protocols time to produce the opening message.
+	smartOpeningReadTimeout = 700 * time.Millisecond
+	// A direct connection gets this long to dial and produce a response.
+	smartDirectTimeout = 2 * time.Second
+	// The direct attempt and the VPN fallback share this total budget.
+	smartConnectTimeout = 5 * time.Second
 	// smartFirstReadBudget is how much of the server's first answer is read
 	// before handing the connection on. One TLS record header is enough to
 	// know the server spoke; reading more would only delay the handover.
 	smartFirstReadBudget = 8 * 1024
-	// smartSilenceMargin is how long before the ceiling an attempt stops
-	// waiting for the server to speak. It exists so silence arrives as an
-	// outcome the loop can still act on, instead of as the ceiling itself:
-	// a connected but mute path is the only candidate left once the other one
-	// has refused, and closing it there costs the user the whole request.
+	// Leave time to hand over a connected VPN fallback before the context
+	// expires, even when its server has not replied yet.
 	smartSilenceMargin = 250 * time.Millisecond
 )
 
@@ -114,149 +103,52 @@ func raceTeaches(res raceResult) bool {
 	return res.Err == nil && !res.Unproven
 }
 
-type raceAttempt struct {
-	conn     net.Conn
-	head     []byte
-	viaProxy bool
-	// silent: connected, the client's bytes went out, the server said nothing
-	// before the cut-off. The connection is alive and comes back unclosed.
-	silent bool
-	err    error
-}
-
-// runSmartRace sends the client's first bytes down both paths and keeps
-// whichever one the server answers on first.
-//
-// Replaying `first` is safe for exactly one reason: it is the client's opening
-// message and the server has said nothing back. A second connection through the
-// node begins a fresh handshake, so the peer never sees a replay — it sees a
-// first message, which is what it is.
-func runSmartRace(ctx context.Context, first []byte, direct, proxy raceDialer) raceResult {
-	ctx, cancel := context.WithTimeout(ctx, smartRaceDeadline)
+// connectSmartTCP tries the direct path through its response deadline. The node
+// receives the opening message only after direct fails or stays silent.
+func connectSmartTCP(ctx context.Context, first []byte, direct, proxy raceDialer) raceResult {
+	ctx, cancel := context.WithTimeout(ctx, smartConnectTimeout)
 	defer cancel()
 
-	results := make(chan raceAttempt, 2)
-	timer := time.NewTimer(smartRaceHeadStart)
-	defer timer.Stop()
-
-	pending := 1
-	var once sync.Once
-	// The counter is kept here rather than at the call sites because the
-	// launch happens at most once while two different events ask for it. Both
-	// used to increment, so on a refusal followed by the head start the loop
-	// waited for a second attempt that was never running — and every doomed
-	// race paid the full ceiling instead of ending when its last path failed.
-	launchProxy := func() {
-		once.Do(func() {
-			pending++
-			timer.Stop()
-			go attempt(ctx, proxy, first, true, results)
-		})
+	directCtx, directCancel := context.WithTimeout(ctx, smartDirectTimeout)
+	result := attemptSmartTCP(directCtx, direct, first, false)
+	directCancel()
+	if result.Err == nil && !result.Unproven {
+		return result
+	}
+	if result.Conn != nil {
+		result.Conn.Close()
+	}
+	if err := ctx.Err(); err != nil {
+		return raceResult{Err: err, Unfinished: 1}
 	}
 
-	directCtx, directCancel := context.WithTimeout(ctx, smartDirectDialTimeout)
-	defer directCancel()
-	go attempt(directCtx, direct, first, false, results)
-
-	var (
-		lastErr error
-		mute    *raceAttempt
-	)
-	// keepMute holds a connected-but-silent NODE connection as the candidate of
-	// last resort. Direct's silence is not kept: it is the signature of the
-	// black hole itself, and a tab hanging on the client's own minute-long
-	// timeout is worse for the user than an honest refusal now.
-	keepMute := func(res raceAttempt) {
-		if !res.viaProxy || mute != nil {
-			res.conn.Close()
-			return
-		}
-		kept := res
-		mute = &kept
+	result = attemptSmartTCP(ctx, proxy, first, true)
+	if result.Err != nil && ctx.Err() != nil {
+		result.Unfinished = 1
 	}
-	handOver := func() raceResult {
-		return raceResult{Conn: mute.conn, ViaProxy: mute.viaProxy, Unproven: true}
-	}
-
-	for {
-		select {
-		case <-timer.C:
-			// The server has not spoken. On a working path that means the
-			// request is still in flight; on a censored one it means it never
-			// will. The two are indistinguishable from here, so stop guessing
-			// and try the other path as well.
-			launchProxy()
-		case res := <-results:
-			pending--
-			switch {
-			case res.err == nil && !res.silent:
-				// Whoever is still running has lost and must not be left
-				// holding a socket.
-				go drainLosers(results, pending)
-				if mute != nil {
-					mute.conn.Close()
-				}
-				return raceResult{Conn: res.conn, Head: res.head, ViaProxy: res.viaProxy}
-			case res.silent:
-				keepMute(res)
-			default:
-				lastErr = res.err
-			}
-			if !res.viaProxy {
-				// Direct refusing or going mute is evidence now, not in 700 ms.
-				launchProxy()
-			}
-			if pending == 0 {
-				if mute != nil {
-					return handOver()
-				}
-				if lastErr == nil {
-					lastErr = ctx.Err()
-				}
-				return raceResult{Err: lastErr}
-			}
-		case <-ctx.Done():
-			go drainLosers(results, pending)
-			if mute != nil {
-				// Direct is known dead and the node is at least alive. Handing
-				// its connection over costs nothing if the server never speaks
-				// — the client then waits on its own terms instead of being
-				// told no while the only live path was thrown away.
-				return handOver()
-			}
-			if lastErr == nil {
-				lastErr = ctx.Err()
-			}
-			return raceResult{
-				Unfinished: pending,
-				Err: E.Cause(lastErr, "no answer in ", smartRaceDeadline.String(), ", ",
-					strconv.Itoa(pending), " path(s) unfinished"),
-			}
-		}
-	}
+	return result
 }
 
-// attempt dials, writes the client's opening bytes, and waits for the server to
-// say something. Silence is not an outcome: only bytes are.
-func attempt(ctx context.Context, dial raceDialer, first []byte, viaProxy bool, out chan<- raceAttempt) {
+func attemptSmartTCP(ctx context.Context, dial raceDialer, first []byte, viaProxy bool) raceResult {
 	conn, err := dial(ctx)
 	if err != nil {
-		out <- raceAttempt{viaProxy: viaProxy, err: err}
-		return
+		return raceResult{ViaProxy: viaProxy, Err: err}
 	}
-	if len(first) > 0 {
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stop()
+
+	deadline, _ := ctx.Deadline()
+	_ = conn.SetWriteDeadline(deadline)
+	if len(first) != 0 {
 		if _, err = conn.Write(first); err != nil {
 			conn.Close()
-			out <- raceAttempt{viaProxy: viaProxy, err: err}
-			return
+			return raceResult{ViaProxy: viaProxy, Err: err}
 		}
 	}
-	// Without a deadline here a mute server keeps this goroutine and its
-	// socket for as long as it likes: cancelling the context does not unblock
-	// a read on an established connection.
-	if deadline, hasDeadline := ctx.Deadline(); hasDeadline {
-		_ = conn.SetReadDeadline(deadline.Add(-smartSilenceMargin))
+	if viaProxy {
+		deadline = deadline.Add(-smartSilenceMargin)
 	}
+	_ = conn.SetReadDeadline(deadline)
 	head := make([]byte, smartFirstReadBudget)
 	n, err := conn.Read(head)
 	if n == 0 && !isDeadlineError(err) {
@@ -264,24 +156,15 @@ func attempt(ctx context.Context, dial raceDialer, first []byte, viaProxy bool, 
 		if err == nil {
 			err = E.New("server closed without answering")
 		}
-		out <- raceAttempt{viaProxy: viaProxy, err: err}
-		return
+		return raceResult{ViaProxy: viaProxy, Err: err}
 	}
-	// Whatever happens next, the connection may end up in the client's hands,
-	// and a deadline left on it would fail their very first read.
-	_ = conn.SetReadDeadline(time.Time{})
-	result := raceAttempt{conn: conn, viaProxy: viaProxy}
-	if n > 0 {
-		result.head = head[:n]
-	} else {
-		result.silent = true
-	}
-	select {
-	case out <- result:
-	case <-ctx.Done():
-		// Someone else already won while we were reading.
+	if !stop() {
 		conn.Close()
+		return raceResult{ViaProxy: viaProxy, Err: ctx.Err()}
 	}
+	_ = conn.SetReadDeadline(time.Time{})
+	_ = conn.SetWriteDeadline(time.Time{})
+	return raceResult{Conn: conn, Head: head[:n], ViaProxy: viaProxy, Unproven: n == 0}
 }
 
 // isDeadlineError separates "the server stayed silent" from "the connection
@@ -295,17 +178,4 @@ func isDeadlineError(err error) bool {
 	}
 	var netErr net.Error
 	return errors.As(err, &netErr) && netErr.Timeout()
-}
-
-// drainLosers closes whatever the still-running attempts hand back.
-func drainLosers(results <-chan raceAttempt, count int) {
-	for i := 0; i < count; i++ {
-		res, ok := <-results
-		if !ok {
-			return
-		}
-		if res.conn != nil {
-			res.conn.Close()
-		}
-	}
 }

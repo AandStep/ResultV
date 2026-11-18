@@ -77,22 +77,21 @@ func looksLikeRegionBlock(o probeOutcome) bool {
 
 // classifyProbe turns two observations into a verdict.
 //
-// The node is the control, not a second opinion: unless it answered, nothing
-// the direct side did is evidence about censorship. That asymmetry is the
-// guard against a bad minute on the user's own line being written down as a
-// week of "blocked".
+// A VPN verdict requires a usable response from the node. A transport error,
+// HTTP error page or region wall on the VPN path cannot confirm the block.
 func classifyProbe(direct, viaNode probeOutcome) verdict.Decision {
 	if !viaNode.reachable() {
 		return verdict.Unknown
 	}
-	if direct.Err != nil {
-		return verdict.Proxy
+	directBlocked, nodeBlocked := looksLikeRegionBlock(direct), looksLikeRegionBlock(viaNode)
+	if directBlocked && nodeBlocked {
+		return verdict.Direct
 	}
-	if looksLikeRegionBlock(direct) {
-		if looksLikeRegionBlock(viaNode) {
-			return verdict.Direct
+	if direct.Err != nil || directBlocked {
+		if viaNode.Status >= 200 && viaNode.Status < 400 && !nodeBlocked {
+			return verdict.Proxy
 		}
-		return verdict.Proxy
+		return verdict.Unknown
 	}
 	if !direct.reachable() {
 		return verdict.Unknown
