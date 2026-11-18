@@ -1,49 +1,24 @@
 {
-  "version": "3.6.0",
+  "version": "3.6.1",
   "releaseTitle": {
-    "ru": "Гибкая маршрутизация и обновлённая светлая тема",
-    "en": "More flexible routing and a refreshed light theme"
+    "ru": "Hotfix",
+    "en": "Hotfix"
   },
   "releaseNotes": [
     {
-      "type": "feature",
-      "ru": "Добавили выход через SOCKS5 после VPN на Windows, macOS и Linux. Можно направить через него весь VPN-трафик или только выбранные сайты и приложения, а встроенная проверка покажет IP, страну и поддержку UDP.",
-      "en": "Added a SOCKS5 exit after the VPN on Windows, macOS and Linux. Route all VPN traffic or selected sites and apps through it, and check its IP address, country and UDP support in the app."
-    },
-    {
-      "type": "feature",
-      "ru": "У режимов Smart и Global теперь отдельные списки сайтов и приложений. В каждом режиме можно задать правила как для трафика через VPN, так и для прямых подключений.",
-      "en": "Smart and Global now have separate site and app lists. Both modes support rules for VPN traffic and direct connections."
-    },
-    {
-      "type": "improve",
-      "ru": "Адаптивный Smart проверяет доступность сайта перед тем, как надолго запомнить маршрут через VPN. В экспериментальных настройках можно удалить отдельные сайты или очистить весь список изученных маршрутов.",
-      "en": "Adaptive Smart checks site reachability before remembering a VPN route long term. In Experimental settings, you can remove individual learned sites or clear the entire list."
-    },
-    {
-      "type": "improve",
-      "ru": "Обновили светлую тему и списки серверов, улучшили отзывчивость при наведении. Тема и язык теперь находятся в разделе «Внешний вид».",
-      "en": "Refreshed the light theme and server lists, and made hover interactions more responsive. Theme and language are now in Appearance settings."
+      "type": "fix",
+      "ru": "Исправили предпросмотр импорта подписки. Информационные записи о лимите устройств, истечении подписки и других состояниях теперь учитываются в общем количестве и отмечаются бейджем Section.",
+      "en": "Fixed the subscription import preview. Notices about device limits, expired subscriptions and other statuses now count toward the total and appear with a Section badge."
     },
     {
       "type": "fix",
-      "ru": "Исправили потерю профилей при запуске. ResultV безопаснее сохраняет конфигурацию и восстанавливает её из резервной копии, если основной файл не читается.",
-      "en": "Fixed a startup issue that could lose saved profiles. ResultV saves the configuration more safely and can restore it from a backup if the main file becomes unreadable."
+      "ru": "Исправили счётчики трафика на главном экране. Объём и скорость теперь отражают только трафик через VPN.",
+      "en": "Fixed the traffic counters on the dashboard. Traffic totals and speeds now reflect only VPN traffic."
     },
     {
       "type": "fix",
-      "ru": "Улучшили импорт подписок Xray с автоматическим выбором сервера. Обновление подписки различает похожие серверы, а удалённый сервер больше не остаётся выбранным на главном экране.",
-      "en": "Improved Xray subscription imports with automatic server selection. Refreshing a subscription keeps similar servers distinct, and deleted servers no longer remain selected on the home screen."
-    },
-    {
-      "type": "fix",
-      "ru": "Исправили зависания в режиме «Туннель», когда DNS через VPN долго не отвечал. Медленный запрос больше не задерживает обработку следующих пакетов.",
-      "en": "Fixed a Tunnel-mode stall caused by slow DNS responses over the VPN. A slow lookup no longer holds up subsequent packets."
-    },
-    {
-      "type": "improve",
-      "ru": "Обновили ядро sing-box, улучшили обработку настроек AmneziaWG 3.1 и добавили импорт смены портов Hysteria2 из подписок Xray.",
-      "en": "Updated the sing-box core, improved handling of AmneziaWG 3.1 settings, and added support for importing Hysteria2 port hopping from Xray subscriptions."
+      "ru": "Исправили адаптивный Smart. Если маршрут для TCP-подключения ещё неизвестен, приложение сначала пробует подключиться напрямую и переключается на VPN при ошибке или тайм-ауте. Загрузки игр и обновлений Steam по умолчанию идут напрямую.",
+      "en": "Fixed Adaptive Smart. When a TCP route is unknown, the app tries a direct connection first and falls back to the VPN on failure or timeout. Steam game downloads and updates use a direct connection by default."
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",
