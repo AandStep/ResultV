@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"time"
 
@@ -36,4 +37,19 @@ func startCrashLog() {
 	fmt.Fprintf(f, "=== start %s pid %d ===\n", time.Now().Format("2006-01-02 15:04:05"), os.Getpid())
 	_ = debug.SetCrashOutput(f, debug.CrashOptions{})
 	f.Close()
+}
+
+// recordExit writes lifecycle events to the same file as fatal runtime output.
+// The in-app log is lost when the process exits.
+func recordExit(reason string) {
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	path := filepath.Join(system.UserDataDir(), "diag", "crash.log")
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "=== exit %s pid %d %s ===\n", time.Now().Format("2006-01-02 15:04:05"), os.Getpid(), reason)
 }

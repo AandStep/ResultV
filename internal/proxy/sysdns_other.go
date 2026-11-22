@@ -13,17 +13,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-//go:build !windows
+//go:build !windows && !darwin
 
 package proxy
 
 type noopSystemDNS struct{}
 
-func (noopSystemDNS) Override(servers []string) error              { return nil }
+func (noopSystemDNS) Override(servers []string) error                     { return nil }
 func (noopSystemDNS) OverrideTunnelAdapter(adapterIP, dnsIP string) error { return nil }
-func (noopSystemDNS) Restore() error                    { return nil }
-func (noopSystemDNS) SnapshotExists() bool              { return false }
-func (noopSystemDNS) RestoreCommands() ([]string, error) { return nil, nil }
-func (noopSystemDNS) DeleteSnapshot() error             { return nil }
+func (noopSystemDNS) Restore() error                                      { return nil }
+func (noopSystemDNS) SnapshotExists() bool                                { return false }
+func (noopSystemDNS) RestoreCommands() ([]string, error)                  { return nil, nil }
+func (noopSystemDNS) DeleteSnapshot() error                               { return nil }
 
 func newSystemDNS() SystemDNS { return noopSystemDNS{} }

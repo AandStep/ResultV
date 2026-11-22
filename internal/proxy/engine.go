@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -725,6 +726,7 @@ type SBRouteRule struct {
 	// port-unreachable, "drop" black-holes silently. Only "default" produces the
 	// fast client-side fallback quicRejectRule relies on.
 	Method string `json:"method,omitempty"`
+	NoDrop bool   `json:"no_drop,omitempty"`
 	// Server is the DNS server of Action="resolve".
 	Server string `json:"server,omitempty"`
 }
@@ -932,6 +934,16 @@ func effectiveDataDir(cfg EngineConfig) string {
 // FakeIP mapping has to land in this very file and not beside it.
 const singBoxCacheDBName = "sing-box-cache.db"
 
+func singBoxCachePath(dataDir string) string {
+	name := singBoxCacheDBName
+	if runtime.GOOS == "darwin" && os.Geteuid() != 0 {
+		// Older elevated tunnel runs can leave the original database owned
+		// by root. Keep the regular user's cache separate from elevated runs.
+		name = "sing-box-cache-user.db"
+	}
+	return filepath.Join(dataDir, name)
+}
+
 // singBoxLogLevel is "error" unless RESULTV_SINGBOX_LOG_LEVEL says otherwise.
 //
 // The default is not a preference, it is a necessity: at "info" the core logs
@@ -963,7 +975,7 @@ func buildExperimentalCache(dataDir string) *SBExperimental {
 	return &SBExperimental{
 		CacheFile: &SBCacheFile{
 			Enabled: true,
-			Path:    filepath.Join(dataDir, singBoxCacheDBName),
+			Path:    singBoxCachePath(dataDir),
 		},
 	}
 }
@@ -1286,6 +1298,10 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 		RouteExcludeAddress: routeExclude,
 		DNSMode:             "hijack",
 	}
+	if runtime.GOOS == "darwin" {
+		// Let sing-box choose an available utun<N> interface.
+		tun.InterfaceName = ""
+	}
 	if pt != "WIREGUARD" && pt != "AMNEZIAWG" {
 		tun.UDPTimeout = "30s"
 		tun.UDPMapping = "endpoint_independent"
@@ -1346,7 +1362,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 		sbCfg.Experimental.CacheFile.Enabled = true
 		sbCfg.Experimental.CacheFile.StoreFakeIP = true
 		if sbCfg.Experimental.CacheFile.Path == "" {
-			sbCfg.Experimental.CacheFile.Path = filepath.Join(dd, singBoxCacheDBName)
+			sbCfg.Experimental.CacheFile.Path = singBoxCachePath(dd)
 		}
 	}
 
@@ -2172,6 +2188,16 @@ func buildRoute(cfg EngineConfig) *SBRoute {
 		}
 	}
 
+	if runtime.GOOS == "darwin" && cfg.Mode == ProxyModeTunnel && !cfg.EnableIPv6 {
+		// Keep public IPv6 captured by utun. Reject it before the TUN stack
+		// acknowledges the TCP handshake so clients can fall back to IPv4.
+		rules = append(rules, SBRouteRule{
+			Inbound: []string{"tun-in"},
+			IPCidr:  []string{"2000::/3"},
+			Action:  "reject",
+			NoDrop:  true,
+		})
+	}
 	rules = append(rules, SBRouteRule{
 		Action: "sniff",
 	})
