@@ -15,9 +15,47 @@
 
 package system
 
-import "github.com/energye/systray"
+import (
+	"embed"
+
+	"github.com/energye/systray"
+)
+
+//go:embed trayicons/menu_*.png
+var trayMenuArt embed.FS
 
 func startTray(onReady, onExit func()) {
 	start, _ := systray.RunWithExternalLoop(onReady, onExit)
 	start()
+}
+
+func (t *Tray) configureTrayMenu() {
+	for _, entry := range []struct {
+		item *systray.MenuItem
+		icon string
+	}{
+		{t.miConnect, "power"},
+		{t.miDisconnect, "power"},
+		{t.miServers, "list"},
+		{t.miShowWindow, "home"},
+		{t.miQuit, "close"},
+	} {
+		if icon, err := trayMenuArt.ReadFile("trayicons/menu_" + entry.icon + ".png"); err == nil {
+			entry.item.SetTemplateIcon(icon, nil)
+		}
+	}
+	systray.CreateMenu()
+}
+
+// AppKit draws the checkmark in the menu's state column in both appearances.
+func applyTrayServerMark(item *systray.MenuItem, mark trayMark) trayMark {
+	checked := mark != trayMarkNone
+	if checked != item.Checked() {
+		if checked {
+			item.Check()
+		} else {
+			item.Uncheck()
+		}
+	}
+	return trayMarkNone
 }

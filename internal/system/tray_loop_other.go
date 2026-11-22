@@ -30,3 +30,18 @@ func startTray(onReady, onExit func()) {
 		systray.Run(onReady, onExit)
 	}()
 }
+
+func (t *Tray) configureTrayMenu() {
+	// Left click restores the window. The right-click menu is supplied by systray.
+	systray.SetOnClick(func(_ systray.IMenu) {
+		t.safeCall(func() {
+			if t.callbacks.OnShowWindow != nil {
+				t.callbacks.OnShowWindow()
+			}
+		})
+	})
+}
+
+func applyTrayServerMark(_ *systray.MenuItem, mark trayMark) trayMark {
+	return mark
+}

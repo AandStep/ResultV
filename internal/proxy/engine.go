@@ -934,6 +934,16 @@ func effectiveDataDir(cfg EngineConfig) string {
 // FakeIP mapping has to land in this very file and not beside it.
 const singBoxCacheDBName = "sing-box-cache.db"
 
+func singBoxCachePath(dataDir string) string {
+	name := singBoxCacheDBName
+	if runtime.GOOS == "darwin" && os.Geteuid() != 0 {
+		// Older elevated tunnel runs can leave the original database owned
+		// by root. Keep the regular user's cache separate from elevated runs.
+		name = "sing-box-cache-user.db"
+	}
+	return filepath.Join(dataDir, name)
+}
+
 // singBoxLogLevel is "error" unless RESULTV_SINGBOX_LOG_LEVEL says otherwise.
 //
 // The default is not a preference, it is a necessity: at "info" the core logs
@@ -965,7 +975,7 @@ func buildExperimentalCache(dataDir string) *SBExperimental {
 	return &SBExperimental{
 		CacheFile: &SBCacheFile{
 			Enabled: true,
-			Path:    filepath.Join(dataDir, singBoxCacheDBName),
+			Path:    singBoxCachePath(dataDir),
 		},
 	}
 }
@@ -1352,7 +1362,7 @@ func BuildTunnelModeConfig(cfg EngineConfig) (SingBoxConfig, error) {
 		sbCfg.Experimental.CacheFile.Enabled = true
 		sbCfg.Experimental.CacheFile.StoreFakeIP = true
 		if sbCfg.Experimental.CacheFile.Path == "" {
-			sbCfg.Experimental.CacheFile.Path = filepath.Join(dd, singBoxCacheDBName)
+			sbCfg.Experimental.CacheFile.Path = singBoxCachePath(dd)
 		}
 	}
 

@@ -85,6 +85,8 @@ type subscriptionRequestMetadata struct {
 }
 
 type App struct {
+	stopControlCenter func()
+
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -646,6 +648,7 @@ func (a *App) startup(ctx context.Context) {
 			}
 		},
 		OnQuit: func() {
+			recordExit("quit requested from tray")
 			a.markQuitRequested()
 			wailsRuntime.Quit(a.ctx)
 		},
@@ -660,6 +663,7 @@ func (a *App) startup(ctx context.Context) {
 			if !quit && a.trayHidden.Load() != 0 {
 				a.log.Warning("Трей неожиданно завершился при скрытом окне — завершение процесса")
 				time.Sleep(300 * time.Millisecond)
+				recordExit("unexpected tray exit with hidden window")
 				os.Exit(0)
 			}
 		},
@@ -695,6 +699,7 @@ func (a *App) startup(ctx context.Context) {
 		wailsRuntime.WindowHide(a.ctx)
 	}
 
+	a.stopControlCenter = a.startControlCenter()
 	a.log.Success("ResultV готов к работе")
 
 	// A link queued from argv stays queued: the frontend picks it up with
@@ -703,11 +708,15 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	recordExit("shutdown started")
 	a.log.Info("ResultV завершает работу...")
 
 	// Native Quit can reach shutdown without passing through markQuitRequested.
 	// Block late window restores and release the singleton before teardown.
 	a.markQuitRequested()
+	if a.stopControlCenter != nil {
+		a.stopControlCenter()
+	}
 
 	done := make(chan struct{})
 	go func() {
@@ -755,10 +764,12 @@ func (a *App) shutdown(ctx context.Context) {
 
 	select {
 	case <-done:
+		recordExit("shutdown finished")
 	case <-time.After(10 * time.Second):
 		// Shutdown hung (likely sing-box instance.Close() blocking) — force exit
 		// so the singleton mutex is released and the user can relaunch.
 		a.log.Warning("Завершение зависло — принудительный выход")
+		recordExit("shutdown timed out")
 		os.Exit(0)
 	}
 }
@@ -1745,6 +1756,7 @@ func (a *App) RestartAsAdmin(connectProxyID string, mode string) error {
 
 	err = system.RestartAsAdmin(exe, system.ElevationRelaunchArgs(connectProxyID, mode)...)
 	if err == nil {
+		recordExit("relaunch with administrator privileges")
 		a.markQuitRequested()
 		wailsRuntime.Quit(a.ctx)
 	}
@@ -3138,7 +3150,8 @@ func (a *App) quitOnTermination() {
 	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(ch)
 	select {
-	case <-ch:
+	case sig := <-ch:
+		recordExit("received signal " + sig.String())
 		a.markQuitRequested()
 		wailsRuntime.Quit(a.ctx)
 	case <-a.ctx.Done():
@@ -3195,6 +3208,7 @@ func (a *App) verifyWindowOrExit() {
 	time.Sleep(400 * time.Millisecond)
 	if !system.IsMainWindowVisible() {
 		a.log.Warning("Окно не стало видимым после восстановления — возможно WebView2 завис. Перезапустите приложение.")
+		recordExit("window did not become visible")
 		os.Exit(0)
 	}
 }
@@ -4401,6 +4415,7 @@ func (a *App) StartUpdate() {
 		time.Sleep(300 * time.Millisecond) // let the event reach the frontend
 		// Ensure BeforeClose allows real process exit (not "hide to tray"),
 		// otherwise the updater handover script cannot replace the running exe.
+		recordExit("restart after update")
 		a.markQuitRequested()
 		wailsRuntime.Quit(a.ctx)
 	}()

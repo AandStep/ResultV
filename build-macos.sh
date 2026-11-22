@@ -4,6 +4,7 @@
 # Optional environment:
 #   SUBSCRIPTION_ENCRYPT_KEY   — pinned at link time if set.
 #   APPLE_DEVELOPER_ID         — codesign identity (e.g., "Developer ID Application: …").
+#                                Enables the Control Center extension (requires Xcode 26+).
 #                                If unset, the .app is left ad-hoc-signed and macOS
 #                                will require a Gatekeeper override on first launch.
 #   APPLE_NOTARY_APPLE_ID      — Apple ID for notarytool submission (optional).
@@ -59,9 +60,14 @@ if [ -n "${APPLE_DEVELOPER_ID:-}" ]; then
   echo "==> codesign libcronet.dylib"
   codesign --force --options runtime --timestamp \
     --sign "$APPLE_DEVELOPER_ID" "${APP_PATH}/Contents/MacOS/libcronet.dylib"
+  CONTROL_BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/resultv-control.XXXXXX")"
+  trap 'rm -rf "$CONTROL_BUILD_DIR"' EXIT
+  bash scripts/embed-macos-control.sh "$APP_PATH" "$CONTROL_BUILD_DIR"
   echo "==> codesign app"
-  codesign --force --deep --options runtime --timestamp \
+  codesign --force --options runtime --timestamp \
+    --entitlements "$CONTROL_BUILD_DIR/host.entitlements" \
     --sign "$APPLE_DEVELOPER_ID" "$APP_PATH"
+  codesign --verify --deep --strict "$APP_PATH"
 else
   # libcronet.dylib is copied after Wails self-sign; re-seal the bundle ad-hoc so
   # Gatekeeper bypass (Open / xattr) still yields a runnable app.

@@ -11,5 +11,5 @@ package main
 
 import _ "embed"
 
-//go:embed public/mac-logo.png
+//go:embed public/mac-tray-logo.png
 var appIcon []byte
