@@ -62,10 +62,7 @@ const (
 	connectionStateKillSwitch
 )
 
-// Tray owns the notification-area icon and the native HMENU (right-click
-// menu). A left-click is dispatched to OnShowWindow; right-click is handled
-// by energye/systray's default behaviour, which calls TrackPopupMenu on the
-// HMENU built in onReady.
+// Tray owns the status icon, native menu and connection actions.
 type Tray struct {
 	mu            sync.Mutex
 	icon          []byte
@@ -171,19 +168,8 @@ func (t *Tray) Stop() {
 
 func (t *Tray) onReady() {
 	if len(t.icon) > 0 {
-		systray.SetIcon(t.icon)
+		systray.SetTemplateIcon(t.icon, t.icon)
 	}
-
-	// Left-click → restore main window. Right-click intentionally not
-	// bound: energye/systray's default handler shows the HMENU built
-	// below via TrackPopupMenu when SetOnRClick is unset.
-	systray.SetOnClick(func(_ systray.IMenu) {
-		t.safeCall(func() {
-			if t.callbacks.OnShowWindow != nil {
-				t.callbacks.OnShowWindow()
-			}
-		})
-	})
 
 	t.buildMenu()
 
@@ -196,6 +182,7 @@ func (t *Tray) onReady() {
 
 	t.renderServers()
 	t.refreshTooltipAndItems()
+	t.configureTrayMenu()
 }
 
 func (t *Tray) onExit() {
@@ -403,10 +390,11 @@ func (t *Tray) renderServers() {
 			s.title = row.title
 		}
 		if !s.iconSet || s.header != header || s.icon != row.icon || s.mark != mark {
+			iconMark := applyTrayServerMark(s.item, mark)
 			if header {
 				setTrayItemIcon(s.item, trayHeaderIcon())
 			} else {
-				setTrayItemIcon(s.item, trayMenuIcon(row.icon, mark))
+				setTrayItemIcon(s.item, trayMenuIcon(row.icon, iconMark))
 			}
 			s.icon, s.mark, s.iconSet = row.icon, mark, true
 		}

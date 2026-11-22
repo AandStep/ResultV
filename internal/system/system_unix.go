@@ -40,9 +40,8 @@ func IsAdmin() bool {
 // nil on success so the caller can quit the unprivileged instance.
 //
 //   - macOS: drives osascript "do shell script ... with administrator privileges",
-//     which shows the standard system password dialog. We launch the binary
-//     detached (`&`) so osascript returns immediately; without that the script
-//     blocks on the GUI process and we can't quit cleanly.
+//     which shows the standard system password dialog. A short-lived launcher
+//     starts the GUI in a separate session before osascript returns.
 //   - Linux: pkexec (PolicyKit GUI prompt), see elevate_linux.go. Returns only
 //     after the password was accepted, or an error when it was not.
 //
@@ -65,13 +64,18 @@ func RestartAsAdmin(exePath string, args ...string) error {
 }
 
 func restartAsAdminDarwin(exePath string, args []string) error {
-	parts := []string{shellQuote(exePath), ElevatedFromFlag + strconv.Itoa(os.Getpid())}
+	// osascript grants root privileges in the system bootstrap. MenuBarAgent
+	// lives in the invoking user's bootstrap, so enter it before launching the
+	// GUI. The launcher still creates an independent POSIX session.
+	parts := []string{
+		"/bin/launchctl", "asuser", strconv.Itoa(os.Getuid()),
+		shellQuote(exePath), "--launch-elevated-session",
+		ElevatedFromFlag + strconv.Itoa(os.Getpid()),
+	}
 	for _, a := range args {
 		parts = append(parts, shellQuote(a))
 	}
-	// Detach so the AppleScript doesn't wait on the GUI process; redirect
-	// stdio so a daemonized child doesn't keep the script's pipes open.
-	shellCmd := strings.Join(parts, " ") + " >/dev/null 2>&1 &"
+	shellCmd := strings.Join(parts, " ")
 
 	appleEscaped := strings.ReplaceAll(shellCmd, `\`, `\\`)
 	appleEscaped = strings.ReplaceAll(appleEscaped, `"`, `\"`)
@@ -79,8 +83,8 @@ func restartAsAdminDarwin(exePath string, args []string) error {
 		`do shell script "%s" with administrator privileges`,
 		appleEscaped,
 	)
-	if err := exec.Command("osascript", "-e", script).Run(); err != nil {
-		return fmt.Errorf("osascript elevation failed: %w", err)
+	if out, err := exec.Command("/usr/bin/osascript", "-e", script).CombinedOutput(); err != nil {
+		return fmt.Errorf("osascript elevation failed: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

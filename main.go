@@ -34,6 +34,12 @@ import (
 var assets embed.FS
 
 func main() {
+	if handled, err := launchElevatedSession(os.Args); handled {
+		if err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	system.WaitForElevationParent(os.Args)
 	releaseOwnership := system.KeepInvokerOwnership()
 	defer releaseOwnership()
@@ -130,6 +136,7 @@ func main() {
 	}
 
 	err := wails.Run(opts)
+	recordExit("Wails returned from its application loop")
 
 	if err != nil {
 		log.Fatalf("wails.Run: %v", err)
