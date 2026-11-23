@@ -3,7 +3,6 @@ package proxy
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
 	"errors"
@@ -12,6 +11,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	sbtls "github.com/sagernet/sing-box/common/tls"
+	sblog "github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 )
 
 const xrayCertificatePinTimeout = 5 * time.Second
@@ -63,43 +66,44 @@ func prepareXrayCertificatePin(ctx context.Context, proxy ProxyConfig, cfg *Sing
 }
 
 func resolveXrayCertificateKey(ctx context.Context, proxy ProxyConfig, out *SBOutbound, pins map[[sha256.Size]byte]bool) ([sha256.Size]byte, error) {
+	var key [sha256.Size]byte
 	ctx, cancel := context.WithTimeout(ctx, xrayCertificatePinTimeout)
 	defer cancel()
 	addresses := serverPinnedIPs(proxy)
 	if len(addresses) == 0 {
 		addresses = []string{out.Server}
 	}
-	var key [sha256.Size]byte
-	verify := func(state tls.ConnectionState) error {
-		if len(state.PeerCertificates) == 0 || !pins[sha256.Sum256(state.PeerCertificates[0].Raw)] {
-			return errXrayCertificateMismatch
-		}
-		publicKey, err := x509.MarshalPKIXPublicKey(state.PeerCertificates[0].PublicKey)
-		if err != nil {
-			return err
-		}
-		key = sha256.Sum256(publicKey)
-		return nil
+	singleAddress := len(addresses) == 1
+	if singleAddress {
+		addresses = append(addresses, addresses[0])
 	}
-	tlsOptions := &tls.Config{
-		ServerName:         firstNonEmpty(out.TLS.ServerName, out.Server),
-		NextProtos:         out.TLS.ALPN,
-		InsecureSkipVerify: true, // VerifyConnection requires an exact certificate pin.
-		VerifyConnection:   verify,
+	tlsOptions := option.OutboundTLSOptions{
+		Enabled:      true,
+		ServerName:   out.TLS.ServerName,
+		ALPN:         out.TLS.ALPN,
+		MinVersion:   out.TLS.MinVersion,
+		MaxVersion:   out.TLS.MaxVersion,
+		CipherSuites: out.TLS.CipherSuites,
+		Insecure:     true, // Only fetch the peer certificate. Its SHA-256 must match below.
+	}
+	if utls := out.TLS.UTLS; utls != nil {
+		tlsOptions.UTLS = &option.OutboundUTLSOptions{Enabled: utls.Enabled, Fingerprint: utls.Fingerprint}
+	}
+	tlsClient, err := sbtls.NewClient(ctx, sblog.NewNOPFactory().Logger(), out.Server, tlsOptions)
+	if err != nil {
+		return key, fmt.Errorf("%w: invalid proxy TLS options", errXrayCertificatePinCheck)
 	}
 	var lastErr error
 	for _, ip := range addresses {
-		dialer := &net.Dialer{Timeout: 2 * time.Second}
-		if bind := net.ParseIP(out.Inet4BindAddress); bind != nil && !strings.Contains(ip, ":") && !isLoopbackProbeHost(ip) {
-			dialer.LocalAddr = &net.TCPAddr{IP: bind}
-		}
-		tlsDialer := tls.Dialer{NetDialer: dialer, Config: tlsOptions}
-		conn, err := tlsDialer.DialContext(ctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(out.ServerPort)))
+		key, err = probeXrayCertificateKey(ctx, ip, out, tlsClient.Clone(), pins)
 		if err == nil {
-			_ = conn.Close()
 			return key, nil
 		}
 		lastErr = err
+		// Never repeat a known rejection on the same endpoint.
+		if singleAddress && errors.Is(err, errXrayCertificateMismatch) {
+			break
+		}
 	}
 	// Raw dial and DNS errors may include a subscription server's address.
 	var timeout net.Error
@@ -108,8 +112,37 @@ func resolveXrayCertificateKey(ctx context.Context, proxy ProxyConfig, out *SBOu
 		return key, fmt.Errorf("%w: %w", errXrayCertificatePinCheck, errXrayCertificateMismatch)
 	case errors.Is(ctx.Err(), context.Canceled):
 		return key, fmt.Errorf("%w: %w", errXrayCertificatePinCheck, context.Canceled)
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		return key, fmt.Errorf("%w: timed out reaching the proxy", errXrayCertificatePinCheck)
 	case errors.As(lastErr, &timeout) && timeout.Timeout():
 		return key, fmt.Errorf("%w: timed out reaching the proxy", errXrayCertificatePinCheck)
 	}
 	return key, fmt.Errorf("%w: could not reach the proxy over TLS", errXrayCertificatePinCheck)
+}
+
+func probeXrayCertificateKey(ctx context.Context, ip string, out *SBOutbound, tlsClient sbtls.Config, pins map[[sha256.Size]byte]bool) ([sha256.Size]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	dialer := &net.Dialer{}
+	if bind := net.ParseIP(out.Inet4BindAddress); bind != nil && !strings.Contains(ip, ":") && !isLoopbackProbeHost(ip) {
+		dialer.LocalAddr = &net.TCPAddr{IP: bind}
+	}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(out.ServerPort)))
+	if err != nil {
+		return [sha256.Size]byte{}, err
+	}
+	defer conn.Close()
+	tlsConn, err := sbtls.ClientHandshake(ctx, conn, tlsClient)
+	if err != nil {
+		return [sha256.Size]byte{}, err
+	}
+	certs := tlsConn.ConnectionState().PeerCertificates
+	if len(certs) == 0 || !pins[sha256.Sum256(certs[0].Raw)] {
+		return [sha256.Size]byte{}, errXrayCertificateMismatch
+	}
+	publicKey, err := x509.MarshalPKIXPublicKey(certs[0].PublicKey)
+	if err != nil {
+		return [sha256.Size]byte{}, err
+	}
+	return sha256.Sum256(publicKey), nil
 }

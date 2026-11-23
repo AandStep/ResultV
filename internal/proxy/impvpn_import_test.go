@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -32,6 +34,64 @@ func TestXrayJSONUsesExplicitXHTTPUplinkMethod(t *testing.T) {
 				t.Fatalf("expected uplink method %q, got %+v", tc.want, outbound.Transport)
 			}
 		})
+	}
+}
+
+func TestXrayJSONKeepsHysteria2Salamander(t *testing.T) {
+	const body = `[{"remarks":"Hysteria2 test","outbounds":[{"protocol":"hysteria","settings":{"address":"example.test","port":443},"streamSettings":{"network":"hysteria","security":"tls","hysteriaSettings":{"auth":"test-auth"},"tlsSettings":{"serverName":"example.test","alpn":["h3"]},"finalmask":{"udp":[{"type":"salamander","settings":{"password":"test-mask"}}],"quicParams":{"udpHop":{"ports":"443,20000-20005","interval":"10s"}}}}}]}]`
+	entries, err := ParseSubscriptionBody(body)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("expected one imported profile, got %d: %v", len(entries), err)
+	}
+	entry := entries[0]
+	cfg, err := BuildPingProbeConfig(ProxyConfig{IP: entry.IP, Port: entry.Port, Type: entry.Type, Extra: entry.Extra}, 1080, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, out := range cfg.Outbounds {
+		if out.Tag != "proxy" {
+			continue
+		}
+		if out.Obfs == nil || out.Obfs.Type != "salamander" || out.Obfs.Password != "test-mask" {
+			t.Fatalf("expected the imported UDP mask, got %+v", out.Obfs)
+		}
+		if out.Password != "test-auth" || out.HopInterval != "10s" || len(out.ServerPorts) == 0 {
+			t.Fatal("import lost authentication or port hopping")
+		}
+		assertCoreAcceptsConfig(t, cfg)
+		return
+	}
+	t.Fatal("missing proxy outbound")
+}
+
+func TestXrayCertificatePinRetriesOneTimedOutHandshake(t *testing.T) {
+	var handshakes atomic.Int32
+	release := make(chan struct{})
+	server := httptest.NewUnstartedServer(http.NotFoundHandler())
+	server.TLS = &tls.Config{GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
+		if handshakes.Add(1) == 1 {
+			<-release
+		}
+		return nil, nil
+	}}
+	server.StartTLS()
+	defer server.Close()
+	defer close(release)
+	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := sha256.Sum256(server.Certificate().Raw)
+	out := &SBOutbound{Server: host, ServerPort: port, TLS: &SBOutboundTLS{Enabled: true}}
+	if _, err := resolveXrayCertificateKey(t.Context(), ProxyConfig{IP: host, Port: port}, out, map[[sha256.Size]byte]bool{pin: true}); err != nil {
+		t.Fatal(err)
+	}
+	if n := handshakes.Load(); n != 2 {
+		t.Fatalf("expected the check to retry once, got %d handshakes", n)
 	}
 }
 
