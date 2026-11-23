@@ -1,5 +1,5 @@
 {
-  "version": "3.6.1",
+  "version": "3.6.2",
   "releaseTitle": {
     "ru": "Улучшен разбор конфигураций Xray",
     "en": "Improved Xray configuration parsing"
@@ -19,29 +19,29 @@
   "downloadUrl": "https://result-proxy.ru/",
   "platforms": {
     "windows-amd64-portable": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.6.1/ResultV.exe",
-      "sha256": "1fecf9980e5eff61b79f942fe5641bdaee5b9200d603dbd7e590e8db9ec7d44e",
-      "size": 63452160
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.6.2/ResultV.exe",
+      "sha256": "c150fe30da51d2943db63612c9653cfd9a2aa6be54f383f3411628fea0230524",
+      "size": 63465984
     },
     "windows-amd64-installer": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.6.1/ResultV-amd64-installer.exe",
-      "sha256": "3579b3a7add91b3599cb57b3bc8903d8c92c5607680eb235a50646e39986694b",
-      "size": 29947025
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.6.2/ResultV-amd64-installer.exe",
+      "sha256": "5e8aafdd5968051edba0a10e187245a7204066fb914735c1783b9ecff453c217",
+      "size": 29946965
     },
     "darwin-universal": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.6.1/ResultV.dmg",
-      "sha256": "16c62fd3ecac5798a9276964ad1e874e245d530917bfa3fb0d6f5532373834bd",
-      "size": 67173859
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.6.2/ResultV.dmg",
+      "sha256": "5058a152ff2c01b2647b3f2f09c8358a86159ac8c26a3d8cf3a389f403330a8e",
+      "size": 67289185
     },
     "linux-amd64-appimage": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.6.1/ResultV-3.6.1-x86_64.AppImage",
-      "sha256": "72cfef90ac0908eaa5fbb96ff0a05ad947881c47b3dc8a3a2ce44b215bfe4770",
-      "size": 27163128
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.6.2/ResultV-3.6.2-x86_64.AppImage",
+      "sha256": "bede55a58eb5363aeabbd1d7d261ee7feaf6c4f55ae321ad6547339ce16c32ce",
+      "size": 27175416
     },
     "linux-amd64-deb": {
-      "url": "https://github.com/AandStep/ResultV/releases/download/v3.6.1/resultv_3.6.1_amd64.deb",
-      "sha256": "e445c1fa7c850d85acea93d4d9b9bf204ee1d51602dbacb94ec9a6a0c2e17048",
-      "size": 28831162
+      "url": "https://github.com/AandStep/ResultV/releases/download/v3.6.2/resultv_3.6.2_amd64.deb",
+      "sha256": "5a7bd1628ea69fa3845f27ea83fdfba2bd9c03e9b213210de44f1f6c15753ea3",
+      "size": 28837112
     }
   }
 }
