@@ -1,24 +1,19 @@
 {
   "version": "3.6.1",
   "releaseTitle": {
-    "ru": "Hotfix",
-    "en": "Hotfix"
+    "ru": "Улучшен разбор конфигураций Xray",
+    "en": "Improved Xray configuration parsing"
   },
   "releaseNotes": [
     {
       "type": "fix",
-      "ru": "Исправили предпросмотр импорта подписки. Информационные записи о лимите устройств, истечении подписки и других состояниях теперь учитываются в общем количестве и отмечаются бейджем Section.",
-      "en": "Fixed the subscription import preview. Notices about device limits, expired subscriptions and other statuses now count toward the total and appear with a Section badge."
+      "ru": "При импорте конфигураций Xray из подписок ResultV теперь сохраняет заданный метод отправки данных для XHTTP и параметр Salamander для Hysteria2.",
+      "en": "When importing Xray configurations from subscriptions, ResultV now preserves the XHTTP upload method and the Salamander setting for Hysteria2."
     },
     {
       "type": "fix",
-      "ru": "Исправили счётчики трафика на главном экране. Объём и скорость теперь отражают только трафик через VPN.",
-      "en": "Fixed the traffic counters on the dashboard. Traffic totals and speeds now reflect only VPN traffic."
-    },
-    {
-      "type": "fix",
-      "ru": "Исправили адаптивный Smart. Если маршрут для TCP-подключения ещё неизвестен, приложение сначала пробует подключиться напрямую и переключается на VPN при ошибке или тайм-ауте. Загрузки игр и обновлений Steam по умолчанию идут напрямую.",
-      "en": "Fixed Adaptive Smart. When a TCP route is unknown, the app tries a direct connection first and falls back to the VPN on failure or timeout. Steam game downloads and updates use a direct connection by default."
+      "ru": "Улучшили проверку TLS для gRPC-профилей с отпечатком сертификата из подписки. При временном тайм-ауте проверки ResultV может повторить подключение.",
+      "en": "Improved TLS verification for gRPC profiles with a certificate fingerprint from the subscription. ResultV can retry the connection after a verification timeout."
     }
   ],
   "downloadUrl": "https://result-proxy.ru/",
