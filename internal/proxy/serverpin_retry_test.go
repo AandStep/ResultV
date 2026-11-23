@@ -26,6 +26,8 @@ func TestShouldRetryWithoutPin(t *testing.T) {
 	}{
 		{"stale pin, probe failed", true, "post_start_probe_failed", true},
 		{"probe failed but no cached pin", false, "post_start_probe_failed", false},
+		{"stale pin, TLS preflight failed", true, connectErrorTLSCertificatePin, true},
+		{"TLS preflight failed, no cached IP", false, connectErrorTLSCertificatePin, false},
 		{"cached pin but cancelled", true, "cancelled", false},
 		{"cached pin but engine start error", true, "engine_start", false},
 		{"cached pin, success (empty code)", true, "", false},

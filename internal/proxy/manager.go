@@ -1413,7 +1413,7 @@ func (m *Manager) captureLiveServerIP(proxy *ProxyConfig) {
 // code is the signal. Other failures (cancelled, config errors, engine start)
 // are not pin-related and must surface as-is.
 func shouldRetryWithoutPin(usedCachedPin bool, errorCode string) bool {
-	return usedCachedPin && errorCode == "post_start_probe_failed"
+	return usedCachedPin && (errorCode == "post_start_probe_failed" || errorCode == connectErrorTLSCertificatePin)
 }
 
 func dnsOverrideServers(custom []string) []string {

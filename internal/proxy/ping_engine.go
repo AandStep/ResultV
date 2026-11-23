@@ -183,6 +183,9 @@ func startPingProbeEngine(ctx context.Context, proxy ProxyConfig, port int, bind
 		}
 		return nil, nil, "engine_config_failed"
 	}
+	if _, err := prepareXrayCertificatePin(ctx, proxy, &cfg, nil); err != nil {
+		return nil, nil, err.Error()
+	}
 
 	configJSON, err := json.Marshal(cfg)
 	if err != nil {

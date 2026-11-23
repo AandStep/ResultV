@@ -139,6 +139,9 @@ func ClassifyEngineStartError(mode ProxyMode, err error) (tunnelFailed bool, rea
 		return false, "", ""
 	}
 	msg := err.Error()
+	if errors.Is(err, errXrayCertificatePinCheck) {
+		return false, extractErrorReason(msg), connectErrorTLSCertificatePin
+	}
 	lower := strings.ToLower(msg)
 	// "set ipv6 address: Element not found" comes from sing-tun on hosts where
 	// the IPv6 stack is disabled. It superficially matches "configure tun
@@ -254,6 +257,8 @@ type SingBoxEngine struct {
 	// caller's intent. They are only meaningful while running.
 	savedCfg EngineConfig
 	savedCtx context.Context
+
+	verifiedTLSKey []byte
 
 
 	uploadBytes   atomic.Int64
@@ -625,6 +630,15 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 	if buildErr != nil {
 		return fmt.Errorf("sing-box config: %w", buildErr)
 	}
+	// A routing-only reload uses the key already verified for this session.
+	var verifiedKey []byte
+	if !announceMode {
+		verifiedKey = e.verifiedTLSKey
+	}
+	verifiedKey, err := prepareXrayCertificatePin(ctx, cfg.Proxy, &sbConfig, verifiedKey)
+	if err != nil {
+		return err
+	}
 
 	configJSON, err := json.MarshalIndent(sbConfig, "", "  ")
 	if err != nil {
@@ -748,6 +762,7 @@ func (e *SingBoxEngine) bootLocked(ctx context.Context, cfg EngineConfig, announ
 	e.cancel = cancel
 	e.boxCtx = boxCtx
 	e.coreLog = coreLog
+	e.verifiedTLSKey = verifiedKey
 	return nil
 }
 
@@ -1088,6 +1103,7 @@ func (e *SingBoxEngine) Stop() error {
 	e.shutdownInstanceLocked()
 	e.savedCfg = EngineConfig{}
 	e.savedCtx = nil
+	e.verifiedTLSKey = nil
 	e.running.Store(false)
 	e.log.Info("[SING-BOX] Остановлен")
 
