@@ -1270,6 +1270,7 @@ func xhttpModeFromExtra(extra map[string]interface{}) string {
 func xhttpUplinkHTTPMethodFromExtra(extra map[string]interface{}, mode string) string {
 	raw := strings.ToUpper(strings.TrimSpace(firstNonEmpty(
 		stringFromExtraValue(extra["uplink_http_method"]),
+		stringFromExtraValue(extra["uplinkHTTPMethod"]),
 		stringFromExtraValue(extra["method"]),
 	)))
 	switch raw {

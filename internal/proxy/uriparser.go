@@ -316,6 +316,9 @@ func parseJSONOutbound(outbound map[string]interface{}, name string) (config.Pro
 			if sni := asString(tls["serverName"]); sni != "" {
 				extra["sni"] = sni
 			}
+			if pin := asString(tls["pinnedPeerCertSha256"]); pin != "" {
+				extra["pinnedPeerCertSha256"] = pin
+			}
 			if fp := asString(tls["fingerprint"]); fp != "" {
 				extra["fp"] = fp
 			}
@@ -384,6 +387,8 @@ func parseJSONOutbound(outbound map[string]interface{}, name string) (config.Pro
 					extra[k] = v
 				}
 				normalizeVLESSExtraPadding(extra)
+			} else if method := asString(xhttp["uplinkHTTPMethod"]); method != "" {
+				extra["uplinkHTTPMethod"] = method
 			}
 		}
 		applyKCPSettings(stream, extra)
@@ -474,6 +479,8 @@ func parseJSONOutbound(outbound map[string]interface{}, name string) (config.Pro
 					extra[k] = v
 				}
 				normalizeVLESSExtraPadding(extra)
+			} else if method := asString(xhttp["uplinkHTTPMethod"]); method != "" {
+				extra["uplinkHTTPMethod"] = method
 			}
 		}
 		applyKCPSettings(stream, extra)
