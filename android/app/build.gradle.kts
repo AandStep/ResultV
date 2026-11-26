@@ -73,8 +73,8 @@ android {
         // fallbacks keep local/dev builds working without any -P flags.
         // versionCode scheme mirrors the tag: major*10000 + minor*100 + patch
         // (so 1.0.0 == 10000, matching the historical default).
-        versionName = (project.findProperty("versionName") as String?) ?: "1.4.0"
-        versionCode = (project.findProperty("versionCode") as String?)?.toInt() ?: 10400
+        versionName = (project.findProperty("versionName") as String?) ?: "1.4.1"
+        versionCode = (project.findProperty("versionCode") as String?)?.toInt() ?: 10401
     }
 
     // Дистрибутивы. play — сборка для Google Play, без браузерного ad-block
