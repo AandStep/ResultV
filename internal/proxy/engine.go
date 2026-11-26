@@ -362,6 +362,8 @@ type SBOutboundTLS struct {
 	Reality      *SBReality `json:"reality,omitempty"`
 	// HandshakeTimeout is set for hysteria2 only, see hysteria2HandshakeTimeout.
 	HandshakeTimeout string `json:"handshake_timeout,omitempty"`
+
+	CertificatePublicKeySHA256 [][]byte `json:"certificate_public_key_sha256,omitempty"`
 }
 
 type SBEndpoint struct {

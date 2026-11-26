@@ -70,6 +70,24 @@ func TestBothSidesFailingTeachesNothing(t *testing.T) {
 	}
 }
 
+func TestNodeErrorPageCannotConfirmVPNRoute(t *testing.T) {
+	direct := probeOutcome{Err: errors.New("i/o timeout")}
+	for _, node := range []probeOutcome{
+		{Status: 403},
+		{Status: 404},
+		{Status: 429},
+		{Status: 502},
+		{Status: 302, Location: "https://example.com/unavailable-in-region"},
+	} {
+		if got := classifyProbe(direct, node); got != verdict.Unknown {
+			t.Errorf("node HTTP %d wrote verdict %v, want unknown", node.Status, got)
+		}
+	}
+	if got := classifyProbe(probeOutcome{Status: 451}, probeOutcome{Status: 502}); got != verdict.Unknown {
+		t.Errorf("failed node response turned a region wall into a VPN verdict: %v", got)
+	}
+}
+
 // A redirect to the same site is ordinary web plumbing, not a region wall.
 func TestOrdinaryRedirectIsNotABlock(t *testing.T) {
 	direct := probeOutcome{Status: 301, Location: "https://www.example.com/", Elapsed: 120 * time.Millisecond}

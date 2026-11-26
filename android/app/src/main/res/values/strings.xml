@@ -177,6 +177,7 @@
     <string name="add_sub_fetch">Fetch</string>
     <string name="add_sub_fetching">Fetching…</string>
     <string name="add_sub_selected">%1$d of %2$d selected</string>
+    <string name="add_sub_sections">Sections (%1$d)</string>
     <string name="add_sub_import">Import %1$d</string>
     <string name="add_sub_select_all">Select all</string>
     <string name="add_sub_clear_all">Clear all</string>
@@ -417,6 +418,7 @@
     <string name="log_ks_reload_build_failed">Kill switch could not rebuild the configuration — traffic is NOT blocked.</string>
     <string name="log_no_server">No server selected.</string>
     <string name="log_build_failed">Failed to build configuration.</string>
+    <string name="log_tls_certificate_pin_failed">Could not verify the server’s TLS certificate.</string>
     <string name="log_permission_denied">VPN permission denied.</string>
     <!-- Log source tokens — same Latin category tags the desktop uses; not translated. -->
     <string name="log_source_proxy" translatable="false">PROXY</string>

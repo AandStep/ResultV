@@ -45,6 +45,20 @@ func TestDecideSmartFollowsAKnownVerdict(t *testing.T) {
 	}
 }
 
+func TestDecideSmartRetriesDirectForLegacyUnverifiedVerdicts(t *testing.T) {
+	store := choiceStore(t)
+	store.LearnUnverified("slow.example")
+	addr := netip.MustParseAddr("192.0.2.44")
+	store.LearnIPUnverified(addr)
+
+	if got := decideSmart(store, "slow.example", netip.Addr{}); got != chooseRace {
+		t.Errorf("hostname with an unverified verdict took %v, want a new direct attempt", got)
+	}
+	if got := decideSmart(store, "", addr); got != chooseRace {
+		t.Errorf("IP with an unverified verdict took %v, want a new direct attempt", got)
+	}
+}
+
 // The race is the only thing that can learn anything, so an unknown name has
 // to reach it — that is the whole feature.
 func TestDecideSmartRacesAnUnknownName(t *testing.T) {

@@ -3,8 +3,8 @@
 
 package verdict
 
-// Learned returns named decisions and a count of the remaining live decisions
-// in the active network. The latter only exist as hashes after a restart.
+// Learned returns confirmed named decisions and a count of the remaining
+// confirmed live decisions, which only exist as hashes after a restart.
 func (s *Store) Learned(decision Decision) (map[string]Record, int) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -12,7 +12,7 @@ func (s *Store) Learned(decision Decision) (map[string]Record, int) {
 	hidden := 0
 	now := s.now()
 	for hash, rec := range s.spaces[s.ns] {
-		if rec.Source != SourceLearned || rec.Decision != decision ||
+		if rec.Source != SourceLearned || rec.Decision != decision || rec.Unverified ||
 			(!rec.ExpiresAt.IsZero() && !rec.ExpiresAt.After(now)) {
 			continue
 		}

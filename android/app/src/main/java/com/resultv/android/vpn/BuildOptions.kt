@@ -92,6 +92,7 @@ internal object BuildOptionsBuilder {
                 else -> null
             }
         } catch (t: Throwable) {
+            reportCertificatePinFailure(t)
             null
         }
     }
@@ -109,13 +110,20 @@ internal object BuildOptionsBuilder {
         return try {
             Mobile.buildSingBoxConfigFromEntryV2(entryJson, dataDir, currentOptionsJson(panic))
         } catch (t: Throwable) {
+            reportCertificatePinFailure(t)
             null
         }
     }
 
-    fun fetchSubscription(url: String, dataDir: String): String = try {
+    private fun reportCertificatePinFailure(error: Throwable) {
+        if (error.message?.startsWith("tls_certificate_pin_failed:") == true) {
+            AppLog.error(R.string.log_tls_certificate_pin_failed)
+        }
+    }
+
+    fun fetchSubscription(url: String, dataDir: String, preview: Boolean = false): String = try {
         check(NativeCore.available) { AppLog.resolve(R.string.native_core_unavailable) }
-        Mobile.fetchSubscriptionV3(url, dataDir, currentSubscriptionFetchOptionsJson())
+        Mobile.fetchSubscriptionV3(url, dataDir, currentSubscriptionFetchOptionsJson(preview))
     } catch (error: Exception) {
         val message = when (error.message) {
             "subscription_hwid_required" -> R.string.subscription_error_hwid_required
@@ -131,11 +139,12 @@ internal object BuildOptionsBuilder {
      * tags the request with the device-id headers Happ / Remnawave panels
      * use for their device-list UI.
      */
-    private fun currentSubscriptionFetchOptionsJson(): String {
+    private fun currentSubscriptionFetchOptionsJson(preview: Boolean): String {
         val s = SettingsRepository.state.value
         return JSONObject().apply {
             put("userAgent", s.subscriptionUserAgent)
             put("sendHwid", s.subscriptionSendHwid)
+            put("preview", preview)
             // Stable across reinstalls — keeps the panel from registering a
             // duplicate device (and eating a HWID slot) on every install.
             put("hwid", SettingsRepository.deviceHwidSource())

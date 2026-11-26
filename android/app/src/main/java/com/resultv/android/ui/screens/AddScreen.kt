@@ -500,7 +500,9 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
                 sub.entries.filterNot { it.isSection }.map { it.key }.toSet()
             }
             val realCount = realKeys.size
-            val allSelected = selected.value.size >= realCount && realCount > 0
+            val sectionCount = remember(sub) { sub.entries.count { it.isSection } }
+            val selectedKeys = selected.value intersect realKeys
+            val allSelected = selectedKeys.size == realCount && realCount > 0
 
             // Selection summary + select-all toggle, kept directly above
             // the import action so neither is buried under the (possibly
@@ -509,21 +511,33 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = stringResource(R.string.add_sub_selected, selected.value.size, realCount),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = RvColor.description,
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(onClick = {
-                    selected.value = if (allSelected) emptySet() else realKeys
-                }) {
-                    Text(
-                        stringResource(
-                            if (allSelected) R.string.add_sub_clear_all
-                            else R.string.add_sub_select_all,
-                        ),
-                    )
+                Column(modifier = Modifier.weight(1f)) {
+                    if (realCount > 0) {
+                        Text(
+                            text = stringResource(R.string.add_sub_selected, selectedKeys.size, realCount),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = RvColor.description,
+                        )
+                    }
+                    if (sectionCount > 0) {
+                        Text(
+                            text = stringResource(R.string.add_sub_sections, sectionCount),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = RvColor.description,
+                        )
+                    }
+                }
+                if (realCount > 0) {
+                    TextButton(onClick = {
+                        selected.value = if (allSelected) emptySet() else realKeys
+                    }) {
+                        Text(
+                            stringResource(
+                                if (allSelected) R.string.add_sub_clear_all
+                                else R.string.add_sub_select_all,
+                            ),
+                        )
+                    }
                 }
             }
 
@@ -533,12 +547,12 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
                 fill = RvButtonColors.greenFill,
                 outline = RvButtonColors.greenOutline,
                 modifier = Modifier.fillMaxWidth(),
-                enabled = selected.value.isNotEmpty(),
+                enabled = selectedKeys.isNotEmpty(),
                 onClick = {
                     importSubscription(
                         url = fetchedUrl,
                         sub = sub,
-                        selectedKeys = selected.value,
+                        selectedKeys = selectedKeys,
                         sourceTag = "",
                         dataDir = dataDir,
                     )
@@ -546,7 +560,7 @@ private fun LinkPane(dataDir: String, onDone: () -> Unit) {
                 },
             ) {
                 Text(
-                    stringResource(R.string.add_sub_import, selected.value.size),
+                    stringResource(R.string.add_sub_import, selectedKeys.size),
                     style = RvButtonLabel,
                     fontWeight = FontWeight.Bold,
                     color = RvColor.Main,
@@ -690,7 +704,7 @@ private fun doFetch(
         onLoad(true)
         try {
             val responseJson = withContext(Dispatchers.IO) {
-                BuildOptionsBuilder.fetchSubscription(url.trim(), dataDir)
+                BuildOptionsBuilder.fetchSubscription(url.trim(), dataDir, preview = true)
             }
             val response = JSONObject(responseJson)
             val arr = response.optJSONArray("entries") ?: JSONArray()
@@ -745,6 +759,7 @@ private fun importSubscription(
     sourceTag: String,
     dataDir: String,
 ) {
+    if (sub.entries.none { !it.isSection && it.key in selectedKeys }) return
     // Re-importing the same URL updates the existing record in place rather
     // than spawning a duplicate; a fresh URL inserts a new one.
     val subId = SubscriptionRepository.upsert(

@@ -332,6 +332,9 @@ func (e *SingBoxEngine) Start(ctx context.Context, cfg EngineConfig) error {
 		sbConfig = BuildProxyModeConfig(cfg)
 		e.log.Info("[SING-BOX] Режим: Системный прокси (mixed)")
 	}
+	if _, err := PrepareXrayCertificatePin(ctx, cfg.Proxy, &sbConfig, nil); err != nil {
+		return err
+	}
 
 	configJSON, err := json.MarshalIndent(sbConfig, "", "  ")
 	if err != nil {

@@ -334,6 +334,9 @@ func parseJSONOutbound(outbound map[string]interface{}, name string) (config.Pro
 			if sni := asString(tls["serverName"]); sni != "" {
 				extra["sni"] = sni
 			}
+			if pin := asString(tls["pinnedPeerCertSha256"]); pin != "" {
+				extra["pinnedPeerCertSha256"] = pin
+			}
 			if fp := asString(tls["fingerprint"]); fp != "" {
 				extra["fp"] = fp
 			}
@@ -402,6 +405,8 @@ func parseJSONOutbound(outbound map[string]interface{}, name string) (config.Pro
 					extra[k] = v
 				}
 				normalizeVLESSExtraPadding(extra)
+			} else if method := asString(xhttp["uplinkHTTPMethod"]); method != "" {
+				extra["uplinkHTTPMethod"] = method
 			}
 		}
 		applyKCPSettings(stream, extra)
@@ -492,6 +497,8 @@ func parseJSONOutbound(outbound map[string]interface{}, name string) (config.Pro
 					extra[k] = v
 				}
 				normalizeVLESSExtraPadding(extra)
+			} else if method := asString(xhttp["uplinkHTTPMethod"]); method != "" {
+				extra["uplinkHTTPMethod"] = method
 			}
 		}
 		applyKCPSettings(stream, extra)
@@ -568,6 +575,18 @@ func parseJSONOutbound(outbound map[string]interface{}, name string) (config.Pro
 		finalMask, ok := asMap(stream["finalmask"])
 		if !ok {
 			finalMask, _ = asMap(stream["finalMask"])
+		}
+		// Standard Hysteria2 Salamander maps to the core's own UDP
+		// obfuscator. A mask chain or Gecko packet sizing is a different
+		// configuration and cannot be represented by this mapping.
+		if masks, ok := asSlice(finalMask["udp"]); ok && len(masks) == 1 {
+			mask, _ := asMap(masks[0])
+			settings, _ := asMap(mask["settings"])
+			if password := asString(settings["password"]); mask["type"] == "salamander" &&
+				password != "" && asString(settings["packetSize"]) == "" {
+				extra["obfs_type"] = "salamander"
+				extra["obfs_password"] = password
+			}
 		}
 		quicParams, _ := asMap(finalMask["quicParams"])
 		udpHop, _ := asMap(quicParams["udpHop"])

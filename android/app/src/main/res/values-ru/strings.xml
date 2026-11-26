@@ -169,6 +169,7 @@
     <string name="add_sub_fetch">Получить</string>
     <string name="add_sub_fetching">Загрузка…</string>
     <string name="add_sub_selected">Выбрано %1$d из %2$d</string>
+    <string name="add_sub_sections">Разделы (%1$d)</string>
     <string name="add_sub_import">Импорт %1$d</string>
     <string name="add_sub_select_all">Выбрать всё</string>
     <string name="add_sub_clear_all">Снять всё</string>
@@ -379,6 +380,7 @@
     <string name="log_ks_reload_build_failed">Kill switch не смог перестроить конфигурацию — трафик НЕ заблокирован.</string>
     <string name="log_no_server">Сервер не выбран.</string>
     <string name="log_build_failed">Не удалось сформировать конфигурацию.</string>
+    <string name="log_tls_certificate_pin_failed">Не удалось подтвердить сертификат TLS сервера.</string>
     <string name="log_permission_denied">Разрешение на VPN отклонено.</string>
     <string name="log_connect_timing">Тайминг подключения: total=%1$d мс</string>
     <string name="log_engine_stopped">Движок остановлен.</string>

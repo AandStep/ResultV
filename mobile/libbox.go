@@ -204,6 +204,7 @@ var tunnelActive atomic.Bool
 // process that never connects still gets real handshake RTTs.
 func SetTunnelActive(active bool) {
 	tunnelActive.Store(active)
+	setTLSCertificateSessionActive(active)
 	// The auto sweep runs its own WireGuard probe and needs the same rule: no
 	// keyed handshake against a server whose session we are currently using.
 	proxy.SetAutoKeyedWGProbe(!active)
@@ -508,6 +509,8 @@ type SubscriptionFetchOptions struct {
 	// registers a duplicate device, burning the provider's HWID-limit slots.
 	// Empty falls back to config.StableHardwareID(dataDir).
 	HWID string `json:"hwid,omitempty"`
+	// Preview allows provider notices even when there are no connectable entries.
+	Preview bool `json:"preview,omitempty"`
 }
 
 // FetchSubscriptionV3 is the options-aware variant of V2. Kotlin should
@@ -600,8 +603,7 @@ func fetchSubscription(subURL, dataDir string, opts SubscriptionFetchOptions) (s
 	// desktop pipeline). impVPN-style helper rows like "👇 выберите конфиг
 	// ниже" stay in list order but are non-clickable.
 	entries = proxy.FinalizeSubscriptionEntries(entries)
-	// A subscription needs at least one real proxy to be useful. SECTION
-	// rows alone don't count.
+	// Saving or refreshing a subscription requires a connectable entry.
 	hasReal := false
 	for _, e := range entries {
 		if !strings.EqualFold(strings.TrimSpace(e.Type), "SECTION") {
@@ -609,7 +611,7 @@ func fetchSubscription(subURL, dataDir string, opts SubscriptionFetchOptions) (s
 			break
 		}
 	}
-	if !hasReal {
+	if !hasReal && (!opts.Preview || len(entries) == 0) {
 		return subscriptionResult{}, fmt.Errorf(
 			"no valid proxies in subscription (parsed=%d, all sections, diag=%s)",
 			rawCount, primaryRes.Diag,
@@ -1677,6 +1679,9 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 	}
 
 	sb := proxy.BuildTunnelModeConfig(cfg)
+	if err := prepareSessionCertificatePin(cfg.Proxy, &sb); err != nil {
+		return "", err
+	}
 
 	// Android-specific overrides: VpnService can't manipulate iptables
 	// or perform privileged route operations. strict_route MUST be off
@@ -1845,14 +1850,18 @@ func buildSingBoxConfigFromEntry(entry config.ProxyEntry, dataDir string, opts B
 		}
 	}
 
-	// Вся суть блока — двумя последними правилами, уже после Smart-списка,
-	// ad-block и исключений. Сперва выученное «ходит напрямую» решается
-	// правилом и мимо реле, потом весь остаток TCP уходит учиться.
+	// Правила после Smart-списка, ad-block и исключений. Steam CDN и выученные
+	// прямые маршруты обходят реле, а незнакомый TCP уходит в него.
 	//
 	// UDP не трогаем: гонки по нему нет, и он по-прежнему проваливается в
 	// final.
 	if adaptiveSmartActive(opts) && sb.Route != nil {
 		sb.Route.Rules = append(sb.Route.Rules,
+			proxy.SBRouteRule{
+				Action:       "route",
+				DomainSuffix: []string{"steamcontent.com", "steampipe.akamaized.net"},
+				Outbound:     "direct",
+			},
 			proxy.SBRouteRule{
 				RuleSet:  []string{"verdict-direct"},
 				Action:   "route",

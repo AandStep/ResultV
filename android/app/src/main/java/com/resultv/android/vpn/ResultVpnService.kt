@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.withIndex
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -153,9 +154,10 @@ class ResultVpnService : VpnService() {
                     val tCfg = System.currentTimeMillis()
                     val active = ProfileRepository.state.value.active
                     val config = active?.let(::buildConfigFromActiveProfile)
+                    coroutineContext.ensureActive()
                     Log.i(TAG, "connect timing: buildConfig=${System.currentTimeMillis() - tCfg}ms, size=${config?.length ?: 0}")
-                    if (active == null || config.isNullOrEmpty()) {
-                        Log.e(TAG, "no config available — stopping")
+                    if (active == null) {
+                        Log.e(TAG, "no active profile — stopping")
                         withContext(Dispatchers.Main) { stopSelf() }
                         return@launch
                     }
@@ -270,14 +272,16 @@ class ResultVpnService : VpnService() {
      * with the next candidate's config without duplicating the success path.
      */
     private fun startWithConfig(
-        config: String,
+        config: String?,
         active: Profile,
         isReload: Boolean,
         connectedMsg: String,
         listsReady: Boolean,
     ) {
+        if (VpnState.status.value !is VpnStatus.Connecting) return
         val t0 = System.currentTimeMillis()
         try {
+            check(!config.isNullOrEmpty()) { getString(R.string.log_build_failed) }
             // openTun during start() must see filterProxyRunning=false
             // (browser ad-block attaches after, off the critical path).
             BoxModule.filterProxyRunning = false
@@ -318,7 +322,7 @@ class ResultVpnService : VpnService() {
             // Fallback: connected before the lists finished warming.
             if (!listsReady) scheduleListReadyReload()
         } catch (t: Throwable) {
-            Log.e(TAG, "BoxModule.start failed", t)
+            Log.e(TAG, "VPN startup failed", t)
             val msg = t.message ?: t.javaClass.simpleName
             AutoSelection.recordOutcome(ok = false, reason = "connect_failed")
             // AUTO: a dead member is a reason to move, not to stop — the group
@@ -326,15 +330,14 @@ class ResultVpnService : VpnService() {
             // been penalised in the node stats, so it sinks on its own without a
             // separate blacklist. advance() returns null once the ranked list is
             // exhausted, which is a real connect failure.
-            val next = AutoSelection.advance()
+            val next = if (active.isAuto) AutoSelection.advance() else null
             if (next != null) {
-                val retry = BuildOptionsBuilder
-                    .buildConfigFromEntry(next.entryJson, filesDir.absolutePath)
-                if (retry != null) {
-                    AppLog.warning(getString(R.string.log_auto_failover, next.name))
-                    worker.execute { startWithConfig(retry, active, isReload, connectedMsg, listsReady) }
-                    return
+                AppLog.warning(getString(R.string.log_auto_failover, next.name))
+                worker.execute {
+                    val retry = BuildOptionsBuilder.buildConfigFromEntry(next.entryJson, filesDir.absolutePath)
+                    startWithConfig(retry, active, isReload, connectedMsg, listsReady)
                 }
+                return
             }
             VpnState.set(VpnStatus.Error(msg))
             AppLog.error(getString(R.string.log_conn_failed, msg))

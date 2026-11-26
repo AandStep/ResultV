@@ -35,7 +35,6 @@ const pingProbeInboundTag = "ping-probe-in"
 // pingProbeHostsTag names the static record that answers the node's own name.
 const pingProbeHostsTag = "ping-probe-hosts"
 
-
 // BuildPingProbeConfig assembles the whole sing-box config for one throwaway
 // measurement: a loopback mixed inbound, the node's own outbound, nothing else.
 //
@@ -63,6 +62,7 @@ const pingProbeHostsTag = "ping-probe-hosts"
 //     /etc/resolv.conf. So the caller resolves the node's name with the Go
 //     resolver (which does work here, same as the WireGuard handshake probe)
 //     and hands the answer in as nodeIPs.
+//
 // pingHysteria2HandshakeTimeout leaves room for a second flow inside the default
 // 3 s ping budget when the network drops the first one.
 const pingHysteria2HandshakeTimeout = "1500ms"
@@ -186,6 +186,9 @@ func pingThroughNode(ctx context.Context, proxy ProxyConfig, method, testURL str
 			return 0, false, "unsupported_for_protocol"
 		}
 		return 0, false, "engine_config_failed"
+	}
+	if _, err := PrepareXrayCertificatePin(ctx, proxy, &cfg, nil); err != nil {
+		return 0, false, TLSCertificatePinFailureCode
 	}
 
 	configJSON, err := json.Marshal(cfg)

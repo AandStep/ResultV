@@ -74,8 +74,7 @@ type SmartRelayOptions struct {
 	// ListenPort — порт реле; 0 означает «любой свободный» и нужен тестам.
 	ListenPort int
 	// TunnelPort — порт loopback-инбаунда движка, через который проходит
-	// туннельная нога. 0 означает, что туннеля нет: гонка тогда вырождается в
-	// прямой путь, и это честнее, чем мерить прямой путь дважды.
+	// туннельная нога. 0 означает, что доступен только прямой путь.
 	TunnelPort     int
 	ExitTunnelPort int
 	// MemoryOnly — не писать на диск ничего, кроме пустого скелета rule-set
@@ -99,7 +98,6 @@ type SmartRelay struct {
 	// открывает десятки соединений к одному имени разом; без этого каждое
 	// начало бы свою пробу и одна страница съела бы весь бюджет намордника.
 	inflight sync.Map
-	losses   raceLosses
 	learnMu  sync.Mutex
 	// Results measured before a user edit cannot restore removed decisions.
 	learnGeneration uint64
@@ -273,11 +271,8 @@ func (r *SmartRelay) serve(client net.Conn) {
 	}
 	_ = client.SetReadDeadline(time.Time{})
 
-	// Ответ 200 идёт до дозвона, и это осознанно: без него клиент не пришлёт
-	// первых байт, а без первых байт гонку не запустить — их нечего послать
-	// обеим ногам. Плата в том, что провал дозвона клиент видит закрытым
-	// соединением, а не кодом ошибки. Ровно так же он видит его и сегодня,
-	// когда сайт не открывается.
+	// Клиент присылает первые байты только после ответа 200. По ответу сайта
+	// на эти байты реле решает, нужно ли попробовать путь через VPN.
 	if _, err := io.WriteString(client, "HTTP/1.1 200 Connection established\r\n\r\n"); err != nil {
 		return
 	}
@@ -299,11 +294,11 @@ func (r *SmartRelay) serve(client net.Conn) {
 	case chooseDirect:
 		r.pipeVia(client, reader, target, smartRelayDirect)
 	default:
-		r.race(client, reader, target, host, tunnelPort)
+		r.connectUnknownTCP(client, reader, target, host, tunnelPort)
 	}
 }
 
-// pipeVia ведёт соединение одной ногой, без гонки: вердикт уже есть.
+// pipeVia ведёт соединение по выбранному пути.
 func (r *SmartRelay) pipeVia(client net.Conn, buffered *bufio.Reader, target string, tunnelPort int) {
 	var (
 		up  net.Conn
@@ -321,23 +316,22 @@ func (r *SmartRelay) pipeVia(client net.Conn, buffered *bufio.Reader, target str
 	splice(client, buffered, up)
 }
 
-// race разыгрывает незнакомое назначение.
-func (r *SmartRelay) race(client net.Conn, buffered *bufio.Reader, target, host string, tunnelPort int) {
+// connectUnknownTCP пробует прямой путь перед тем, как подключить VPN.
+func (r *SmartRelay) connectUnknownTCP(client net.Conn, buffered *bufio.Reader, target, host string, tunnelPort int) {
 	r.learnMu.Lock()
 	generation := r.learnGeneration
 	r.learnMu.Unlock()
 	first := make([]byte, smartFirstReadBudget)
-	_ = client.SetReadDeadline(time.Now().Add(smartRaceHeadStart))
+	_ = client.SetReadDeadline(time.Now().Add(smartOpeningReadTimeout))
 	n, _ := buffered.Read(first)
 	_ = client.SetReadDeadline(time.Time{})
 	if n == 0 {
-		// Клиент, который молчит, разыграть нельзя: нечего послать и нечем
-		// различить ноги. Пусть идёт так, как ходил до появления фичи.
+		// Если протокол ждёт первые байты от сервера, оставляем прямой путь.
 		r.pipeVia(client, buffered, target, smartRelayDirect)
 		return
 	}
 
-	res := runSmartRace(context.Background(), first[:n],
+	res := connectSmartTCP(context.Background(), first[:n],
 		func(ctx context.Context) (net.Conn, error) { return r.dialDirect(ctx, target) },
 		func(ctx context.Context) (net.Conn, error) { return r.dialTunnel(ctx, target, tunnelPort) },
 	)
@@ -352,7 +346,7 @@ func (r *SmartRelay) race(client net.Conn, buffered *bufio.Reader, target, host 
 	if raceTeaches(res) {
 		r.learnMu.Lock()
 		if generation == r.learnGeneration {
-			r.learn(host, res.ViaProxy, time.Now())
+			r.learn(host, res.ViaProxy)
 		}
 		r.learnMu.Unlock()
 	}
@@ -366,36 +360,21 @@ func (r *SmartRelay) race(client net.Conn, buffered *bufio.Reader, target, host 
 	splice(client, buffered, res.Conn)
 }
 
-// learn records a direct win and verifies a proxy win with a separate probe.
-// Repeated losses can temporarily select the proxy while the probe is inconclusive.
+// learn records a working direct connection. A VPN fallback only requests
+// an independent probe, which can confirm that the node is needed.
 // The caller holds learnMu.
-func (r *SmartRelay) learn(host string, viaTunnel bool, now time.Time) {
+func (r *SmartRelay) learn(host string, viaTunnel bool) {
 	if !r.health.healthy() {
 		return
 	}
 	addr, _ := netip.ParseAddr(host)
-	key := verdict.NormalizeHost(host)
-	if addr.IsValid() {
-		key = verdict.IPKey(addr)
-	}
-	if key == "" {
-		return
-	}
 	if !viaTunnel {
-		r.losses.reset(key)
 		if addr.IsValid() {
 			r.store.LearnIP(addr, verdict.Direct)
 		} else {
 			r.store.Learn(host, verdict.Direct)
 		}
 		r.markDirty()
-	} else if r.losses.add(key, now) >= raceLossesToLearn {
-		r.losses.reset(key)
-		if addr.IsValid() {
-			r.store.LearnIPUnverified(addr)
-		} else {
-			r.store.LearnUnverified(host)
-		}
 	}
 	if !addr.IsValid() {
 		r.recheckAsync(host)
@@ -423,13 +402,12 @@ func (r *SmartRelay) recheckAsync(host string) {
 			return
 		}
 		r.store.Learn(host, d)
-		r.losses.reset(verdict.NormalizeHost(host))
 		r.markDirty()
 	}()
 }
 
 func (r *SmartRelay) dialDirect(ctx context.Context, target string) (net.Conn, error) {
-	d := net.Dialer{Timeout: smartDirectDialTimeout}
+	d := net.Dialer{Timeout: smartDirectTimeout}
 	return d.DialContext(ctx, "tcp", target)
 }
 

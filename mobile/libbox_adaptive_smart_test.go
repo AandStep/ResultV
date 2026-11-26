@@ -10,6 +10,7 @@ package mobile
 import (
 	"encoding/json"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/sagernet/sing-box/experimental/libbox"
@@ -32,11 +33,12 @@ type adaptiveSmartView struct {
 	} `json:"outbounds"`
 	Route struct {
 		Rules []struct {
-			Inbound  []string `json:"inbound"`
-			Network  []string `json:"network"`
-			RuleSet  []string `json:"rule_set"`
-			Action   string   `json:"action"`
-			Outbound string   `json:"outbound"`
+			Inbound      []string `json:"inbound"`
+			Network      []string `json:"network"`
+			RuleSet      []string `json:"rule_set"`
+			DomainSuffix []string `json:"domain_suffix"`
+			Action       string   `json:"action"`
+			Outbound     string   `json:"outbound"`
 		} `json:"rules"`
 		RuleSet []struct {
 			Type   string `json:"type"`
@@ -169,6 +171,33 @@ func TestAdaptiveSmart_LearnedDirectRuleComesBeforeRelayRule(t *testing.T) {
 	}
 	if directIdx < 0 || relayIdx < 0 || directIdx >= relayIdx {
 		t.Fatalf("порядок неверен: verdict-direct=%d, smart-relay=%d", directIdx, relayIdx)
+	}
+}
+
+func TestAdaptiveSmart_SteamContentRoutesDirectlyBeforeFallback(t *testing.T) {
+	opts := smartOpts()
+	opts.IntoVpnDomains = "forced.steamcontent.com"
+	opts.BlockedDomains = "blocked.steampipe.akamaized.net"
+	opts.SmartBlockedDomainsList = "listed.steamcontent.com"
+	cfg := buildAdaptive(t, opts)
+
+	forced, blocked, listed, steam, relay := -1, -1, -1, -1, -1
+	for i, rule := range cfg.Route.Rules {
+		switch {
+		case rule.Outbound == "proxy" && slices.Contains(rule.DomainSuffix, "forced.steamcontent.com"):
+			forced = i
+		case rule.Action == "reject" && slices.Contains(rule.DomainSuffix, "blocked.steampipe.akamaized.net"):
+			blocked = i
+		case rule.Outbound == "proxy" && slices.Contains(rule.DomainSuffix, "listed.steamcontent.com"):
+			listed = i
+		case rule.Outbound == "direct" && slices.Equal(rule.DomainSuffix, []string{"steamcontent.com", "steampipe.akamaized.net"}):
+			steam = i
+		case rule.Outbound == "smart-relay":
+			relay = i
+		}
+	}
+	if forced < 0 || blocked < 0 || listed < 0 || steam <= forced || steam <= blocked || steam <= listed || relay <= steam {
+		t.Fatalf("Steam must follow explicit routes and precede the relay: forced=%d blocked=%d listed=%d steam=%d relay=%d", forced, blocked, listed, steam, relay)
 	}
 }
 

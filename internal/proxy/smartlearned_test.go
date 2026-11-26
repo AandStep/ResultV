@@ -4,7 +4,6 @@ import (
 	"context"
 	"slices"
 	"testing"
-	"time"
 
 	"resultproxy-wails/internal/verdict"
 )
@@ -27,11 +26,11 @@ func TestSmartLearnedRoutesListAndForget(t *testing.T) {
 	relay.store.Seed("manual.example.net", verdict.Proxy, verdict.SourceUser)
 
 	list, err := ManageSmartLearnedRoutes(dir, relay, "", false)
-	if err != nil || !slices.Equal(list.Items, []string{"a.example.net", "z.example.net"}) || list.Hidden != 1 {
+	if err != nil || !slices.Equal(list.Items, []string{"z.example.net"}) || list.Hidden != 1 {
 		t.Fatalf("learned routes = %+v, err = %v", list, err)
 	}
 	list, err = ManageSmartLearnedRoutes(dir, relay, " Z.Example.Net. ", false)
-	if err != nil || !slices.Equal(list.Items, []string{"a.example.net"}) || list.Hidden != 1 {
+	if err != nil || len(list.Items) != 0 || list.Hidden != 1 {
 		t.Fatalf("after forgetting = %+v, err = %v", list, err)
 	}
 	saved, err := verdict.Load(SmartVerdictStorePath(dir), nil)
@@ -93,7 +92,7 @@ func TestSmartLearnedRoutesResetDiscardsAnOngoingProbe(t *testing.T) {
 		return verdict.Proxy
 	}
 	host := "inflight.example.org"
-	relay.learn(host, true, time.Now())
+	relay.learn(host, true)
 	<-started
 	_, err = ManageSmartLearnedRoutes(dir, relay, "", true)
 	close(result)

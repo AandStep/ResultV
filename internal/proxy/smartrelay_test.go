@@ -376,7 +376,7 @@ func serveFakeSocks(c net.Conn, target string) {
 	io.Copy(c, up)
 }
 
-func TestSmartRelaySpacedLossesAreTemporary(t *testing.T) {
+func TestSmartRelayRepeatedFallbackDoesNotLearnVPNRoute(t *testing.T) {
 	relay, err := StartSmartRelay(SmartRelayOptions{DataDir: t.TempDir(), MemoryOnly: true})
 	if err != nil {
 		t.Fatal(err)
@@ -385,18 +385,11 @@ func TestSmartRelaySpacedLossesAreTemporary(t *testing.T) {
 
 	const host = "203.0.113.50"
 	addr := netip.MustParseAddr(host)
-	now := time.Now()
-	for _, elapsed := range []time.Duration{0, time.Second, raceLossSpacing} {
-		relay.learn(host, true, now.Add(elapsed))
+	for range 3 {
+		relay.learn(host, true)
 		if rec, ok := relay.store.LookupIP(addr); ok {
-			t.Fatalf("premature proxy verdict: %+v", rec)
+			t.Fatalf("fallback without confirmation taught a proxy verdict: %+v", rec)
 		}
-	}
-
-	relay.learn(host, true, now.Add(2*raceLossSpacing))
-	rec, ok := relay.store.LookupIP(addr)
-	if !ok || rec.Decision != verdict.Proxy || !rec.Unverified {
-		t.Fatalf("want an unverified proxy verdict, got %+v", rec)
 	}
 }
 
@@ -409,7 +402,7 @@ func TestSmartRelayHostnameProxyVerdictRequiresProbeConfirmation(t *testing.T) {
 
 	relay.probe = func(context.Context, string, *probeGate) verdict.Decision { return verdict.Proxy }
 	const host = "confirmed.example.org"
-	relay.learn(host, true, time.Now())
+	relay.learn(host, true)
 	waitFor(t, func() bool {
 		rec, ok := relay.store.Lookup(host)
 		return ok && rec.Decision == verdict.Proxy && !rec.Unverified

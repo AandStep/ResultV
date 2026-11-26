@@ -87,7 +87,7 @@ func refusingDialer() raceDialer {
 }
 
 func TestRaceTakesDirectWhenDirectAnswers(t *testing.T) {
-	res := runSmartRace(context.Background(), []byte("hello"), liveServer(t, "ok"), liveServer(t, "ok"))
+	res := connectSmartTCP(context.Background(), []byte("hello"), liveServer(t, "ok"), liveServer(t, "ok"))
 	if res.Err != nil {
 		t.Fatal(res.Err)
 	}
@@ -100,11 +100,42 @@ func TestRaceTakesDirectWhenDirectAnswers(t *testing.T) {
 	}
 }
 
+func TestSlowWorkingDirectDoesNotStartTheVPNPath(t *testing.T) {
+	direct := func(ctx context.Context) (net.Conn, error) {
+		timer := time.NewTimer(time.Second)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timer.C:
+			return liveServer(t, "direct")(ctx)
+		}
+	}
+	nodeDialed := make(chan struct{}, 1)
+	node := func(ctx context.Context) (net.Conn, error) {
+		nodeDialed <- struct{}{}
+		return liveServer(t, "node")(ctx)
+	}
+	res := connectSmartTCP(context.Background(), []byte("hello"), direct, node)
+	if res.Err != nil {
+		t.Fatal(res.Err)
+	}
+	defer res.Conn.Close()
+	if res.ViaProxy || string(res.Head) != "direct" {
+		t.Fatalf("working direct path lost to the node: viaProxy=%t reply=%q", res.ViaProxy, res.Head)
+	}
+	select {
+	case <-nodeDialed:
+		t.Fatal("request was sent to the node while direct was still connecting")
+	default:
+	}
+}
+
 // The measured case: instagram.com takes a full ten seconds to fail on a
 // Russian address because the SYN goes into a black hole. Not waiting that out
 // is the whole reason the race exists.
 func TestRaceFallsToProxyWhenDirectIsABlackHole(t *testing.T) {
-	res := runSmartRace(context.Background(), []byte("hello"), blackHoleServer(t), liveServer(t, "ok"))
+	res := connectSmartTCP(context.Background(), []byte("hello"), blackHoleServer(t), liveServer(t, "ok"))
 	if res.Err != nil {
 		t.Fatal(res.Err)
 	}
@@ -120,7 +151,7 @@ func TestRaceFallsToProxyWhenDirectIsABlackHole(t *testing.T) {
 // An outright refusal is evidence at once — there is nothing left to wait for.
 func TestRaceTakesProxyImmediatelyOnDirectRefusal(t *testing.T) {
 	start := time.Now()
-	res := runSmartRace(context.Background(), []byte("hello"), refusingDialer(), liveServer(t, "ok"))
+	res := connectSmartTCP(context.Background(), []byte("hello"), refusingDialer(), liveServer(t, "ok"))
 	if res.Err != nil {
 		t.Fatal(res.Err)
 	}
@@ -128,7 +159,7 @@ func TestRaceTakesProxyImmediatelyOnDirectRefusal(t *testing.T) {
 	if !res.ViaProxy {
 		t.Fatal("a refused direct dial still won")
 	}
-	if elapsed := time.Since(start); elapsed >= smartRaceHeadStart {
+	if elapsed := time.Since(start); elapsed >= smartOpeningReadTimeout {
 		t.Fatalf("a refusal was not acted on immediately: %v", elapsed)
 	}
 }
@@ -136,7 +167,7 @@ func TestRaceTakesProxyImmediatelyOnDirectRefusal(t *testing.T) {
 // If neither path works the connection has to fail, not hang until something
 // times out on its own.
 func TestRaceFailsWhenNeitherPathAnswers(t *testing.T) {
-	res := runSmartRace(context.Background(), []byte("hello"), refusingDialer(), refusingDialer())
+	res := connectSmartTCP(context.Background(), []byte("hello"), refusingDialer(), refusingDialer())
 	if res.Err == nil {
 		res.Conn.Close()
 		t.Fatal("the race reported success with no working path")
@@ -157,7 +188,7 @@ func TestRaceClosesTheLoser(t *testing.T) {
 		}()
 		return &notifyCloseConn{Conn: client, closed: closed}, nil
 	}
-	res := runSmartRace(context.Background(), []byte("hello"), loser, liveServer(t, "ok"))
+	res := connectSmartTCP(context.Background(), []byte("hello"), loser, liveServer(t, "ok"))
 	if res.Err != nil {
 		t.Fatal(res.Err)
 	}
@@ -188,7 +219,7 @@ func (c *notifyCloseConn) Close() error {
 // этом уже точно известно, что он мёртв, то есть выбрасывался единственный
 // оставшийся живой кандидат.
 func TestSilentNodeConnectionIsHandedOverInsteadOfDropped(t *testing.T) {
-	res := runSmartRace(context.Background(), []byte("hello"), refusingDialer(), blackHoleServer(t))
+	res := connectSmartTCP(context.Background(), []byte("hello"), refusingDialer(), blackHoleServer(t))
 	if res.Err != nil {
 		t.Fatalf("гонка отдала отказ вместо живого соединения узла: %v", res.Err)
 	}
@@ -207,7 +238,7 @@ func TestSilentNodeConnectionIsHandedOverInsteadOfDropped(t *testing.T) {
 // Дедлайн чтения, которым попытка ловит молчание, обязан быть снят перед
 // передачей клиенту: иначе первое же его чтение мгновенно упадёт по таймауту.
 func TestHandedOverConnectionHasNoLeftoverDeadline(t *testing.T) {
-	res := runSmartRace(context.Background(), []byte("hello"), refusingDialer(), muteServer(t))
+	res := connectSmartTCP(context.Background(), []byte("hello"), refusingDialer(), muteServer(t))
 	if res.Err != nil || res.Conn == nil {
 		t.Fatalf("ожидалось живое соединение: err=%v", res.Err)
 	}
@@ -224,7 +255,7 @@ func TestHandedOverConnectionHasNoLeftoverDeadline(t *testing.T) {
 // Доказанный ответ всегда лучше молчания: молчащий кандидат не имеет права
 // выиграть у пути, по которому сервер заговорил.
 func TestAnsweredPathBeatsASilentOne(t *testing.T) {
-	res := runSmartRace(context.Background(), []byte("hello"), blackHoleServer(t), liveServer(t, "ok"))
+	res := connectSmartTCP(context.Background(), []byte("hello"), blackHoleServer(t), liveServer(t, "ok"))
 	if res.Err != nil {
 		t.Fatal(res.Err)
 	}
@@ -263,7 +294,7 @@ func TestHandedOverConnectionTeachesNothing(t *testing.T) {
 // есть подпись чёрной дыры, и вкладка, висящая своим таймаутом минуту, хуже
 // честного отказа за секунду. Отдаём только узел.
 func TestMuteDirectIsNotHandedOver(t *testing.T) {
-	res := runSmartRace(context.Background(), []byte("hello"), muteServer(t), refusingDialer())
+	res := connectSmartTCP(context.Background(), []byte("hello"), muteServer(t), refusingDialer())
 	if res.Err == nil {
 		res.Conn.Close()
 		t.Fatal("клиенту отдали молчащий прямой путь вместо отказа")

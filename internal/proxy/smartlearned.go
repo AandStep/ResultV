@@ -63,11 +63,6 @@ func (r *SmartRelay) editLearnedRoutes(host string, reset bool) error {
 	r.learnMu.Lock()
 	defer r.learnMu.Unlock()
 	r.learnGeneration++
-	if reset {
-		r.losses.clear()
-	} else {
-		r.losses.reset(host)
-	}
 	editSmartLearnedRoutes(r.store, host, reset)
 	if r.opts.MemoryOnly {
 		// Apply the explicit removal to any disk cache left from a previous
